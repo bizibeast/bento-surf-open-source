@@ -1,0 +1,4 @@
+interface:
+  display_name: "Bento"
+  short_description: "Operate Bento through its MCP server"
+  default_prompt: "Use Bento to manage my creator business."

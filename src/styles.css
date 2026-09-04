@@ -1,0 +1,870 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+@import "react-grid-layout/css/styles.css";
+@import "react-resizable/css/styles.css";
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/inter-cyrillic-ext.woff2") format("woff2");
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/inter-cyrillic.woff2") format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/inter-greek-ext.woff2") format("woff2");
+  unicode-range: U+1F00-1FFF;
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/inter-greek.woff2") format("woff2");
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/inter-vietnamese.woff2") format("woff2");
+  unicode-range:
+    U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301,
+    U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/inter-latin-ext.woff2") format("woff2");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/inter-latin.woff2") format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Instrument Serif";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/instrument-serif-latin-ext.woff2") format("woff2");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "Instrument Serif";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/instrument-serif-latin.woff2") format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@custom-variant dark (&:is(.dark *):not(:is(.auth-light, .auth-light *)));
+
+:root {
+  --motion-instant: 80ms;
+  --motion-fast: 180ms;
+  --motion-normal: 350ms;
+  --motion-ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  min-width: 0;
+}
+
+html,
+body {
+  overflow-x: clip;
+}
+
+body {
+  min-height: 100dvh;
+}
+
+img,
+video,
+canvas,
+iframe {
+  max-width: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  max-width: 100%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  :where(
+    button,
+    a[href],
+    [role="button"],
+    summary,
+    select,
+    input[type="button"],
+    input[type="submit"],
+    input[type="reset"],
+    input[type="checkbox"],
+    input[type="radio"]
+  ):not(:disabled) {
+    transition-property: color, background-color, border-color, box-shadow, opacity, filter, scale;
+    transition-duration: var(--motion-fast);
+    transition-timing-function: var(--motion-ease-smooth);
+    transform-origin: center;
+  }
+
+  :where(
+      button:not([data-micro-app-tab]),
+      a[href],
+      [role="button"],
+      summary,
+      select,
+      input[type="button"],
+      input[type="submit"],
+      input[type="reset"],
+      input[type="checkbox"],
+      input[type="radio"]
+    ):not(:disabled):active {
+    scale: 0.97;
+    transition-duration: var(--motion-instant);
+  }
+
+  :where(input:not([type="button"], [type="submit"], [type="reset"]), textarea, select) {
+    transition-property: color, background-color, border-color, box-shadow, opacity;
+    transition-duration: var(--motion-fast);
+    transition-timing-function: var(--motion-ease-smooth);
+  }
+
+  :where(.ui-surface, .ui-feature-surface):is(a, button, [role="button"]):hover {
+    box-shadow: var(--shadow-float);
+  }
+}
+
+/* Keep typography tokens indirect so Tailwind utilities read the live values
+   selected by FontApplier instead of baking the defaults into the CSS. */
+@theme {
+  --font-display: "Instrument Serif";
+  --font-sans: "Inter";
+  --font-ui-display: "Instrument Serif";
+  --font-ui-sans: "Inter";
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 6px);
+  --radius-md: calc(var(--radius) - 4px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 6px);
+  --radius-2xl: calc(var(--radius) + 12px);
+  --radius-3xl: calc(var(--radius) + 20px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Pastel tints used by bento blocks */
+  --color-tint-sky: var(--tint-sky);
+  --color-tint-sky-fg: var(--tint-sky-fg);
+  --color-tint-rose: var(--tint-rose);
+  --color-tint-rose-fg: var(--tint-rose-fg);
+  --color-tint-mint: var(--tint-mint);
+  --color-tint-mint-fg: var(--tint-mint-fg);
+  --color-tint-lavender: var(--tint-lavender);
+  --color-tint-lavender-fg: var(--tint-lavender-fg);
+  --color-tint-amber: var(--tint-amber);
+  --color-tint-amber-fg: var(--tint-amber-fg);
+  --color-tint-neutral: var(--tint-neutral);
+  --color-tint-neutral-fg: var(--tint-neutral-fg);
+}
+
+:root {
+  --radius: 1rem;
+
+  /* Product UI geometry. Keep this vocabulary small: controls, surfaces, and
+     feature canvases are the only three radius levels used by shared UI. */
+  --radius-control: 0.75rem;
+  --radius-surface: 1.25rem;
+  --radius-feature: 1.75rem;
+  --shadow-subtle: 0 1px 2px rgb(23 33 58 / 0.05), 0 10px 30px -24px rgb(23 33 58 / 0.24);
+  --shadow-float: 0 24px 70px -44px rgb(23 33 58 / 0.34);
+
+  --background: oklch(0.99 0.003 90);
+  --foreground: oklch(0.18 0.01 270);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.18 0.01 270);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.18 0.01 270);
+  --primary: oklch(0.18 0.01 270);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.965 0.005 260);
+  --secondary-foreground: oklch(0.18 0.01 270);
+  --muted: oklch(0.965 0.005 260);
+  --muted-foreground: oklch(0.52 0.015 260);
+  --accent: oklch(0.95 0.02 250);
+  --accent-foreground: oklch(0.18 0.01 270);
+  --destructive: oklch(0.6 0.22 25);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(0.92 0.005 260);
+  --input: oklch(0.94 0.005 260);
+  --ring: oklch(0.7 0.04 250);
+
+  --tint-sky: oklch(0.95 0.04 230);
+  --tint-sky-fg: oklch(0.4 0.13 240);
+  --tint-rose: oklch(0.94 0.04 20);
+  --tint-rose-fg: oklch(0.45 0.18 20);
+  --tint-mint: oklch(0.95 0.05 160);
+  --tint-mint-fg: oklch(0.38 0.12 160);
+  --tint-lavender: oklch(0.94 0.045 295);
+  --tint-lavender-fg: oklch(0.4 0.15 295);
+  --tint-amber: oklch(0.96 0.06 80);
+  --tint-amber-fg: oklch(0.48 0.13 70);
+  --tint-neutral: oklch(0.97 0.003 260);
+  --tint-neutral-fg: oklch(0.3 0.01 260);
+}
+
+.dark {
+  --background: oklch(0.13 0.01 270);
+  --foreground: oklch(0.97 0.003 260);
+  --card: oklch(0.18 0.01 270);
+  --card-foreground: oklch(0.18 0.01 270); /* locked: same as light mode */
+  --popover: oklch(0.18 0.01 270);
+  --popover-foreground: oklch(0.97 0.003 260);
+  --primary: oklch(0.97 0.003 260);
+  --primary-foreground: oklch(0.18 0.01 270);
+  --secondary: oklch(0.23 0.01 270);
+  --secondary-foreground: oklch(0.97 0.003 260);
+  --muted: oklch(0.23 0.01 270);
+  --muted-foreground: oklch(0.68 0.01 260);
+  --accent: oklch(0.27 0.02 270);
+  --accent-foreground: oklch(0.97 0.003 260);
+  --destructive: oklch(0.55 0.2 25);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(1 0 0 / 8%);
+  --input: oklch(1 0 0 / 10%);
+  --ring: oklch(0.55 0.03 260);
+
+  /* Tint foregrounds locked to light-mode values so card text stays consistent across themes */
+  --tint-sky: oklch(0.28 0.06 235);
+  --tint-sky-fg: oklch(0.4 0.13 240);
+  --tint-rose: oklch(0.28 0.07 20);
+  --tint-rose-fg: oklch(0.45 0.18 20);
+  --tint-mint: oklch(0.27 0.06 160);
+  --tint-mint-fg: oklch(0.38 0.12 160);
+  --tint-lavender: oklch(0.28 0.07 295);
+  --tint-lavender-fg: oklch(0.4 0.15 295);
+  --tint-amber: oklch(0.3 0.07 75);
+  --tint-amber-fg: oklch(0.48 0.13 70);
+  --tint-neutral: oklch(0.22 0.005 270);
+  --tint-neutral-fg: oklch(0.3 0.01 260);
+}
+
+/* Marketing, auth, and first-run screens stay on the light design system,
+   even when the OS or signed-in editor prefers dark mode. */
+.auth-light,
+.dark .auth-light {
+  color-scheme: light;
+  --font-display: "Instrument Serif";
+  --font-sans: "Inter";
+  --background: oklch(0.99 0.003 90);
+  --foreground: oklch(0.18 0.01 270);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.18 0.01 270);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.18 0.01 270);
+  --primary: oklch(0.18 0.01 270);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.965 0.005 260);
+  --secondary-foreground: oklch(0.18 0.01 270);
+  --muted: oklch(0.965 0.005 260);
+  --muted-foreground: oklch(0.52 0.015 260);
+  --accent: oklch(0.95 0.02 250);
+  --accent-foreground: oklch(0.18 0.01 270);
+  --destructive: oklch(0.6 0.22 25);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(0.92 0.005 260);
+  --input: oklch(0.94 0.005 260);
+  --ring: oklch(0.7 0.04 250);
+  --tint-sky: oklch(0.95 0.04 230);
+  --tint-sky-fg: oklch(0.4 0.13 240);
+  --tint-rose: oklch(0.94 0.04 20);
+  --tint-rose-fg: oklch(0.45 0.18 20);
+  --tint-mint: oklch(0.95 0.05 160);
+  --tint-mint-fg: oklch(0.38 0.12 160);
+  --tint-lavender: oklch(0.94 0.045 295);
+  --tint-lavender-fg: oklch(0.4 0.15 295);
+  --tint-amber: oklch(0.96 0.06 80);
+  --tint-amber-fg: oklch(0.48 0.13 70);
+  --tint-neutral: oklch(0.97 0.003 260);
+  --tint-neutral-fg: oklch(0.3 0.01 260);
+
+  /* Also pin the Tailwind color aliases so utilities cannot re-read html.dark tokens. */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-tint-sky: var(--tint-sky);
+  --color-tint-sky-fg: var(--tint-sky-fg);
+  --color-tint-rose: var(--tint-rose);
+  --color-tint-rose-fg: var(--tint-rose-fg);
+  --color-tint-mint: var(--tint-mint);
+  --color-tint-mint-fg: var(--tint-mint-fg);
+  --color-tint-lavender: var(--tint-lavender);
+  --color-tint-lavender-fg: var(--tint-lavender-fg);
+  --color-tint-amber: var(--tint-amber);
+  --color-tint-amber-fg: var(--tint-amber-fg);
+  --color-tint-neutral: var(--tint-neutral);
+  --color-tint-neutral-fg: var(--tint-neutral-fg);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  body {
+    background: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  h1,
+  h2,
+  h3,
+  .font-display {
+    font-family: var(--font-display);
+    font-weight: 400;
+    letter-spacing: normal;
+  }
+
+  .auth-light :where(h1, h2, h3) {
+    font-family: var(--font-sans);
+  }
+
+  .auth-light .font-display {
+    font-family: var(--font-display);
+    font-style: normal;
+  }
+}
+
+@layer components {
+  /* Shared product primitives. Bento cards may stay expressive; navigation,
+     settings, forms, and dialogs should use this quieter system. */
+  .ui-surface {
+    border: 1px solid color-mix(in oklab, var(--color-border) 82%, transparent);
+    border-radius: var(--radius-surface);
+    background: color-mix(in oklab, var(--color-card) 94%, transparent);
+    box-shadow: var(--shadow-subtle);
+  }
+
+  .ui-feature-surface {
+    border: 1px solid color-mix(in oklab, var(--color-border) 78%, transparent);
+    border-radius: var(--radius-feature);
+    background: color-mix(in oklab, var(--color-card) 96%, transparent);
+    box-shadow: var(--shadow-float);
+  }
+
+  .ui-control {
+    border-radius: var(--radius-control);
+  }
+
+  .ui-section-title {
+    font-family: var(--font-ui-display);
+    font-size: clamp(1.5rem, 1.1rem + 1vw, 2rem);
+    font-weight: 400;
+    line-height: 1.05;
+    letter-spacing: normal;
+  }
+
+  /* Product UI typography stays consistent even when a creator chooses a
+     custom font for their public Bento and editor preview. */
+  .font-ui-display {
+    font-family: var(--font-ui-display);
+    font-weight: 400;
+    letter-spacing: normal;
+  }
+
+  .font-ui-sans {
+    font-family: var(--font-ui-sans);
+    letter-spacing: normal;
+  }
+
+  .ui-kicker {
+    font-size: 0.6875rem;
+    font-weight: 650;
+    line-height: 1;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  /* Compact authenticated tools. The Link editor intentionally lives outside
+     this scope so creator-page cards and controls keep their current geometry. */
+  .app-ui-compact {
+    --radius-control: 0.5rem;
+    --radius-surface: 0.875rem;
+    --radius-feature: 1rem;
+  }
+
+  .app-ui-rectangular
+    :where(
+      button,
+      [role="button"],
+      a[class*="rounded-full"],
+      a[class*="rounded-2xl"],
+      a[class*="rounded-xl"],
+      [class*="rounded-full"][class*="px-"],
+      [class*="rounded-full"][class*="inline-flex"]:not([class*="size-"]),
+      [class*="rounded-full"][class^="flex "]:not([class*="size-"]),
+      [class*="rounded-full"][class*=" flex "]:not([class*="size-"])
+    ):not(:where([data-bento-public-page] *)) {
+    border-radius: 0.5rem !important;
+  }
+
+  .app-ui-rectangular button[data-mcp-client-tab]:first-child {
+    border-top-left-radius: calc(var(--radius-2xl) - 4px) !important;
+  }
+
+  .app-ui-rectangular button[data-mcp-client-tab]:last-child {
+    border-top-right-radius: calc(var(--radius-2xl) - 4px) !important;
+  }
+
+  .app-ui-rectangular
+    :where(
+      button:not([data-micro-app-tab])[class*="px-"],
+      button:not([data-micro-app-tab])[class*="py-"],
+      [role="button"][class*="px-"],
+      [role="button"][class*="py-"],
+      a[class*="inline-flex"][class*="px-"]
+    ):not([role="switch"]):not(:where([data-bento-public-page] *)) {
+    min-height: 2.5rem !important;
+    height: auto !important;
+    gap: 0.5rem !important;
+    padding: 0.5rem 0.875rem !important;
+    font-size: 0.875rem !important;
+  }
+
+  .app-ui-rectangular
+    :where(
+      input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]),
+      textarea,
+      select
+    ):not(:where([data-bento-public-page] *)) {
+    min-height: 2.5rem !important;
+    border-radius: 0.5rem !important;
+    padding: 0.625rem 0.9375rem !important;
+    font-size: 0.875rem !important;
+  }
+
+  .app-ui-rectangular
+    :where(
+      input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]),
+      select
+    ):not(:where([data-bento-public-page] *)) {
+    height: 2.625rem !important;
+  }
+
+  .app-ui-rectangular input.integration-search-input {
+    padding-left: 2.75rem !important;
+    padding-right: 1rem !important;
+  }
+}
+
+/* react-grid-layout overrides for our aesthetic */
+.react-grid-item.react-grid-placeholder {
+  background: var(--color-accent) !important;
+  border-radius: var(--radius-2xl);
+  opacity: 0.4;
+}
+.react-grid-item > .react-resizable-handle {
+  opacity: 0;
+  transition: opacity 0.2s;
+  z-index: 20;
+}
+.react-grid-item:hover > .react-resizable-handle {
+  opacity: 0.5;
+}
+
+/* Landing hero bento: soft blue drop target, snappy but not sluggish. */
+.bento-hero .react-grid-item.react-grid-placeholder {
+  background: #3478f6 !important;
+  border-radius: 1.5rem;
+  opacity: 0.16;
+}
+.bento-hero .react-grid-item.react-draggable-dragging {
+  z-index: 30;
+  cursor: grabbing;
+  transition: none;
+  box-shadow: 0 25px 55px -20px rgba(0, 0, 0, 0.35);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+/* Landing page: a quiet paper grid that gives the floating cards a canvas. */
+.landing-grid {
+  background-color: #f7f8fc;
+  background-image:
+    linear-gradient(rgba(52, 120, 246, 0.065) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(52, 120, 246, 0.065) 1px, transparent 1px),
+    radial-gradient(
+      circle at 50% 42%,
+      rgba(255, 255, 255, 0.98) 0,
+      rgba(247, 248, 252, 0.55) 40%,
+      transparent 68%
+    );
+  background-size:
+    64px 64px,
+    64px 64px,
+    100% 100%;
+  background-position: center center;
+}
+
+.story-layer {
+  opacity: var(--story-opacity) !important;
+  filter: var(--story-blur) !important;
+}
+
+/* Page loader: official logo paths, 2.5s loop, SVG user-space motion via view-box %. */
+.bento-loader-card {
+  transform-box: view-box;
+  transform-origin: 0 0;
+  will-change: transform;
+  animation-duration: 2.5s;
+  animation-iteration-count: infinite;
+}
+
+.bento-loader-card-red {
+  animation-name: bento-loader-red;
+}
+
+.bento-loader-card-yellow {
+  animation-name: bento-loader-yellow;
+}
+
+.bento-loader-card-blue {
+  animation-name: bento-loader-blue;
+}
+
+@keyframes bento-loader-red {
+  0% {
+    transform: translate(0, 0);
+    animation-timing-function: linear;
+  }
+  6% {
+    transform: translate(0, 0);
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  24% {
+    transform: translate(24.4601%, -20.4348%);
+    animation-timing-function: linear;
+  }
+  30% {
+    transform: translate(24.4601%, -20.4348%);
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  50% {
+    transform: translate(49.2273%, 1.07%);
+    animation-timing-function: linear;
+  }
+  56% {
+    transform: translate(49.2273%, 1.07%);
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  74% {
+    transform: translate(24.7673%, 21.5048%);
+    animation-timing-function: linear;
+  }
+  80% {
+    transform: translate(24.7673%, 21.5048%);
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  98%,
+  100% {
+    transform: translate(0, 0);
+  }
+}
+
+@keyframes bento-loader-yellow {
+  0% {
+    transform: translate(0, 0);
+    animation-timing-function: linear;
+  }
+  8% {
+    transform: translate(0, 0);
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  22% {
+    transform: translate(-24.4601%, 20.4348%);
+    animation-timing-function: linear;
+  }
+  30% {
+    transform: translate(-24.4601%, 20.4348%);
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  50% {
+    transform: translate(0.3072%, 41.9396%);
+    animation-timing-function: linear;
+  }
+  58% {
+    transform: translate(0.3072%, 41.9396%);
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  72% {
+    transform: translate(24.7673%, 21.5048%);
+    animation-timing-function: linear;
+  }
+  80% {
+    transform: translate(24.7673%, 21.5048%);
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  98%,
+  100% {
+    transform: translate(0, 0);
+  }
+}
+
+@keyframes bento-loader-blue {
+  0%,
+  30% {
+    transform: translate(0, 0);
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  50% {
+    transform: translate(-24.7673%, -21.5048%);
+    animation-timing-function: linear;
+  }
+  80% {
+    transform: translate(-24.7673%, -21.5048%);
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  98%,
+  100% {
+    transform: translate(0, 0);
+  }
+}
+
+@media (max-width: 640px) {
+  .landing-grid {
+    background-size:
+      42px 42px,
+      42px 42px,
+      100% 100%;
+  }
+}
+
+/* Shared marketing motion stays progressive: content is visible without support or JavaScript. */
+@keyframes marketing-menu-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px) scale(0.985);
+  }
+}
+
+@keyframes marketing-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) rotate(0.5deg);
+  }
+}
+
+@keyframes marketing-section-reveal {
+  from {
+    opacity: 0.35;
+    transform: translateY(34px);
+    filter: blur(8px);
+  }
+}
+
+@keyframes marketing-rule-draw {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+@keyframes marketing-cta-drift {
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  details[open] > .marketing-menu-panel {
+    animation: marketing-menu-in 180ms var(--motion-ease-smooth) both;
+    transform-origin: top center;
+  }
+
+  .marketing-product-row {
+    animation: marketing-row-in 550ms var(--marketing-row-delay, 180ms) var(--motion-ease-smooth)
+      both;
+    transition:
+      transform var(--motion-normal) var(--motion-ease-smooth),
+      border-color var(--motion-fast) var(--motion-ease-smooth),
+      box-shadow var(--motion-normal) var(--motion-ease-smooth);
+  }
+
+  .marketing-product-row:nth-child(2) {
+    --marketing-row-delay: 240ms;
+  }
+
+  .marketing-product-row:nth-child(3) {
+    --marketing-row-delay: 300ms;
+  }
+
+  .marketing-product-row:nth-child(4) {
+    --marketing-row-delay: 360ms;
+  }
+
+  .marketing-product-row:nth-child(5) {
+    --marketing-row-delay: 420ms;
+  }
+
+  .marketing-product-row:hover {
+    transform: translateX(6px) rotate(0.25deg);
+    border-color: rgb(52 120 246 / 24%);
+    box-shadow: 0 22px 44px -32px rgb(23 33 58 / 45%);
+  }
+
+  .marketing-link-row {
+    transition:
+      transform var(--motion-normal) var(--motion-ease-smooth),
+      color var(--motion-fast) var(--motion-ease-smooth);
+  }
+
+  .marketing-link-row:hover {
+    transform: translateX(6px);
+  }
+
+  .marketing-final-cta {
+    background-image: linear-gradient(112deg, #ffc928 0%, #ffdd70 48%, #ffc928 100%);
+    background-size: 180% 100%;
+    animation: marketing-cta-drift 12s ease-in-out infinite;
+  }
+}
+
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .marketing-reveal {
+      animation: marketing-section-reveal 1ms var(--motion-ease-smooth) both;
+      animation-timeline: view();
+      animation-range: entry 5% cover 24%;
+    }
+
+    .marketing-benefit-row,
+    .marketing-workflow-step {
+      animation: marketing-section-reveal 1ms var(--motion-ease-smooth) both;
+      animation-timeline: view();
+      animation-range: entry 8% cover 22%;
+    }
+
+    .marketing-rule {
+      animation: marketing-rule-draw 1ms var(--motion-ease-smooth) both;
+      animation-timeline: view();
+      animation-range: entry 15% cover 32%;
+      transform-origin: left;
+    }
+  }
+}
+
+@supports (interpolate-size: allow-keywords) {
+  :root {
+    interpolate-size: allow-keywords;
+  }
+
+  .marketing-faq::details-content {
+    block-size: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition:
+      block-size var(--motion-normal) var(--motion-ease-smooth),
+      opacity var(--motion-fast) var(--motion-ease-smooth),
+      content-visibility var(--motion-normal) allow-discrete;
+  }
+
+  .marketing-faq[open]::details-content {
+    block-size: auto;
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,1 @@
+drop policy if exists "avatars_public_read" on storage.objects;

@@ -1,0 +1,17 @@
+# Bento Surf application and MCP
+
+This instance serves creator application routes and MCP.
+
+## App routes
+
+- [Explore](/explore)
+- [Sign up](/signup)
+- [Log in](/login)
+- [Privacy](/privacy)
+- [Terms](/terms)
+
+## MCP
+
+MCP endpoint: /mcp
+
+Authenticate with an account created on this instance. Available tools depend on enabled modules and caller permissions.
