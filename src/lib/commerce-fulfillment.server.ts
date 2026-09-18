@@ -10,6 +10,7 @@ type CommercePaymentSession = {
   provider: string;
   provider_checkout_id?: string | null;
   metadata?: Record<string, unknown> | null;
+  attribution?: Record<string, unknown> | null;
 };
 
 type CommerceOrder = {
@@ -76,6 +77,7 @@ export function commerceOrderMetadata(
   delete safeProviderMetadata.buyer_answers;
   return {
     ...safeProviderMetadata,
+    newsletter_opt_in: session?.attribution?.newsletter_opt_in === "true",
     ...(buyerAnswers.length ? { buyer_answers: buyerAnswers } : {}),
     ...(followUp
       ? {

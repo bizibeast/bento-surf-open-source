@@ -8,11 +8,11 @@ import type { SocialProvider } from "./social-scheduler";
 export type SocialGrowthMetric = "views" | "impressions" | "reach" | "engagements" | "followers";
 
 export function socialGrowthMetricsFor(provider: SocialProvider): SocialGrowthMetric[] {
-  if (provider === "instagram") return ["reach", "engagements", "followers"];
+  if (provider === "instagram") return ["views", "reach", "engagements", "followers"];
   if (["threads", "youtube", "tiktok"].includes(provider))
     return ["views", "engagements", "followers"];
   if (provider === "reddit") return ["engagements", "followers"];
-  if (provider === "facebook") return ["impressions", "reach", "engagements", "followers"];
+  if (provider === "facebook") return ["views", "reach", "engagements", "followers"];
   return ["impressions", "engagements", "followers"];
 }
 
@@ -39,6 +39,10 @@ export type DailySocialPerformance = {
   posts: number;
 };
 
+export type DailySocialActivity = DailySocialPerformance & {
+  items: SocialContentInsight[];
+};
+
 export function dailySocialPerformance(
   content: SocialContentInsight[],
   days = 366,
@@ -47,12 +51,20 @@ export function dailySocialPerformance(
   const firstDay = new Date(now);
   firstDay.setHours(0, 0, 0, 0);
   firstDay.setDate(firstDay.getDate() - days + 1);
-  const byDate = new Map<string, DailySocialPerformance>();
+  const byDate = new Map<string, DailySocialActivity>();
   for (let index = 0; index < days; index += 1) {
     const date = new Date(firstDay);
     date.setDate(firstDay.getDate() + index);
     const key = localDateKey(date);
-    byDate.set(key, { date: key, views: 0, impressions: 0, reach: 0, engagements: 0, posts: 0 });
+    byDate.set(key, {
+      date: key,
+      views: 0,
+      impressions: 0,
+      reach: 0,
+      engagements: 0,
+      posts: 0,
+      items: [],
+    });
   }
   for (const item of content) {
     const key = localDateKey(new Date(item.publishedAt));
@@ -63,6 +75,7 @@ export function dailySocialPerformance(
     day.reach += item.reach || 0;
     day.engagements += item.engagements || 0;
     day.posts += 1;
+    day.items.push(item);
   }
   return [...byDate.values()];
 }
@@ -81,7 +94,14 @@ export function dailyAnalyticsHistory(
     const date = new Date(firstDay);
     date.setDate(firstDay.getDate() + index);
     const key = localDateKey(date);
-    byDate.set(key, { date: key, views: 0, impressions: 0, reach: 0, engagements: 0, posts: 0 });
+    byDate.set(key, {
+      date: key,
+      views: 0,
+      impressions: 0,
+      reach: 0,
+      engagements: 0,
+      posts: 0,
+    });
   }
   for (const point of history) {
     if (point.connectionId !== connectionId) continue;
@@ -147,7 +167,16 @@ function socialMetricSeries(
   const imported = history
     .filter((point) => point.connectionId === connectionId && point[historyMetric] !== null)
     .map((point) => ({ date: point.capturedAt, value: point[historyMetric] as number }));
-  const fromContent = dailySocialPerformance(content, days, now);
+  const fromContent = dailySocialPerformance(content, days, now).map(
+    ({ date, views, impressions, reach, engagements, posts }) => ({
+      date,
+      views,
+      impressions,
+      reach,
+      engagements,
+      posts,
+    }),
+  );
   if (imported.some((point) => point.value > 0)) {
     const importedByDate = new Map(
       imported.map((point) => [localDateKey(new Date(point.date)), point.value]),
@@ -231,13 +260,16 @@ export function bestSocialContent(
 }
 
 export function socialMilestones(account: SocialAnalyticsAccount, content: SocialContentInsight[]) {
-  const usesViews = ["instagram", "threads", "tiktok", "youtube"].includes(account.provider);
+  const usesViews = ["instagram", "facebook", "threads", "tiktok", "youtube"].includes(
+    account.provider,
+  );
   const preferredMetric = usesViews ? "views" : "impressions";
   const preferredExposure = content.reduce(
     (total, item) => total + (item[preferredMetric] || 0),
     0,
   );
-  const exposureMetric = preferredExposure || account.views ? preferredMetric : "engagements";
+  const exposureMetric =
+    preferredExposure || account.views ? preferredMetric : socialContentExposureMetric(content);
   const exposure = Math.max(
     exposureMetric === "engagements" ? account.engagements || 0 : account.views || 0,
     content.reduce((total, item) => total + (item[exposureMetric] || 0), 0),

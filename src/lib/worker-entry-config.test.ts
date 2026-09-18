@@ -39,6 +39,9 @@ describe("Cloudflare Worker entry configuration", () => {
     expect(contents).toContain('compiledServer.includes("async scheduled(controller")');
     expect(contents).toContain("server.scheduled(controller, env, context)");
     expect(contents).toContain('resolve(process.cwd(), "wrangler.jsonc")');
-    expect(contents).toContain("Object.assign(generatedWrangler, deploymentConfig");
+    expect(contents).toContain("safeDeploymentKeys");
+    expect(contents).toContain("Object.assign(generatedWrangler, safeDeploymentConfig");
+    expect(contents).not.toContain('"account_id"');
+    expect(contents).not.toContain('"routes"');
   });
 });

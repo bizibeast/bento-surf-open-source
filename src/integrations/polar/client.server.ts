@@ -1,4 +1,3 @@
-import { configuredAppOrigin } from "@/lib/application-urls";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Private payment columns are added by a pending migration. */
 import { Polar } from "@polar-sh/sdk";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
@@ -71,7 +70,7 @@ function polarApiBaseUrl() {
 }
 
 export function polarRedirectUri() {
-  const origin = configuredAppOrigin(process.env.VITE_APP_URL);
+  const origin = (process.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "");
   return `${origin}/integrations/polar/callback`;
 }
 

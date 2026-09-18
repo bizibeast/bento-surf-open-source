@@ -91,13 +91,53 @@ describe("Open Graph image requests", () => {
     expect(parseOpenGraphImagePath("/api/og/creator.jpg")).toEqual({
       username: "creator",
       pageSlug: null,
+      productSlug: null,
     });
     expect(parseOpenGraphImagePath("/api/og/creator/about-me.jpg")).toEqual({
       username: "creator",
       pageSlug: "about-me",
+      productSlug: null,
+    });
+    expect(parseOpenGraphImagePath("/api/og/creator/products/field-guide.jpg")).toEqual({
+      username: "creator",
+      pageSlug: null,
+      productSlug: "field-guide",
     });
     expect(parseOpenGraphImagePath("/api/og/../../secret.jpg")).toBeNull();
     expect(parseOpenGraphImagePath("/api/og/Creator.jpg")).toBeNull();
+  });
+
+  it("renders a product-specific image for a coverless product", async () => {
+    const data = previewData();
+    const { bucket, put } = mockBucket();
+    const browser = { quickAction: vi.fn(async () => screenshotResponse()) };
+
+    const response = await handleOpenGraphImageRequest(
+      new Request("https://bento.surf/api/og/creator/products/field-guide.jpg?v=1"),
+      { MEDIA_BUCKET: bucket, BROWSER: browser },
+      {
+        loadProfile: vi.fn(async () => data),
+        loadProduct: vi.fn(async () => ({
+          id: "product-1",
+          kind: "digital_product" as const,
+          public_slug: "field-guide",
+          cover_url: null,
+          updated_at: "2026-09-11T00:00:00.000Z",
+        })),
+        productEntitled: vi.fn(async () => true),
+      },
+    );
+
+    expect(response?.status).toBe(200);
+    expect(response?.headers.get("x-bento-og")).toBe("MISS");
+    expect(browser.quickAction).toHaveBeenCalledWith(
+      "screenshot",
+      expect.objectContaining({
+        url: "https://bento.surf/@creator/products/field-guide",
+        waitForSelector: { selector: "[data-product-website]", visible: true },
+      }),
+    );
+    expect(put).toHaveBeenCalledOnce();
   });
 
   it("redirects forged or stale versions to the authoritative image URL", async () => {
@@ -308,7 +348,40 @@ describe("Open Graph image requests", () => {
       { loadProfile: vi.fn(async () => data) },
     );
 
-    expect(response?.status).toBe(502);
+    expect(response?.status).toBe(302);
+    expect(response?.headers.get("location")).toBe("https://bento.surf/branding/landing-og.jpg");
     expect(put).not.toHaveBeenCalled();
   });
+});
+
+it("returns a usable static image when profile loading throws", async () => {
+  const { bucket } = mockBucket();
+  const result = await handleOpenGraphImageRequest(
+    new Request("https://bento.surf/api/og/creator.jpg"),
+    { MEDIA_BUCKET: bucket, BROWSER: { quickAction: vi.fn() } },
+    { loadProfile: vi.fn().mockRejectedValue(new Error("database unavailable")) },
+  );
+  expect(result?.status).toBe(302);
+  expect(result?.headers.get("location")).toBe("https://bento.surf/branding/landing-og.jpg");
+});
+
+it("passes the Worker hostname and waits for ordinary and system tiles", async () => {
+  const data = { ...previewData(), systemItems: [{}, {}] };
+  const loadProfile = vi.fn(async () => data);
+  const browser = { quickAction: vi.fn(async () => screenshotResponse()) };
+  const { bucket } = mockBucket();
+  await handleOpenGraphImageRequest(
+    new Request("https://bento.surf/api/og/creator.jpg?v=" + publicPagePreviewVersion(data)),
+    { MEDIA_BUCKET: bucket, BROWSER: browser },
+    { loadProfile },
+  );
+  expect(loadProfile).toHaveBeenCalledWith("creator", null, "bento.surf");
+  expect(browser.quickAction).toHaveBeenCalledWith(
+    "screenshot",
+    expect.objectContaining({
+      waitForSelector: expect.objectContaining({
+        selector: '[data-bento-public-block-grid-ready="true"][data-bento-public-block-count="3"]',
+      }),
+    }),
+  );
 });

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
-  configuredPublicOrigin,
+  normalizeOrigin,
+  PRODUCTION_PUBLIC_ORIGIN,
   publicNewsletterPostPath,
   publicNewsletterPublicationPath,
   publicNewslettersPath,
@@ -60,8 +61,9 @@ export function NewsletterWebsite({
   const [phone, setPhone] = useState(false);
   const [bentoPending, setBentoPending] = useState(false);
   const [bentoMessage, setBentoMessage] = useState("");
-  const publicOrigin = configuredPublicOrigin(
+  const publicOrigin = normalizeOrigin(
     requestedPublicOrigin ?? import.meta.env.VITE_PUBLIC_URL,
+    PRODUCTION_PUBLIC_ORIGIN,
   );
   const url = archiveData
     ? `${publicOrigin}${publicNewsletterPublicationPath(archiveData.creator.username, archiveData.publication.slug)}`

@@ -4,7 +4,6 @@ import { getPlan, getStorageAllowanceMb } from "./plan.server";
 import { captureServerEvent } from "./posthog.server";
 import { planName, uploadLimitMb, type PlanId } from "./plans";
 import { readRequestText, RequestBodyTooLargeError } from "./request-security.server";
-import { configuredPublicOrigin } from "./application-urls";
 
 export const R2_BUCKET_NAME = "bento-surf-media";
 export const MEDIA_CDN_PATH = "/cdn/";
@@ -96,7 +95,7 @@ function sanitizeOriginalFilename(value: string | null) {
 export function mediaObjectUrl(key: string, origin = process.env.VITE_PUBLIC_URL) {
   const safeKey = validateMediaObjectKey(key);
   if (!safeKey) throw new Error("Invalid media object key");
-  const base = configuredPublicOrigin(origin);
+  const base = (origin || "http://localhost:8080").replace(/\/$/, "");
   return `${base}${MEDIA_CDN_PATH}${safeKey
     .split("/")
     .map((part) => encodeURIComponent(part))

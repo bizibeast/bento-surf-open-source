@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { mediaBelongsToCreator } from "./social-scheduler.functions";
 import {
   deriveSocialPostStatus,
@@ -38,7 +38,7 @@ import {
 
 const image: SchedulerMedia = {
   key: "users/user/image/file.jpg",
-  url: "https://bento.surf/cdn/users/user/image/file.jpg",
+  url: "http://localhost:8080/cdn/users/user/image/file.jpg",
   name: "file.jpg",
   mimeType: "image/jpeg",
   size: 100,
@@ -46,8 +46,6 @@ const image: SchedulerMedia = {
 const video = { ...image, key: "video.mp4", name: "video.mp4", mimeType: "video/mp4" };
 
 describe("social scheduler validation", () => {
-  afterEach(() => vi.unstubAllEnvs());
-
   it("only shows engagement after analytics have been fetched", () => {
     expect(schedulerPostEngagement([{ likes: null, comments: null }])).toEqual({
       likes: null,
@@ -276,35 +274,9 @@ describe("social scheduler validation", () => {
     expect(validatePostForProviders("hello", [image], ["reddit"]).reddit).toContain("text-only");
   });
 
-  it("accepts creator media from configured split origins", () => {
-    vi.stubEnv("VITE_APP_URL", "https://app.example");
-    vi.stubEnv("VITE_PUBLIC_URL", "https://public.example");
-
-    expect(
-      mediaBelongsToCreator(
-        { ...image, url: "https://public.example/cdn/users/user/image/file.jpg" },
-        "user",
-      ),
-    ).toBe(true);
-    expect(
-      mediaBelongsToCreator(
-        { ...image, url: "https://app.example/cdn/users/user/image/file.jpg" },
-        "user",
-      ),
-    ).toBe(true);
-  });
-
-  it("rejects media from unconfigured origins or another creator", () => {
-    vi.stubEnv("VITE_APP_URL", "https://app.example");
-    vi.stubEnv("VITE_PUBLIC_URL", "https://public.example");
-
-    expect(mediaBelongsToCreator(image, "user")).toBe(false);
-    expect(
-      mediaBelongsToCreator(
-        { ...image, url: "https://public.example/cdn/users/user/image/file.jpg" },
-        "someone-else",
-      ),
-    ).toBe(false);
+  it("accepts only media uploaded by the post owner to Bento's CDN", () => {
+    expect(mediaBelongsToCreator(image, "user")).toBe(true);
+    expect(mediaBelongsToCreator(image, "someone-else")).toBe(false);
     expect(mediaBelongsToCreator({ ...image, url: "https://example.com/image.jpg" }, "user")).toBe(
       false,
     );
@@ -313,7 +285,7 @@ describe("social scheduler validation", () => {
         {
           ...image,
           key: "users/user/../someone-else/image.jpg",
-          url: "https://public.example/cdn/users/user/../someone-else/image.jpg",
+          url: "http://localhost:8080/cdn/users/user/../someone-else/image.jpg",
         },
         "user",
       ),
@@ -322,15 +294,28 @@ describe("social scheduler validation", () => {
 
   it("requires Instagram content publishing permission before scheduling", () => {
     expect(
-      socialConnectionCanPublish("instagram", [
-        "instagram_business_basic",
-        "instagram_business_manage_comments",
-      ]),
+      socialConnectionCanPublish(
+        "instagram",
+        ["instagram_business_basic", "instagram_business_manage_comments"],
+        "active",
+        false,
+      ),
     ).toBe(false);
-    expect(socialConnectionCanPublish("instagram", ["instagram_business_content_publish"])).toBe(
-      true,
-    );
-    expect(socialConnectionCanPublish("youtube", [])).toBe(true);
+    expect(
+      socialConnectionCanPublish(
+        "instagram",
+        ["instagram_business_content_publish"],
+        "active",
+        false,
+      ),
+    ).toBe(true);
+    expect(socialConnectionCanPublish("youtube", [], "active", false)).toBe(true);
+  });
+
+  it("blocks inactive or reconnect-required accounts from publishing", () => {
+    expect(socialConnectionCanPublish("facebook", [], "expired", false)).toBe(false);
+    expect(socialConnectionCanPublish("facebook", [], "active", true)).toBe(false);
+    expect(socialConnectionCanPublish("facebook", [], "active", false)).toBe(true);
   });
 
   it("backs publishing retries off exponentially and caps them at six hours", () => {
@@ -539,7 +524,7 @@ describe("social scheduler validation", () => {
     const media = [
       {
         key: "users/user/file/deck.pdf",
-        url: "https://app.test.bento.surf/cdn/users/user/file/deck.pdf",
+        url: "http://localhost:8080/cdn/users/user/file/deck.pdf",
         name: "deck.pdf",
         mimeType: "application/pdf",
         size: 12_000,
@@ -576,7 +561,7 @@ describe("social scheduler validation", () => {
   it("accepts a Reddit link post without requiring duplicate body text", () => {
     expect(
       validatePostForProviders("", [], ["reddit"], "A useful resource", {
-        reddit: { community: "r/creators", kind: "link", url: "https://bento.surf" },
+        reddit: { community: "r/creators", kind: "link", url: "http://localhost:8080" },
       }),
     ).toEqual({});
   });
@@ -628,7 +613,7 @@ describe("social post drafts", () => {
     const media = Array.from({ length: 3 }, (_, index) => ({
       ...image,
       key: `users/user/image/${index}.jpg`,
-      url: `https://bento.surf/cdn/users/user/image/${index}.jpg`,
+      url: `http://localhost:8080/cdn/users/user/image/${index}.jpg`,
     }));
     expect(validatePostForProviders("Carousel", media, ["instagram"])).toEqual({});
   });

@@ -146,7 +146,7 @@ export function SetupChecklist({
       <button
         type="button"
         onClick={() => handleOpenChange(true)}
-        className="fixed bottom-5 left-20 z-40 hidden w-[270px] items-center gap-3 rounded-2xl border border-[#17213a]/10 bg-white p-4 text-left text-[#17213a] shadow-[var(--shadow-float)] transition-colors hover:bg-[#f7f9fc] sm:flex"
+        className="fixed bottom-28 left-[calc(var(--app-sidebar-width)+1rem)] z-40 hidden w-[270px] items-center gap-3 rounded-2xl border border-[#17213a]/10 bg-white p-4 text-left text-[#17213a] shadow-[var(--shadow-float)] transition-[left,background-color] hover:bg-[#f7f9fc] sm:flex"
         aria-label={`Open setup checklist, ${progress.completed} of ${progress.total} complete`}
       >
         <ProgressRing percentage={progress.percentage} compact />

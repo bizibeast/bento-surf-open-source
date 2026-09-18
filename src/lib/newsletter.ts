@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { DEFAULT_PUBLIC_ORIGIN } from "./application-urls";
 import { parsePublicHttpUrl } from "./safe-url";
 
 export type NewsletterBlockVisibility = "both" | "email" | "web";
@@ -270,8 +269,8 @@ export function safeNewsletterUrl(value: string) {
   const trimmed = value.trim();
   if (trimmed.startsWith("/") && !trimmed.startsWith("//")) {
     try {
-      const relative = new URL(trimmed, DEFAULT_PUBLIC_ORIGIN);
-      if (relative.origin === DEFAULT_PUBLIC_ORIGIN) {
+      const relative = new URL(trimmed, "http://localhost:8080");
+      if (relative.origin === "http://localhost:8080") {
         return `${relative.pathname}${relative.search}${relative.hash}`;
       }
     } catch {

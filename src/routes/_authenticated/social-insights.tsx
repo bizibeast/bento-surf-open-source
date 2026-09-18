@@ -1,3 +1,4 @@
+import { MicroAppTabs } from "@/components/MicroAppTabs";
 import { useEffect, useMemo, useState, type ComponentType } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -39,9 +40,15 @@ import {
 import { toast } from "sonner";
 import { AppHeader } from "@/components/AppHeader";
 import { DecodedImage } from "@/components/DecodedImage";
-import { MicroAppPanel } from "@/components/MicroAppPanel";
+import { MicroAppPanel, MicroAppStatCard } from "@/components/MicroAppPanel";
 import { UpgradeDialog } from "@/components/UpgradeDialog";
 import { Switch } from "@/components/ui/switch";
+import {
+  Tooltip as HoverTooltip,
+  TooltipContent as HoverTooltipContent,
+  TooltipProvider as HoverTooltipProvider,
+  TooltipTrigger as HoverTooltipTrigger,
+} from "@/components/ui/tooltip";
 import { micro } from "@/lib/micro-app-ui";
 import { safeMediaUrl } from "@/lib/safe-url";
 import {
@@ -50,6 +57,7 @@ import {
   setPublicSocialInsightsPeriod,
   SOCIAL_INSIGHTS_DISPLAY_PERIODS,
   socialInsightsDisplayPeriodLabel,
+  summarizeSocialAnalytics,
   type SocialAnalyticsAccount,
   type SocialAnalyticsHistoryPoint,
   type SocialInsightsDisplayPeriodDays,
@@ -106,7 +114,7 @@ const GROWTH_METRICS: Array<{ id: SocialGrowthMetric; label: string }> = [
 
 function SocialInsightsPage() {
   const queryClient = useQueryClient();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>("all");
   const analytics = useQuery({
     queryKey: ["social-analytics"],
     queryFn: () => getSocialAnalytics(),
@@ -222,7 +230,7 @@ function HistoricalImporting({ account }: { account: SocialAnalyticsAccount }) {
   );
 }
 
-function InsightsDashboard({
+export function InsightsDashboard({
   accounts,
   history,
   content,
@@ -246,6 +254,7 @@ function InsightsDashboard({
   onDisplayPeriodChange: (days: SocialInsightsDisplayPeriodDays) => void;
 }) {
   const selected = selectedSocialAnalyticsAccount(accounts, selectedId, content);
+  const totals = useMemo(() => summarizeSocialAnalytics(accounts), [accounts]);
   const selectedContent = content.filter((item) => item.connectionId === selected?.connectionId);
   const selectedHistory = history.filter((item) => item.connectionId === selected?.connectionId);
 
@@ -268,8 +277,39 @@ function InsightsDashboard({
     );
   }
 
+  const all = selectedId === "all";
   return (
     <div className="space-y-5">
+      <MicroAppPanel>
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className={micro.eyebrowMuted}>All social media</p>
+            <h2 className="mt-1 font-ui-display text-2xl">
+              Totals across every connected platform
+            </h2>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {accounts.length} connected {accounts.length === 1 ? "account" : "accounts"}
+          </p>
+        </div>
+        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+          {[
+            { label: "Total followers", value: totals.totalFollowers, icon: UsersRound },
+            { label: "Total views", value: totals.totalViews, icon: Eye },
+            { label: "Total reach", value: totals.totalReach, icon: UserRoundSearch },
+            { label: "Total engagements", value: totals.totalEngagements, icon: MessageCircle },
+            { label: "Total posts", value: totals.totalPosts, icon: Send },
+          ].map((metric) => (
+            <MicroAppStatCard key={metric.label} className="min-w-0 p-4">
+              <metric.icon className="size-4 text-primary" />
+              <p className="mt-4 text-2xl font-semibold tabular-nums">
+                {compactMetric(metric.value)}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">{metric.label}</p>
+            </MicroAppStatCard>
+          ))}
+        </div>
+      </MicroAppPanel>
       <MicroAppPanel className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
           <p className={micro.eyebrowMuted}>Visitor page</p>
@@ -305,12 +345,26 @@ function InsightsDashboard({
             <RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} /> Refresh
           </button>
         </div>
+        <MicroAppTabs
+          ariaLabel="Social media view"
+          className="mb-3"
+          value={all ? "all" : selected.connectionId}
+          onChange={onSelect}
+          tabs={[
+            { id: "all", label: "All social media", icon: BarChart3 },
+            ...accounts.map((account) => ({
+              id: account.connectionId,
+              label: `${SOCIAL_PROVIDER_DEFINITIONS[account.provider].name} · @${account.handle}`,
+              icon: PROVIDER_ICONS[account.provider],
+            })),
+          ]}
+        />
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {accounts.map((account) => (
             <AccountSelector
               key={account.connectionId}
               account={account}
-              active={account.connectionId === selected.connectionId}
+              active={!all && account.connectionId === selected.connectionId}
               onClick={() => onSelect(account.connectionId)}
             />
           ))}
@@ -332,20 +386,35 @@ function InsightsDashboard({
         </div>
       </section>
 
-      <AccountOverview account={selected} />
-
-      {selected.refreshing && <HistoricalImporting account={selected} />}
-      {(!selected.refreshing || selectedContent.length > 0) && (
-        <ActivityHeatmap account={selected} content={selectedContent} />
-      )}
-      {(!selected.refreshing || selectedHistory.length > 0) && (
-        <GrowthPanel account={selected} history={history} content={selectedContent} />
-      )}
-      <MilestonesPanel account={selected} content={selectedContent} />
-      {(!selected.refreshing || selectedContent.length > 0) && (
+      {all ? (
         <>
-          <ContentPerformancePanel content={selectedContent} provider={selected.provider} />
-          <BestContentPanel content={selectedContent} provider={selected.provider} />
+          <ActivityHeatmap content={content} />
+          <div className="grid gap-4 lg:grid-cols-2">
+            {accounts.map((account) => (
+              <AccountOverview key={account.connectionId} account={account} />
+            ))}
+          </div>
+          <ContentPerformancePanel content={content} provider={selected.provider} />
+          <BestContentPanel content={content} provider={selected.provider} />
+        </>
+      ) : (
+        <>
+          <AccountOverview account={selected} />
+
+          {selected.refreshing && <HistoricalImporting account={selected} />}
+          {(!selected.refreshing || selectedContent.length > 0) && (
+            <ActivityHeatmap account={selected} content={selectedContent} />
+          )}
+          {(!selected.refreshing || selectedHistory.length > 0) && (
+            <GrowthPanel account={selected} history={history} content={selectedContent} />
+          )}
+          <MilestonesPanel account={selected} content={selectedContent} />
+          {(!selected.refreshing || selectedContent.length > 0) && (
+            <>
+              <ContentPerformancePanel content={selectedContent} provider={selected.provider} />
+              <BestContentPanel content={selectedContent} provider={selected.provider} />
+            </>
+          )}
         </>
       )}
     </div>
@@ -402,7 +471,7 @@ function AccountOverview({ account }: { account: SocialAnalyticsAccount }) {
   const metrics = [
     { label: "Followers", value: account.followers, icon: UsersRound },
     {
-      label: ["instagram", "threads", "youtube", "tiktok"].includes(account.provider)
+      label: ["instagram", "facebook", "threads", "youtube", "tiktok"].includes(account.provider)
         ? "Views"
         : "Impressions",
       value: account.views,
@@ -416,7 +485,9 @@ function AccountOverview({ account }: { account: SocialAnalyticsAccount }) {
     <MicroAppPanel>
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className={micro.eyebrowMuted}>Account overview</p>
+          <p className={micro.eyebrowMuted}>
+            {SOCIAL_PROVIDER_DEFINITIONS[account.provider].name} account overview
+          </p>
           <h2 className="mt-1 font-ui-display text-2xl">{account.displayName}</h2>
         </div>
         <p className="text-xs text-muted-foreground">Updated {formatDateTime(account.fetchedAt)}</p>
@@ -488,6 +559,12 @@ function GrowthPanel({
     let total = 0;
     return rawPoints.map((point) => ({ ...point, value: (total += point.value) }));
   }, [cumulative, metric, rawPoints]);
+  const historyMetric = metric === "impressions" ? "views" : metric;
+  const hasMetricData =
+    history.some(
+      (point) => point.connectionId === account.connectionId && point[historyMetric] !== null,
+    ) ||
+    (metric !== "followers" && content.some((item) => item[metric] !== null));
   const currentValue =
     metric === "followers"
       ? account.followers
@@ -562,7 +639,7 @@ function GrowthPanel({
         ))}
       </div>
 
-      {points.length >= 2 && points.some((point) => point.value > 0) ? (
+      {points.length >= 2 && hasMetricData ? (
         <div className="mt-6 h-72 w-full">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={points} margin={{ top: 8, right: 8, left: -14, bottom: 0 }}>
@@ -622,14 +699,16 @@ function GrowthPanel({
   );
 }
 
-function ActivityHeatmap({
+export function ActivityHeatmap({
   account,
   content,
+  now = new Date(),
 }: {
-  account: SocialAnalyticsAccount;
+  account?: SocialAnalyticsAccount;
   content: SocialContentInsight[];
+  now?: Date;
 }) {
-  const days = dailySocialPerformance(content, 366, new Date());
+  const days = dailySocialPerformance(content, 366, now);
   const total = days.reduce((sum, day) => sum + day.posts, 0);
   const max = Math.max(...days.map((day) => day.posts), 1);
   const leading = new Date(days[0].date).getDay();
@@ -639,37 +718,94 @@ function ActivityHeatmap({
   ];
   return (
     <MicroAppPanel>
-      <p className={micro.eyebrowMuted}>Activity</p>
+      <p className={micro.eyebrowMuted}>
+        {account
+          ? `${SOCIAL_PROVIDER_DEFINITIONS[account.provider].name} · @${account.handle}`
+          : "All social media"}{" "}
+        activity
+      </p>
       <div className="mt-2 flex items-end gap-2">
-        <h2 className="font-ui-display text-4xl">{compactMetric(total)} posts</h2>
+        <h2 className="font-ui-display text-4xl">
+          {compactMetric(total)} {total === 1 ? "post" : "posts"}
+        </h2>
         <span className="pb-1 text-sm text-muted-foreground">past year</span>
       </div>
       {total > 0 ? (
         <div className="mt-6 overflow-x-auto pb-2">
-          <div className="grid min-w-[780px] grid-flow-col grid-rows-7 gap-1.5">
-            {cells.map((day, index) => {
-              if (!day) return <span key={`empty-${index}`} className="size-3.5" />;
-              const level = day.posts ? Math.max(1, Math.ceil((day.posts / max) * 4)) : 0;
-              return (
-                <span
-                  key={day.date}
-                  title={`${shortDate(day.date)} · ${day.posts.toLocaleString()} posts`}
-                  aria-label={`${shortDate(day.date)}, ${day.posts} posts`}
-                  className={`size-3.5 rounded-[4px] ${
-                    level === 4
-                      ? "bg-[#3478f6]"
-                      : level === 3
-                        ? "bg-[#6da0fa]"
-                        : level === 2
-                          ? "bg-[#a8c7fc]"
-                          : level === 1
-                            ? "bg-[#d7e6fe]"
-                            : "bg-[#f3f5f9]"
-                  }`}
-                />
-              );
-            })}
-          </div>
+          <HoverTooltipProvider delayDuration={80}>
+            <div className="grid min-w-[780px] grid-flow-col grid-rows-7 gap-1.5">
+              {cells.map((day, index) => {
+                if (!day) return <span key={`empty-${index}`} className="size-3.5" />;
+                const level = day.posts ? Math.max(1, Math.ceil((day.posts / max) * 4)) : 0;
+                const platforms = [...new Set(day.items.map((item) => item.provider))];
+                const label = `${shortDate(day.date)}, ${day.posts} ${day.posts === 1 ? "post" : "posts"}${platforms.length ? ` across ${platforms.map((provider) => SOCIAL_PROVIDER_DEFINITIONS[provider].name).join(" and ")}` : ""}`;
+                const cellClass = `size-3.5 rounded-[4px] ${
+                  level === 4
+                    ? "bg-[#3478f6]"
+                    : level === 3
+                      ? "bg-[#6da0fa]"
+                      : level === 2
+                        ? "bg-[#a8c7fc]"
+                        : level === 1
+                          ? "bg-[#d7e6fe]"
+                          : "bg-[#f3f5f9]"
+                }`;
+                if (!day.items.length)
+                  return <span key={day.date} aria-hidden="true" className={cellClass} />;
+                const cell = (
+                  <button
+                    type="button"
+                    aria-label={label}
+                    className={`${cellClass} outline-none transition hover:scale-125 focus-visible:scale-125 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2`}
+                  />
+                );
+                return (
+                  <HoverTooltip key={day.date}>
+                    <HoverTooltipTrigger asChild>{cell}</HoverTooltipTrigger>
+                    <HoverTooltipContent
+                      side="top"
+                      sideOffset={10}
+                      className="w-80 rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-xl"
+                    >
+                      <p className="font-ui-display text-base">{shortDate(day.date)}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {day.posts} {day.posts === 1 ? "post" : "posts"} across {platforms.length}{" "}
+                        {platforms.length === 1 ? "platform" : "platforms"}
+                      </p>
+                      <div className="mt-3 max-h-64 space-y-2 overflow-y-auto pr-1">
+                        {day.items.map((post) => {
+                          const PlatformIcon = PROVIDER_ICONS[post.provider];
+                          const platform = SOCIAL_PROVIDER_DEFINITIONS[post.provider];
+                          return (
+                            <div
+                              key={`${post.connectionId}:${post.remotePostId}`}
+                              aria-label={`${platform.name} post`}
+                              className="flex items-start gap-2.5 rounded-lg bg-muted/70 p-2.5"
+                            >
+                              <span
+                                className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-background"
+                                style={{ color: platform.color }}
+                              >
+                                <PlatformIcon className="size-3.5" />
+                              </span>
+                              <span className="min-w-0">
+                                <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                  {platform.name}
+                                </span>
+                                <span className="mt-0.5 block line-clamp-2 text-xs leading-5">
+                                  {post.caption?.trim() || `${post.contentType} post`}
+                                </span>
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </HoverTooltipContent>
+                  </HoverTooltip>
+                );
+              })}
+            </div>
+          </HoverTooltipProvider>
           <div className="mt-3 flex items-center justify-end gap-1.5 text-[10px] text-muted-foreground">
             Less <span className="size-3 rounded-[3px] bg-[#f3f5f9]" />
             <span className="size-3 rounded-[3px] bg-[#d7e6fe]" />
@@ -678,8 +814,12 @@ function ActivityHeatmap({
             <span className="size-3 rounded-[3px] bg-[#3478f6]" /> More
           </div>
         </div>
-      ) : (
+      ) : account ? (
         <ProviderDataEmpty provider={account.provider} />
+      ) : (
+        <p className="mt-5 text-sm text-muted-foreground">
+          No imported posts in the past year. Refresh to import available content.
+        </p>
       )}
     </MicroAppPanel>
   );
@@ -853,7 +993,7 @@ function BestContentPanel({
             const thumbnail = safeMediaUrl(item.thumbnailUrl);
             return (
               <article
-                key={item.remotePostId}
+                key={`${item.connectionId}:${item.remotePostId}`}
                 className="mb-4 break-inside-avoid overflow-hidden rounded-xl border border-border bg-white p-4 shadow-sm"
               >
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">

@@ -74,6 +74,13 @@ export function buildLinkedInMemberPostAnalyticsUrl(entity: string, metric: Link
   return url;
 }
 
+export function buildYouTubeChannelUrl(channelId: string, part: string) {
+  const url = new URL("https://www.googleapis.com/youtube/v3/channels");
+  url.searchParams.set("part", part);
+  url.searchParams.set("id", channelId);
+  return url;
+}
+
 function linkedInMetricType(value: unknown) {
   if (typeof value === "string") return value;
   if (value && typeof value === "object") return String(Object.values(value)[0] || "");
@@ -323,11 +330,19 @@ async function fetchFacebook(
       .filter(Boolean)
       .join(","),
   );
-  const page = await graphPage(
-    url,
-    token,
-    typeof state.after === "string" ? state.after : undefined,
-  );
+  let page;
+  try {
+    page = await graphPage(url, token, typeof state.after === "string" ? state.after : undefined);
+  } catch (error) {
+    // A Page can expose posts without supporting the optional insights expansion.
+    unavailableItemInsights(error);
+    if (!scopes.has("read_insights")) throw error;
+    url.searchParams.set(
+      "fields",
+      url.searchParams.get("fields")!.replace(/,insights\.metric\([^)]*\)/, ""),
+    );
+    page = await graphPage(url, token, typeof state.after === "string" ? state.after : undefined);
+  }
   const items = page.items.slice(0, 25).map((item: any): ProviderContentInsight => {
     const metrics = metricMap(item.insights);
     const likes = count(item.reactions?.summary?.total_count);
@@ -372,7 +387,7 @@ async function fetchThreads(
       : `https://graph.threads.net/v1.0/${encodeURIComponent(connection.provider_user_id)}/threads`,
   );
   url.searchParams.set("fields", "id,media_type,text,timestamp,permalink,thumbnail_url,media_url");
-  url.searchParams.set("limit", "25");
+  url.searchParams.set("limit", "6");
   let page = await graphPage(url, token, typeof state.after === "string" ? state.after : undefined);
   let source = owner ? "me" : "account";
   if (!page.items.length && !state.after && !owner) {
@@ -382,14 +397,19 @@ async function fetchThreads(
     source = "me";
   }
   const items = await mapInBatches(
-    page.items.slice(0, 25),
+    page.items.slice(0, 6),
     6,
     async (item: any): Promise<ProviderContentInsight> => {
-      const insights = await providerJson(
-        `https://graph.threads.net/v1.0/${encodeURIComponent(item.id)}/insights?metric=views,likes,replies,reposts,quotes,shares`,
-        token,
-      ).catch(unavailableItemInsights);
-      const metrics = metricMap(insights);
+      const entries = await Promise.all(
+        ["views", "likes", "replies", "reposts", "quotes", "shares"].map(async (metric) => {
+          const insights = await providerJson(
+            `https://graph.threads.net/v1.0/${encodeURIComponent(item.id)}/insights?metric=${metric}`,
+            token,
+          ).catch(unavailableItemInsights);
+          return [metric, metricMap(insights).get(metric) ?? null] as const;
+        }),
+      );
+      const metrics = new Map(entries);
       const likes = metrics.get("likes") ?? null;
       const comments = metrics.get("replies") ?? null;
       const shares = sum(
@@ -620,7 +640,7 @@ async function fetchYouTube(
   state: CursorState,
 ): Promise<ProviderPage> {
   const channel = await providerJson(
-    "https://www.googleapis.com/youtube/v3/channels?part=contentDetails&mine=true",
+    buildYouTubeChannelUrl(connection.provider_user_id, "contentDetails"),
     token,
   );
   const uploads = channel.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;

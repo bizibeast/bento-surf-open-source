@@ -76,7 +76,10 @@ describe("SchedulerStatusLine", () => {
     const refresh = vi
       .fn<() => Promise<{ id: string; avatarUrl: string }>>()
       .mockRejectedValueOnce(new Error("temporary"))
-      .mockResolvedValueOnce({ id: missingAvatar.id, avatarUrl: "https://bento.surf/avatar.png" });
+      .mockResolvedValueOnce({
+        id: missingAvatar.id,
+        avatarUrl: "http://localhost:8080/avatar.png",
+      });
     const onSuccess = vi.fn();
     const repair = createAvatarRepairHandler({
       refresh,
@@ -96,7 +99,7 @@ describe("SchedulerStatusLine", () => {
     expect(refresh).toHaveBeenCalledTimes(2);
     expect(onSuccess).toHaveBeenCalledWith({
       id: missingAvatar.id,
-      avatarUrl: "https://bento.surf/avatar.png",
+      avatarUrl: "http://localhost:8080/avatar.png",
     });
   });
 });

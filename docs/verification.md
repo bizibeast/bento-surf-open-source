@@ -3,6 +3,8 @@
 ## Verified locally
 
 - Repository boundary, TypeScript, lint, unit/integration tests, and production build.
+- Complete reachable Git history is scanned for credential-shaped values and operated identities without printing matched values.
+- Private-to-public parity reports zero missing, stale, removed, or unclassified self-hostable source paths; mixed files remain explicit transformation boundaries.
 - Representative Link, Store, newsletter, scheduler, booking, community, payment, MCP, and WebMCP test matrix.
 - Cloudflare Worker dry run with the committed R2, Queue, Browser, AI, rate-limit, asset, cron, and environment bindings.
 

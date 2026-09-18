@@ -106,7 +106,7 @@ function HomePage() {
               icon={<CalendarClock className="size-4" />}
               label="Upcoming calls"
               value={formatMetric(data?.pulse.upcomingCalls ?? 0)}
-              trend="Ahead"
+              trend={(data?.pulse.upcomingCalls ?? 0) > 0 ? "Ahead" : "None scheduled"}
             />
           </div>
 

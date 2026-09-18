@@ -1,4 +1,3 @@
-import { configuredAppOrigin } from "@/lib/application-urls";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Fathom SDK payloads are normalized here. */
 import { Fathom } from "fathom-typescript";
 import type { TokenStore } from "fathom-typescript/funcs/withAuthorization.js";
@@ -6,7 +5,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { decryptServerSecret, encryptServerSecret } from "./secret-crypto.server";
 
 function appOrigin() {
-  return configuredAppOrigin(process.env.VITE_APP_URL);
+  return (process.env.VITE_APP_URL?.trim() || "http://localhost:8080").replace(/\/$/, "");
 }
 
 export function fathomRedirectUri() {

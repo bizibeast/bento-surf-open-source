@@ -1,8 +1,26 @@
-import { useState, type CSSProperties, type MouseEvent } from "react";
+import { useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  horizontalListSortingStrategy,
+  sortableKeyboardCoordinates,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import {
   BarChart3,
   CalendarDays,
   FileText,
+  Ellipsis,
   Home,
   Link2,
   Newspaper,
@@ -20,7 +38,7 @@ export type PageTab = {
   slug: string;
   url?: string | null;
   href?: string | null;
-  system?: "calendar" | "insights" | "store" | "newsletter";
+  system?: string | null;
 };
 
 type Mode = "editor" | "public";
@@ -49,7 +67,46 @@ function hostnameOf(u: string) {
 
 function faviconFor(u: string) {
   const host = hostnameOf(u);
-  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64`;
+  return `/api/favicon?domain=${encodeURIComponent(host)}&sz=64`;
+}
+
+function SortablePageTab({
+  id,
+  name,
+  enabled,
+  children,
+}: {
+  id: string;
+  name: string;
+  enabled: boolean;
+  children: ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+    disabled: !enabled,
+  });
+
+  return (
+    <span
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={`group relative inline-flex ${isDragging ? "opacity-50" : ""}`}
+    >
+      {children}
+      {enabled && (
+        <button
+          type="button"
+          aria-label={`Reorder ${name}`}
+          className="absolute -bottom-1.5 left-1/2 z-10 inline-flex size-4 -translate-x-1/2 items-center justify-center rounded-sm bg-card text-muted-foreground opacity-0 shadow-sm ring-1 ring-border transition hover:bg-accent group-hover:opacity-100 group-focus-within:opacity-100"
+          onClick={(event) => event.stopPropagation()}
+          {...attributes}
+          {...listeners}
+        >
+          <Ellipsis className="size-3" />
+        </button>
+      )}
+    </span>
+  );
 }
 
 export function PageTabs({
@@ -66,6 +123,7 @@ export function PageTabs({
   onCreateNewsletter,
   onRename,
   onDelete,
+  onReorder,
   menuStyle,
   phoneEditor = false,
 }: {
@@ -82,6 +140,7 @@ export function PageTabs({
   onCreateNewsletter?: () => void;
   onRename?: (id: string, name: string) => void;
   onDelete?: (id: string) => void;
+  onReorder?: (pageIds: string[]) => void;
   menuStyle?: CSSProperties;
   phoneEditor?: boolean;
 }) {
@@ -97,6 +156,17 @@ export function PageTabs({
   const hasPages = pages.length > 0;
   const isEditor = mode === "editor";
   const safeHomeHref = safeNavigationHref(homeHref, { allowRelative: true });
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    if (!onReorder || !event.over || event.active.id === event.over.id) return;
+    const from = pages.findIndex((page) => page.id === event.active.id);
+    const to = pages.findIndex((page) => page.id === event.over?.id);
+    if (from >= 0 && to >= 0) onReorder(arrayMove(pages, from, to).map((page) => page.id));
+  };
 
   const shouldOpenPage = (id: string, event: MouseEvent<HTMLElement>) => {
     setConfirmDeleteId(null);
@@ -137,7 +207,7 @@ export function PageTabs({
           isEditor ? "justify-start" : "justify-center"
         } ${isEditor ? "my-6 gap-1.5 py-2" : "my-4 gap-1 py-1"}`}
       >
-        {hasPages &&
+        {(hasPages || !isEditor) &&
           (!isEditor && safeHomeHref ? (
             <a
               href={safeHomeHref}
@@ -176,142 +246,157 @@ export function PageTabs({
               <Home className="size-3" />
             </button>
           ))}
-        {pages.map((p) => {
-          const isActive = activeId === p.id;
-          const safePageUrl = safeNavigationHref(p.url);
-          const safePageHref = safeNavigationHref(p.href, { allowRelative: true });
-          const isLink = Boolean(safePageUrl);
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext
+            items={pages.map((page) => page.id)}
+            strategy={horizontalListSortingStrategy}
+          >
+            {pages.map((p) => {
+              const isActive = activeId === p.id;
+              const safePageUrl = safeNavigationHref(p.url);
+              const safePageHref = safeNavigationHref(p.href, { allowRelative: true });
+              const isLink = Boolean(safePageUrl);
 
-          if (renamingId === p.id) {
-            return (
-              <span
-                key={p.id}
-                className="inline-flex h-7 items-center rounded-md bg-card px-2 ring-1 ring-border"
-              >
-                <input
-                  autoFocus
-                  value={renameDraft}
-                  maxLength={40}
-                  onChange={(e) => setRenameDraft(e.target.value)}
-                  onBlur={() => commitRename(p.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") commitRename(p.id);
-                    if (e.key === "Escape") {
-                      setRenamingId(null);
-                      setRenameDraft("");
-                    }
+              if (renamingId === p.id) {
+                return (
+                  <span
+                    key={p.id}
+                    className="inline-flex h-7 items-center rounded-md bg-card px-2 ring-1 ring-border"
+                  >
+                    <input
+                      autoFocus
+                      value={renameDraft}
+                      maxLength={40}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onBlur={() => commitRename(p.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") commitRename(p.id);
+                        if (e.key === "Escape") {
+                          setRenamingId(null);
+                          setRenameDraft("");
+                        }
+                      }}
+                      className="w-28 bg-transparent text-center text-xs outline-none"
+                    />
+                  </span>
+                );
+              }
+
+              const tileBase = `inline-flex items-center justify-center rounded-md text-center transition ${
+                isEditor ? "h-7 text-xs" : "h-6 text-[11px]"
+              }`;
+
+              const tileButton = isLink ? (
+                <a
+                  href={safePageUrl!}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(event) => shouldOpenPage(p.id, event)}
+                  aria-expanded={phoneEditor ? armedPageId === p.id : undefined}
+                  title={`${p.name}: opens in a new tab`}
+                  className={`${tileBase} gap-1 bg-card px-1.5 text-foreground ring-1 ring-border hover:bg-accent`}
+                >
+                  <img
+                    src={faviconFor(safePageUrl!)}
+                    alt=""
+                    width={14}
+                    height={14}
+                    className="size-3.5 rounded-sm"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+                    }}
+                  />
+                </a>
+              ) : !isEditor && safePageHref ? (
+                <a
+                  href={safePageHref}
+                  aria-current={isActive ? "page" : undefined}
+                  target={isEditor ? "_blank" : undefined}
+                  rel={isEditor ? "noopener noreferrer" : undefined}
+                  onClick={(event) => shouldOpenPage(p.id, event)}
+                  aria-expanded={phoneEditor ? armedPageId === p.id : undefined}
+                  title={isEditor ? `${p.name}: opens the visitor page in a new tab` : p.name}
+                  className={`${tileBase} px-2 ${isActive ? "bg-foreground text-background" : "bg-card text-foreground ring-1 ring-border hover:bg-accent"}`}
+                >
+                  {p.name}
+                </a>
+              ) : (
+                <button
+                  type="button"
+                  onPointerEnter={() => onIntent?.(p.id)}
+                  onFocus={() => onIntent?.(p.id)}
+                  onClick={(event) => {
+                    if (!shouldOpenPage(p.id, event)) return;
+                    onSelect(p.id);
                   }}
-                  className="w-28 bg-transparent text-center text-xs outline-none"
-                />
-              </span>
-            );
-          }
+                  aria-expanded={phoneEditor ? armedPageId === p.id : undefined}
+                  className={`${tileBase} px-2 ${
+                    isActive
+                      ? "bg-foreground text-background"
+                      : "bg-card text-foreground ring-1 ring-border hover:bg-accent"
+                  }`}
+                >
+                  {p.name}
+                </button>
+              );
 
-          const tileBase = `inline-flex items-center justify-center rounded-md text-center transition ${
-            isEditor ? "h-7 text-xs" : "h-6 text-[11px]"
-          }`;
-
-          const tileButton = isLink ? (
-            <a
-              href={safePageUrl!}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(event) => shouldOpenPage(p.id, event)}
-              aria-expanded={phoneEditor ? armedPageId === p.id : undefined}
-              title={`${p.name}: opens in a new tab`}
-              className={`${tileBase} gap-1 bg-card px-1.5 text-foreground ring-1 ring-border hover:bg-accent`}
-            >
-              <img
-                src={faviconFor(safePageUrl!)}
-                alt=""
-                width={14}
-                height={14}
-                className="size-3.5 rounded-sm"
-                onError={(e) => {
-                  (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
-                }}
-              />
-            </a>
-          ) : safePageHref ? (
-            <a
-              href={safePageHref}
-              target={isEditor ? "_blank" : undefined}
-              rel={isEditor ? "noopener noreferrer" : undefined}
-              onClick={(event) => shouldOpenPage(p.id, event)}
-              aria-expanded={phoneEditor ? armedPageId === p.id : undefined}
-              title={isEditor ? `${p.name}: opens the visitor page in a new tab` : p.name}
-              className={`${tileBase} bg-card px-2 text-foreground ring-1 ring-border hover:bg-accent`}
-            >
-              {p.name}
-            </a>
-          ) : (
-            <button
-              type="button"
-              onPointerEnter={() => onIntent?.(p.id)}
-              onFocus={() => onIntent?.(p.id)}
-              onClick={(event) => {
-                if (!shouldOpenPage(p.id, event)) return;
-                onSelect(p.id);
-              }}
-              aria-expanded={phoneEditor ? armedPageId === p.id : undefined}
-              className={`${tileBase} px-2 ${
-                isActive
-                  ? "bg-foreground text-background"
-                  : "bg-card text-foreground ring-1 ring-border hover:bg-accent"
-              }`}
-            >
-              {p.name}
-            </button>
-          );
-
-          return (
-            <span key={p.id} className="group relative inline-flex">
-              {tileButton}
-              {isEditor && (!phoneEditor || armedPageId === p.id) && (
-                <>
-                  <button
-                    type="button"
-                    aria-label="Delete page"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      e.preventDefault();
-                      if (confirmDeleteId === p.id) {
-                        setConfirmDeleteId(null);
-                        setArmedPageId(null);
-                        onDelete?.(p.id);
-                        return;
-                      }
-                      setConfirmDeleteId(p.id);
-                    }}
-                    className={`absolute -left-1.5 -top-1.5 z-10 inline-flex h-5 min-w-5 items-center justify-center rounded-sm px-1 text-[10px] leading-none shadow-sm ring-1 transition ${
-                      confirmDeleteId === p.id
-                        ? "bg-destructive text-destructive-foreground ring-destructive opacity-100"
-                        : phoneEditor
-                          ? "bg-card text-muted-foreground ring-border opacity-100 hover:bg-accent"
-                          : "bg-card text-muted-foreground ring-border opacity-0 hover:bg-accent group-hover:opacity-100 group-focus-within:opacity-100"
-                    }`}
-                  >
-                    {confirmDeleteId === p.id ? "OK" : <Trash2 className="size-3" />}
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Rename page"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setRenamingId(p.id);
-                      setRenameDraft(p.name);
-                      setConfirmDeleteId(null);
-                      setArmedPageId(null);
-                    }}
-                    className="absolute -right-1.5 -top-1.5 z-10 inline-flex size-5 items-center justify-center rounded-sm bg-card text-muted-foreground opacity-100 shadow-sm ring-1 ring-border transition hover:bg-accent sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
-                  >
-                    <Pencil className="size-3" />
-                  </button>
-                </>
-              )}
-            </span>
-          );
-        })}
+              return (
+                <SortablePageTab
+                  key={p.id}
+                  id={p.id}
+                  name={p.name}
+                  enabled={isEditor && Boolean(onReorder)}
+                >
+                  <span className="group relative inline-flex">
+                    {tileButton}
+                    {isEditor && (!phoneEditor || armedPageId === p.id) && (
+                      <>
+                        <button
+                          type="button"
+                          aria-label="Delete page"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            if (confirmDeleteId === p.id) {
+                              setConfirmDeleteId(null);
+                              setArmedPageId(null);
+                              onDelete?.(p.id);
+                              return;
+                            }
+                            setConfirmDeleteId(p.id);
+                          }}
+                          className={`absolute -left-1.5 -top-1.5 z-10 inline-flex h-5 min-w-5 items-center justify-center rounded-sm px-1 text-[10px] leading-none shadow-sm ring-1 transition ${
+                            confirmDeleteId === p.id
+                              ? "bg-destructive text-destructive-foreground ring-destructive opacity-100"
+                              : phoneEditor
+                                ? "bg-card text-muted-foreground ring-border opacity-100 hover:bg-accent"
+                                : "bg-card text-muted-foreground ring-border opacity-0 hover:bg-accent group-hover:opacity-100 group-focus-within:opacity-100"
+                          }`}
+                        >
+                          {confirmDeleteId === p.id ? "OK" : <Trash2 className="size-3" />}
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Rename page"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRenamingId(p.id);
+                            setRenameDraft(p.name);
+                            setConfirmDeleteId(null);
+                            setArmedPageId(null);
+                          }}
+                          className="absolute -right-1.5 -top-1.5 z-10 inline-flex size-5 items-center justify-center rounded-sm bg-card text-muted-foreground opacity-100 shadow-sm ring-1 ring-border transition hover:bg-accent sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
+                        >
+                          <Pencil className="size-3" />
+                        </button>
+                      </>
+                    )}
+                  </span>
+                </SortablePageTab>
+              );
+            })}
+          </SortableContext>
+        </DndContext>
 
         {isEditor && creating && (
           <span className="inline-flex h-7 items-center rounded-md bg-card px-2 ring-1 ring-border">

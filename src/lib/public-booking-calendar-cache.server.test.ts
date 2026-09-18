@@ -4,13 +4,13 @@ import { publicBookingCalendarCacheKey } from "./public-booking-calendar-cache.s
 describe("public booking calendar cache", () => {
   it("normalizes usernames into a stable, isolated cache key", () => {
     expect(publicBookingCalendarCacheKey("BiziBeast")).toBe(
-      "https://booking-calendar-cache.bento.internal/v1/bizibeast",
+      "https://booking-calendar-cache.bento.internal/v2/bizibeast",
     );
   });
 
   it("encodes unexpected characters without changing the cache namespace", () => {
     expect(publicBookingCalendarCacheKey("name/with space")).toBe(
-      "https://booking-calendar-cache.bento.internal/v1/name%2Fwith%20space",
+      "https://booking-calendar-cache.bento.internal/v2/name%2Fwith%20space",
     );
   });
 });

@@ -26,6 +26,7 @@ import {
   enqueueDueAudienceCampaigns,
   enqueueEmailBatch,
   getCreatorEmailCapacity,
+  hasDeliverableEmailOutbox,
   processAudienceCampaignDelivery,
   recordEmailMarketingCapacityBlock,
   scheduleAudienceCampaignForCreator,
@@ -66,6 +67,27 @@ describe("email campaign delivery", () => {
 
   afterEach(() => {
     Reflect.deleteProperty(globalThis, "__env__");
+  });
+
+  it.each([
+    [null, false],
+    [{ id: "11111111-1111-4111-8111-111111111111" }, true],
+  ])("kicks the recovery queue only when email delivery is due", async (data, expected) => {
+    const query: Record<string, ReturnType<typeof vi.fn>> = {};
+    query.select = vi.fn(() => query);
+    query.lt = vi.fn(() => query);
+    query.or = vi.fn(() => query);
+    query.limit = vi.fn(() => query);
+    query.maybeSingle = vi.fn().mockResolvedValue({ data, error: null });
+    mocks.from.mockReturnValue(query);
+
+    await expect(hasDeliverableEmailOutbox(new Date("2026-09-05T12:00:00.000Z"))).resolves.toBe(
+      expected,
+    );
+    expect(query.lt).toHaveBeenCalledWith("attempts", 5);
+    expect(query.or).toHaveBeenCalledWith(
+      "and(status.eq.pending,available_at.lte.2026-09-05T12:00:00.000Z),and(status.eq.processing,updated_at.lte.2026-09-05T11:50:00.000Z)",
+    );
   });
 
   it("returns inserted and pre-existing outbox IDs and kicks only the email queue", async () => {

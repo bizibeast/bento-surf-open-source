@@ -29,6 +29,22 @@ afterEach(() => {
 });
 
 describe("AppearancePanel pattern controls", () => {
+  it("persists no_banner when choosing Without photo", async () => {
+    vi.mocked(getMyProfile).mockResolvedValue(profile as never);
+    vi.mocked(updateProfile).mockResolvedValue(profile as never);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(["my-profile"], profile);
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AppearancePanel />
+      </QueryClientProvider>,
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Without photo.*Hide avatar/ }));
+    });
+    expect(updateProfile).toHaveBeenCalledWith({ data: { header_mode: "no_banner" } });
+  });
+
   it("updates intensity and opacity immediately and persists the latest values once", async () => {
     vi.useFakeTimers();
     vi.mocked(getMyProfile).mockResolvedValue(profile as never);

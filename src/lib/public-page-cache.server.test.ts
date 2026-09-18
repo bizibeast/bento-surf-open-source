@@ -1,15 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { isPublicPageRequest as classifyPublicPageRequest } from "./public-page-cache.server";
-
-const instanceEnv = {
-  VITE_APP_URL: "https://app.self.example",
-  VITE_PUBLIC_URL: "https://public.self.example",
-};
-
-function isPublicPageRequest(request: Request, env = instanceEnv) {
-  return classifyPublicPageRequest(request, env);
-}
+import { isPublicPageRequest, storePublicPageCache } from "./public-page-cache.server";
 
 function documentRequest(url: string, init?: RequestInit) {
   return new Request(url, {
@@ -19,33 +10,32 @@ function documentRequest(url: string, init?: RequestInit) {
 }
 
 describe("public page cache boundary", () => {
-  it("classifies exact self-host app and public origins without trusting sibling origins", () => {
-    const env = {
-      VITE_APP_URL: "https://app.self.example",
-      VITE_PUBLIC_URL: "https://public.self.example",
-    };
-
-    expect(isPublicPageRequest(documentRequest("https://app.self.example/home"), env)).toBe(false);
-    expect(isPublicPageRequest(documentRequest("https://public.self.example/@creator"), env)).toBe(
-      true,
+  it("uses the unified-page cache generation for rendered HTML", async () => {
+    const put = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("caches", { default: { put } });
+    await storePublicPageCache(
+      documentRequest("http://localhost:8080/@bizibeast/store"),
+      new Response("<html>Store</html>", {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      }),
+      undefined,
     );
-    expect(
-      isPublicPageRequest(documentRequest("https://unrelated.self.example/p/product"), env),
-    ).toBe(false);
+    expect(put.mock.calls[0][0].url).toContain("__bento_public_page_cache=v2");
+    vi.unstubAllGlobals();
   });
 
   it("caches public Bento and product pages", () => {
-    expect(isPublicPageRequest(documentRequest("https://public.self.example/"))).toBe(true);
-    expect(isPublicPageRequest(documentRequest("https://public.self.example/@creator"))).toBe(true);
-    expect(isPublicPageRequest(documentRequest("https://public.self.example/@creator/links"))).toBe(
+    expect(isPublicPageRequest(documentRequest("http://localhost:8080/"))).toBe(true);
+    expect(isPublicPageRequest(documentRequest("http://localhost:8080/@bizibeast"))).toBe(true);
+    expect(isPublicPageRequest(documentRequest("http://localhost:8080/@bizibeast/links"))).toBe(
       true,
     );
     expect(
       isPublicPageRequest(
-        documentRequest("https://public.self.example/@creator/products/creator-course"),
+        documentRequest("http://localhost:8080/@bizibeast/products/creator-course"),
       ),
     ).toBe(true);
-    expect(isPublicPageRequest(documentRequest("https://app.self.example/p/creator-course"))).toBe(
+    expect(isPublicPageRequest(documentRequest("http://localhost:8080/p/creator-course"))).toBe(
       true,
     );
     expect(isPublicPageRequest(documentRequest("https://creator.example/"))).toBe(true);
@@ -66,38 +56,32 @@ describe("public page cache boundary", () => {
       "/earn",
       "/settings",
     ]) {
-      expect(isPublicPageRequest(documentRequest(`https://public.self.example${path}`))).toBe(
-        false,
-      );
+      expect(isPublicPageRequest(documentRequest(`http://localhost:8080${path}`))).toBe(false);
     }
-    expect(isPublicPageRequest(documentRequest("https://public.self.example/api/health"))).toBe(
+    expect(isPublicPageRequest(documentRequest("http://localhost:8080/api/health"))).toBe(false);
+    expect(isPublicPageRequest(documentRequest("http://localhost:8080/login"))).toBe(false);
+    expect(isPublicPageRequest(documentRequest("http://localhost:8080/reset-password"))).toBe(
       false,
     );
-    expect(isPublicPageRequest(documentRequest("https://public.self.example/login"))).toBe(false);
-    expect(isPublicPageRequest(documentRequest("https://app.self.example/reset-password"))).toBe(
+    expect(isPublicPageRequest(documentRequest("http://localhost:8080/review/private-token"))).toBe(
       false,
     );
-    expect(
-      isPublicPageRequest(documentRequest("https://app.self.example/review/private-token")),
-    ).toBe(false);
-    expect(isPublicPageRequest(documentRequest("https://app.self.example/library/"))).toBe(false);
-    expect(
-      isPublicPageRequest(documentRequest("https://app.self.example/payments/razorpay/id")),
-    ).toBe(false);
-    expect(isPublicPageRequest(documentRequest("https://app.self.example/calendar"))).toBe(false);
-    expect(isPublicPageRequest(documentRequest("https://app.self.example/community"))).toBe(false);
-    expect(isPublicPageRequest(documentRequest("https://app.self.example/link"))).toBe(false);
+    expect(isPublicPageRequest(documentRequest("http://localhost:8080/library/"))).toBe(false);
+    expect(isPublicPageRequest(documentRequest("http://localhost:8080/payments/razorpay/id"))).toBe(
+      false,
+    );
+    expect(isPublicPageRequest(documentRequest("http://localhost:8080/calendar"))).toBe(false);
+    expect(isPublicPageRequest(documentRequest("http://localhost:8080/community"))).toBe(false);
+    expect(isPublicPageRequest(documentRequest("http://localhost:8080/link"))).toBe(false);
     expect(
       isPublicPageRequest(
-        documentRequest("https://public.self.example/@creator", {
+        documentRequest("http://localhost:8080/@bizibeast", {
           headers: { accept: "text/html", cookie: "session=private" },
         }),
       ),
     ).toBe(false);
     expect(
-      isPublicPageRequest(
-        documentRequest("https://public.self.example/@creator", { method: "POST" }),
-      ),
+      isPublicPageRequest(documentRequest("http://localhost:8080/@bizibeast", { method: "POST" })),
     ).toBe(false);
   });
 });

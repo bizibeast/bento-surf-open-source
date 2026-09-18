@@ -1,3 +1,7 @@
+import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { getPlan } from "./plan.server";
+import { commerceEntitlement, planHasEntitlement } from "./plans";
+import { safeMediaUrl } from "./safe-url";
 import { loadPublicProfileByUsername } from "./profile.functions";
 import {
   OPEN_GRAPH_IMAGE_SCALE,
@@ -11,6 +15,8 @@ import {
   type PublicPagePreviewData,
 } from "./open-graph";
 import { readResponseBytes, readResponseText } from "./request-security.server";
+import { publicProductUrl } from "./application-urls";
+import type { CommerceProductKind } from "./commerce";
 
 export const OPEN_GRAPH_IMAGE_PATH = "/api/og/";
 
@@ -30,15 +36,29 @@ type OpenGraphEnvironment = Pick<Env, "MEDIA_BUCKET"> & {
   };
 };
 
-type PublicProfileData = PublicPagePreviewData & { notFound?: boolean };
+type PublicProfileData = PublicPagePreviewData & { notFound?: boolean; systemItems?: unknown[] };
+type ProductPreviewData = {
+  id: string;
+  kind: CommerceProductKind;
+  public_slug: string;
+  cover_url: string | null;
+  updated_at: string;
+};
 
 type OpenGraphDependencies = {
-  loadProfile?: (username: string, pageSlug: string | null) => Promise<PublicProfileData | null>;
+  loadProfile?: (
+    username: string,
+    pageSlug: string | null,
+    requestHost?: string,
+  ) => Promise<PublicProfileData | null>;
+  loadProduct?: (creatorId: string, publicSlug: string) => Promise<ProductPreviewData | null>;
+  productEntitled?: (creatorId: string, kind: CommerceProductKind) => Promise<boolean>;
 };
 
 type ParsedOpenGraphPath = {
   username: string;
   pageSlug: string | null;
+  productSlug: string | null;
 };
 
 const RETRYABLE_BROWSER_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
@@ -47,7 +67,7 @@ export function parseOpenGraphImagePath(pathname: string): ParsedOpenGraphPath |
   if (!pathname.startsWith(OPEN_GRAPH_IMAGE_PATH) || !pathname.endsWith(".jpg")) return null;
   const rawPath = pathname.slice(OPEN_GRAPH_IMAGE_PATH.length, -".jpg".length);
   const rawSegments = rawPath.split("/");
-  if (rawSegments.length < 1 || rawSegments.length > 2) return null;
+  if (rawSegments.length < 1 || rawSegments.length > 3) return null;
 
   let segments: string[];
   try {
@@ -56,10 +76,14 @@ export function parseOpenGraphImagePath(pathname: string): ParsedOpenGraphPath |
     return null;
   }
 
-  const [username, pageSlug] = segments;
+  const [username, pageOrProducts, nestedSlug] = segments;
   if (!username || !/^[a-z0-9_]{3,24}$/.test(username)) return null;
-  if (pageSlug && !/^[a-z0-9-]{1,40}$/.test(pageSlug)) return null;
-  return { username, pageSlug: pageSlug ?? null };
+  if (nestedSlug) {
+    if (pageOrProducts !== "products" || !/^[a-z0-9-]{3,64}$/.test(nestedSlug)) return null;
+    return { username, pageSlug: null, productSlug: nestedSlug };
+  }
+  if (pageOrProducts && !/^[a-z0-9-]{1,40}$/.test(pageOrProducts)) return null;
+  return { username, pageSlug: pageOrProducts ?? null, productSlug: null };
 }
 
 function previewObjectPrefix(data: PublicPagePreviewData) {
@@ -125,7 +149,8 @@ async function latestOrError(
   status: number,
 ) {
   const latest = await storedImageResponse(request, bucket, latestObjectKey(data), "STALE");
-  return latest ?? Response.json({ error: message }, { status });
+  if (!latest) console.warn("[og] static fallback", { message, status });
+  return latest ?? staticOpenGraphFallback(request);
 }
 
 function generationRateLimitKey(request: Request, data: PublicPagePreviewData) {
@@ -161,6 +186,73 @@ async function renderPreview(
   return null;
 }
 
+async function productPreviewResponse(
+  request: Request,
+  env: OpenGraphEnvironment,
+  parsed: ParsedOpenGraphPath,
+  profile: PublicProfileData["profile"],
+  product: ProductPreviewData,
+) {
+  const key = `og/product/${profile.id}/${product.id}/${product.updated_at}.jpg`;
+  const stored = await storedImageResponse(request, env.MEDIA_BUCKET, key, "HIT");
+  if (stored) return stored;
+  if (!env.BROWSER) return staticOpenGraphFallback(request);
+
+  const address = request.headers.get("cf-connecting-ip")?.trim() || "missing-cloudflare-ip";
+  if (env.EXPENSIVE_API_RATE_LIMITER) {
+    const limit = await env.EXPENSIVE_API_RATE_LIMITER.limit({
+      key: `og:product:${product.id}:${address}`.slice(0, 512),
+    });
+    if (!limit.success) return staticOpenGraphFallback(request);
+  }
+
+  const pageUrl = publicProductUrl(
+    profile.username,
+    product.public_slug,
+    new URL(request.url).origin,
+  );
+  const bytes = await renderPreview(
+    env.BROWSER,
+    {
+      url: pageUrl,
+      viewport: {
+        width: OPEN_GRAPH_VIEWPORT_WIDTH,
+        height: OPEN_GRAPH_VIEWPORT_HEIGHT,
+        deviceScaleFactor: OPEN_GRAPH_IMAGE_SCALE,
+      },
+      gotoOptions: { waitUntil: "load", timeout: 30_000 },
+      waitForSelector: { selector: "[data-product-website]", visible: true },
+      cacheTTL: 0,
+      screenshotOptions: {
+        type: "jpeg",
+        quality: 94,
+        clip: {
+          x: 0,
+          y: 0,
+          width: OPEN_GRAPH_VIEWPORT_WIDTH,
+          height: OPEN_GRAPH_VIEWPORT_HEIGHT,
+        },
+      },
+    } satisfies BrowserRunScreenshotOptions,
+    parsed,
+  );
+  if (!bytes) return staticOpenGraphFallback(request);
+
+  await env.MEDIA_BUCKET.put(key, bytes, {
+    httpMetadata: { contentType: "image/jpeg", cacheControl: IMMUTABLE_CACHE_CONTROL },
+    customMetadata: {
+      userId: profile.id,
+      username: profile.username,
+      productId: product.id,
+      version: product.updated_at,
+      variant: "product",
+    },
+  });
+  const headers = imageHeaders("MISS");
+  headers.set("content-length", String(bytes.byteLength));
+  return new Response(request.method === "HEAD" ? null : bytes, { headers });
+}
+
 function isCompleteJpeg(bytes: Uint8Array) {
   return (
     bytes.byteLength >= MIN_SCREENSHOT_BYTES &&
@@ -172,7 +264,7 @@ function isCompleteJpeg(bytes: Uint8Array) {
   );
 }
 
-export async function handleOpenGraphImageRequest(
+async function renderOpenGraphImageRequest(
   request: Request,
   env: OpenGraphEnvironment,
   dependencies: OpenGraphDependencies = {},
@@ -185,8 +277,49 @@ export async function handleOpenGraphImageRequest(
   }
 
   const loadProfile = dependencies.loadProfile ?? loadPublicProfileByUsername;
-  const data = await loadProfile(parsed.username, parsed.pageSlug);
-  if (!data || data.notFound) return Response.json({ error: "Page not found" }, { status: 404 });
+  const data = await loadProfile(
+    parsed.username,
+    parsed.productSlug ? null : parsed.pageSlug,
+    url.host,
+  );
+  if (!data) return Response.json({ error: "Page not found" }, { status: 404 });
+  if (parsed.productSlug) {
+    const loadProduct =
+      dependencies.loadProduct ??
+      (async (creatorId: string, publicSlug: string) => {
+        const { data: product, error } = await supabaseAdmin
+          .from("commerce_products")
+          .select("id,kind,public_slug,cover_url,updated_at")
+          .eq("creator_id", creatorId)
+          .eq("public_slug", publicSlug)
+          .eq("status", "published")
+          .maybeSingle();
+        if (error) throw new Error("Product preview could not be loaded");
+        return product as ProductPreviewData | null;
+      });
+    const product = await loadProduct(data.profile.id, parsed.productSlug);
+    const entitled = product
+      ? await (dependencies.productEntitled
+          ? dependencies.productEntitled(data.profile.id, product.kind)
+          : Promise.resolve(
+              planHasEntitlement(await getPlan(data.profile.id), commerceEntitlement(product.kind)),
+            ))
+      : false;
+    if (!product || !entitled) {
+      return Response.json({ error: "Page not found" }, { status: 404 });
+    }
+    const cover = safeMediaUrl(product.cover_url);
+    if (cover && /^https:\/\//.test(cover)) {
+      return new Response(null, {
+        status: 302,
+        headers: { location: cover, "cache-control": "public, max-age=300" },
+      });
+    }
+    return productPreviewResponse(request, env, parsed, data.profile, product);
+  }
+  if (data.notFound) {
+    return Response.json({ error: "Page not found" }, { status: 404 });
+  }
 
   const version = publicPagePreviewVersion(data);
   if (url.searchParams.get("v") !== version) {
@@ -223,6 +356,7 @@ export async function handleOpenGraphImageRequest(
 
   const pageUrl = new URL(publicPageCanonicalUrl(data, url.origin));
   pageUrl.searchParams.set("__bento_preview", version);
+  const blockCount = data.blocks.length + (data.systemItems?.length || 0);
   const screenshotOptions = {
     url: pageUrl.toString(),
     viewport: {
@@ -238,8 +372,8 @@ export async function handleOpenGraphImageRequest(
     gotoOptions: { waitUntil: "load", timeout: 30_000 },
     waitForSelector: {
       selector:
-        data.blocks.length > 0
-          ? `[data-bento-public-block-grid-ready="true"][data-bento-public-block-count="${data.blocks.length}"]`
+        blockCount > 0
+          ? `[data-bento-public-block-grid-ready="true"][data-bento-public-block-count="${blockCount}"]`
           : '[data-bento-public-page="true"]',
       visible: true,
       timeout: 20_000,
@@ -286,4 +420,30 @@ export async function handleOpenGraphImageRequest(
   const headers = imageHeaders("MISS");
   headers.set("content-length", String(bytes.byteLength));
   return new Response(request.method === "HEAD" ? null : bytes, { headers });
+}
+
+export function staticOpenGraphFallback(request: Request) {
+  return new Response(null, {
+    status: 302,
+    headers: {
+      location: new URL("/branding/landing-og.jpg", request.url).toString(),
+      "cache-control": "public, max-age=60",
+      "x-bento-og": "FALLBACK",
+    },
+  });
+}
+export async function handleOpenGraphImageRequest(
+  request: Request,
+  env: OpenGraphEnvironment,
+  dependencies: OpenGraphDependencies = {},
+) {
+  try {
+    return await renderOpenGraphImageRequest(request, env, dependencies);
+  } catch (error) {
+    console.error("[og] preview failed", {
+      path: new URL(request.url).pathname,
+      message: error instanceof Error ? error.message : "Unknown preview error",
+    });
+    return staticOpenGraphFallback(request);
+  }
 }

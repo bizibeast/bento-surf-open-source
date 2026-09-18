@@ -32,9 +32,9 @@ describe("request rate limits", () => {
 });
 
 describe("Turnstile request verification", () => {
-  const verifierUrl = "https://verify.example.com/turnstile";
-  const protectedRequest = (hostname = "app.example.com") =>
-    new Request(`https://${hostname}/api/public-form`, {
+  const verifierUrl = "https://turnstile-siteverify-bento-surf.bizibeast.workers.dev";
+  const protectedRequest = (hostname = "bento.surf") =>
+    new Request(`https://${hostname}/api/tools/media`, {
       method: "POST",
       headers: {
         [TURNSTILE_TOKEN_HEADER]: "valid-turnstile-token",
@@ -47,7 +47,7 @@ describe("Turnstile request verification", () => {
       Response.json({
         success: true,
         action: TURNSTILE_ACTION,
-        hostname: "app.example.com",
+        hostname: "bento.surf",
       }),
     );
 
@@ -74,9 +74,12 @@ describe("Turnstile request verification", () => {
   });
 
   it.each([
-    ["failed challenge", { success: false, action: TURNSTILE_ACTION, hostname: "app.example.com" }],
-    ["wrong action", { success: true, action: "other-action", hostname: "app.example.com" }],
-    ["wrong hostname", { success: true, action: TURNSTILE_ACTION, hostname: "other.example.com" }],
+    ["failed challenge", { success: false, action: TURNSTILE_ACTION, hostname: "bento.surf" }],
+    ["wrong action", { success: true, action: "other-action", hostname: "bento.surf" }],
+    [
+      "wrong hostname",
+      { success: true, action: TURNSTILE_ACTION, hostname: "staging.example.com" },
+    ],
   ])("rejects a %s", async (_label, verification) => {
     const fetcher = vi.fn(async () => Response.json(verification));
 
@@ -109,7 +112,7 @@ describe("Turnstile request verification", () => {
 
   it("rejects a missing token and a verifier network failure", async () => {
     await expect(
-      enforceTurnstileRequest(new Request("https://self.example/api/public-form"), {
+      enforceTurnstileRequest(new Request("http://localhost:8080/api/tools/media"), {
         APP_ENV: "production",
         TURNSTILE_VERIFIER_URL: verifierUrl,
       }),
@@ -117,7 +120,7 @@ describe("Turnstile request verification", () => {
 
     await expect(
       enforceTurnstileRequest(
-        new Request("https://self.example/api/public-form", {
+        new Request("http://localhost:8080/api/tools/media", {
           headers: { [TURNSTILE_TOKEN_HEADER]: "x".repeat(2_049) },
         }),
         { APP_ENV: "production", TURNSTILE_VERIFIER_URL: verifierUrl },
@@ -138,7 +141,7 @@ describe("Turnstile request verification", () => {
 
     await expect(
       enforceTurnstileRequest(
-        new Request("http://localhost:8080/api/public-form"),
+        new Request("http://localhost:8080/api/tools/media"),
         { APP_ENV: "development" },
         fetcher,
       ),
@@ -149,7 +152,7 @@ describe("Turnstile request verification", () => {
 
 describe("server-function request limits", () => {
   it("rejects oversized chunked POST and GET payloads", async () => {
-    const chunked = new Request("https://bento.surf/_serverFn/test", {
+    const chunked = new Request("http://localhost:8080/_serverFn/test", {
       method: "POST",
       body: new ReadableStream({
         start(controller) {
@@ -160,7 +163,7 @@ describe("server-function request limits", () => {
       duplex: "half",
     } as RequestInit & { duplex: "half" });
     const oversizedGet = new Request(
-      `https://bento.surf/_serverFn/test?payload=${"a".repeat(256 * 1024 + 1)}`,
+      `http://localhost:8080/_serverFn/test?payload=${"a".repeat(256 * 1024 + 1)}`,
     );
 
     await expect(enforceServerFunctionRequestLimits(chunked)).rejects.toMatchObject({
@@ -174,14 +177,14 @@ describe("server-function request limits", () => {
 
 describe("bounded request and response readers", () => {
   it("rejects declared and chunked request bodies over the limit", async () => {
-    const declared = new Request("https://bento.surf/api/test", {
+    const declared = new Request("http://localhost:8080/api/test", {
       method: "POST",
       headers: { "content-length": "100" },
       body: "small",
     });
     await expect(readRequestText(declared, 16)).rejects.toBeInstanceOf(RequestBodyTooLargeError);
 
-    const chunked = new Request("https://bento.surf/api/test", {
+    const chunked = new Request("http://localhost:8080/api/test", {
       method: "POST",
       body: new ReadableStream({
         start(controller) {

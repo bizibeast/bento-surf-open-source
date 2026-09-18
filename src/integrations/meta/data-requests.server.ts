@@ -1,6 +1,6 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { readRequestText, RequestBodyTooLargeError } from "@/lib/request-security.server";
-import { configuredAppOrigin } from "@/lib/application-urls";
+import { normalizeOrigin, PRODUCTION_APP_ORIGIN } from "@/lib/application-urls";
 
 type RpcResult = {
   data: unknown;
@@ -115,7 +115,7 @@ export async function handleInstagramDataRequest(request: Request, mode: "deauth
   if (mode === "deauthorize") {
     return Response.json({ success: true });
   }
-  const appOrigin = configuredAppOrigin(process.env.VITE_APP_URL);
+  const appOrigin = normalizeOrigin(process.env.VITE_APP_URL, PRODUCTION_APP_ORIGIN);
   return Response.json({
     url: `${appOrigin}/integrations/instagram/data-deletion?code=${confirmationCode}`,
     confirmation_code: confirmationCode,

@@ -99,7 +99,7 @@ function newBlock(type: BlockType, products: Product[]): NewsletterContentBlock 
     case "paragraph":
       return { id, type, text: "" };
     case "image":
-      return { id, type, url: "/branding/bento-logo.png", alt: "" };
+      return { id, type, url: "/branding/landing-og.jpg", alt: "" };
     case "button":
       return { id, type, label: "Read more", url: "/" };
     case "social":

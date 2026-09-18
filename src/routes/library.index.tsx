@@ -32,7 +32,6 @@ import {
   useWebMcpTools,
   webMcpResult,
 } from "@/lib/webmcp";
-import { configuredPublicOrigin } from "@/lib/application-urls";
 
 type LibraryData = NonNullable<Awaited<ReturnType<typeof getCustomerLibrary>>>;
 type LibraryEntry = LibraryData["entries"][number];
@@ -75,10 +74,7 @@ export function LibraryLogin({ returnTo = "/library" }: { returnTo?: string }) {
       <div className="pointer-events-none absolute -left-32 top-[-8rem] size-96 rounded-full bg-[#dceaff] blur-3xl" />
       <div className="pointer-events-none absolute -bottom-40 right-[-8rem] size-[28rem] rounded-full bg-[#ffe2e4] blur-3xl" />
       <section className="relative w-full max-w-lg rounded-[36px] border border-white/90 bg-white/88 p-6 shadow-[0_38px_120px_-65px_rgba(23,33,58,.68)] backdrop-blur-xl sm:p-9">
-        <a
-          href={configuredPublicOrigin(import.meta.env.VITE_PUBLIC_URL)}
-          aria-label="Bento Surf home"
-        >
+        <a href="http://localhost:8080" aria-label="bento.surf home">
           <BentoFullLogo className="h-8 w-auto" />
         </a>
         <span className="mt-10 flex size-14 items-center justify-center rounded-[20px] bg-[#17213a] text-white">
@@ -268,10 +264,7 @@ export function LibraryHome({ data }: { data: LibraryData }) {
     <div className="min-h-screen bg-[#f4f6fb] text-[#17213a]">
       <header className="border-b border-black/[0.06] bg-white/88 backdrop-blur-xl">
         <div className="mx-auto flex min-h-16 max-w-6xl items-center gap-3 px-4 py-3 sm:px-6">
-          <a
-            href={configuredPublicOrigin(import.meta.env.VITE_PUBLIC_URL)}
-            aria-label="Bento Surf home"
-          >
+          <a href="http://localhost:8080" aria-label="bento.surf home">
             <BentoFullLogo className="h-8 w-auto" />
           </a>
           <div className="ml-auto min-w-0 text-right">

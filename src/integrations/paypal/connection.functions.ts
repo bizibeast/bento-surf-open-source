@@ -1,4 +1,3 @@
-import { configuredAppOrigin } from "@/lib/application-urls";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Payment tables are introduced by the pending migration. */
 import { createServerFn } from "@tanstack/react-start";
 import { requirePlanEntitlement } from "@/lib/plan.server";
@@ -25,7 +24,7 @@ import {
 } from "./client.server";
 
 function appUrl() {
-  return configuredAppOrigin(process.env.VITE_APP_URL);
+  return (process.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "");
 }
 
 const credentialsSchema = z.object({

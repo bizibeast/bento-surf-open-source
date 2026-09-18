@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_OPEN_GRAPH_IMAGE_PATH,
+  landingPageHead,
+  landingPageOpenGraphImageUrl,
   publicPageCanonicalUrl,
   publicPageHead,
   publicPageOpenGraphImageUrl,
@@ -27,37 +28,54 @@ function previewData(): PublicPagePreviewData {
   };
 }
 
-describe("public page Open Graph metadata", () => {
-  it("uses the bundled generic preview asset", () => {
-    expect(DEFAULT_OPEN_GRAPH_IMAGE_PATH).toBe("/branding/bento-logo.png");
-  });
+describe("landing page Open Graph metadata", () => {
+  it("uses the marketing preview image for the homepage only", () => {
+    const image = landingPageOpenGraphImageUrl("http://localhost:8080/");
+    const head = landingPageHead("http://localhost:8080/");
 
+    expect(image).toBe("http://localhost:8080/branding/landing-og.jpg?v=20260813");
+    expect(head.meta).toContainEqual({ property: "og:url", content: "http://localhost:8080" });
+    expect(head.meta).toContainEqual({ property: "og:image", content: image });
+    expect(head.meta).toContainEqual({ property: "og:image:type", content: "image/jpeg" });
+    expect(head.meta).toContainEqual({ property: "og:image:width", content: "1200" });
+    expect(head.meta).toContainEqual({ property: "og:image:height", content: "630" });
+    expect(head.meta).toContainEqual({ name: "twitter:card", content: "summary_large_image" });
+    expect(head.meta).toContainEqual({ name: "twitter:image", content: image });
+    expect(head.links).toContainEqual({ rel: "canonical", href: "http://localhost:8080" });
+    expect(head.scripts.map((script) => JSON.parse(script.children)["@type"])).toEqual([
+      "Organization",
+      "WebSite",
+    ]);
+  });
+});
+
+describe("public page Open Graph metadata", () => {
   it("builds a canonical, versioned large-image preview", () => {
     const data = previewData();
     const version = publicPagePreviewVersion(data);
-    const image = publicPageOpenGraphImageUrl(data, "https://bento.surf/");
-    const head = publicPageHead(data, "https://bento.surf/");
+    const image = publicPageOpenGraphImageUrl(data, "http://localhost:8080/");
+    const head = publicPageHead(data, "http://localhost:8080/");
 
-    expect(publicPageCanonicalUrl(data, "https://bento.surf/")).toBe(
-      "https://bento.surf/@creator/links",
+    expect(publicPageCanonicalUrl(data, "http://localhost:8080/")).toBe(
+      "http://localhost:8080/@creator/links",
     );
-    expect(image).toBe(`https://bento.surf/api/og/creator/links.jpg?v=${version}`);
+    expect(image).toBe(`http://localhost:8080/api/og/creator/links.jpg?v=${version}`);
     expect(head.meta).toContainEqual({ name: "twitter:card", content: "summary_large_image" });
     expect(head.meta).toContainEqual({ property: "og:image", content: image });
     expect(head.meta).toContainEqual({ property: "og:image:width", content: "2400" });
     expect(head.meta).toContainEqual({ property: "og:image:height", content: "1260" });
     expect(JSON.parse(head.scripts[0].children)).toMatchObject({
       "@type": "WebPage",
-      url: "https://bento.surf/@creator/links",
+      url: "http://localhost:8080/@creator/links",
       isPartOf: {
         "@type": "ProfilePage",
-        "@id": "https://bento.surf/@creator#profile",
+        "@id": "http://localhost:8080/@creator#profile",
       },
       about: {
         "@type": "Person",
-        "@id": "https://bento.surf/@creator#creator",
+        "@id": "http://localhost:8080/@creator#creator",
         alternateName: "@creator",
-        url: "https://bento.surf/@creator",
+        url: "http://localhost:8080/@creator",
       },
     });
   });
@@ -65,15 +83,15 @@ describe("public page Open Graph metadata", () => {
   it("uses one stable ProfilePage entity for the creator home", () => {
     const data = previewData();
     data.activePageId = null;
-    const schema = JSON.parse(publicPageHead(data, "https://public.example").scripts[0].children);
+    const schema = JSON.parse(publicPageHead(data).scripts[0].children);
 
     expect(schema).toMatchObject({
       "@type": "ProfilePage",
-      "@id": "https://public.example/@creator#profile",
-      url: "https://public.example/@creator",
+      "@id": "http://localhost:8080/@creator#profile",
+      url: "http://localhost:8080/@creator",
       mainEntity: {
         "@type": "Person",
-        "@id": "https://public.example/@creator#creator",
+        "@id": "http://localhost:8080/@creator#creator",
       },
     });
   });
@@ -83,19 +101,19 @@ describe("public page Open Graph metadata", () => {
     data.activePageId = null;
     data.activePageSlug = "insights";
     data.activePageName = "Social media insights";
-    const head = publicPageHead(data, "https://public.example");
+    const head = publicPageHead(data);
 
     expect(head.links).toContainEqual({
       rel: "canonical",
-      href: "https://public.example/@creator/insights",
+      href: "http://localhost:8080/@creator/insights",
     });
     expect(head.meta).toContainEqual({
       title: "Social Media Insights for Creator Name | bento.surf",
     });
     expect(JSON.parse(head.scripts[0].children)).toMatchObject({
       "@type": "WebPage",
-      url: "https://public.example/@creator/insights",
-      isPartOf: { "@id": "https://public.example/@creator#profile" },
+      url: "http://localhost:8080/@creator/insights",
+      isPartOf: { "@id": "http://localhost:8080/@creator#profile" },
     });
   });
 
@@ -176,7 +194,7 @@ describe("public product Open Graph metadata", () => {
           display_name: "Creator Name",
         },
       },
-      "https://bento.surf/",
+      "http://localhost:8080/",
     );
 
     expect(head.meta).toContainEqual({
@@ -184,7 +202,7 @@ describe("public product Open Graph metadata", () => {
     });
     expect(head.meta).toContainEqual({
       property: "og:url",
-      content: "https://bento.surf/@creator/products/creator-course",
+      content: "http://localhost:8080/@creator/products/creator-course",
     });
     expect(head.meta).toContainEqual({
       property: "og:image",
@@ -205,7 +223,7 @@ describe("public product Open Graph metadata", () => {
         availability: "https://schema.org/InStock",
         seller: {
           "@type": "Person",
-          url: "https://bento.surf/@creator",
+          url: "http://localhost:8080/@creator",
         },
       },
     });
@@ -231,10 +249,11 @@ describe("public product Open Graph metadata", () => {
       name: "description",
       content: "Buy Coaching Call from coach on bento.surf.",
     });
-    expect(head.meta).toContainEqual({ name: "twitter:card", content: "summary" });
-    expect(head.meta.some((entry) => "property" in entry && entry.property === "og:image")).toBe(
-      false,
-    );
+    expect(head.meta).toContainEqual({ name: "twitter:card", content: "summary_large_image" });
+    expect(head.meta).toContainEqual({
+      property: "og:image",
+      content: "http://localhost:8080/api/og/coach/products/coaching-call.jpg?v=1",
+    });
     expect(head.scripts).toEqual([]);
   });
 

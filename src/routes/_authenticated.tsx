@@ -12,12 +12,12 @@ import { getFeaturebaseIdentity } from "@/lib/featurebase.functions";
 import { requireAuthenticatedCreator } from "@/lib/auth-entry";
 import { getMyProfile } from "@/lib/profile.functions";
 import { FeaturebaseHub } from "@/components/FeaturebaseHub";
+import { getFeaturebasePublicConfig } from "@/lib/instance-public-config";
 import { FeaturebaseIdentitySync } from "@/components/FeaturebaseIdentitySync";
 import { FontApplier } from "@/components/FontApplier";
 import { AppSidebar } from "@/components/AppSidebar";
 import { setBrowserTimeZoneOverride } from "@/lib/timezones";
 import { configuredMcpEndpoint } from "@/lib/application-urls";
-import { getFeaturebasePublicConfig } from "@/lib/instance-public-config";
 import {
   bentoRemoteMcpSetup,
   requireWebMcpUserConfirmation,

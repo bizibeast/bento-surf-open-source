@@ -1,4 +1,3 @@
-import { configuredAppOrigin } from "@/lib/application-urls";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Community columns are introduced by the pending staging migration; remove after regenerating Supabase types. */
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
@@ -35,7 +34,7 @@ function jsonObject(value: Json): Record<string, Json | undefined> {
 }
 
 function appUrl() {
-  return configuredAppOrigin(process.env.VITE_APP_URL);
+  return (process.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "");
 }
 
 export function randomCommunityAccessToken() {

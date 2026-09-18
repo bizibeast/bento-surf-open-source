@@ -17,7 +17,7 @@ export const getIntegrationOverview = createServerFn({ method: "GET" })
       db
         .from("social_connections")
         .select(
-          "id,provider,provider_handle,provider_display_name,provider_avatar_url,status,scopes",
+          "id,provider,provider_handle,provider_display_name,provider_avatar_url,status,scopes,reauth_required",
         )
         .eq("user_id", context.userId)
         .order("created_at", { ascending: true }),
@@ -50,7 +50,12 @@ export const getIntegrationOverview = createServerFn({ method: "GET" })
           avatarUrl: (connection.provider_avatar_url as string | null) || null,
           status: connection.status as string,
           scopes: (connection.scopes || []) as string[],
-          canPublish: socialConnectionCanPublish(connection.provider, connection.scopes),
+          canPublish: socialConnectionCanPublish(
+            connection.provider,
+            connection.scopes,
+            connection.status,
+            Boolean(connection.reauth_required),
+          ),
           canAutomate:
             (connection.provider !== "twitter" ||
               TWITTER_AUTO_DM_REQUIRED_SCOPES.every((scope) =>

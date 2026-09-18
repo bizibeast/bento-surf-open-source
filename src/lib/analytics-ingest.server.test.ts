@@ -29,9 +29,9 @@ describe("analytics ingestion endpoint", () => {
   it("queues a valid same-origin event", async () => {
     const send = vi.fn<(event: unknown) => Promise<void>>(async () => undefined);
     const response = await handleAnalyticsEventRequest(
-      new Request("https://bento.surf/api/events", {
+      new Request("http://localhost:8080/api/events", {
         method: "POST",
-        headers: { "content-type": "application/json", origin: "https://bento.surf" },
+        headers: { "content-type": "application/json", origin: "http://localhost:8080" },
         body: JSON.stringify(validPayload),
       }),
       { ANALYTICS_QUEUE: { send } as unknown as Queue },
@@ -58,9 +58,9 @@ describe("analytics ingestion endpoint", () => {
     for (let index = 0; index < 20; index += 1) {
       const userId = `22222222-2222-4222-8222-${String(index).padStart(12, "0")}`;
       await handleAnalyticsEventRequest(
-        new Request("https://bento.surf/api/events", {
+        new Request("http://localhost:8080/api/events", {
           method: "POST",
-          headers: { "content-type": "application/json", origin: "https://bento.surf" },
+          headers: { "content-type": "application/json", origin: "http://localhost:8080" },
           body: JSON.stringify({ ...validPayload, user_id: userId }),
         }),
         env,
@@ -75,9 +75,9 @@ describe("analytics ingestion endpoint", () => {
     const send = vi.fn(async () => undefined);
     const limit = vi.fn(async () => ({ success: false }));
     const response = await handleAnalyticsEventRequest(
-      new Request("https://bento.surf/api/events", {
+      new Request("http://localhost:8080/api/events", {
         method: "POST",
-        headers: { "content-type": "application/json", origin: "https://bento.surf" },
+        headers: { "content-type": "application/json", origin: "http://localhost:8080" },
         body: JSON.stringify(validPayload),
       }),
       {
@@ -96,9 +96,9 @@ describe("analytics ingestion endpoint", () => {
 
   it("fails closed when deployed analytics rate limiting is missing", async () => {
     const response = await handleAnalyticsEventRequest(
-      new Request("https://bento.surf/api/events", {
+      new Request("http://localhost:8080/api/events", {
         method: "POST",
-        headers: { "content-type": "application/json", origin: "https://bento.surf" },
+        headers: { "content-type": "application/json", origin: "http://localhost:8080" },
         body: JSON.stringify(validPayload),
       }),
       { APP_ENV: "production", ANALYTICS_QUEUE: { send: vi.fn() } as unknown as Queue },
@@ -118,9 +118,9 @@ describe("analytics ingestion endpoint", () => {
     const waitUntil = vi.fn<(promise: Promise<unknown>) => void>();
 
     const response = await handleAnalyticsEventRequest(
-      new Request("https://bento.surf/api/events", {
+      new Request("http://localhost:8080/api/events", {
         method: "POST",
-        headers: { "content-type": "application/json", origin: "https://bento.surf" },
+        headers: { "content-type": "application/json", origin: "http://localhost:8080" },
         body: JSON.stringify(validPayload),
       }),
       { ANALYTICS_QUEUE: { send } as unknown as Queue },
@@ -137,7 +137,7 @@ describe("analytics ingestion endpoint", () => {
     const send = vi.fn<(event: unknown) => Promise<void>>(async () => undefined);
     const queue = { ANALYTICS_QUEUE: { send } as unknown as Queue };
     const crossOrigin = await handleAnalyticsEventRequest(
-      new Request("https://bento.surf/api/events", {
+      new Request("http://localhost:8080/api/events", {
         method: "POST",
         headers: { "content-type": "application/json", origin: "https://attacker.example" },
         body: JSON.stringify(validPayload),
@@ -145,7 +145,7 @@ describe("analytics ingestion endpoint", () => {
       queue,
     );
     const oversized = await handleAnalyticsEventRequest(
-      new Request("https://bento.surf/api/events", {
+      new Request("http://localhost:8080/api/events", {
         method: "POST",
         headers: { "content-type": "application/json", "content-length": "3000" },
         body: JSON.stringify(validPayload),

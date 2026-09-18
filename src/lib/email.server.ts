@@ -2,8 +2,6 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { renderBentoEmail, type BentoEmailCategory, type BentoEmailEvent } from "./email-templates";
 import {
-  configuredAppOrigin,
-  configuredPublicOrigin,
   publicNewsletterPath,
   publicProductPath,
   publicProductSuccessPath,
@@ -78,7 +76,7 @@ export async function processAudienceCampaignQueueMessage(
 const encoder = new TextEncoder();
 
 function appUrl() {
-  return configuredAppOrigin(process.env.VITE_APP_URL);
+  return (process.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "");
 }
 
 function base64UrlEncode(value: Uint8Array | string) {
@@ -484,7 +482,6 @@ async function sendWithResend(row: EmailOutboxRow) {
     recipientName: row.recipient_name,
     payload: deliveryPayload,
     appUrl: appUrl(),
-    publicUrl: configuredPublicOrigin(process.env.VITE_PUBLIC_URL),
     unsubscribeUrl,
   });
   const testRecipient = process.env.RESEND_TEST_RECIPIENT?.trim();
@@ -575,6 +572,21 @@ export async function processEmailOutbox(limit = 25) {
     }
   }
   return { claimed: rows.length, sent, configured: true };
+}
+
+export async function hasDeliverableEmailOutbox(now = new Date()) {
+  const staleProcessingAt = new Date(now.getTime() - 10 * 60_000).toISOString();
+  const { data, error } = await (supabaseAdmin as any)
+    .from("email_outbox")
+    .select("id")
+    .lt("attempts", 5)
+    .or(
+      `and(status.eq.pending,available_at.lte.${now.toISOString()}),and(status.eq.processing,updated_at.lte.${staleProcessingAt})`,
+    )
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return Boolean(data);
 }
 
 export async function enqueueLifecycleEmails() {
@@ -1124,7 +1136,7 @@ export async function processAudienceCampaignDelivery(campaignId: string) {
                   description: product.description,
                   url: new URL(
                     publicProductPath(profile.username, product.public_slug),
-                    configuredPublicOrigin(process.env.VITE_PUBLIC_URL),
+                    "http://localhost:8080",
                   ).toString(),
                   priceAmount: product.price_amount,
                   currency: product.currency,
@@ -1141,10 +1153,9 @@ export async function processAudienceCampaignDelivery(campaignId: string) {
     profile.display_name ||
     profile.username ||
     "A Bento creator";
-  const publicOrigin = configuredPublicOrigin(process.env.VITE_PUBLIC_URL);
   const creatorUrl = profile.username
-    ? `${publicOrigin}/@${encodeURIComponent(profile.username)}`
-    : publicOrigin;
+    ? `http://localhost:8080/@${encodeURIComponent(profile.username)}`
+    : "http://localhost:8080";
   const subscriptionByContact = new Map<string, string>();
   if (delivery.kind === "newsletter" && delivery.publication_id) {
     const { data: subscriptions, error: subscriptionsError } = await db

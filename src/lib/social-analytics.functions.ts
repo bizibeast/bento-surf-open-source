@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Provider payloads are normalized at this boundary. */
 import { createServerFn } from "@tanstack/react-start";
+import { setSystemPageVisibility } from "./pages.functions";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
@@ -14,6 +15,7 @@ import { planHasEntitlement } from "./plans";
 import { enforceRequestRateLimit, readResponseText } from "./request-security.server";
 import { socialApiErrorMessage, socialApiPayloadHasError } from "./social-provider-response";
 import {
+  buildYouTubeChannelUrl,
   fetchSocialContentInsightsPage,
   type SocialContentInsight,
 } from "./social-content-insights.server";
@@ -21,6 +23,7 @@ import { accessTokenForConnection, ProviderError } from "./social-publisher.serv
 import type { SocialProvider } from "./social-scheduler";
 
 export const SOCIAL_INSIGHTS_LEASE_MS = 15 * 60_000;
+export const SOCIAL_INSIGHTS_REFRESH_INTERVAL_MS = 24 * 60 * 60_000;
 export const SOCIAL_INSIGHTS_DISPLAY_PERIODS = [30, 90, 365] as const;
 export type SocialInsightsDisplayPeriodDays = (typeof SOCIAL_INSIGHTS_DISPLAY_PERIODS)[number];
 
@@ -75,6 +78,7 @@ export type NormalizedSocialInsightsBackfillMessage = SocialInsightsBackfillMess
 
 type SocialInsightsSnapshotLease = {
   connection_id: string;
+  fetched_at?: string | null;
   refresh_job_id?: string | null;
   refresh_stage?: "account" | "content" | null;
   refresh_cursor?: string | null;
@@ -157,7 +161,13 @@ export function socialInsightsBackfillTargets<T extends { id: string }>(
     const snapshot = byConnection.get(connection.id);
     if (socialInsightsLeaseIsActive(snapshot, now)) return false;
     if (snapshot?.refresh_started_at) return true;
-    return force || !snapshot?.history_imported_at;
+    const fetchedAt = Date.parse(snapshot?.fetched_at || "");
+    return (
+      force ||
+      !snapshot?.history_imported_at ||
+      !Number.isFinite(fetchedAt) ||
+      fetchedAt <= now.getTime() - SOCIAL_INSIGHTS_REFRESH_INTERVAL_MS
+    );
   });
 }
 
@@ -201,6 +211,7 @@ type LinkedInDailyMetric = (typeof LINKEDIN_DAILY_METRICS)[number];
 
 export function socialAnalyticsNumber(...values: unknown[]) {
   for (const value of values) {
+    if (typeof value !== "number" && typeof value !== "string") continue;
     const parsed = typeof value === "string" && value.trim() === "" ? NaN : Number(value);
     if (Number.isFinite(parsed) && parsed >= 0) return Math.trunc(parsed);
   }
@@ -571,7 +582,10 @@ async function linkedInTotalMetric(metric: string, token: string) {
   return socialAnalyticsNumber(data.elements?.[0]?.count);
 }
 
-async function fetchProviderAnalytics(connection: any, token: string): Promise<ProviderAnalytics> {
+export async function fetchProviderAnalytics(
+  connection: any,
+  token: string,
+): Promise<ProviderAnalytics> {
   const provider = connection.provider as SocialProvider;
   const scopes = new Set<string>(connection.scopes || []);
 
@@ -704,25 +718,27 @@ async function fetchProviderAnalytics(connection: any, token: string): Promise<P
   }
 
   if (provider === "linkedin") {
-    if (!scopes.has("r_member_profileAnalytics") || !scopes.has("r_member_postAnalytics")) {
+    if (!scopes.has("r_member_profileAnalytics") && !scopes.has("r_member_postAnalytics")) {
       return unavailable(
         "Reconnect LinkedIn after Bento's Member Analytics and Member Post Analytics products are approved.",
       );
     }
     const [data, views, reach, reactions, comments, reshares] = await Promise.all([
-      providerJson(
-        "https://api.linkedin.com/rest/memberFollowersCount?q=me",
-        token,
-        linkedInHeaders(),
+      scopes.has("r_member_profileAnalytics")
+        ? providerJson(
+            "https://api.linkedin.com/rest/memberFollowersCount?q=me",
+            token,
+            linkedInHeaders(),
+          ).catch(optionalProviderAnalytics)
+        : Promise.resolve(null),
+      ...["IMPRESSION", "MEMBERS_REACHED", "REACTION", "COMMENT", "RESHARE"].map((metric) =>
+        scopes.has("r_member_postAnalytics")
+          ? linkedInTotalMetric(metric, token).catch(optionalProviderAnalytics)
+          : Promise.resolve(null),
       ),
-      linkedInTotalMetric("IMPRESSION", token),
-      linkedInTotalMetric("MEMBERS_REACHED", token),
-      linkedInTotalMetric("REACTION", token),
-      linkedInTotalMetric("COMMENT", token),
-      linkedInTotalMetric("RESHARE", token),
     ]);
     return {
-      followers: socialAnalyticsNumber(data.elements?.[0]?.memberFollowersCount),
+      followers: socialAnalyticsNumber(data?.elements?.[0]?.memberFollowersCount),
       following: null,
       posts: null,
       views,
@@ -731,7 +747,7 @@ async function fetchProviderAnalytics(connection: any, token: string): Promise<P
         reactions === null && comments === null && reshares === null
           ? null
           : (reactions || 0) + (comments || 0) + (reshares || 0),
-      status: "available",
+      status: data && views !== null ? "available" : "partial",
       note: "LinkedIn audience and lifetime member-post analytics from the official APIs.",
     };
   }
@@ -762,12 +778,9 @@ async function fetchProviderAnalytics(connection: any, token: string): Promise<P
     analyticsUrl.searchParams.delete("dimensions");
     analyticsUrl.searchParams.delete("sort");
     const [data, report] = await Promise.all([
-      providerJson(
-        "https://www.googleapis.com/youtube/v3/channels?part=statistics&mine=true",
-        token,
-      ),
+      providerJson(buildYouTubeChannelUrl(connection.provider_user_id, "statistics"), token),
       scopes.has("https://www.googleapis.com/auth/yt-analytics.readonly")
-        ? providerJson(analyticsUrl, token)
+        ? providerJson(analyticsUrl, token).catch(optionalProviderAnalytics)
         : Promise.resolve(null),
     ]);
     const statistics = data.items?.[0]?.statistics || {};
@@ -832,7 +845,7 @@ function snapshotRow(row: any, connectionAvatarUrl?: string | null): SocialAnaly
   return {
     connectionId: row.connection_id,
     provider: row.provider,
-    handle: row.provider_handle,
+    handle: String(row.provider_handle || "").replace(/^@+/, ""),
     displayName: row.provider_display_name,
     avatarUrl: socialAnalyticsAvatarUrl(row.provider_avatar_url, connectionAvatarUrl),
     followers: socialAnalyticsNumber(row.followers),
@@ -907,11 +920,15 @@ async function fetchProviderDailyHistory(
     start.setUTCDate(start.getUTCDate() - 366);
     const payloads = await Promise.all(
       LINKEDIN_DAILY_METRICS.map((metric) =>
-        providerJson(buildLinkedInDailyAnalyticsUrl(metric, start, end), token, linkedInHeaders()),
+        providerJson(
+          buildLinkedInDailyAnalyticsUrl(metric, start, end),
+          token,
+          linkedInHeaders(),
+        ).catch(optionalProviderAnalytics),
       ),
     );
     return normalizeLinkedInDailyAnalytics(
-      payloads.flatMap((payload) => (Array.isArray(payload.elements) ? payload.elements : [])),
+      payloads.flatMap((payload) => (Array.isArray(payload?.elements) ? payload.elements : [])),
     ).map((point) => ({ ...point, reach: null }));
   }
   if (connection.provider === "facebook" && scopes.has("read_insights")) {
@@ -1223,7 +1240,14 @@ async function processSocialInsightsAccountStage(
 ) {
   const db = supabaseAdmin as any;
   const token = await accessTokenForConnection(connection);
-  const analytics = await fetchProviderAnalytics(connection, token);
+  const analytics = await fetchProviderAnalytics(connection, token).catch((error) => {
+    if (!isSocialInsightsCapabilityError(error)) throw error;
+    return unavailable(
+      error instanceof Error
+        ? error.message
+        : "Account analytics are unavailable; importing accessible posts.",
+    );
+  });
   const warnings: string[] = [];
   let dailyHistory: DailyPerformancePoint[] = [];
   try {
@@ -1263,9 +1287,9 @@ async function processSocialInsightsAccountStage(
       followers: analytics.followers,
       following: analytics.following,
       posts: analytics.posts,
-      views: dailyHistory.length ? null : analytics.views,
-      reach: dailyHistory.length ? null : analytics.reach,
-      engagements: dailyHistory.length ? null : analytics.engagements,
+      views: null,
+      reach: null,
+      engagements: null,
       status: analytics.status,
       captured_at: message.startedAt,
     },
@@ -1349,7 +1373,7 @@ async function queueSocialInsightsBackfill(userId: string, force: boolean) {
       db
         .from("social_analytics_snapshots")
         .select(
-          "connection_id,refresh_job_id,refresh_stage,refresh_cursor,refresh_processing_at,refresh_started_at,history_imported_at",
+          "connection_id,fetched_at,refresh_job_id,refresh_stage,refresh_cursor,refresh_processing_at,refresh_started_at,history_imported_at",
         )
         .eq("user_id", userId),
     ]);
@@ -1546,6 +1570,18 @@ export async function requeueStaleSocialInsightsBackfills(queue?: SocialInsights
   return { queued: messages.length };
 }
 
+export async function loadSocialAnalyticsPages(
+  fetchPage: (from: number, to: number) => PromiseLike<{ data: any[] | null; error: unknown }>,
+) {
+  const rows: any[] = [];
+  for (let from = 0; ; from += 1000) {
+    const page = await fetchPage(from, from + 999);
+    if (page.error) throw new Error("Historical social analytics could not be loaded.");
+    rows.push(...(page.data || []));
+    if (!page.data || page.data.length < 1000) return rows;
+  }
+}
+
 async function loadSocialAnalytics(userId: string) {
   const db = supabaseAdmin as any;
   let profileResult = await db
@@ -1584,26 +1620,41 @@ async function loadSocialAnalytics(userId: string) {
   const accounts = (rows || []).map((row: any) =>
     snapshotRow(row, connectionAvatars.get(row.connection_id)),
   );
-  const historyResult = await db
-    .from("social_analytics_history")
-    .select("connection_id,followers,posts,views,reach,engagements,status,captured_at")
-    .eq("user_id", userId)
-    .gte("captured_at", new Date(Date.now() - 366 * 24 * 60 * 60_000).toISOString())
-    .order("captured_at", { ascending: true })
-    .limit(2_000);
-  const contentResult = await db
-    .from("social_content_insights")
-    .select("*")
-    .eq("user_id", userId)
-    .gte("published_at", new Date(Date.now() - 366 * 24 * 60 * 60_000).toISOString())
-    .order("published_at", { ascending: false })
-    .limit(2_000);
-  if (historyResult.error || contentResult.error)
-    throw new Error("Historical social analytics could not be loaded.");
-  const content = (contentResult.data || []).map(contentRow);
+  const cutoff = new Date(Date.now() - 366 * 24 * 60 * 60_000).toISOString();
+  const [historyRows, contentRows] = await Promise.all([
+    loadSocialAnalyticsPages((from, to) =>
+      db
+        .from("social_analytics_history")
+        .select("connection_id,followers,posts,views,reach,engagements,status,captured_at")
+        .eq("user_id", userId)
+        .gte("captured_at", cutoff)
+        .order("captured_at", { ascending: true })
+        .order("connection_id", { ascending: true })
+        .range(from, to),
+    ),
+    loadSocialAnalyticsPages((from, to) =>
+      db
+        .from("social_content_insights")
+        .select("*")
+        .eq("user_id", userId)
+        .gte("published_at", cutoff)
+        .order("published_at", { ascending: false })
+        .order("connection_id", { ascending: true })
+        .order("remote_post_id", { ascending: true })
+        .range(from, to),
+    ),
+  ]);
+  const activeIds = new Set(
+    accounts.map((account: SocialAnalyticsAccount) => account.connectionId),
+  );
+  const content = contentRows
+    .map(contentRow)
+    .filter((item: SocialContentInsight) => activeIds.has(item.connectionId));
   return {
     accounts,
-    history: (historyResult.data || []).map(historyRow),
+    history: historyRows
+      .map(historyRow)
+      .filter((point: SocialAnalyticsHistoryPoint) => activeIds.has(point.connectionId)),
     content,
     summary: summarizeSocialAnalytics(accounts),
     shareEnabled: Boolean(profile?.social_insights_enabled),
@@ -1675,6 +1726,7 @@ export const setPublicSocialInsights = createServerFn({ method: "POST" })
       .select("username,social_insights_enabled")
       .single();
     if (error) throw new Error("The public Insights page could not be updated.");
+    await setSystemPageVisibility(context.supabase, context.userId, "insights", data.enabled);
     return {
       enabled: Boolean(profile.social_insights_enabled),
       publicUrl: profile.username ? publicProfileUrl(profile.username, "insights") : null,

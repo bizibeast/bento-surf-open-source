@@ -1,9 +1,9 @@
-import { configuredPublicOrigin } from "@/lib/application-urls";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Referral tables ship with the paired migration. */
 import { createServerFn } from "@tanstack/react-start";
 import { deleteCookie, getCookie, getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { configuredPublicOrigin } from "@/lib/application-urls";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { captureServerEvent } from "./posthog.server";
 import { REFERRAL_COOKIE, referralCookieSettings, referralTokenHash } from "./referral.server";

@@ -23,10 +23,9 @@ import { toast } from "sonner";
 import { AppHeader } from "@/components/AppHeader";
 import { MobileTabSelect } from "@/components/MobileTabSelect";
 import { micro } from "@/lib/micro-app-ui";
-import { configuredMcpEndpoint } from "@/lib/application-urls";
 import bentoSkill from "../../../skills/bento/SKILL.md?raw";
 
-const MCP_URL = configuredMcpEndpoint(import.meta.env.VITE_APP_URL);
+const MCP_URL = "http://localhost:8080/mcp";
 const MCP_CONFIG = `{
   "mcpServers": {
     "bento": {

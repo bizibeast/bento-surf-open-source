@@ -1,4 +1,3 @@
-import { configuredAppOrigin } from "@/lib/application-urls";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Private payment tables are added by a pending migration. */
 import { createServerFn } from "@tanstack/react-start";
 import { requirePlanEntitlement } from "@/lib/plan.server";
@@ -120,7 +119,7 @@ export const completePolarConnection = createServerFn({ method: "POST" })
     const existing = await getPolarPaymentAccount(oauthState.creator_id);
     const connectionId = existing?.id || crypto.randomUUID();
     const webhook = await polar.webhooks.createWebhookEndpoint({
-      url: `${configuredAppOrigin(process.env.VITE_APP_URL)}/api/webhooks/polar/${connectionId}`,
+      url: `${(process.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "")}/api/webhooks/polar/${connectionId}`,
       format: "raw",
       name: "bento.surf orders",
       events: [...POLAR_WEBHOOK_EVENTS],
@@ -180,7 +179,7 @@ export const refreshPolarConnection = createServerFn({ method: "POST" })
       await polar.webhooks.updateWebhookEndpoint({
         id: account.webhook_endpoint_id,
         webhookEndpointUpdate: {
-          url: `${configuredAppOrigin(process.env.VITE_APP_URL)}/api/webhooks/polar/${account.id}`,
+          url: `${(process.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "")}/api/webhooks/polar/${account.id}`,
           name: "bento.surf orders",
           format: "raw",
           events: [...POLAR_WEBHOOK_EVENTS],

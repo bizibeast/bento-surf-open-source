@@ -118,8 +118,8 @@ describe("R2 media storage paths", () => {
   });
 
   it("creates same-origin CDN URLs without carrying query strings", () => {
-    expect(mediaObjectUrl("cache/instagram/bizibeast/POST_1.jpg", "https://bento.surf/")).toBe(
-      "https://bento.surf/cdn/cache/instagram/bizibeast/POST_1.jpg",
+    expect(mediaObjectUrl("cache/instagram/bizibeast/POST_1.jpg", "http://localhost:8080/")).toBe(
+      "http://localhost:8080/cdn/cache/instagram/bizibeast/POST_1.jpg",
     );
   });
 });
@@ -231,7 +231,7 @@ describe("self-service storage management", () => {
     const rateLimit = vi.fn(async () => ({ success: true }));
 
     const response = await handleR2StorageRequest(
-      new Request("https://bento.surf/api/storage/manage", {
+      new Request("http://localhost:8080/api/storage/manage", {
         headers: { authorization: "Bearer test" },
       }),
       { MEDIA_BUCKET: bucket, UPLOAD_RATE_LIMITER: { limit: rateLimit } },
@@ -283,7 +283,7 @@ describe("self-service storage management", () => {
 
     vi.mocked(bucket.list).mockClear();
     const next = await handleR2StorageRequest(
-      new Request("https://bento.surf/api/storage/manage?cursor=private%3Aprivate-next", {
+      new Request("http://localhost:8080/api/storage/manage?cursor=private%3Aprivate-next", {
         headers: { authorization: "Bearer test" },
       }),
       { MEDIA_BUCKET: bucket, UPLOAD_RATE_LIMITER: { limit: rateLimit } },
@@ -306,7 +306,7 @@ describe("self-service storage management", () => {
     const { bucket } = mockBucket();
     const request = (keys: unknown) =>
       handleR2StorageRequest(
-        new Request("https://bento.surf/api/storage/manage", {
+        new Request("http://localhost:8080/api/storage/manage", {
           method: "DELETE",
           headers: { authorization: "Bearer test", "content-type": "application/json" },
           body: JSON.stringify({ keys }),
@@ -345,7 +345,7 @@ describe("self-service storage management", () => {
     storageAnalyticsMocks.captureServerEvent.mockClear();
 
     const response = await handleR2StorageRequest(
-      new Request("https://bento.surf/api/storage/manage", {
+      new Request("http://localhost:8080/api/storage/manage", {
         method: "DELETE",
         headers: { authorization: "Bearer test", "content-type": "application/json" },
         body: JSON.stringify({ keys: [publicKey, privateKey] }),
@@ -374,7 +374,7 @@ describe("self-service storage management", () => {
   it("stores a sanitized original filename in R2 metadata", async () => {
     const { bucket, put } = mockBucket();
     const response = await handleR2StorageRequest(
-      new Request("https://bento.surf/api/storage/upload", {
+      new Request("http://localhost:8080/api/storage/upload", {
         method: "PUT",
         headers: {
           "content-length": String(PNG_BYTES.length),
@@ -402,7 +402,7 @@ describe("self-service storage management", () => {
 
     const emojiBoundaryName = `${"a".repeat(179)}😀tail.png`;
     const emojiResponse = await handleR2StorageRequest(
-      new Request("https://bento.surf/api/storage/upload", {
+      new Request("http://localhost:8080/api/storage/upload", {
         method: "PUT",
         headers: {
           "content-length": String(PNG_BYTES.length),
@@ -434,7 +434,7 @@ describe("R2 upload boundary", () => {
   it("fails closed when deployed upload rate limiting is missing", async () => {
     const { bucket } = mockBucket();
     const response = await handleR2StorageRequest(
-      new Request("https://bento.surf/api/storage/upload", { method: "PUT" }),
+      new Request("http://localhost:8080/api/storage/upload", { method: "PUT" }),
       { APP_ENV: "production", MEDIA_BUCKET: bucket },
       { waitUntil: vi.fn() },
     );
@@ -445,7 +445,7 @@ describe("R2 upload boundary", () => {
   it("stores an authenticated image under the user's isolated prefix", async () => {
     const { bucket, put } = mockBucket();
     const response = await handleR2StorageRequest(
-      new Request("https://bento.surf/api/storage/upload", {
+      new Request("http://localhost:8080/api/storage/upload", {
         method: "PUT",
         headers: {
           "content-length": String(PNG_BYTES.length),
@@ -463,7 +463,7 @@ describe("R2 upload boundary", () => {
     const payload = (await response?.json()) as { key: string; publicUrl: string };
     expect(response?.status).toBe(201);
     expect(payload.key).toMatch(/^users\/user-123\/image\/.+\.png$/);
-    expect(payload.publicUrl).toBe(`https://bento.surf/cdn/${payload.key}`);
+    expect(payload.publicUrl).toBe(`http://localhost:8080/cdn/${payload.key}`);
     expect(put).toHaveBeenCalledOnce();
   });
 
@@ -474,7 +474,7 @@ describe("R2 upload boundary", () => {
     });
 
     const response = await handleR2StorageRequest(
-      new Request("https://bento.surf/api/storage/upload", {
+      new Request("http://localhost:8080/api/storage/upload", {
         method: "PUT",
         headers: {
           "content-length": String(PNG_BYTES.length),
@@ -502,7 +502,7 @@ describe("R2 upload boundary", () => {
   it("rejects unauthenticated and oversized uploads before writing", async () => {
     const { bucket, put } = mockBucket();
     const request = (size: number) =>
-      new Request("https://bento.surf/api/storage/upload", {
+      new Request("http://localhost:8080/api/storage/upload", {
         method: "PUT",
         headers: {
           "content-length": String(size),
@@ -542,7 +542,7 @@ describe("R2 upload boundary", () => {
   ])("rejects active content %s", async (contentType, extension) => {
     const { bucket, put } = mockBucket();
     const response = await handleR2StorageRequest(
-      new Request("https://bento.surf/api/storage/upload", {
+      new Request("http://localhost:8080/api/storage/upload", {
         method: "PUT",
         headers: {
           "content-length": "3",
@@ -564,7 +564,7 @@ describe("R2 upload boundary", () => {
   it("rejects a body that lies about Content-Length", async () => {
     const { bucket } = mockBucket();
     const response = await handleR2StorageRequest(
-      new Request("https://bento.surf/api/storage/upload", {
+      new Request("http://localhost:8080/api/storage/upload", {
         method: "PUT",
         headers: {
           "content-length": "3",
@@ -585,7 +585,7 @@ describe("R2 upload boundary", () => {
   it("keeps paid product files private and refuses public CDN access", async () => {
     const { bucket, put } = mockBucket();
     const upload = await handleR2StorageRequest(
-      new Request("https://test.bento.surf/api/storage/upload", {
+      new Request("http://localhost:8080/api/storage/upload", {
         method: "PUT",
         headers: {
           "content-length": String(PDF_BYTES.length),
@@ -607,7 +607,7 @@ describe("R2 upload boundary", () => {
     expect(put).toHaveBeenCalledOnce();
 
     const read = await handleR2StorageRequest(
-      new Request(`https://test.bento.surf/cdn/${payload.key}`),
+      new Request(`http://localhost:8080/cdn/${payload.key}`),
       { MEDIA_BUCKET: bucket },
       { waitUntil: vi.fn() },
     );
@@ -617,7 +617,7 @@ describe("R2 upload boundary", () => {
   it("accepts the browser file-size header when Content-Length is unavailable", async () => {
     const { bucket, put } = mockBucket();
     const response = await handleR2StorageRequest(
-      new Request("https://bento.surf/api/storage/upload", {
+      new Request("http://localhost:8080/api/storage/upload", {
         method: "PUT",
         headers: {
           "content-type": "application/pdf",
@@ -654,7 +654,7 @@ describe("R2 upload boundary", () => {
     }));
 
     const response = await handleR2StorageRequest(
-      new Request("https://bento.surf/api/storage/upload", {
+      new Request("http://localhost:8080/api/storage/upload", {
         method: "PUT",
         headers: {
           "content-length": String(PDF_BYTES.length),
@@ -693,7 +693,7 @@ describe("R2 upload boundary", () => {
     }));
 
     const response = await handleR2StorageRequest(
-      new Request("https://bento.surf/api/storage/upload", {
+      new Request("http://localhost:8080/api/storage/upload", {
         method: "PUT",
         headers: {
           "content-length": String(PNG_BYTES.length),
@@ -757,7 +757,7 @@ describe("R2 upload boundary", () => {
     }));
 
     const response = await handleR2StorageRequest(
-      new Request("https://bento.surf/api/storage/upload?action=mpu-create", {
+      new Request("http://localhost:8080/api/storage/upload?action=mpu-create", {
         method: "POST",
         headers: {
           "content-type": "video/mp4",
@@ -803,7 +803,7 @@ describe("R2 upload boundary", () => {
     }));
 
     const response = await handleR2StorageRequest(
-      new Request("https://bento.surf/api/storage/upload?action=mpu-create", {
+      new Request("http://localhost:8080/api/storage/upload?action=mpu-create", {
         method: "POST",
         headers: {
           "content-type": "video/mp4",
@@ -841,7 +841,7 @@ describe("R2 upload boundary", () => {
     const { bucket, put } = mockBucket();
     const upload = (contentType: string, extension: string, bytes: Uint8Array<ArrayBuffer>) =>
       handleR2StorageRequest(
-        new Request("https://bento.surf/api/storage/upload", {
+        new Request("http://localhost:8080/api/storage/upload", {
           method: "PUT",
           headers: {
             "content-length": String(bytes.length),
@@ -873,7 +873,7 @@ describe("R2 upload boundary", () => {
     const { bucket, put } = mockBucket();
     const upload = async (contentType: string, extension: string, bytes: Uint8Array<ArrayBuffer>) =>
       handleR2StorageRequest(
-        new Request("https://bento.surf/api/storage/upload", {
+        new Request("http://localhost:8080/api/storage/upload", {
           method: "PUT",
           headers: {
             "content-length": String(bytes.length),
@@ -916,7 +916,7 @@ describe("R2 upload boundary", () => {
 
     const result = await Promise.race([
       handleR2StorageRequest(
-        new Request("https://bento.surf/api/storage/upload", {
+        new Request("http://localhost:8080/api/storage/upload", {
           method: "PUT",
           headers: {
             "content-length": String(bytes.length),
@@ -946,7 +946,7 @@ describe("R2 upload boundary", () => {
     const key = "users/user-123/video/file-mpu-4.webm";
     const response = await handleR2StorageRequest(
       new Request(
-        `https://bento.surf/api/storage/upload?action=mpu-uploadpart&key=${encodeURIComponent(key)}&uploadId=upload-1&partNumber=1`,
+        `http://localhost:8080/api/storage/upload?action=mpu-uploadpart&key=${encodeURIComponent(key)}&uploadId=upload-1&partNumber=1`,
         {
           method: "PUT",
           headers: {
@@ -972,7 +972,7 @@ describe("R2 upload boundary", () => {
     const complete = (parts: Array<{ etag: string; partNumber: number }>) =>
       handleR2StorageRequest(
         new Request(
-          `https://bento.surf/api/storage/upload?action=mpu-complete&key=${encodeURIComponent(key)}&uploadId=upload-1`,
+          `http://localhost:8080/api/storage/upload?action=mpu-complete&key=${encodeURIComponent(key)}&uploadId=upload-1`,
           {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -987,7 +987,7 @@ describe("R2 upload boundary", () => {
     const duplicateKey = "users/user-123/video/file-mpu-8388609.webm";
     const duplicate = await handleR2StorageRequest(
       new Request(
-        `https://bento.surf/api/storage/upload?action=mpu-complete&key=${encodeURIComponent(duplicateKey)}&uploadId=upload-1`,
+        `http://localhost:8080/api/storage/upload?action=mpu-complete&key=${encodeURIComponent(duplicateKey)}&uploadId=upload-1`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -1016,7 +1016,7 @@ describe("R2 upload boundary", () => {
     const key = "users/user-123/video/file-mpu-4.webm";
     const response = await handleR2StorageRequest(
       new Request(
-        `https://bento.surf/api/storage/upload?action=mpu-complete&key=${encodeURIComponent(key)}&uploadId=upload-1`,
+        `http://localhost:8080/api/storage/upload?action=mpu-complete&key=${encodeURIComponent(key)}&uploadId=upload-1`,
         {
           method: "POST",
           headers: { "content-length": String(64 * 1024 + 1) },

@@ -298,7 +298,10 @@ export function AddBlockPicker({
                       >
                         <span
                           className="relative flex size-14 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-black/5 shadow-[var(--shadow-subtle)] sm:size-16"
-                          style={{ background: p.color, color: p.fg ?? "#fff" }}
+                          style={{
+                            background: p.category === "custom" ? "#eef5ff" : p.color,
+                            color: p.category === "custom" ? "#245fd0" : (p.fg ?? "#fff"),
+                          }}
                         >
                           <Icon className="relative size-5 sm:size-6" />
                         </span>

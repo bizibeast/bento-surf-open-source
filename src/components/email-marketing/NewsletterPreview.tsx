@@ -1,6 +1,5 @@
 import { useMemo, useRef, useState } from "react";
 import { renderBentoEmail } from "@/lib/email-templates";
-import { configuredPublicOrigin } from "@/lib/application-urls";
 import type { NewsletterContentBlock } from "@/lib/newsletter";
 import { resolveNewsletterTemplate, type NewsletterTemplateId } from "@/lib/newsletter-templates";
 import {
@@ -52,7 +51,6 @@ export function NewsletterPreview({
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const active = modes.find((candidate) => candidate.id === activeMode) ?? modes[0];
   const presentation = resolveNewsletterTemplate(templateId)?.presentation;
-  const publicOrigin = configuredPublicOrigin(import.meta.env.VITE_PUBLIC_URL);
   const email = useMemo(
     () =>
       renderBentoEmail({
@@ -64,22 +62,20 @@ export function NewsletterPreview({
           body: previewText,
           creatorName: publicationName,
           newsletterLogoUrl: publicationLogoUrl || null,
-          creatorUrl: publicOrigin,
+          creatorUrl: "http://localhost:8080",
           newsletterContent: content,
           newsletterProducts: products,
           newsletterTemplateId: templateId,
           postalAddress,
         },
-        appUrl: publicOrigin,
-        publicUrl: publicOrigin,
-        unsubscribeUrl: `${publicOrigin}/unsubscribe`,
+        appUrl: "http://localhost:8080",
+        unsubscribeUrl: "http://localhost:8080/unsubscribe",
       }),
     [
       content,
       postalAddress,
       postTitle,
       previewText,
-      publicOrigin,
       products,
       publicationLogoUrl,
       publicationName,

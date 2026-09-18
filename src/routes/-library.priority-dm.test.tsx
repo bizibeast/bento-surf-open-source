@@ -390,24 +390,25 @@ describe("customer library conversation return path", () => {
     });
   });
 
-  it("redirects a consumed link only to its sanitized Priority DM path", async () => {
-    vi.mocked(consumeCustomerLibraryLink).mockResolvedValue({ ok: true });
+  it("does not consume a library link during GET, prefetch, or hydration", () => {
     const loader = (
       VerifyRoute as unknown as {
-        loader: (input: { deps: { token: string; returnTo: string } }) => Promise<unknown>;
+        loader: (input: { deps: { token: string; returnTo: string } }) => unknown;
       }
     ).loader;
-
-    await expect(loader({ deps: { token: "x".repeat(32), returnTo } })).rejects.toEqual({
-      redirect: { href: returnTo },
-    });
+    expect(loader({ deps: { token: "x".repeat(32), returnTo } })).toEqual({ invalid: false });
+    expect(consumeCustomerLibraryLink).not.toHaveBeenCalled();
   });
 
   it("keeps the safe return path on an expired link's request-new-link action", () => {
     routeState.search = { token: "expired", returnTo } as never;
     const InvalidLink = (VerifyRoute as unknown as { component: ComponentType }).component;
 
-    render(<InvalidLink />);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <InvalidLink />
+      </QueryClientProvider>,
+    );
 
     expect(screen.getByRole("link", { name: "Request a new link" })).toHaveAttribute(
       "href",

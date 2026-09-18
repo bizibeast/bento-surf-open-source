@@ -21,7 +21,6 @@ import {
 import { useEffect, useState } from "react";
 import { DecodedImage } from "@/components/DecodedImage";
 import { BentoIcon } from "@/components/BentoBrand";
-import { getInstancePublicConfig } from "@/lib/instance-public-config";
 import { safeMediaUrl } from "@/lib/safe-url";
 
 export const APP_NAV_ITEMS = [
@@ -178,7 +177,6 @@ function SidebarPanel({
   onNavigate: () => void;
 }) {
   const pathname = pathnameOverride ?? "/home";
-  const { sourceUrl } = getInstancePublicConfig(import.meta.env);
 
   return (
     <>
@@ -239,15 +237,6 @@ function SidebarPanel({
       </nav>
 
       <ProfileCard profile={profile} collapsed={collapsed} />
-      {sourceUrl && (
-        <a
-          href={sourceUrl}
-          className="mt-2 rounded-lg px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-          rel="noreferrer"
-        >
-          Source
-        </a>
-      )}
     </>
   );
 }

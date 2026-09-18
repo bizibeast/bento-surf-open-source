@@ -1,7 +1,9 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  fetchProviderAnalytics,
+  loadSocialAnalyticsPages,
   buildFacebookPageInsightsUrl,
   buildFacebookPageHistoryUrl,
   buildLinkedInDailyAnalyticsUrl,
@@ -141,7 +143,12 @@ describe("social analytics", () => {
 
   it("keeps fresh imports exclusive even when refresh is forced and recovers stale imports", () => {
     const now = new Date("2026-08-20T00:20:00.000Z");
-    const connections = [{ id: "fresh" }, { id: "stale" }, { id: "completed" }];
+    const connections = [
+      { id: "fresh" },
+      { id: "stale" },
+      { id: "completed" },
+      { id: "stale-completed" },
+    ];
     const snapshots = [
       {
         connection_id: "fresh",
@@ -160,6 +167,14 @@ describe("social analytics", () => {
         refresh_job_id: null,
         refresh_started_at: null,
         history_imported_at: "2026-08-19T00:00:00.000Z",
+        fetched_at: "2026-08-19T23:00:00.000Z",
+      },
+      {
+        connection_id: "stale-completed",
+        refresh_job_id: null,
+        refresh_started_at: null,
+        history_imported_at: "2026-08-18T00:00:00.000Z",
+        fetched_at: "2026-08-18T00:00:00.000Z",
       },
     ];
 
@@ -169,12 +184,12 @@ describe("social analytics", () => {
       socialInsightsBackfillTargets(connections, snapshots, { force: false, now }).map(
         (connection) => connection.id,
       ),
-    ).toEqual(["stale"]);
+    ).toEqual(["stale", "stale-completed"]);
     expect(
       socialInsightsBackfillTargets(connections, snapshots, { force: true, now }).map(
         (connection) => connection.id,
       ),
-    ).toEqual(["stale", "completed"]);
+    ).toEqual(["stale", "completed", "stale-completed"]);
   });
 
   it("adds job ownership to the social analytics snapshot schema", () => {
@@ -509,4 +524,62 @@ describe("social analytics", () => {
       ]).map((item) => item.remotePostId),
     ).toEqual(["same-video"]);
   });
+});
+
+afterEach(() => vi.unstubAllGlobals());
+
+it("preserves unavailable metrics and skips non-numeric fallback values", () => {
+  expect(socialAnalyticsNumber(null, false, [], {}, "", "42")).toBe(42);
+  expect(socialAnalyticsNumber(null, undefined, true)).toBeNull();
+  expect(socialAnalyticsNumber(0, 42)).toBe(0);
+});
+
+it("loads history beyond the database page cap and does not return partial success on failure", async () => {
+  const page = vi
+    .fn()
+    .mockResolvedValueOnce({ data: Array(1000).fill({ id: 1 }), error: null })
+    .mockResolvedValueOnce({ data: [{ id: 2 }], error: null });
+  expect(await loadSocialAnalyticsPages(page)).toHaveLength(1001);
+  expect(page).toHaveBeenNthCalledWith(2, 1000, 1999);
+  await expect(
+    loadSocialAnalyticsPages(async () => ({ data: null, error: { message: "offline" } })),
+  ).rejects.toThrow();
+});
+
+it("keeps LinkedIn follower totals when post analytics are not approved", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(JSON.stringify({ elements: [{ memberFollowersCount: 42 }] }))),
+  );
+  const result = await fetchProviderAnalytics(
+    { provider: "linkedin", scopes: ["r_member_profileAnalytics"] },
+    "test-token",
+  );
+  expect(result).toMatchObject({
+    followers: 42,
+    views: null,
+    engagements: null,
+    status: "partial",
+  });
+});
+
+it("keeps YouTube channel totals when optional Analytics access is unavailable", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url) =>
+      String(url).includes("youtubeanalytics")
+        ? new Response(JSON.stringify({ error: { message: "Not approved" } }), { status: 403 })
+        : new Response(
+            JSON.stringify({
+              items: [{ statistics: { subscriberCount: "42", viewCount: "123", videoCount: "6" } }],
+            }),
+          ),
+    ),
+  );
+  expect(
+    await fetchProviderAnalytics(
+      { provider: "youtube", scopes: ["https://www.googleapis.com/auth/yt-analytics.readonly"] },
+      "test-token",
+    ),
+  ).toMatchObject({ followers: 42, views: 123, status: "partial" });
 });

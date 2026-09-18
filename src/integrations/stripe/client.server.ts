@@ -1,4 +1,3 @@
-import { configuredAppOrigin } from "@/lib/application-urls";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Stripe responses are validated at their use sites. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { decryptServerSecret } from "@/lib/secret-crypto.server";
@@ -73,7 +72,7 @@ function stripeConnectClientId() {
 }
 
 export function stripeRedirectUri() {
-  const origin = configuredAppOrigin(process.env.VITE_APP_URL);
+  const origin = (process.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "");
   return `${origin}/integrations/stripe/callback`;
 }
 
@@ -171,7 +170,7 @@ export async function verifyStripeDirectRestrictedKey(restrictedKey: string) {
 }
 
 export function stripeDirectWebhookUrl(connectionId: string) {
-  const origin = configuredAppOrigin(process.env.VITE_APP_URL);
+  const origin = (process.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "");
   return `${origin}/api/webhooks/stripe/direct/${encodeURIComponent(connectionId)}`;
 }
 

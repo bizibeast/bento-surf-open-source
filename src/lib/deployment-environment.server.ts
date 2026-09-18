@@ -1,3 +1,5 @@
+export const PRODUCTION_SUPABASE_PROJECT_ID = "qefsatsrhpmgoahutkqu";
+
 export type DeploymentEnvironment = "production" | "staging";
 
 type RuntimeEnvironment = Record<string, unknown> | undefined;
@@ -29,7 +31,6 @@ export function getStagingIsolationErrors(env?: RuntimeEnvironment) {
   const errors: string[] = [];
   const projectId = readString(env, "SUPABASE_PROJECT_ID");
   const projectIdFromUrl = supabaseProjectIdFromUrl(readString(env, "SUPABASE_URL"));
-  const productionProjectId = readString(env, "PRODUCTION_SUPABASE_PROJECT_ID");
 
   if (!projectId || !projectIdFromUrl) {
     errors.push("A separate staging Supabase project is not configured.");
@@ -38,8 +39,8 @@ export function getStagingIsolationErrors(env?: RuntimeEnvironment) {
   }
 
   if (
-    productionProjectId &&
-    (projectId === productionProjectId || projectIdFromUrl === productionProjectId)
+    projectId === PRODUCTION_SUPABASE_PROJECT_ID ||
+    projectIdFromUrl === PRODUCTION_SUPABASE_PROJECT_ID
   ) {
     errors.push("The staging Worker is pointing at the production Supabase project.");
   }

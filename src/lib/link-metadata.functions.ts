@@ -16,7 +16,7 @@ export type LinkMetadata = {
 const MAX_HTML_BYTES = 200_000;
 const MAX_FAVICON_BYTES = 256_000;
 const MAX_REDIRECTS = 4;
-const BOT_UA = "Mozilla/5.0 (compatible; BentoSurfBot/1.0)";
+const BOT_UA = "Mozilla/5.0 (compatible; BentoSurfBot/1.0; +http://localhost:8080)";
 
 function absolutizePublic(base: string, href: string): string | null {
   try {

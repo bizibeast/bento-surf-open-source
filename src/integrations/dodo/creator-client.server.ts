@@ -1,4 +1,3 @@
-import { configuredAppOrigin } from "@/lib/application-urls";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Creator payment accounts are read with the service role. */
 import DodoPayments from "dodopayments";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
@@ -49,7 +48,7 @@ export const DODO_CREATOR_WEBHOOK_EVENTS = [
 ] as const;
 
 export function dodoCreatorWebhookUrl(connectionId: string) {
-  const origin = configuredAppOrigin(process.env.VITE_APP_URL);
+  const origin = (process.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "");
   return `${origin}/api/webhooks/dodo/direct/${encodeURIComponent(connectionId)}`;
 }
 

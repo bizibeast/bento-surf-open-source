@@ -1,4 +1,3 @@
-import { configuredAppOrigin } from "@/lib/application-urls";
 import { createServerFn } from "@tanstack/react-start";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
@@ -77,7 +76,7 @@ async function createHostedCheckoutSession(input: {
     throw new Error(`No Dodo product configured for ${input.plan} ${input.period}.`);
   }
 
-  const appUrl = configuredAppOrigin(process.env.VITE_APP_URL);
+  const appUrl = process.env.VITE_APP_URL || "http://localhost:8080";
   let session: Awaited<ReturnType<typeof dodo.checkoutSessions.create>>;
   try {
     const addons = input.addons
@@ -100,7 +99,7 @@ async function createHostedCheckoutSession(input: {
       period: input.period,
     });
     throw new Error(
-      "Secure checkout is temporarily unavailable. Please try again or contact the instance operator.",
+      "Secure checkout is temporarily unavailable. Please try again or contact support@example.com.",
     );
   }
 
@@ -415,7 +414,7 @@ export const changeMyPlan = createServerFn({ method: "POST" })
         const period = normalizeBillingPeriod(subscription.billing_interval);
         if (!period) {
           throw new Error(
-            "Your previous billing subscription cannot be migrated automatically. Contact the instance operator for help.",
+            "Your previous billing subscription cannot be migrated automatically. Contact support@example.com for help.",
           );
         }
         const email = typeof claims.email === "string" ? claims.email : undefined;
@@ -451,7 +450,7 @@ export const changeMyPlan = createServerFn({ method: "POST" })
         nextPlan: data.plan,
       });
       throw new Error(
-        "Your subscription could not be verified. Please try again or contact the instance operator.",
+        "Your subscription could not be verified. Please try again or contact support@example.com.",
       );
     }
 
@@ -511,7 +510,7 @@ export const changeMyPlan = createServerFn({ method: "POST" })
         period,
       });
       throw new Error(
-        "Your plan could not be changed right now. Please try again or contact the instance operator.",
+        "Your plan could not be changed right now. Please try again or contact support@example.com.",
       );
     }
 
@@ -571,7 +570,7 @@ export const updateMyBillingAddons = createServerFn({ method: "POST" })
         userId,
       });
       throw new Error(
-        "Your subscription could not be verified. Please try again or contact the instance operator.",
+        "Your subscription could not be verified. Please try again or contact support@example.com.",
       );
     }
 
@@ -586,7 +585,7 @@ export const updateMyBillingAddons = createServerFn({ method: "POST" })
       (remotePeriod !== null && remotePeriod !== remoteProduct.period)
     ) {
       throw new Error(
-        "Your subscription could not be verified. Please try again or contact the instance operator.",
+        "Your subscription could not be verified. Please try again or contact support@example.com.",
       );
     }
     const period = remoteProduct.period;
@@ -607,7 +606,7 @@ export const updateMyBillingAddons = createServerFn({ method: "POST" })
         period,
       });
       throw new Error(
-        "Your add-ons could not be changed right now. Please try again or contact the instance operator.",
+        "Your add-ons could not be changed right now. Please try again or contact support@example.com.",
       );
     }
 
@@ -671,7 +670,7 @@ export const createMyBillingPortal = createServerFn({ method: "POST" })
     }
     if (!customerId) throw new Error("Your billing profile could not be found.");
 
-    const appUrl = configuredAppOrigin(process.env.VITE_APP_URL);
+    const appUrl = process.env.VITE_APP_URL || "http://localhost:8080";
     const returnUrl = new URL("/settings?section=plan", appUrl).toString();
     const session = await dodo.customers.customerPortal.create(customerId, {
       return_url: returnUrl,

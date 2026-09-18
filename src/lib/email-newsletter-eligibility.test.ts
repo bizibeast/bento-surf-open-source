@@ -46,7 +46,7 @@ const row = {
     audienceContactId: "55555555-5555-4555-8555-555555555555",
     creatorId: "44444444-4444-4444-8444-444444444444",
     creatorName: "Ari",
-    creatorUrl: "https://bento.surf/@ari",
+    creatorUrl: "http://localhost:8080/@ari",
     subject: "Studio Notes",
     previewText: "Issue preview",
     body: "Issue body",

@@ -5,7 +5,8 @@ import {
   createRootRouteWithContext,
   useRouter,
   useRouterState,
-  HeadContent,
+  Asset,
+  useTags,
   Scripts,
 } from "@tanstack/react-router";
 import { useEffect, useMemo } from "react";
@@ -15,8 +16,6 @@ import { Toaster } from "sonner";
 import appCss from "../styles.css?url";
 import { HoverGuide } from "@/components/HoverGuide";
 import { shouldInvalidateRouterForAuthEvent } from "@/lib/auth-route-refresh";
-import { configuredPublicOrigin } from "@/lib/application-urls";
-import { DEFAULT_OPEN_GRAPH_IMAGE_PATH, DEFAULT_OPEN_GRAPH_IMAGE_VERSION } from "@/lib/open-graph";
 import { safeWebMcpPathname, useWebMcpTools, webMcpResult } from "@/lib/webmcp";
 
 // After a deploy, tabs loaded against the previous asset manifest 404 when they
@@ -35,6 +34,8 @@ if (typeof window !== "undefined") {
 }
 
 function NotFoundComponent() {
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const creator = pathname.match(/^\/(@[a-z0-9_]+)(?:\/|$)/i)?.[1];
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="max-w-md text-center">
@@ -44,11 +45,17 @@ function NotFoundComponent() {
           The page you're looking for doesn't exist.
         </p>
         <div className="mt-6">
-          <Link
-            to="/"
+          <a
+            href={creator ? "/" + creator : "/"}
             className="inline-flex items-center justify-center rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition hover:opacity-90"
           >
-            Go home
+            {creator ? "Back to creator" : "Go home"}
+          </a>
+          <Link to="/explore" search={{ q: "", page: 1 }} className="ml-4 text-sm underline">
+            Explore
+          </Link>
+          <Link to="/signup" className="ml-4 text-sm underline">
+            Sign up
           </Link>
         </div>
       </div>
@@ -127,35 +134,45 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
 }
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
-  head: () => {
-    const appName = import.meta.env.VITE_APP_NAME?.trim() || "Bento Surf";
-    const publicOrigin = configuredPublicOrigin(import.meta.env.VITE_PUBLIC_URL);
-    const previewImage =
-      import.meta.env.VITE_PREVIEW_IMAGE_URL?.trim() ||
-      `${publicOrigin}${DEFAULT_OPEN_GRAPH_IMAGE_PATH}?v=${DEFAULT_OPEN_GRAPH_IMAGE_VERSION}`;
-    const description = "A self-hostable creator business application.";
+  head: ({ matches }) => {
+    const publicOrigin = (import.meta.env.VITE_PUBLIC_URL || "http://localhost:8080").replace(
+      /\/$/,
+      "",
+    );
+    const previewImage = `${publicOrigin}/branding/bento-preview.png?v=20260727`;
 
     return {
       meta: [
         { charSet: "utf-8" },
         { name: "viewport", content: "width=device-width, initial-scale=1" },
         { name: "theme-color", content: "#f7f8fc" },
-        { title: appName },
-        { name: "description", content: description },
-        { name: "author", content: appName },
-        { property: "og:site_name", content: appName },
-        { property: "og:title", content: appName },
-        { property: "og:description", content: description },
+        {
+          title: matches.some((match) => match.status === "notFound" || match.globalNotFound)
+            ? "Page not found | bento.surf"
+            : "bento.surf - the creator business operating system",
+        },
+        {
+          name: "description",
+          content:
+            "Run your creator page, store, bookings, social posts, Instagram automations, courses, and community from one beautiful Bento.",
+        },
+        { name: "author", content: "bento.surf" },
+        { property: "og:site_name", content: "bento.surf" },
+        { property: "og:title", content: "bento.surf - run your creator business in one place" },
+        {
+          property: "og:description",
+          content: "Replace a stack of creator tools with one storefront and operating system.",
+        },
         { property: "og:type", content: "website" },
         { property: "og:image", content: previewImage },
         { property: "og:image:secure_url", content: previewImage },
         { property: "og:image:type", content: "image/png" },
-        { property: "og:image:width", content: "512" },
-        { property: "og:image:height", content: "512" },
-        { property: "og:image:alt", content: `${appName} preview` },
+        { property: "og:image:width", content: "1200" },
+        { property: "og:image:height", content: "630" },
+        { property: "og:image:alt", content: "bento.surf logo" },
         { name: "twitter:card", content: "summary_large_image" },
         { name: "twitter:image", content: previewImage },
-        { name: "twitter:image:alt", content: `${appName} preview` },
+        { name: "twitter:image:alt", content: "bento.surf logo" },
         ...(import.meta.env.VITE_APP_ENV === "staging"
           ? [{ name: "robots", content: "noindex, nofollow, noarchive" }]
           : []),
@@ -204,11 +221,33 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
   errorComponent: ErrorComponent,
 });
 
+function RouteHeadContent() {
+  const tags = useTags();
+  const nonce = useRouter().options.ssr?.nonce;
+  const notFound = useRouterState({
+    select: (state) =>
+      state.matches.some((match) => match.status === "notFound" || match.globalNotFound),
+  });
+  return (
+    <>
+      {tags.map((tag) => (
+        <Asset
+          {...(notFound && tag.tag === "title"
+            ? { ...tag, children: "Page not found | bento.surf" }
+            : tag)}
+          key={JSON.stringify(tag)}
+          nonce={nonce}
+        />
+      ))}
+    </>
+  );
+}
+
 function RootShell({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <HeadContent />
+        <RouteHeadContent />
       </head>
       <body>
         {children}
@@ -256,9 +295,19 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+        <a
+          href="#main-content"
+          className="fixed left-4 top-4 z-[100] -translate-y-24 rounded-lg bg-foreground px-4 py-2 text-sm font-semibold text-background shadow-lg transition-transform focus:translate-y-0 focus:outline-none focus:ring-2 focus:ring-ring"
+        >
+          Skip to main content
+        </a>
         <ProductAnalyticsSync />
         <AuthSync />
-        <div className={rectangularUi ? "app-ui-rectangular" : undefined}>
+        <div
+          id="main-content"
+          tabIndex={-1}
+          className={rectangularUi ? "app-ui-rectangular" : undefined}
+        >
           <Outlet />
         </div>
         <HoverGuide />

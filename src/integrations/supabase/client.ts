@@ -19,13 +19,27 @@ function createSupabaseClient() {
     throw new Error(message);
   }
 
-  return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+  const client = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     auth: {
       storage: typeof window !== "undefined" ? localStorage : undefined,
       persistSession: true,
       autoRefreshToken: true,
     },
   });
+  if (typeof document !== "undefined") {
+    client.auth.onAuthStateChange((_event, session) => {
+      const maxAge = session?.expires_at
+        ? Math.max(0, session.expires_at - Math.floor(Date.now() / 1000))
+        : 0;
+      document.cookie =
+        "bento_creator_access=" +
+        encodeURIComponent(session?.access_token || "") +
+        "; Path=/; SameSite=Lax; Max-Age=" +
+        maxAge +
+        (window.location.protocol === "https:" ? "; Secure" : "");
+    });
+  }
+  return client;
 }
 
 let _supabase: ReturnType<typeof createSupabaseClient> | undefined;

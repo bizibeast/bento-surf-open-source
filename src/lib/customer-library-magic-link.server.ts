@@ -1,4 +1,3 @@
-import { configuredAppOrigin } from "@/lib/application-urls";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Customer library tables are service-role only. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { commerceTokenHash, randomCommerceToken } from "./commerce-access.server";
@@ -8,7 +7,7 @@ import { sanitizeCustomerLibraryReturnTo } from "./safe-url";
 const MAGIC_LINK_MINUTES = 15;
 
 function appUrl() {
-  return configuredAppOrigin(process.env.VITE_APP_URL);
+  return (process.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "");
 }
 
 export async function issueCustomerLibraryMagicLinkForEmail(input: {

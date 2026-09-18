@@ -22,7 +22,7 @@ const firstPage = {
       type: "image",
       size: 1_024,
       uploaded: "2026-08-31T10:00:00.000Z",
-      publicUrl: "https://bento.surf/cdn/users/example/image/object.jpg",
+      publicUrl: "http://localhost:8080/cdn/users/example/image/object.jpg",
     },
   ],
   usedBytes: 3_072,

@@ -1,5 +1,14 @@
 export const DEFAULT_APP_ORIGIN = "http://localhost:8080";
 export const DEFAULT_PUBLIC_ORIGIN = "http://localhost:8080";
+export const PRODUCTION_APP_ORIGIN = DEFAULT_APP_ORIGIN;
+export const PRODUCTION_PUBLIC_ORIGIN = DEFAULT_PUBLIC_ORIGIN;
+export const STAGING_APP_ORIGIN = DEFAULT_APP_ORIGIN;
+export const STAGING_PUBLIC_ORIGIN = DEFAULT_PUBLIC_ORIGIN;
+
+export function isStagingHostname(hostname: string) {
+  const normalized = hostname.trim().toLowerCase().replace(/\.$/, "");
+  return normalized === "localhost" || normalized.startsWith("staging.");
+}
 
 export function normalizeOrigin(value: string | null | undefined, fallback: string) {
   const candidate = value?.trim() || fallback;
@@ -80,15 +89,21 @@ export function publicProductSuccessPath(username: string, productSlug: string) 
 export function publicProfileUrl(
   username: string,
   pageSlug?: string | null,
-  publicOrigin?: string | null,
+  publicOrigin = PRODUCTION_PUBLIC_ORIGIN,
 ) {
-  return `${configuredPublicOrigin(publicOrigin)}${publicProfilePath(username, pageSlug)}`;
+  return `${normalizeOrigin(publicOrigin, PRODUCTION_PUBLIC_ORIGIN)}${publicProfilePath(
+    username,
+    pageSlug,
+  )}`;
 }
 
 export function publicProductUrl(
   username: string,
   productSlug: string,
-  publicOrigin?: string | null,
+  publicOrigin = PRODUCTION_PUBLIC_ORIGIN,
 ) {
-  return `${configuredPublicOrigin(publicOrigin)}${publicProductPath(username, productSlug)}`;
+  return `${normalizeOrigin(publicOrigin, PRODUCTION_PUBLIC_ORIGIN)}${publicProductPath(
+    username,
+    productSlug,
+  )}`;
 }

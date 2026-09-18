@@ -54,8 +54,14 @@ export const INSTAGRAM_CONTENT_PUBLISH_SCOPE = "instagram_business_content_publi
 export function socialConnectionCanPublish(
   provider: SocialProvider,
   scopes: readonly string[] | null | undefined,
+  status: SchedulerConnection["status"],
+  reauthRequired: boolean,
 ) {
-  return provider !== "instagram" || Boolean(scopes?.includes(INSTAGRAM_CONTENT_PUBLISH_SCOPE));
+  return (
+    status === "active" &&
+    !reauthRequired &&
+    (provider !== "instagram" || Boolean(scopes?.includes(INSTAGRAM_CONTENT_PUBLISH_SCOPE)))
+  );
 }
 
 const MAX_SOCIAL_RETRY_DELAY_SECONDS = 6 * 60 * 60;

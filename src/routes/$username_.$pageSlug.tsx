@@ -58,5 +58,11 @@ function PublicPage() {
   const username = normalizePublicUsername(params.username);
   const { data } = useSuspenseQuery(profileQuery(username, params.pageSlug));
   if (!data || data.notFound) return <NotFound />;
-  return <PublicProfileView data={data} username={username} activeSlug={params.pageSlug} />;
+  return (
+    <PublicProfileView
+      data={data}
+      username={data.profile.username}
+      activeSlug={data.activePageSlug}
+    />
+  );
 }

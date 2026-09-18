@@ -8,6 +8,7 @@ import {
   deriveSocialPostStatus,
   isPublicSocialProvider,
   providerSettingsMedia,
+  postingScheduleSchema,
   socialConnectionCanPublish,
   socialPostInputSchema,
   validatePostForProviders,
@@ -39,6 +40,14 @@ import {
   getFacebookConnectionReadiness,
 } from "./facebook-auto-dm";
 import { getTwitterConnectionReadiness, twitterDmAutomationInputSchema } from "./twitter-auto-dm";
+import {
+  loadPriorityDmInboxForCreator,
+  type PriorityDmConversationSummary,
+} from "./priority-dm.server";
+import {
+  sendCreatorPriorityDmMessageForUser,
+  setPriorityDmConversationClosedForUser,
+} from "./priority-dm.functions";
 import bentoSkill from "../../skills/bento/SKILL.md?raw";
 import bentoToolsReference from "../../skills/bento/references/tools.md?raw";
 import {
@@ -111,6 +120,8 @@ function featureLinks(origin: string) {
     dashboard: `${origin}/link`,
     pages: `${origin}/link`,
     products: `${origin}/store`,
+    priorityDm: `${origin}/priority-dm`,
+    emailMarketing: `${origin}/email-marketing`,
     scheduler: `${origin}/post-scheduler`,
     automations: `${origin}/auto-dms`,
     analytics: `${origin}/analytics`,
@@ -118,6 +129,7 @@ function featureLinks(origin: string) {
     bookings: `${origin}/calendar`,
     community: `${origin}/community`,
     settings: `${origin}/settings`,
+    mcp: `${origin}/mcp`,
   };
 }
 
@@ -214,8 +226,12 @@ async function listSocialAccounts(userId: string, provider?: string) {
       status: connection.status,
       canPublish:
         isPublicSocialProvider(connection.provider) &&
-        connection.status === "active" &&
-        socialConnectionCanPublish(connection.provider, connection.scopes),
+        socialConnectionCanPublish(
+          connection.provider,
+          connection.scopes,
+          connection.status,
+          Boolean(connection.reauth_required),
+        ),
       autoDmReady: autoDm?.ready ?? false,
       autoDmIssues: autoDm?.issues || [],
       needsReconnect: Boolean(connection.reauth_required || autoDm?.needsReconnect),
@@ -252,13 +268,17 @@ async function saveSocialPostForUser(userId: string, input: unknown) {
   const client = db();
   const { data: connections, error: connectionError } = await client
     .from("social_connections")
-    .select("id,provider,status,scopes")
+    .select("id,provider,status,scopes,reauth_required")
     .eq("user_id", userId)
     .in("id", data.connectionIds);
   if (connectionError || connections?.length !== new Set(data.connectionIds).size) {
     throw new Error("One or more selected social accounts are unavailable.");
   }
-  if (connections.some((connection: any) => connection.status !== "active")) {
+  if (
+    connections.some(
+      (connection: any) => connection.status !== "active" || connection.reauth_required,
+    )
+  ) {
     throw new Error("Reconnect expired social accounts before posting.");
   }
   if (connections.some((connection: any) => !isPublicSocialProvider(connection.provider))) {
@@ -266,7 +286,13 @@ async function saveSocialPostForUser(userId: string, input: unknown) {
   }
   if (
     connections.some(
-      (connection: any) => !socialConnectionCanPublish(connection.provider, connection.scopes),
+      (connection: any) =>
+        !socialConnectionCanPublish(
+          connection.provider,
+          connection.scopes,
+          connection.status,
+          Boolean(connection.reauth_required),
+        ),
     )
   ) {
     throw new Error("Reconnect Instagram and approve publishing access before posting.");
@@ -649,7 +675,7 @@ async function uploadMedia(
     if (!url) throw new Error("Use a public HTTP or HTTPS media URL.");
     const { response } = await fetchPublicFollowingSafeRedirects(url, fetch, {
       Accept: input.mimeType,
-      "User-Agent": "Bento-MCP/1.0",
+      "User-Agent": "Bento-MCP/1.0 (+http://localhost:8080)",
     });
     if (!response.ok) throw new Error("Bento could not download media from that URL.");
     bytes = await readResponseBytes(response, MAX_MCP_MEDIA_BYTES);
@@ -696,6 +722,116 @@ async function uploadMedia(
   };
 }
 
+async function getPriorityDmConversations(
+  userId: string,
+  filter: "open" | "closed",
+  limit: number,
+) {
+  const conversations = await loadPriorityDmInboxForCreator(db(), userId);
+  return conversations
+    .filter((conversation: PriorityDmConversationSummary) =>
+      filter === "closed" ? conversation.status === "closed" : conversation.status !== "closed",
+    )
+    .slice(0, limit)
+    .map(
+      ({ buyerEmail: _buyerEmail, ...conversation }: PriorityDmConversationSummary) => conversation,
+    );
+}
+
+async function sendPriorityDmMessage(userId: string, input: { requestId: string; body: string }) {
+  await enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "mcp-priority-dm-send", userId);
+  return sendCreatorPriorityDmMessageForUser(db(), userId, input);
+}
+
+async function setPriorityDmClosed(userId: string, input: { requestId: string; closed: boolean }) {
+  await enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "mcp-priority-dm-status", userId);
+  return setPriorityDmConversationClosedForUser(db(), userId, input);
+}
+
+async function getSchedulerWorkspace(userId: string) {
+  const [accounts, posts, schedule] = await Promise.all([
+    listSocialAccounts(userId),
+    listSocialPosts(userId, undefined, 100),
+    db()
+      .from("social_posting_schedules")
+      .select("timezone,slots,natural_offset,updated_at")
+      .eq("user_id", userId)
+      .maybeSingle(),
+  ]);
+  if (schedule.error) throw new Error("Posting times could not be loaded.");
+  return { accounts, posts, postingSchedule: schedule.data };
+}
+
+const schedulerMutationSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("save_posting_schedule"), schedule: z.unknown() }),
+  z.object({
+    action: z.literal("reschedule_post"),
+    id: z.uuid(),
+    scheduledAt: z.iso.datetime({ offset: true }),
+    timezone: z.string().min(1).max(100).optional(),
+  }),
+  z.object({
+    action: z.enum(["duplicate_post", "cancel_post", "delete_post"]),
+    id: z.uuid(),
+  }),
+]);
+
+async function manageScheduler(userId: string, input: unknown) {
+  const data = schedulerMutationSchema.parse(input);
+  await enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "mcp-scheduler", userId);
+  const client = db();
+
+  if (data.action === "save_posting_schedule") {
+    await requirePlanEntitlement(userId, "postScheduler", "The post scheduler is not available.");
+    const schedule = postingScheduleSchema.parse(data.schedule);
+    const { error } = await client.from("social_posting_schedules").upsert({
+      user_id: userId,
+      timezone: schedule.timezone,
+      slots: schedule.slots,
+      natural_offset: schedule.naturalOffset,
+      updated_at: new Date().toISOString(),
+    });
+    if (error) throw new Error("Posting times could not be saved.");
+  } else if (data.action === "reschedule_post") {
+    await requirePlanEntitlement(userId, "postScheduler", "The post scheduler is not available.");
+    if (new Date(data.scheduledAt).getTime() < Date.now() - 60_000) {
+      throw new Error("Choose a future publish time.");
+    }
+    const { data: rescheduled, error } = await client.rpc("reschedule_social_post_atomic", {
+      p_user_id: userId,
+      p_post_id: data.id,
+      p_scheduled_at: data.scheduledAt,
+      p_timezone: data.timezone || null,
+    });
+    if (error || !rescheduled) throw new Error("This post could not be rescheduled.");
+  } else if (data.action === "duplicate_post") {
+    await requirePlanEntitlement(userId, "postScheduler", "The post scheduler is not available.");
+    const { data: duplicated, error } = await client.rpc("duplicate_social_post_atomic", {
+      p_user_id: userId,
+      p_post_id: data.id,
+    });
+    if (error || !duplicated) throw new Error("The post could not be duplicated.");
+  } else if (data.action === "cancel_post") {
+    const { data: cancelled, error } = await client.rpc("cancel_social_post_atomic", {
+      p_user_id: userId,
+      p_post_id: data.id,
+    });
+    if (error || !cancelled) throw new Error("This post can no longer be cancelled.");
+  } else {
+    const { data: deleted, error } = await client
+      .from("social_posts")
+      .delete()
+      .eq("id", data.id)
+      .eq("user_id", userId)
+      .in("status", ["draft", "cancelled", "failed"])
+      .select("id")
+      .maybeSingle();
+    if (error || !deleted) throw new Error("The post could not be deleted.");
+  }
+
+  return getSchedulerWorkspace(userId);
+}
+
 export const defaultBentoMcpOperations = {
   getBentoOverview,
   listSocialAccounts,
@@ -726,6 +862,11 @@ export const defaultBentoMcpOperations = {
   getIntegrationWorkspace,
   getEarnWorkspace,
   mutateEarn,
+  getPriorityDmConversations,
+  sendPriorityDmMessage,
+  setPriorityDmClosed,
+  getSchedulerWorkspace,
+  manageScheduler,
 };
 
 export type BentoMcpOperations = typeof defaultBentoMcpOperations;
@@ -1339,6 +1480,96 @@ export function createBentoMcpServer(
     async ({ limit }) => {
       const bookings = await operations.listBookings(userId, limit);
       return textResult(`Found ${bookings.length} booking(s).`, { bookings });
+    },
+  );
+
+  server.registerTool(
+    "get_priority_dm_conversations",
+    {
+      title: "Get Priority DM conversations",
+      description:
+        "List bounded Priority DM inbox summaries. Buyer emails, full messages, orders, payments, and links are omitted.",
+      inputSchema: z.object({
+        filter: z.enum(["open", "closed"]).default("open"),
+        limit: z.number().int().min(1).max(100).default(50),
+      }),
+      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+    },
+    async ({ filter, limit }) => {
+      const conversations = await operations.getPriorityDmConversations(userId, filter, limit);
+      return textResult(`Loaded ${conversations.length} Priority DM conversation(s).`, {
+        conversations,
+      });
+    },
+  );
+
+  server.registerTool(
+    "send_priority_dm_message",
+    {
+      title: "Send Priority DM message",
+      description:
+        "Send and email a creator reply to one owned, eligible Priority DM conversation.",
+      inputSchema: z.object({
+        requestId: z.uuid(),
+        body: z.string().trim().min(1).max(10_000),
+      }),
+      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
+    },
+    async (input) => {
+      const message = await operations.sendPriorityDmMessage(userId, input);
+      return textResult("Priority DM message sent.", {
+        requestId: input.requestId,
+        messageId: message.id,
+      });
+    },
+  );
+
+  server.registerTool(
+    "set_priority_dm_closed",
+    {
+      title: "Close or reopen Priority DM conversation",
+      description: "Close or reopen one owned Priority DM conversation.",
+      inputSchema: z.object({ requestId: z.uuid(), closed: z.boolean() }),
+      annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
+    },
+    async (input) => {
+      const conversation = await operations.setPriorityDmClosed(userId, input);
+      return textResult(
+        input.closed ? "Priority DM conversation closed." : "Priority DM conversation reopened.",
+        {
+          conversation,
+        },
+      );
+    },
+  );
+
+  server.registerTool(
+    "get_scheduler_workspace",
+    {
+      title: "Get scheduler workspace",
+      description:
+        "Load posting times, connected-account readiness, and bounded social-post lifecycle state.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+    },
+    async () => {
+      const scheduler = await operations.getSchedulerWorkspace(userId);
+      return textResult("Loaded social scheduler workspace.", { scheduler });
+    },
+  );
+
+  server.registerTool(
+    "manage_scheduler",
+    {
+      title: "Manage scheduler lifecycle",
+      description:
+        "Save posting times or reschedule, duplicate, cancel, or delete an owned social post.",
+      inputSchema: schedulerMutationSchema,
+      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+    },
+    async (input) => {
+      const scheduler = await operations.manageScheduler(userId, input);
+      return textResult(`Completed scheduler action: ${input.action}.`, { scheduler });
     },
   );
 

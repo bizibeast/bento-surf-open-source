@@ -1208,13 +1208,59 @@ export type Database = {
         };
         Relationships: [];
       };
+      page_system_item_layouts: {
+        Row: {
+          created_at: string;
+          h: number;
+          item_key: string;
+          page_id: string;
+          position: number;
+          updated_at: string;
+          w: number;
+          x: number;
+          y: number;
+        };
+        Insert: {
+          created_at?: string;
+          h: number;
+          item_key: string;
+          page_id: string;
+          position: number;
+          updated_at?: string;
+          w: number;
+          x: number;
+          y: number;
+        };
+        Update: {
+          created_at?: string;
+          h?: number;
+          item_key?: string;
+          page_id?: string;
+          position?: number;
+          updated_at?: string;
+          w?: number;
+          x?: number;
+          y?: number;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "page_system_item_layouts_page_id_fkey";
+            columns: ["page_id"];
+            isOneToOne: false;
+            referencedRelation: "pages";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       pages: {
         Row: {
           created_at: string;
           id: string;
+          is_visible: boolean;
           name: string;
           position: number;
           slug: string;
+          system: string | null;
           updated_at: string;
           url: string | null;
           user_id: string;
@@ -1222,9 +1268,11 @@ export type Database = {
         Insert: {
           created_at?: string;
           id?: string;
+          is_visible?: boolean;
           name: string;
           position?: number;
           slug: string;
+          system?: string | null;
           updated_at?: string;
           url?: string | null;
           user_id: string;
@@ -1232,9 +1280,11 @@ export type Database = {
         Update: {
           created_at?: string;
           id?: string;
+          is_visible?: boolean;
           name?: string;
           position?: number;
           slug?: string;
+          system?: string | null;
           updated_at?: string;
           url?: string | null;
           user_id?: string;
@@ -1875,6 +1925,19 @@ export type Database = {
           p_units: number;
         };
         Returns: boolean;
+      };
+      reorder_creator_pages: {
+        Args: {
+          page_ids: string[];
+        };
+        Returns: undefined;
+      };
+      replace_page_system_item_layout: {
+        Args: {
+          layout_items: Json;
+          target_page_id: string;
+        };
+        Returns: undefined;
       };
       set_default_newsletter_publication: {
         Args: { p_creator_id: string; p_publication_id: string };

@@ -1,4 +1,3 @@
-import { configuredAppOrigin } from "@/lib/application-urls";
 /* eslint-disable @typescript-eslint/no-explicit-any -- PayPal responses are validated at their use sites. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { decryptServerSecret } from "@/lib/secret-crypto.server";
@@ -202,7 +201,7 @@ export async function paypalCredentialFingerprint(value: PayPalCredentials) {
 }
 
 export function paypalDirectWebhookUrl(connectionId: string) {
-  const origin = configuredAppOrigin(process.env.VITE_APP_URL);
+  const origin = (process.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "");
   return `${origin}/api/webhooks/paypal/direct/${encodeURIComponent(connectionId)}`;
 }
 

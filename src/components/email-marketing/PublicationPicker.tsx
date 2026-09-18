@@ -187,17 +187,26 @@ export function PublicationPicker({
                 </DropdownMenuItem>
               ))}
               <DropdownMenuSeparator />
-              <DropdownMenuItem
-                aria-label="Add publication"
-                disabled={locked}
-                onSelect={openDialog}
-                className="min-h-11 rounded-lg px-3 font-semibold"
-              >
-                <Plus className="size-4" />
-                Add publication
-              </DropdownMenuItem>
+              {!locked && (
+                <DropdownMenuItem
+                  aria-label="Add publication"
+                  disabled={locked}
+                  onSelect={openDialog}
+                  className="min-h-11 rounded-lg px-3 font-semibold"
+                >
+                  <Plus className="size-4" />
+                  Add publication
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
+        ) : locked ? (
+          <a
+            href="/settings?section=plan"
+            className="rounded-lg border px-3 py-2 text-sm font-semibold"
+          >
+            Review plan
+          </a>
         ) : !loading ? (
           <button
             type="button"

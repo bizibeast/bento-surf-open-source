@@ -48,6 +48,12 @@ export default tseslint.config(
     },
   },
   {
+    files: ["**/*.{test,spec}.{ts,tsx}"],
+    rules: {
+      "@typescript-eslint/no-explicit-any": "off",
+    },
+  },
+  {
     files: ["src/components/ui/**/*.{ts,tsx}"],
     rules: { "react-refresh/only-export-components": "off" },
   },

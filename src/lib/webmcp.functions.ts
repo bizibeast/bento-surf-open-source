@@ -1,4 +1,3 @@
-import { configuredAppOrigin } from "@/lib/application-urls";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
@@ -725,7 +724,7 @@ export const runBentoWebMcpRead = createServerFn({ method: "POST" })
         case "get_bento_overview":
           return defaultBentoMcpOperations.getBentoOverview(
             context.userId,
-            configuredAppOrigin(process.env.VITE_APP_URL),
+            (process.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, ""),
           );
         case "list_social_accounts":
           return defaultBentoMcpOperations.listSocialAccounts(
@@ -814,7 +813,7 @@ export const runBentoWebMcpWrite = createServerFn({ method: "POST" })
             scopes: [],
             extra: { userId: context.userId },
           },
-          configuredAppOrigin(process.env.VITE_APP_URL),
+          (process.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, ""),
           mediaInput,
         );
       }

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { FileDropzone } from "@/components/blocks/FileDropzone";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { configuredPublicOrigin, publicNewsletterPublicationPath } from "@/lib/application-urls";
+import { PRODUCTION_PUBLIC_ORIGIN, publicNewsletterPublicationPath } from "@/lib/application-urls";
 import { NEWSLETTER_TEMPLATES, type NewsletterTemplateId } from "@/lib/newsletter-templates";
 
 export type NewsletterSettingsPanel =
@@ -203,7 +203,7 @@ export function NewsletterSettings({
         >
           {creatorUsername && publication.slug ? (
             <p className="break-all text-xs text-emerald-700">
-              {configuredPublicOrigin(import.meta.env.VITE_PUBLIC_URL)}
+              {PRODUCTION_PUBLIC_ORIGIN}
               {publicNewsletterPublicationPath(creatorUsername, publication.slug)}
             </p>
           ) : null}

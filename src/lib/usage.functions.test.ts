@@ -1,9 +1,44 @@
 import { describe, expect, it, vi } from "vitest";
-import { loadUsage } from "./usage.functions";
+const mocks = vi.hoisted(() => ({ filters: [] as unknown[][] }));
+vi.mock("@tanstack/react-start", () => ({
+  createServerFn: () => {
+    const query: any = {
+      select: () => query,
+      eq: (...args: unknown[]) => {
+        mocks.filters.push(args);
+        return query;
+      },
+      is: (...args: unknown[]) => {
+        mocks.filters.push(args);
+        return query;
+      },
+      then: (resolve: any) => Promise.resolve({ count: 2, error: null }).then(resolve),
+    };
+    const fn: any = {
+      middleware: () => fn,
+      handler: (handler: any) => () =>
+        handler({ context: { userId: "owner", supabase: { from: () => query } } }),
+    };
+    return fn;
+  },
+}));
+vi.mock("@/integrations/supabase/auth-middleware", () => ({ requireSupabaseAuth: {} }));
+vi.mock("./plan.server", () => ({ getPlan: vi.fn().mockResolvedValue("free") }));
+vi.mock("./r2-storage.server", () => ({
+  getMediaBucket: vi.fn(),
+  sumR2UserStorageBytes: vi.fn().mockResolvedValue(0),
+}));
+import { getMyUsage, loadUsage } from "./usage.functions";
 
 const ok = (count: number) => Promise.resolve({ count, error: null });
 
 describe("settings usage snapshot", () => {
+  it("counts only custom hosted pages in the live usage query", async () => {
+    mocks.filters.length = 0;
+    await getMyUsage();
+    expect(mocks.filters).toContainEqual(["system", null]);
+    expect(mocks.filters).toContainEqual(["url", null]);
+  });
   it("includes Main in page usage and falls back to zero when R2 is unavailable", async () => {
     const usage = await loadUsage({
       countPages: () => ok(1),

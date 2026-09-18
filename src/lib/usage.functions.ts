@@ -61,7 +61,12 @@ export const getMyUsage = createServerFn({ method: "GET" })
     const { supabase, userId } = context;
     return loadUsage({
       countPages: () =>
-        supabase.from("pages").select("id", { count: "exact", head: true }).eq("user_id", userId),
+        supabase
+          .from("pages")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", userId)
+          .is("system", null)
+          .is("url", null),
       countBlocks: () =>
         supabase.from("blocks").select("id", { count: "exact", head: true }).eq("user_id", userId),
       plan: () => getPlan(userId),

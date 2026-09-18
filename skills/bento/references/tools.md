@@ -5,6 +5,7 @@
 - `upload_media`: import a public media URL or a small base64 payload into Bento storage.
 - `list_social_posts`: recent drafts, scheduled posts, publishing outcomes, and stable IDs.
 - `create_social_post`: draft, schedule, or publish to one or more connected accounts.
+- `get_scheduler_workspace`, `manage_scheduler`: inspect posting times and lifecycle state, then save posting times or reschedule, duplicate, cancel, or delete owned posts.
 - `list_auto_dm_automations`: Instagram, Facebook, or X automations and connection health.
 - `save_auto_dm_automation`: create or update an automation using the platform's native validation.
 - `set_auto_dm_enabled`: pause or enable one owned automation.
@@ -14,6 +15,7 @@
 - `manage_discount_code`, `manage_order_bump`, `manage_audience`: manage Store growth, lists, and email campaigns.
 - `get_calendar_workspace`, `manage_calendar`: inspect and manage availability, public Calendar, reviews, and connections. Sessions use `manage_product` with `coaching_call`.
 - `get_community_workspace`, `manage_community`: manage community members, posts, comments, moderation, and settings.
+- `get_priority_dm_conversations`, `send_priority_dm_message`, `set_priority_dm_closed`: inspect the redacted creator inbox, reply to eligible paid conversations, and close or reopen them.
 - `get_profile_workspace`, `update_profile`: inspect and change creator identity, branding, Explore visibility, plan usage, and safe payment readiness.
 - `get_analytics_workspace`, `get_integration_workspace`: inspect site/social performance and connected services without returning secrets.
 - `get_earn_workspace`, `manage_earn`: inspect referrals and commissions, change the referral code, or explicitly request a payout.

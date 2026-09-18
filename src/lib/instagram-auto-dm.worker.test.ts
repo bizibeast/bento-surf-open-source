@@ -538,85 +538,95 @@ describe("Instagram Auto-DM queue worker", () => {
     );
   });
 
-  it("checks follow status immediately after Send it and waits without sending the link", async () => {
-    vi.stubEnv("APP_ENV", "production");
-    mocks.connections.push(connection());
-    mocks.automations.push(
-      automation("automation-b", {
-        opening_message: "I have the guide ready.",
-        confirmation_button_label: "Send it",
-        follow_gate_enabled: true,
-      }),
-    );
-    const runId = crypto.randomUUID();
-    const senderIdHash = await testSenderHash("visitor-1");
-    const payload = await createInstagramRunActionPayload(runId, "connection-b", senderIdHash);
-    mocks.runs.push({
-      follow_gate_enabled: true,
-      follow_prompt_message: "Follow me, then retry.",
-      follow_max_rechecks: 3,
-      follow_fail_action: "send_anyway",
-      follow_recheck_count: 0,
-    });
-    mocks.rpc.mockImplementation(async (name: string) => {
-      if (name === "claim_instagram_dm_event") {
-        return { data: { event_id: "event-follow", should_process: true }, error: null };
-      }
-      if (name === "claim_instagram_dm_run") {
-        return {
-          data: { automation_id: "automation-b", user_id: "user-1", should_process: true },
-          error: null,
-        };
-      }
-      if (name === "claim_instagram_delivery_slot") {
-        return { data: [{ wait_ms: 0 }], error: null };
-      }
-      throw new Error(`Unexpected RPC in Instagram worker test: ${name}`);
-    });
-    mocks.fetch
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ is_user_follow_business: false }), { status: 200 }),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ message_id: "follow-prompt-1" }), { status: 200 }),
-      );
-
-    await expect(
-      processInstagramDmQueueMessage({
-        kind: "instagram_dm_event",
-        event: event({
-          externalEventId: "message:confirm-follow",
-          eventType: "message",
-          eventContext: "quick_reply",
-          sourceId: "confirm-follow",
-          senderId: "visitor-1",
-          text: "Send it",
-          actionPayload: payload,
-          mediaId: null,
+  it.each([false, true])(
+    "handles follow checks without claiming verification on provider failure (%s)",
+    async (unavailable) => {
+      vi.stubEnv("APP_ENV", "production");
+      mocks.connections.push(connection());
+      mocks.automations.push(
+        automation("automation-b", {
+          opening_message: "I have the guide ready.",
+          confirmation_button_label: "Send it",
+          follow_gate_enabled: true,
         }),
-      }),
-    ).resolves.toEqual({ sent: true });
+      );
+      const runId = crypto.randomUUID();
+      const senderIdHash = await testSenderHash("visitor-1");
+      const payload = await createInstagramRunActionPayload(runId, "connection-b", senderIdHash);
+      mocks.runs.push({
+        follow_gate_enabled: true,
+        follow_prompt_message: "Follow me, then retry.",
+        follow_max_rechecks: 3,
+        follow_fail_action: "send_anyway",
+        follow_recheck_count: 0,
+      });
+      mocks.rpc.mockImplementation(async (name: string) => {
+        if (name === "claim_instagram_dm_event") {
+          return { data: { event_id: "event-follow", should_process: true }, error: null };
+        }
+        if (name === "claim_instagram_dm_run") {
+          return {
+            data: { automation_id: "automation-b", user_id: "user-1", should_process: true },
+            error: null,
+          };
+        }
+        if (name === "claim_instagram_delivery_slot") {
+          return { data: [{ wait_ms: 0 }], error: null };
+        }
+        throw new Error(`Unexpected RPC in Instagram worker test: ${name}`);
+      });
+      mocks.fetch
+        .mockResolvedValueOnce(
+          unavailable
+            ? new Response(JSON.stringify({ error: { message: "Unavailable" } }), { status: 503 })
+            : new Response(JSON.stringify({ is_user_follow_business: false }), { status: 200 }),
+        )
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ message_id: "follow-prompt-1" }), { status: 200 }),
+        );
 
-    const sent = JSON.parse(String((mocks.fetch.mock.calls[1][1] as RequestInit).body));
-    expect(sent.message).toMatchObject({
-      text: "Follow me, then retry.",
-      quick_replies: [{ title: "I’ve followed" }],
-    });
-    expect(sent.message.quick_replies[0].payload).toMatch(/^bento:run:follow_recheck:/);
-    expect(mocks.updates).toEqual(
-      expect.arrayContaining([
-        {
-          table: "instagram_dm_runs",
-          id: runId,
-          values: expect.objectContaining({
-            status: "awaiting_follow",
-            follow_prompt_response_id: "follow-prompt-1",
+      await expect(
+        processInstagramDmQueueMessage({
+          kind: "instagram_dm_event",
+          event: event({
+            externalEventId: "message:confirm-follow",
+            eventType: "message",
+            eventContext: "quick_reply",
+            sourceId: "confirm-follow",
+            senderId: "visitor-1",
+            text: "Send it",
+            actionPayload: payload,
+            mediaId: null,
           }),
-        },
-      ]),
-    );
-    expect(JSON.stringify(mocks.fetch.mock.calls)).not.toContain("Here is the guide.");
-  });
+        }),
+      ).resolves.toEqual({ sent: true });
+
+      if (unavailable) {
+        expect(mocks.updates.some((update) => "follow_verified_at" in update.values)).toBe(false);
+        expect(mocks.updates.some((update) => update.values.status === "completed")).toBe(true);
+        return;
+      }
+      const sent = JSON.parse(String((mocks.fetch.mock.calls[1][1] as RequestInit).body));
+      expect(sent.message).toMatchObject({
+        text: "Follow me, then retry.",
+        quick_replies: [{ title: "I’ve followed" }],
+      });
+      expect(sent.message.quick_replies[0].payload).toMatch(/^bento:run:follow_recheck:/);
+      expect(mocks.updates).toEqual(
+        expect.arrayContaining([
+          {
+            table: "instagram_dm_runs",
+            id: runId,
+            values: expect.objectContaining({
+              status: "awaiting_follow",
+              follow_prompt_response_id: "follow-prompt-1",
+            }),
+          },
+        ]),
+      );
+      expect(JSON.stringify(mocks.fetch.mock.calls)).not.toContain("Here is the guide.");
+    },
+  );
 
   it("deduplicates a redelivered Meta webhook before loading any user connection", async () => {
     mocks.shouldProcess = false;

@@ -66,7 +66,7 @@ export function FaviconTile({
   const googleFavicon = (() => {
     try {
       const u = new URL(safeHref);
-      return `https://www.google.com/s2/favicons?sz=128&domain=${u.hostname}`;
+      return `/api/favicon?domain=${u.hostname}`;
     } catch {
       return null;
     }
@@ -78,7 +78,9 @@ export function FaviconTile({
       return null;
     }
   })();
-  const customFavicon = safeMediaUrl(favicon);
+  const customFavicon = favicon?.includes("google.com/s2/favicons")
+    ? googleFavicon
+    : safeMediaUrl(favicon);
   const [imgSrc, setImgSrc] = useState<string | null>(
     platform ? null : customFavicon || googleFavicon,
   );

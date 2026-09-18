@@ -16,6 +16,20 @@ function toolSource(name: string, next: string) {
 }
 
 describe("public product WebMCP contracts", () => {
+  it("renders a standalone product website without profile chrome", () => {
+    expect(source).not.toContain("PublicCreatorShell");
+    expect(source).toContain("data-product-website");
+    expect(source).toContain("productWebsite(product.settings?.website)");
+  });
+
+  it("links the brand home and keeps checkout visible on mobile", () => {
+    expect(source).toContain(
+      "publicProfileUrl(creator.username, null, import.meta.env.VITE_PUBLIC_URL)",
+    );
+    expect(source).toContain('className="fixed inset-x-4 bottom-4');
+    expect(source).toContain("text-white/72");
+  });
+
   it("bounds public lessons and reports the total", () => {
     const block = toolSource("bento_get_public_product", "useWebMcpTools(webMcpTools)");
     expect(block).toContain("lessonCount: lessons.length");

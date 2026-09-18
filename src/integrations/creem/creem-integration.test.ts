@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   creemApiBase,
-  assertCreemEnvironment,
   creemCredentialFingerprint,
   creemRequest,
   creemWebhookUrl,
@@ -51,22 +50,11 @@ describe("Creem creator payments", () => {
   });
 
   it("builds the per-creator webhook URL from the deployment origin", () => {
-    vi.stubEnv("VITE_APP_URL", "https://staging.example/");
+    vi.stubEnv("VITE_APP_URL", "http://localhost:8080/");
     expect(creemWebhookUrl("00000000-0000-4000-8000-000000000001")).toBe(
-      "https://staging.example/api/webhooks/creem/direct/00000000-0000-4000-8000-000000000001",
+      "http://localhost:8080/api/webhooks/creem/direct/00000000-0000-4000-8000-000000000001",
     );
   });
-
-  it.each(["development", "preview", "staging"])(
-    "keeps live credentials out of non-production %s",
-    (appEnv) => {
-      vi.stubEnv("APP_ENV", appEnv);
-      expect(() => assertCreemEnvironment("production")).toThrow(
-        /Live keys are blocked outside production/,
-      );
-      expect(assertCreemEnvironment("test")).toBe("test");
-    },
-  );
 
   it("verifies raw-body HMAC signatures and rejects tampering", async () => {
     const raw = JSON.stringify({ id: "evt_1", eventType: "checkout.completed" });

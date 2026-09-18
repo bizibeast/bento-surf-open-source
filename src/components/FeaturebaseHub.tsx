@@ -8,13 +8,12 @@ export function FeaturebaseHub({
   portalUrl,
   inAppShell = false,
 }: {
-  portalUrl: string | null;
+  portalUrl?: string | null;
   inAppShell?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const messengerReadyRef = useRef(false);
-
   useEffect(() => {
     if (!portalUrl) return;
     let cancelled = false;
@@ -40,6 +39,8 @@ export function FeaturebaseHub({
       messengerReadyRef.current = false;
     };
   }, [portalUrl]);
+  if (!portalUrl) return null;
+  const changelogUrl = `${portalUrl}/changelog`;
 
   const openSupportMessenger = (event: MouseEvent<HTMLAnchorElement>) => {
     setOpen(false);
@@ -63,8 +64,6 @@ export function FeaturebaseHub({
 
   const itemClass =
     "flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left transition hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
-
-  if (!portalUrl) return null;
 
   return (
     <>
@@ -144,7 +143,7 @@ export function FeaturebaseHub({
               <ExternalLink className="ml-auto size-3.5 text-muted-foreground" aria-hidden="true" />
             </a>
             <a
-              href={`${portalUrl}/changelog`}
+              href={changelogUrl}
               target="_blank"
               rel="noreferrer"
               className={itemClass}

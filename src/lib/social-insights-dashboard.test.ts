@@ -226,6 +226,7 @@ describe("social insights dashboard model", () => {
     ];
     const days = dailySocialPerformance(content, 2, new Date("2026-08-18T12:00:00.000Z"));
     expect(days[0]).toMatchObject({ date: "2026-08-17", impressions: 600, posts: 2 });
+    expect(days[0].items.map((entry) => entry.remotePostId)).toEqual(["text", "video"]);
     expect(socialContentTypePerformance(content)[0]).toMatchObject({
       type: "video",
       averageImpressions: 500,
@@ -244,12 +245,17 @@ describe("social insights dashboard model", () => {
   });
 
   it("offers only provider-backed growth metrics, including engagements", () => {
-    expect(socialGrowthMetricsFor("instagram")).toEqual(["reach", "engagements", "followers"]);
+    expect(socialGrowthMetricsFor("instagram")).toEqual([
+      "views",
+      "reach",
+      "engagements",
+      "followers",
+    ]);
     expect(socialGrowthMetricsFor("threads")).toEqual(["views", "engagements", "followers"]);
     expect(socialGrowthMetricsFor("youtube")).toEqual(["views", "engagements", "followers"]);
     expect(socialGrowthMetricsFor("tiktok")).toEqual(["views", "engagements", "followers"]);
     expect(socialGrowthMetricsFor("facebook")).toEqual([
-      "impressions",
+      "views",
       "reach",
       "engagements",
       "followers",
@@ -376,8 +382,8 @@ describe("social insights dashboard model", () => {
     ).toContainEqual({ label: "10K views", reached: true });
     expect(
       socialMilestones({ ...account, provider: "facebook" as const }, [
-        item({ provider: "facebook", views: null, impressions: 15_000 }),
+        item({ provider: "facebook", views: 15_000, impressions: null }),
       ]),
-    ).toContainEqual({ label: "10K impressions", reached: true });
+    ).toContainEqual({ label: "10K views", reached: true });
   });
 });

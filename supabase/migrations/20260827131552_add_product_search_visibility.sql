@@ -20,6 +20,11 @@ comment on column public.commerce_products.noindex is
 grant insert (noindex) on public.commerce_products to authenticated;
 grant update (noindex) on public.commerce_products to authenticated;
 
+-- Keep review fixtures and known test offers crawlable for approval flows but out of search.
+update public.profiles
+set noindex = true
+where lower(username) in ('meta_reviewer', 'oauthreview');
+
 update public.profiles
 set noindex = true
 where onboarded = false;
@@ -40,6 +45,16 @@ where profile.onboarded = true
           and block.page_id is null
       )
     )
+  );
+
+update public.commerce_products as product
+set noindex = true
+from public.profiles as profile
+where product.creator_id = profile.id
+  and (
+    (lower(profile.username) = 'bizibeast' and product.public_slug in ('test-community', 'test-product'))
+    or
+    (lower(profile.username) = 'oauthreview' and product.public_slug = 'google-calendar-demo-session')
   );
 
 create or replace view public.sitemap_profiles

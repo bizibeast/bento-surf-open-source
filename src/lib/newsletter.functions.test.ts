@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => {
     responses,
     queries,
     rpc: vi.fn(),
+    publicChrome: vi.fn(),
     requirePlanEntitlement: vi.fn(),
     recordEmailMarketingCapacityBlock: vi.fn().mockResolvedValue(true),
     verifyNewsletterConfirmationToken: vi.fn(),
@@ -105,6 +106,7 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("@tanstack/react-start", () => ({
+  createServerOnlyFn: (fn: unknown) => fn,
   createServerFn: () => {
     let validate = (input: unknown) => input;
     const builder = {
@@ -132,10 +134,14 @@ vi.mock("@tanstack/react-start", () => ({
     return builder;
   },
 }));
+vi.mock("@tanstack/react-start/server", () => ({ getRequestHost: () => null }));
 
 vi.mock("@/integrations/supabase/auth-middleware", () => ({ requireSupabaseAuth: {} }));
 vi.mock("@/integrations/supabase/client.server", () => ({
   supabaseAdmin: { from: mocks.from, rpc: mocks.rpc },
+}));
+vi.mock("./public-creator-chrome.server", () => ({
+  loadPublicCreatorChrome: mocks.publicChrome,
 }));
 vi.mock("./email.server", () => ({
   enqueueEmailBatch: vi.fn(),
@@ -155,6 +161,8 @@ vi.mock("./payment-connection-policy.server", () => ({
 vi.mock("./request-security.server", () => ({ enforceRequestRateLimit: vi.fn() }));
 
 import { saveAudienceCampaign } from "./commerce-growth.functions";
+import { createBlock, updateBlock, deleteBlock } from "./blocks.functions";
+import { getPlan } from "./plan.server";
 import { mutateAudience, type CreatorMcpContext } from "./mcp.creator-ops.server";
 import {
   addNewsletterToBento,
@@ -183,6 +191,27 @@ describe("newsletter authenticated writes", () => {
     vi.clearAllMocks();
     mocks.rpc.mockReset();
     mocks.requirePlanEntitlement.mockReset().mockResolvedValue(undefined);
+    mocks.publicChrome.mockReset().mockResolvedValue({
+      creator: {
+        id: "33333333-3333-4333-8333-333333333333",
+        username: "creator",
+        display_name: "Creator",
+        plan_id: "creator",
+        theme: "dark",
+        pattern: "dots",
+      },
+      pages: [
+        {
+          id: "newsletter-page",
+          name: "Newsletters",
+          slug: "newsletters",
+          system: "newsletter",
+          url: null,
+          href: "/@creator/newsletters",
+        },
+      ],
+      customDomain: null,
+    });
     mocks.queries.length = 0;
     for (const table of Object.keys(mocks.responses)) delete mocks.responses[table];
     mocks.rows.newsletter_publications = {
@@ -195,6 +224,183 @@ describe("newsletter authenticated writes", () => {
     mocks.rows.commerce_products = null;
     mocks.rows.commerce_access_grants = null;
     mocks.rows.blocks = null;
+    mocks.rows.pages = { id: "newsletter-page", system: "newsletter", slug: "__system_newsletter" };
+  });
+
+  it.each(["save", "update", "archive"])(
+    "reconciles newsletter visibility after publication %s",
+    async (action) => {
+      const publicationId = "11111111-1111-4111-8111-111111111111";
+      mocks.rows.blocks = [{ id: "signup", content: { newsletterPublicationId: publicationId } }];
+      const input = {
+        title: "Notes",
+        description: "Updates",
+        senderName: "Ari",
+        postalAddress: "123 Studio Road",
+        status: "published" as const,
+      };
+      if (action === "save") {
+        mocks.responses.newsletter_publications = [
+          { data: [{ id: publicationId }], error: null },
+          { data: { id: publicationId }, error: null },
+          { data: [{ id: publicationId }], error: null },
+        ];
+        await saveNewsletterPublication({ data: input });
+      } else if (action === "update") {
+        mocks.responses.newsletter_publications = [
+          { data: { id: publicationId }, error: null },
+          { data: [{ id: publicationId }], error: null },
+        ];
+        await updateNewsletterPublication({ data: { ...input, publicationId } });
+      } else {
+        mocks.rpc.mockResolvedValue({ data: { id: publicationId }, error: null });
+        mocks.responses.newsletter_publications = [{ data: [], error: null }];
+        await archiveNewsletterPublication({ data: { publicationId, confirmation: "Notes" } });
+      }
+      expect(
+        mocks.queries.find((q) => q.table === "pages" && q.action === "update")?.value,
+      ).toEqual({ is_visible: action !== "archive" });
+    },
+  );
+
+  it.each(["save", "update"])(
+    "hides the last published newsletter through %s while keeping its signup",
+    async (action) => {
+      const publicationId = "11111111-1111-4111-8111-111111111111";
+      mocks.rows.blocks = [{ id: "signup", content: { newsletterPublicationId: publicationId } }];
+      const input = {
+        title: "Notes",
+        description: "Updates",
+        senderName: "Ari",
+        postalAddress: "123 Studio Road",
+        status: "draft" as const,
+      };
+      mocks.responses.newsletter_publications = [
+        ...(action === "save" ? [{ data: [{ id: publicationId }], error: null }] : []),
+        { data: { id: publicationId }, error: null },
+        { data: [], error: null },
+      ];
+      if (action === "save") await saveNewsletterPublication({ data: input });
+      else await updateNewsletterPublication({ data: { ...input, publicationId } });
+      expect(
+        mocks.queries.find((q) => q.table === "pages" && q.action === "update")?.value,
+      ).toEqual({ is_visible: false });
+      expect(mocks.queries.some((q) => q.action === "delete")).toBe(false);
+    },
+  );
+
+  it("keeps the newsletter page visible when archiving one publication leaves another published signup", async () => {
+    const publicationId = "11111111-1111-4111-8111-111111111111";
+    const otherId = "66666666-6666-4666-8666-666666666666";
+    mocks.rows.blocks = [
+      { content: { newsletterPublicationId: publicationId } },
+      { content: { newsletterPublicationId: otherId } },
+    ];
+    mocks.rpc.mockResolvedValue({ data: { id: publicationId }, error: null });
+    mocks.responses.newsletter_publications = [{ data: [{ id: otherId }], error: null }];
+    await archiveNewsletterPublication({ data: { publicationId, confirmation: "Notes" } });
+    expect(mocks.queries.find((q) => q.table === "pages" && q.action === "update")?.value).toEqual({
+      is_visible: true,
+    });
+  });
+
+  it.each(["create", "update", "delete"])(
+    "reconciles the last homepage signup through generic block %s",
+    async (action) => {
+      vi.mocked(getPlan).mockResolvedValue("creator");
+      const block = {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        type: "email_capture",
+        page_id: null,
+        content: { newsletterPublicationId: "11111111-1111-4111-8111-111111111111" },
+      };
+      if (action === "create") {
+        mocks.responses.blocks = [
+          { data: [], error: null },
+          { data: block, error: null },
+          { data: [block], error: null },
+        ];
+        mocks.rows.newsletter_publications = [{ id: "11111111-1111-4111-8111-111111111111" }];
+        await createBlock({ data: { type: "email_capture", content: block.content } });
+      } else if (action === "update") {
+        mocks.responses.blocks = [
+          { data: block, error: null },
+          { data: { ...block, content: {} }, error: null },
+          { data: [], error: null },
+        ];
+        await updateBlock({ data: { id: block.id, content: {} } });
+      } else {
+        mocks.responses.blocks = [
+          { data: block, error: null },
+          { data: [], error: null },
+        ];
+        await deleteBlock({ data: { id: block.id } });
+      }
+      expect(
+        mocks.queries.find((q) => q.table === "pages" && q.action === "update")?.value,
+      ).toEqual({ is_visible: action === "create" });
+    },
+  );
+
+  it.each([null, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"])(
+    "does not reconcile ordinary forms or secondary-page signups: %s",
+    async (pageId) => {
+      vi.mocked(getPlan).mockResolvedValue("creator");
+      const block = {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        type: "email_capture",
+        page_id: pageId,
+        content: pageId ? { newsletterPublicationId: "11111111-1111-4111-8111-111111111111" } : {},
+      };
+      mocks.responses.blocks = [
+        { data: [], error: null },
+        { data: block, error: null },
+      ];
+      await createBlock({ data: { type: "email_capture", content: block.content, pageId } });
+      expect(mocks.queries.some((q) => q.table === "pages")).toBe(false);
+    },
+  );
+
+  it.each([true, false])(
+    "keeps newsletter visibility aligned with remaining published signups: %s",
+    async (remainingPublished) => {
+      const selectedId = "11111111-1111-4111-8111-111111111111";
+      const otherId = "66666666-6666-4666-8666-666666666666";
+      mocks.responses.newsletter_publications = [
+        { data: { id: selectedId }, error: null },
+        { data: remainingPublished ? [{ id: otherId }] : [], error: null },
+      ];
+      mocks.rows.blocks = [
+        { id: "selected-signup", content: { newsletterPublicationId: selectedId } },
+        { id: "other-signup", content: { newsletterPublicationId: otherId } },
+      ];
+      await removeNewsletterFromBento({ data: { publicationId: selectedId } });
+      expect(
+        mocks.queries.find((q) => q.table === "pages" && q.action === "update")?.value,
+      ).toEqual({ is_visible: remainingPublished });
+      expect(mocks.queries.filter((q) => q.table === "newsletter_publications")[1].filters).toEqual(
+        expect.arrayContaining([
+          ["creator_id", "33333333-3333-4333-8333-333333333333"],
+          ["status", "published"],
+          ["in", "id", [otherId]],
+        ]),
+      );
+    },
+  );
+
+  it("hides the newsletter page when its last signup is removed", async () => {
+    mocks.rows.blocks = [
+      {
+        id: "signup",
+        content: { newsletterPublicationId: "11111111-1111-4111-8111-111111111111" },
+      },
+    ];
+    await removeNewsletterFromBento({
+      data: { publicationId: "11111111-1111-4111-8111-111111111111" },
+    });
+    expect(mocks.queries.find((q) => q.table === "pages" && q.action === "update")?.value).toEqual({
+      is_visible: false,
+    });
   });
 
   it("creates independent Bento signup blocks for selected publications", async () => {
@@ -251,6 +457,9 @@ describe("newsletter authenticated writes", () => {
     await addNewsletterToBento({
       data: { publicationId: "66666666-6666-4666-8666-666666666666" },
     });
+    expect(
+      mocks.queries.filter((q) => q.table === "pages" && q.action === "update").map((q) => q.value),
+    ).toEqual([{ is_visible: true }, { is_visible: true }]);
 
     const publicationQueries = mocks.queries.filter(
       (query) => query.table === "newsletter_publications",
@@ -447,6 +656,7 @@ describe("newsletter authenticated writes", () => {
     ];
     mocks.rows.newsletter_publications = [
       {
+        id: "11111111-1111-4111-8111-111111111111",
         title: "Studio Notes",
         slug: "studio-notes",
         description: "Studio dispatches",
@@ -454,6 +664,7 @@ describe("newsletter authenticated writes", () => {
         accent_color: "#3478f6",
       },
       {
+        id: "22222222-2222-4222-8222-222222222222",
         title: "Product Notes",
         slug: "product-notes",
         description: "Product updates",
@@ -471,11 +682,12 @@ describe("newsletter authenticated writes", () => {
         { title: "Product Notes", slug: "product-notes" },
       ],
     });
-    expect(
-      mocks.queries.find(
-        (query) => query.table === "profiles" && query.selection?.includes("theme"),
-      )?.selection,
-    ).toContain("theme");
+    expect(mocks.publicChrome).toHaveBeenCalledWith(
+      "33333333-3333-4333-8333-333333333333",
+      "creator",
+      undefined,
+      undefined,
+    );
   });
 
   it("loads persisted template identity through the public post database projection", async () => {
@@ -754,7 +966,9 @@ describe("newsletter authenticated writes", () => {
       },
     });
 
-    expect(mocks.queries.at(-1)).toMatchObject({
+    expect(
+      mocks.queries.find((q) => q.table === "newsletter_publications" && q.action === "insert"),
+    ).toMatchObject({
       table: "newsletter_publications",
       action: "insert",
       value: expect.objectContaining({
@@ -883,7 +1097,9 @@ describe("newsletter authenticated writes", () => {
       },
     });
 
-    expect(mocks.queries.at(-1)).toMatchObject({
+    expect(
+      mocks.queries.find((q) => q.table === "newsletter_publications" && q.action === "update"),
+    ).toMatchObject({
       table: "newsletter_publications",
       action: "update",
       filters: [
@@ -930,7 +1146,9 @@ describe("newsletter authenticated writes", () => {
       p_publication_id: "11111111-1111-4111-8111-111111111111",
       p_confirmation: "Studio Notes",
     });
-    expect(mocks.from).not.toHaveBeenCalled();
+    expect(mocks.queries.find((q) => q.table === "pages" && q.action === "update")?.value).toEqual({
+      is_visible: false,
+    });
   });
 
   it("surfaces transactional archive rejection", async () => {
@@ -974,7 +1192,7 @@ describe("newsletter authenticated writes", () => {
       new Error("Upgrade to use Email Marketing."),
     );
 
-    expect(() =>
+    await expect(() =>
       saveNewsletterIssue({
         data: {
           publicationId: "11111111-1111-4111-8111-111111111111",
@@ -1261,7 +1479,9 @@ describe("newsletter authenticated writes", () => {
         ["created_at", { ascending: true }],
       ],
     });
-    expect(mocks.queries.at(-1)).toMatchObject({
+    expect(
+      mocks.queries.find((q) => q.table === "newsletter_publications" && q.action === "update"),
+    ).toMatchObject({
       action: "update",
       filters: [
         ["id", "66666666-6666-4666-8666-666666666666"],

@@ -4,6 +4,8 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import {
   exploreCategorySchema,
   explorePreviewUrl,
+  EXPLORE_EXCLUDED_USERNAMES,
+  isExploreProfileExcluded,
   normalizeExploreSearch,
   type ExploreCategory,
 } from "@/lib/explore";
@@ -111,7 +113,7 @@ export const getExploreProfiles = createServerFn({ method: "GET" })
     const { data: profiles, error } = await supabaseAdmin.rpc("get_explore_profiles", {
       p_category: data.category ?? null,
       p_query: queryText,
-      p_limit: EXPLORE_PAGE_SIZE,
+      p_limit: EXPLORE_PAGE_SIZE + EXPLORE_EXCLUDED_USERNAMES.size,
       p_offset: from,
     });
     if (error) {
@@ -119,7 +121,12 @@ export const getExploreProfiles = createServerFn({ method: "GET" })
       throw new Error("Explore is unavailable right now");
     }
 
-    const visibleProfiles = (profiles ?? []).slice(0, EXPLORE_PAGE_SIZE);
+    const excludedProfiles = (profiles ?? []).filter((profile) =>
+      isExploreProfileExcluded(profile.username),
+    );
+    const visibleProfiles = (profiles ?? [])
+      .filter((profile) => !isExploreProfileExcluded(profile.username))
+      .slice(0, EXPLORE_PAGE_SIZE);
     const previewUrls = await previewUrlsForProfiles(
       visibleProfiles.map((profile) => profile.username),
     );
@@ -136,7 +143,7 @@ export const getExploreProfiles = createServerFn({ method: "GET" })
       items,
       page: data.page,
       pageSize: EXPLORE_PAGE_SIZE,
-      total: Math.max(0, Number(profiles?.[0]?.total_count ?? 0)),
+      total: Math.max(0, Number(profiles?.[0]?.total_count ?? 0) - excludedProfiles.length),
       query: queryText,
       category: data.category ?? null,
     };

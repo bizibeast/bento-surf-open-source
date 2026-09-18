@@ -496,14 +496,14 @@ export async function getFounderWebAnalytics(
   offset = 0,
 ): Promise<FounderWebAnalytics> {
   const apiKey = overrides.apiKey ?? process.env.POSTHOG_QUERY_API_KEY?.trim();
-  const projectId = overrides.projectId?.trim() || process.env.POSTHOG_PROJECT_ID?.trim();
+  const projectId =
+    overrides.projectId?.trim() || process.env.POSTHOG_PROJECT_ID?.trim() || "513770";
   const host = appHost(overrides.host ?? process.env.POSTHOG_HOST);
   // Cloudflare Workers' global fetch is an "illegal invocation" when it is
   // detached from globalThis and later called as an object method. Bind the
   // runtime fetch once while keeping injected test fetchers untouched.
   const fetcher = overrides.fetcher ?? globalThis.fetch.bind(globalThis);
-  if (!apiKey || !projectId)
-    return emptyAnalytics(days, "PostHog reporting is not configured.", offset);
+  if (!apiKey) return emptyAnalytics(days, "PostHog reporting is not configured.", offset);
 
   const config = { apiKey, projectId, host, fetcher };
   const cacheable = Object.keys(overrides).length === 0;

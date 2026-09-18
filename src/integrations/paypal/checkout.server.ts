@@ -23,7 +23,7 @@ import {
   persistCommerceCheckoutGrowth,
   type CommerceCheckoutGrowth,
 } from "@/lib/commerce-growth.server";
-import { configuredAppOrigin, publicProductUrl } from "@/lib/application-urls";
+import { publicProductUrl } from "@/lib/application-urls";
 
 type CheckoutProduct = {
   id: string;
@@ -40,7 +40,7 @@ type CheckoutProduct = {
 };
 
 function appUrl() {
-  return configuredAppOrigin(process.env.VITE_APP_URL);
+  return (process.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "");
 }
 
 function randomToken() {

@@ -1,4 +1,3 @@
-import { configuredAppOrigin } from "@/lib/application-urls";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Razorpay API payloads are normalized at the boundary. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { decryptServerSecret } from "@/lib/secret-crypto.server";
@@ -110,7 +109,7 @@ export async function verifyRazorpayCredentials(credentials: RazorpayCredentials
 }
 
 export function razorpayWebhookUrl(connectionId: string) {
-  const origin = configuredAppOrigin(process.env.VITE_APP_URL);
+  const origin = (process.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "");
   return `${origin}/api/webhooks/razorpay/direct/${encodeURIComponent(connectionId)}`;
 }
 

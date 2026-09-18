@@ -1,78 +1,58 @@
-import { describe, expect, it } from "vitest";
-import { verifySupabaseDatabaseUrl } from "../../scripts/supabase-migration-target";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  SUPABASE_PROJECTS,
+  verifySupabaseDatabaseUrl,
+} from "../../scripts/supabase-migration-target";
 
-const projectRef = ["abcdefghij", "klmnopqrst"].join("");
-const otherProjectRef = ["zyxwvutsrq", "ponmlkjihg"].join("");
-const confirmation = `MIGRATE:${projectRef}`;
+const originalConfirmation = process.env.MIGRATION_CONFIRMATION;
+
+afterEach(() => {
+  if (originalConfirmation === undefined) delete process.env.MIGRATION_CONFIRMATION;
+  else process.env.MIGRATION_CONFIRMATION = originalConfirmation;
+});
 
 describe("Supabase migration target guard", () => {
-  it("accepts a deployer-configured direct database URL with matching confirmation", () => {
+  it("accepts an explicitly confirmed direct staging database URL", () => {
+    process.env.MIGRATION_CONFIRMATION = `STAGING:${SUPABASE_PROJECTS.staging}`;
+
     expect(
       verifySupabaseDatabaseUrl(
-        projectRef,
-        `postgresql://postgres:secret@db.${projectRef}.supabase.co:5432/postgres`,
-        confirmation,
+        "staging",
+        `postgresql://postgres:secret@db.${SUPABASE_PROJECTS.staging}.supabase.co:5432/postgres`,
       ),
-    ).toEqual({ hostname: `db.${projectRef}.supabase.co` });
+    ).toMatchObject({ expectedProject: SUPABASE_PROJECTS.staging });
   });
 
-  it("accepts a matching Supavisor pooler URL", () => {
+  it("accepts a confirmed Supavisor pooler URL", () => {
+    process.env.MIGRATION_CONFIRMATION = `PRODUCTION:${SUPABASE_PROJECTS.production}`;
+
     expect(
       verifySupabaseDatabaseUrl(
-        projectRef,
-        `postgresql://postgres.${projectRef}:secret@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
-        confirmation,
+        "production",
+        `postgresql://postgres.${SUPABASE_PROJECTS.production}:secret@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
       ),
-    ).toEqual({ hostname: "aws-0-us-east-1.pooler.supabase.com" });
+    ).toMatchObject({ expectedProject: SUPABASE_PROJECTS.production });
   });
 
-  it("rejects a matching pooler username on an unrelated host", () => {
+  it("rejects a production URL when staging was requested", () => {
+    process.env.MIGRATION_CONFIRMATION = `STAGING:${SUPABASE_PROJECTS.staging}`;
+
     expect(() =>
       verifySupabaseDatabaseUrl(
-        projectRef,
-        `postgresql://postgres.${projectRef}:secret@database.example.com:6543/postgres`,
-        confirmation,
+        "staging",
+        `postgresql://postgres:secret@db.${SUPABASE_PROJECTS.production}.supabase.co:5432/postgres`,
       ),
     ).toThrow("Database target mismatch");
   });
 
-  it("rejects a database URL for a different project without echoing either reference", () => {
-    let message = "";
-    try {
-      verifySupabaseDatabaseUrl(
-        projectRef,
-        `postgresql://postgres:secret@db.${otherProjectRef}.supabase.co:5432/postgres`,
-        confirmation,
-      );
-    } catch (error) {
-      message = error instanceof Error ? error.message : String(error);
-    }
+  it("rejects an unconfirmed target", () => {
+    delete process.env.MIGRATION_CONFIRMATION;
 
-    expect(message).toContain("Database target mismatch");
-    expect(message).not.toContain(projectRef);
-    expect(message).not.toContain(otherProjectRef);
-  });
-
-  it("requires confirmation derived from the configured project reference", () => {
     expect(() =>
       verifySupabaseDatabaseUrl(
-        projectRef,
-        `postgresql://postgres:secret@db.${projectRef}.supabase.co:5432/postgres`,
-        "MIGRATE:different-project",
+        "staging",
+        `postgresql://postgres:secret@db.${SUPABASE_PROJECTS.staging}.supabase.co:5432/postgres`,
       ),
-    ).toThrow("MIGRATION_CONFIRMATION=MIGRATE:<SUPABASE_PROJECT_ID>");
-  });
-
-  it("rejects malformed project references and database URLs", () => {
-    expect(() =>
-      verifySupabaseDatabaseUrl(
-        "not-a-project-ref",
-        "postgresql://postgres:secret@localhost/postgres",
-        "MIGRATE:not-a-project-ref",
-      ),
-    ).toThrow("SUPABASE_PROJECT_ID");
-    expect(() =>
-      verifySupabaseDatabaseUrl(projectRef, "https://example.com", confirmation),
-    ).toThrow("postgres or postgresql");
+    ).toThrow("MIGRATION_CONFIRMATION");
   });
 });

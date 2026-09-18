@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { connectDodoApiKey, getMyDodoConnection } from "@/integrations/dodo/connection.functions";
+import { isStagingHostname } from "@/lib/application-urls";
 
 export function DodoApiKeyDialog({
   open,
@@ -23,7 +24,9 @@ export function DodoApiKeyDialog({
   const queryClient = useQueryClient();
   const [apiKey, setApiKey] = useState("");
   const [environment, setEnvironment] = useState<"test_mode" | "live_mode">(
-    import.meta.env.VITE_APP_ENV === "production" ? "live_mode" : "test_mode",
+    typeof window !== "undefined" && isStagingHostname(window.location.hostname)
+      ? "test_mode"
+      : "live_mode",
   );
   const [replaceKey, setReplaceKey] = useState(false);
   const connectionQuery = useQuery({

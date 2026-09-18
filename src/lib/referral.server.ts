@@ -1,7 +1,7 @@
-import { configuredAppOrigin } from "@/lib/application-urls";
-import { normalizeHostname } from "@/lib/custom-domain";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Referral tables ship with the paired migration. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { configuredAppOrigin } from "@/lib/application-urls";
+import { normalizeHostname } from "@/lib/custom-domain";
 import { enforceRequestRateLimit } from "./request-security.server";
 import { isReferralCode } from "./referrals";
 

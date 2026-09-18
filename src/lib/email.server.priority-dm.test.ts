@@ -40,7 +40,7 @@ describe("legacy Priority DM notifications", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getUserById.mockResolvedValue({ data: { user: { email: "creator@example.com" } } });
-    mocks.issueMagicLink.mockResolvedValue("https://app.bento.surf/library/verify?token=secret");
+    mocks.issueMagicLink.mockResolvedValue("http://localhost:8080/library/verify?token=secret");
     mocks.outboxUpsert.mockReturnValue({
       select: () => ({ maybeSingle: async () => ({ data: { id: "outbox-1" }, error: null }) }),
     });

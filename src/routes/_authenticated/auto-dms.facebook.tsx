@@ -1,3 +1,4 @@
+import { AutoDmMetrics, AutoDmFlow, AutoDmActivityRow } from "@/components/AutoDmDetails";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -642,7 +643,14 @@ function FacebookAutoDmPage() {
                   <div className="mt-5 divide-y divide-border/65">
                     {(data?.activity || []).length ? (
                       data?.activity.map((event: FacebookDmActivity) => (
-                        <ActivityRow key={event.id} event={event} />
+                        <AutoDmActivityRow
+                          key={event.id}
+                          event={event}
+                          automation={data?.automations.find(
+                            (automation: FacebookDmAutomation) =>
+                              automation.id === event.automationId,
+                          )}
+                        />
                       ))
                     ) : (
                       <div
@@ -1714,6 +1722,7 @@ function AutomationRow({
   onToggle: (enabled: boolean) => void;
   onDelete: () => void;
 }) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [testOpen, setTestOpen] = useState(false);
   const [testText, setTestText] = useState(automation.keywords[0] || "Looks great");
   const testResult = testFacebookAutomation(automation, testText);
@@ -1737,7 +1746,16 @@ function AutomationRow({
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="truncate font-sans font-semibold">{automation.name}</h3>
+            <h3 className="truncate font-sans font-semibold">
+              <button
+                type="button"
+                aria-expanded={detailsOpen}
+                onClick={() => setDetailsOpen(!detailsOpen)}
+                className="text-left hover:underline focus-visible:outline focus-visible:outline-primary"
+              >
+                {automation.name}
+              </button>
+            </h3>
             <span
               className={`${micro.soft} rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground`}
             >
@@ -1839,6 +1857,16 @@ function AutomationRow({
           </button>
         </div>
       </div>
+      <AutoDmMetrics automation={automation} />
+      <button
+        type="button"
+        className={`${micro.btnOutline} mt-3`}
+        aria-expanded={detailsOpen}
+        onClick={() => setDetailsOpen(!detailsOpen)}
+      >
+        {detailsOpen ? "Hide flow" : "View automation flow"}
+      </button>
+      {detailsOpen && <AutoDmFlow automation={automation} />}
       {testOpen && (
         <div id={`automation-test-${automation.id}`} className={`${micro.soft} mt-3 p-4`}>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
@@ -1904,34 +1932,6 @@ function AutomationRow({
   );
 }
 
-function ActivityRow({ event }: { event: FacebookDmActivity }) {
-  return (
-    <div className="flex items-center gap-3 py-3.5 first:pt-0 last:pb-0">
-      <div
-        className={`flex size-10 shrink-0 items-center justify-center rounded-2xl ${event.eventType === "comment" ? "bg-[#dceaff] text-[#3478f6]" : "bg-[#ffd6e6]/65"}`}
-      >
-        <MessageCircleReply className="size-4" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-          <span className="truncate font-semibold">{event.senderLabel}</span>
-          <EventStatus status={event.status} />
-        </div>
-        <p className="mt-0.5 truncate text-xs text-muted-foreground">
-          {event.automationName || "No matching automation"}
-          {event.matchedKeyword ? ` · “${event.matchedKeyword}”` : ""}
-          {event.errorMessage ? ` · ${event.errorMessage}` : ""}
-        </p>
-      </div>
-      <time className="hidden text-right text-[11px] text-muted-foreground sm:block">
-        {new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(
-          new Date(event.createdAt),
-        )}
-      </time>
-    </div>
-  );
-}
-
 function WorkflowRow({ workflow }: { workflow: FacebookDmWorkflow }) {
   const label = workflow.status.replaceAll("_", " ");
   const statusClass =
@@ -1970,22 +1970,6 @@ function WorkflowRow({ workflow }: { workflow: FacebookDmWorkflow }) {
         )}
       </time>
     </div>
-  );
-}
-
-function EventStatus({ status }: { status: FacebookDmActivity["status"] }) {
-  const styles: Record<FacebookDmActivity["status"], string> = {
-    received: "bg-sky-500/10 text-sky-700 dark:text-sky-300",
-    processing: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
-    sent: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-    failed: "bg-rose-500/10 text-rose-700 dark:text-rose-300",
-  };
-  return (
-    <span
-      className={`rounded-full px-2 py-0.5 text-[10px] font-semibold capitalize ${styles[status]}`}
-    >
-      {status}
-    </span>
   );
 }
 

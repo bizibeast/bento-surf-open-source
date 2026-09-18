@@ -1,4 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
+import { isHomepageNewsletterSignup, reconcileNewsletterPageVisibility } from "./pages.functions";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getPlan } from "./plan.server";
@@ -157,6 +158,7 @@ export const createBlock = createServerFn({ method: "POST" })
       .select("*")
       .single();
     if (error) throw new Error(error.message);
+    if (isHomepageNewsletterSignup(row)) await reconcileNewsletterPageVisibility(supabase, userId);
     return row;
   });
 
@@ -178,7 +180,7 @@ export const updateBlock = createServerFn({ method: "POST" })
     const { id, ...patch } = data;
     const { data: existing, error: existingError } = await supabase
       .from("blocks")
-      .select("type")
+      .select("type,content,page_id")
       .eq("id", id)
       .eq("user_id", userId)
       .maybeSingle();
@@ -196,6 +198,8 @@ export const updateBlock = createServerFn({ method: "POST" })
       .select("*")
       .single();
     if (error) throw new Error(error.message);
+    if (isHomepageNewsletterSignup(existing) || isHomepageNewsletterSignup(row))
+      await reconcileNewsletterPageVisibility(supabase, userId);
     return row;
   });
 
@@ -238,11 +242,15 @@ export const deleteBlock = createServerFn({ method: "POST" })
   .validator((input) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const { error } = await supabase
+    const { data: deleted, error } = await supabase
       .from("blocks")
       .delete()
       .eq("id", data.id)
-      .eq("user_id", userId);
+      .eq("user_id", userId)
+      .select("type,content,page_id")
+      .maybeSingle();
     if (error) throw new Error(error.message);
+    if (deleted && isHomepageNewsletterSignup(deleted))
+      await reconcileNewsletterPageVisibility(supabase, userId);
     return { ok: true };
   });

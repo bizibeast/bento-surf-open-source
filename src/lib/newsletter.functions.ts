@@ -1,5 +1,8 @@
+import { loadPublicCreatorPage } from "./profile.functions";
+import { loadPublicCreatorChrome } from "./public-creator-chrome.server";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Newsletter tables are introduced by a pending migration. */
 import { createServerFn } from "@tanstack/react-start";
+import { setSystemPageVisibility, reconcileNewsletterPageVisibility } from "./pages.functions";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
@@ -274,6 +277,7 @@ export const updateNewsletterPublication = createServerFn({ method: "POST" })
       .maybeSingle();
     if (error) throw new Error(error.message);
     if (!publication) throw new Error("Newsletter publication not found.");
+    await reconcileNewsletterPageVisibility(context.supabase, context.userId);
     return publication;
   });
 
@@ -314,6 +318,7 @@ export const archiveNewsletterPublication = createServerFn({ method: "POST" })
     );
     if (error) throw new Error(error.message);
     if (!archived) throw new Error("Newsletter publication not found.");
+    await reconcileNewsletterPageVisibility(context.supabase, context.userId);
     return archived;
   });
 
@@ -520,6 +525,7 @@ export const saveNewsletterPublication = createServerFn({ method: "POST" })
     const { data: publication, error } = await query.select("*").maybeSingle();
     if (error) throw new Error(error.message);
     if (!publication) throw new Error("Could not save newsletter publication.");
+    await reconcileNewsletterPageVisibility(context.supabase, context.userId);
     return publication;
   });
 
@@ -817,6 +823,20 @@ export function publicNewsletterIssueFromRows(rows: PublicNewsletterRows & { iss
   return { ...archive, issue: { ...issue, content: publicContent }, paidProduct: null };
 }
 
+async function withPublicNewsletterChrome<T extends object>(
+  rows: PublicNewsletterRows,
+  content: T | null,
+) {
+  if (!content) return null;
+  const chrome = await loadPublicCreatorChrome(rows.creator.id, rows.canonicalUsername);
+  if (!chrome) return null;
+  return {
+    ...content,
+    chrome,
+    activePageId: chrome.pages.find((page) => page.system === "newsletter")?.id ?? null,
+  };
+}
+
 const publicNewsletterInput = z.object({
   username: z.string().trim().min(1).max(64),
   publicationSlug: z.string().trim().min(1).max(96).optional(),
@@ -912,39 +932,23 @@ export const getPublicNewsletterPublications = createServerFn({ method: "GET" })
   .validator((input) => z.object({ username: z.string().trim().min(1).max(64) }).parse(input))
   .handler(async ({ data }) => {
     await enforceRequestRateLimit("PUBLIC_API_RATE_LIMITER", "public-newsletters");
-    const db = supabaseAdmin as any;
-    const resolved = await resolvePublicUsername(db, data.username);
-    if (!resolved) return null;
-    const [
-      { data: creator, error: creatorError },
-      { data: publications, error: publicationsError },
-    ] = await Promise.all([
-      db
-        .from("profiles")
-        .select(
-          "id,username,display_name,avatar_url,bio,theme,accent_color,primary_font,secondary_font,pattern,pattern_settings,noindex,onboarded",
-        )
-        .eq("id", resolved.userId)
-        .maybeSingle(),
-      db
-        .from("newsletter_publications")
-        .select("title,slug,description,logo_url,accent_color,is_default")
-        .eq("creator_id", resolved.userId)
-        .eq("status", "published")
-        .order("is_default", { ascending: false })
-        .order("created_at", { ascending: true }),
-    ]);
-    if (creatorError || publicationsError) throw new Error("Unable to load public newsletters");
-    if (!creator || !publications?.length) return null;
+    const canvas = await loadPublicCreatorPage({ username: data.username }, "newsletters", null);
+    if (!canvas || canvas.notFound || !canvas.page) return null;
+    const publications = canvas.systemItems
+      .filter((item) => item.kind === "publication")
+      .map(({ data }) => ({
+        title: String(data.title),
+        slug: String(data.slug),
+        description: String(data.description ?? ""),
+        logoUrl: typeof data.logoUrl === "string" ? data.logoUrl : null,
+        accentColor: typeof data.accentColor === "string" ? data.accentColor : null,
+      }));
     return {
-      creator: publicNewsletterCreator(resolved.username, creator),
-      publications: publications.map((publication: any) => ({
-        title: String(publication.title),
-        slug: String(publication.slug),
-        description: String(publication.description ?? ""),
-        logoUrl: publication.logo_url ?? null,
-        accentColor: publication.accent_color ?? null,
-      })),
+      ...canvas,
+      page: canvas.page,
+      creator: publicNewsletterCreator(canvas.profile.username, canvas.profile),
+      publications,
+      domainData: { publications },
     };
   });
 
@@ -953,7 +957,7 @@ export const getPublicNewsletterArchive = createServerFn({ method: "GET" })
   .handler(async ({ data }) => {
     await enforceRequestRateLimit("PUBLIC_API_RATE_LIMITER", "public-newsletter");
     const rows = await loadPublicNewsletterRows(data.username, data.publicationSlug);
-    return rows ? publicNewsletterArchiveFromRows(rows) : null;
+    return rows ? withPublicNewsletterChrome(rows, publicNewsletterArchiveFromRows(rows)) : null;
   });
 
 export const getPublicNewsletterIssue = createServerFn({ method: "GET" })
@@ -963,7 +967,12 @@ export const getPublicNewsletterIssue = createServerFn({ method: "GET" })
   .handler(async ({ data }) => {
     await enforceRequestRateLimit("PUBLIC_API_RATE_LIMITER", "public-newsletter-issue");
     const rows = await loadPublicNewsletterRows(data.username, data.publicationSlug);
-    return rows ? publicNewsletterIssueFromRows({ ...rows, issueSlug: data.issueSlug }) : null;
+    return rows
+      ? withPublicNewsletterChrome(
+          rows,
+          publicNewsletterIssueFromRows({ ...rows, issueSlug: data.issueSlug }),
+        )
+      : null;
   });
 
 export const validateNewsletterSubscriptionConfirmation = createServerFn({ method: "GET" })
@@ -1052,6 +1061,7 @@ export const addNewsletterToBento = createServerFn({ method: "POST" })
         .eq("id", linked.id)
         .eq("user_id", userId);
       if (error) throw new Error(error.message);
+      await setSystemPageVisibility(supabase, userId, "newsletter", true);
       return { blockId: linked.id, created: false as const };
     }
     const { data: block, error } = await db
@@ -1071,6 +1081,7 @@ export const addNewsletterToBento = createServerFn({ method: "POST" })
       .select("id")
       .single();
     if (error) throw new Error(error.message);
+    await setSystemPageVisibility(supabase, userId, "newsletter", true);
     return { blockId: block.id, created: true as const };
   });
 
@@ -1104,12 +1115,18 @@ export const removeNewsletterFromBento = createServerFn({ method: "POST" })
           block.content.newsletterPublicationId === publication.id,
       )
       .map((block: any) => block.id);
-    if (!ids.length) return { removed: false as const };
-    const { error } = await (supabase as any)
-      .from("blocks")
-      .delete()
-      .eq("user_id", userId)
-      .in("id", ids);
-    if (error) throw new Error(error.message);
-    return { removed: true as const };
+    if (ids.length) {
+      const { error } = await (supabase as any)
+        .from("blocks")
+        .delete()
+        .eq("user_id", userId)
+        .in("id", ids);
+      if (error) throw new Error(error.message);
+    }
+    await reconcileNewsletterPageVisibility(
+      supabase,
+      userId,
+      (blocks ?? []).filter((block: any) => !ids.includes(block.id)),
+    );
+    return { removed: ids.length > 0 };
   });

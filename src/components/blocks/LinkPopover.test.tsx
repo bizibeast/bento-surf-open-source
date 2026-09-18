@@ -4,9 +4,9 @@ import { LinkPopover } from "./LinkPopover";
 
 vi.mock("@/lib/link-metadata.functions", () => ({
   fetchLinkMetadata: vi.fn().mockResolvedValue({
-    url: "https://product.example/",
-    title: "Example Product",
-    favicon: "https://product.example/favicon.svg",
+    url: "https://behooked.ai/",
+    title: "BeHooked",
+    favicon: "https://behooked.ai/favicon.svg",
     color: "#007cff",
   }),
 }));
@@ -80,7 +80,7 @@ describe("LinkPopover", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Add link" }));
     fireEvent.change(screen.getByPlaceholderText("Enter Link"), {
-      target: { value: "product.example" },
+      target: { value: "behooked.ai" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
 
@@ -88,12 +88,12 @@ describe("LinkPopover", () => {
       expect(onAdd).toHaveBeenCalledWith({
         type: "generic_link",
         content: {
-          title: "Example Product",
-          url: "https://product.example/",
+          title: "BeHooked",
+          url: "https://behooked.ai/",
           description: "",
           color: "#007cff",
         },
-        cover_url: "https://product.example/favicon.svg",
+        cover_url: "https://behooked.ai/favicon.svg",
         w: 2,
         h: 1,
       }),

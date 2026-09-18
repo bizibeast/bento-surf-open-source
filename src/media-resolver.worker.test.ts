@@ -162,6 +162,89 @@ describe("media resolver Worker", () => {
     });
   });
 
+  it("prefers a signed public YouTube stream for transcript audio", async () => {
+    const sourceAudio = "https://rr1---sn-test.googlevideo.com/videoplayback?id=audio";
+    const redirectedAudio = "https://rr2---sn-test.googlevideo.com/videoplayback?id=audio";
+    let playerAttempts = 0;
+    const fetcher = vi.fn().mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === `${UPSTREAM_URL}/`) {
+        return Response.json({ status: "error", error: { code: "error.api.content.unavailable" } });
+      }
+      if (url.startsWith("https://www.youtube.com/youtubei/v1/player")) {
+        playerAttempts += 1;
+        if (new Headers(init?.headers).get("user-agent")?.includes("android")) {
+          return Response.json({ playabilityStatus: { status: "LOGIN_REQUIRED" } });
+        }
+        return Response.json({
+          playabilityStatus: { status: "OK" },
+          videoDetails: { lengthSeconds: "15" },
+          streamingData: {
+            adaptiveFormats: [
+              {
+                itag: 139,
+                bitrate: 48_000,
+                mimeType: 'audio/mp4; codecs="mp4a.40.5"',
+                url: sourceAudio,
+              },
+            ],
+          },
+        });
+      }
+      if (url === sourceAudio) {
+        expect(new Headers(init?.headers).get("user-agent")).toContain("google.ios.youtube");
+        return new Response(null, { status: 302, headers: { location: redirectedAudio } });
+      }
+      if (url === redirectedAudio) {
+        return new Response(Uint8Array.from([1, 2, 3]), {
+          headers: { "content-type": "audio/mp4", "content-length": "3" },
+        });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    const env = envFor(fetcher);
+    const resolved = await mediaResolver.fetch(
+      new Request("https://media.bento.surf/resolve", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${SECRET}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          url: "https://www.youtube.com/watch?v=C-WMHU2kGnc",
+          downloadMode: "audio",
+        }),
+      }),
+      env as never,
+    );
+    const payload = (await resolved.json()) as { status: string; url: string; filename: string };
+
+    expect(payload).toMatchObject({
+      status: "tunnel",
+      filename: "youtube_C-WMHU2kGnc.m4a",
+    });
+    expect(playerAttempts).toBe(2);
+    const streamUrl = new URL(payload.url);
+    expect(streamUrl.origin).toBe("https://media.bento.surf");
+    expect(streamUrl.pathname).toBe("/youtube-stream");
+    expect(streamUrl.searchParams.get("signature")).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    streamUrl.searchParams.set("bento_filename", payload.filename);
+
+    const streamed = await mediaResolver.fetch(new Request(streamUrl), env as never);
+
+    expect(playerAttempts).toBe(4);
+    expect(streamed.status).toBe(200);
+    expect(streamed.headers.get("content-type")).toBe("audio/mp4");
+    expect(streamed.headers.get("content-disposition")).toContain(payload.filename);
+    expect(new Uint8Array(await streamed.arrayBuffer())).toEqual(Uint8Array.from([1, 2, 3]));
+
+    const callsBeforeTamper = fetcher.mock.calls.length;
+    streamUrl.searchParams.set("signature", "A".repeat(43));
+    const tampered = await mediaResolver.fetch(new Request(streamUrl), env as never);
+    expect(tampered.status).toBe(404);
+    expect(fetcher).toHaveBeenCalledTimes(callsBeforeTamper);
+  });
+
   it("falls back from an unusable direct tunnel to the YouTube session route", async () => {
     const sessionUrl = `${UPSTREAM_URL}/youtube-session`;
     const proxyUrl = `${UPSTREAM_URL}/webshare`;
@@ -225,18 +308,20 @@ describe("media resolver Worker", () => {
     });
   });
 
-  it("returns the first usable direct YouTube tunnel without spending fallback routes", async () => {
+  it("returns fresh Cobalt audio after validating its tunnel", async () => {
     const sessionUrl = `${UPSTREAM_URL}/youtube-session`;
+    let resolutions = 0;
     const fetcher = vi.fn().mockImplementation(async (input, init) => {
       const url = String(input);
       if (url === `${UPSTREAM_URL}/`) {
+        resolutions += 1;
         return Response.json({
           status: "tunnel",
-          url: `${UPSTREAM_URL}/tunnel?id=direct-audio`,
+          url: `${UPSTREAM_URL}/tunnel?id=direct-audio-${resolutions}`,
           filename: "audio.mp3",
         });
       }
-      if (url === `${UPSTREAM_URL}/tunnel?id=direct-audio`) {
+      if (url === `${UPSTREAM_URL}/tunnel?id=direct-audio-1`) {
         expect(new Headers(init?.headers).get("range")).toBe("bytes=0-1023");
         expect(init?.redirect).toBe("manual");
         return new Response(Uint8Array.from([1, 2, 3]), {
@@ -269,11 +354,12 @@ describe("media resolver Worker", () => {
 
     expect(fetcher.mock.calls.map(([input]) => String(input))).toEqual([
       `${UPSTREAM_URL}/`,
-      `${UPSTREAM_URL}/tunnel?id=direct-audio`,
+      `${UPSTREAM_URL}/tunnel?id=direct-audio-1`,
+      `${UPSTREAM_URL}/`,
     ]);
     await expect(response.json()).resolves.toMatchObject({
       status: "tunnel",
-      url: "https://media.bento.surf/tunnel?id=direct-audio",
+      url: "https://media.bento.surf/tunnel?id=direct-audio-2",
     });
   });
 
@@ -323,6 +409,8 @@ describe("media resolver Worker", () => {
       `${UPSTREAM_URL}/`,
       `${UPSTREAM_URL}/tunnel?id=first-video`,
       `${UPSTREAM_URL}/tunnel?id=second-video`,
+      "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+      "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
     ]);
     expect(response.status).toBe(503);
   });
@@ -352,7 +440,7 @@ describe("media resolver Worker", () => {
       envFor(fetcher) as never,
     );
 
-    expect(fetcher).toHaveBeenCalledOnce();
+    expect(fetcher).toHaveBeenCalledTimes(3);
     expect(response.status).toBe(503);
   });
 
@@ -406,8 +494,8 @@ describe("media resolver Worker", () => {
         },
         body: JSON.stringify({
           url: "https://youtube.com/watch?v=dQw4w9WgXcQ",
-          downloadMode: "audio",
-          audioFormat: "mp3",
+          downloadMode: "auto",
+          videoQuality: "max",
         }),
       }),
       {
@@ -423,12 +511,11 @@ describe("media resolver Worker", () => {
       `${sessionUrl}/tunnel?id=session-audio`,
       `${proxyUrl}/tunnel?id=proxy-audio`,
     ]);
-    expect(attemptedBodies[0]).not.toHaveProperty("videoQuality");
-    expect(attemptedBodies[1]).toMatchObject({
-      downloadMode: "audio",
-      videoQuality: "max",
-    });
-    expect(attemptedBodies[2]).not.toHaveProperty("videoQuality");
+    expect(attemptedBodies).toEqual([
+      expect.objectContaining({ downloadMode: "auto", videoQuality: "max" }),
+      expect.objectContaining({ downloadMode: "auto", videoQuality: "max" }),
+      expect.objectContaining({ downloadMode: "auto", videoQuality: "max" }),
+    ]);
     await expect(response.json()).resolves.toMatchObject({
       status: "tunnel",
       url: "https://media.bento.surf/webshare/tunnel?id=proxy-audio",
@@ -494,7 +581,7 @@ describe("media resolver Worker", () => {
           authorization: `Bearer ${SECRET}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ url: "https://youtube.com/watch?v=dQw4w9WgXcQ" }),
+        body: JSON.stringify({ url: "https://instagram.com/p/public-post" }),
       }),
       {
         ...envFor(fetcher),

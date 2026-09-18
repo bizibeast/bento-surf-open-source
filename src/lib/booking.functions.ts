@@ -1,5 +1,13 @@
+import { loadPublicCreatorPage } from "./profile.functions";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Booking tables are added by the accompanying migration. */
 import { createServerFn } from "@tanstack/react-start";
+import { getRequestHost } from "@tanstack/react-start/server";
+import { hostnameFromRequestHost } from "./custom-domain";
+import {
+  normalizeOrigin,
+  PRODUCTION_APP_ORIGIN,
+  PRODUCTION_PUBLIC_ORIGIN,
+} from "./application-urls";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
@@ -30,11 +38,6 @@ import { encryptServerSecret } from "./secret-crypto.server";
 import { enforceRequestRateLimit } from "./request-security.server";
 import { requirePlanEntitlement } from "./plan.server";
 import {
-  pricingLabel,
-  sanitizeCommerceSettingsForPublic,
-  type CommerceProductKind,
-} from "./commerce";
-import {
   clearPublicBookingCalendarCache,
   publicBookingCalendarCacheKey,
   readPublicBookingCalendarCache,
@@ -42,7 +45,7 @@ import {
 } from "./public-booking-calendar-cache.server";
 import { usernameSchema } from "./username";
 import { resolveCommerceGrantByToken } from "./commerce-access.server";
-import { resolvePublicUsername } from "./username-alias.server";
+import { setSystemPageVisibility } from "./pages.functions";
 
 const db = () => supabaseAdmin as any;
 const uuidSchema = z.string().uuid();
@@ -162,6 +165,9 @@ export const getBookingWorkspace = createServerFn({ method: "GET" })
       }
     }
 
+    if (calendarEnabled) {
+      await setSystemPageVisibility(context.supabase, context.userId, "calendar", true);
+    }
     return {
       ...plan,
       availabilityConfigured,
@@ -212,6 +218,7 @@ export const setPublicCalendarPage = createServerFn({ method: "POST" })
       .select("username,calendar_page_enabled")
       .single();
     if (error) throw new Error(error.message);
+    await setSystemPageVisibility(context.supabase, context.userId, "calendar", data.enabled);
     return {
       enabled: Boolean(profile.calendar_page_enabled),
       username: profile.username,
@@ -227,9 +234,16 @@ export const renamePublicCalendarPage = createServerFn({ method: "POST" })
       .from("profiles")
       .update({ calendar_page_name: data.name })
       .eq("id", context.userId)
-      .select("calendar_page_name")
+      .select("calendar_page_name,calendar_page_enabled")
       .single();
     if (error) throw new Error(error.message);
+    await setSystemPageVisibility(
+      context.supabase,
+      context.userId,
+      "calendar",
+      Boolean(profile.calendar_page_enabled),
+      profile.calendar_page_name,
+    );
     return { name: profile.calendar_page_name };
   });
 
@@ -259,118 +273,75 @@ export const getPublicBookingCalendar = createServerFn({ method: "GET" })
   .validator((input) => z.object({ username: usernameSchema }).parse(input))
   .handler(async ({ data }) => {
     const username = data.username.toLowerCase();
+    const hostname = hostnameFromRequestHost(getRequestHost());
+    const cacheable =
+      !hostname ||
+      [
+        normalizeOrigin(import.meta.env.VITE_PUBLIC_URL, PRODUCTION_PUBLIC_ORIGIN),
+        normalizeOrigin(import.meta.env.VITE_APP_URL, PRODUCTION_APP_ORIGIN),
+      ].some((origin) => new URL(origin).hostname === hostname);
     const cacheKey = publicBookingCalendarCacheKey(username);
-    const cached =
-      await readPublicBookingCalendarCache<Awaited<ReturnType<typeof loadPublicBookingCalendar>>>(
-        cacheKey,
-      );
+    const cached = cacheable
+      ? await readPublicBookingCalendarCache<Awaited<ReturnType<typeof loadPublicBookingCalendar>>>(
+          cacheKey,
+        )
+      : { hit: false as const, value: null };
     if (cached.hit) return cached.value;
 
     await enforceRequestRateLimit("PUBLIC_API_RATE_LIMITER", "public-booking-calendar");
     const result = await loadPublicBookingCalendar(username);
-    await writePublicBookingCalendarCache(cacheKey, result);
+    if (cacheable) await writePublicBookingCalendarCache(cacheKey, result);
     return result;
   });
 
 async function loadPublicBookingCalendar(username: string) {
-  const client = db();
-  const resolvedUsername = await resolvePublicUsername(client, username);
-  if (!resolvedUsername) return null;
-  const { data: profile, error: profileError } = await client
-    .from("profiles")
-    .select(
-      "id,username,display_name,bio,avatar_url,theme,accent_color,primary_font,secondary_font,header_mode,pattern,pattern_settings,badge_hidden,calendar_page_enabled,calendar_page_name,plan_id,is_pro,onboarded,noindex",
-    )
-    .eq("id", resolvedUsername.userId)
-    .maybeSingle();
-  if (profileError) throw new Error(profileError.message);
-  if (!profile?.calendar_page_enabled) return null;
-
-  const [
-    { data: products, error: productsError },
-    { data: pages, error: pagesError },
-    { data: reviews, error: reviewsError },
-  ] = await Promise.all([
-    client
-      .from("commerce_products")
-      .select(
-        "id,slug,public_slug,title,subtitle,cover_url,pricing_type,price_amount,currency,billing_interval,cta_label,inventory_limit,sales_count,settings,published_at",
-      )
-      .eq("creator_id", profile.id)
-      .eq("kind", "coaching_call")
-      .eq("status", "published")
-      .order("published_at", { ascending: false }),
-    client
-      .from("pages")
-      .select("id,name,slug,position,url")
-      .eq("user_id", profile.id)
-      .order("position", { ascending: true }),
-    client
-      .from("booking_reviews")
-      .select("id,reviewer_name,rating,body,submitted_at")
-      .eq("creator_id", profile.id)
-      .eq("is_public", true)
-      .not("submitted_at", "is", null)
-      .order("submitted_at", { ascending: false })
-      .limit(6),
-  ]);
-  if (productsError) throw new Error(productsError.message);
-  if (pagesError) throw new Error(pagesError.message);
-  if (reviewsError) throw new Error(reviewsError.message);
-
+  const canvas = await loadPublicCreatorPage({ username }, "calendar", null);
+  if (!canvas || canvas.notFound || !canvas.page) return null;
+  const creator = canvas.profile;
+  const sessions = canvas.systemItems
+    .filter((item) => item.kind === "session")
+    .map(({ data }) => ({
+      id: String(data.id),
+      slug: String(data.slug),
+      title: String(data.title),
+      subtitle: String(data.subtitle ?? ""),
+      coverUrl: typeof data.coverUrl === "string" ? data.coverUrl : null,
+      ctaLabel: String(data.ctaLabel ?? ""),
+      durationMinutes: Number(data.durationMinutes),
+      priceLabel: String(data.priceLabel),
+      soldOut: data.soldOut === true,
+    }));
+  const reviews = canvas.systemItems
+    .filter((item) => item.kind === "review")
+    .map(({ data }) => ({
+      id: String(data.id),
+      reviewerName: typeof data.reviewerName === "string" ? data.reviewerName : null,
+      rating: typeof data.rating === "number" ? data.rating : null,
+      body: typeof data.body === "string" ? data.body : null,
+    }));
   return {
+    ...canvas,
+    page: canvas.page,
     profile: {
-      username: profile.username,
-      displayName: profile.display_name,
-      bio: profile.bio,
-      avatarUrl: profile.avatar_url,
-      theme: profile.theme,
-      accentColor: profile.accent_color,
-      primaryFont: profile.primary_font,
-      secondaryFont: profile.secondary_font,
-      headerMode: profile.header_mode,
-      pattern: profile.pattern,
-      patternSettings: profile.pattern_settings,
-      isPro: Boolean(profile.is_pro),
-      badgeHidden: Boolean(profile.badge_hidden),
-      onboarded: profile.onboarded,
-      noindex: profile.noindex,
+      username: creator.username,
+      displayName: creator.display_name,
+      bio: creator.bio,
+      avatarUrl: creator.avatar_url,
+      theme: creator.theme,
+      accentColor: creator.accent_color,
+      primaryFont: creator.primary_font,
+      secondaryFont: creator.secondary_font,
+      headerMode: creator.header_mode,
+      pattern: creator.pattern,
+      patternSettings: creator.pattern_settings,
+      isPro: Boolean(creator.is_pro),
+      badgeHidden: Boolean(creator.badge_hidden),
+      onboarded: creator.onboarded,
+      noindex: creator.noindex,
     },
-    pages: [
-      ...(pages || []),
-      {
-        id: "__calendar",
-        name: profile.calendar_page_name || "Calendar",
-        slug: "calendar",
-        url: null,
-        system: "calendar" as const,
-      },
-    ],
-    reviews: (reviews || []).map((review: any) => ({
-      id: review.id,
-      reviewerName: review.reviewer_name,
-      rating: review.rating,
-      body: review.body,
-    })),
-    sessions: (products || []).map((product: any) => ({
-      id: product.id,
-      slug: product.public_slug,
-      title: product.title,
-      subtitle: product.subtitle,
-      coverUrl: product.cover_url,
-      ctaLabel: product.cta_label,
-      durationMinutes: Number(
-        sanitizeCommerceSettingsForPublic("coaching_call" as CommerceProductKind, product.settings)
-          .durationMinutes || 60,
-      ),
-      priceLabel: pricingLabel(
-        product.pricing_type,
-        product.price_amount,
-        product.currency,
-        product.billing_interval,
-      ),
-      soldOut: Boolean(product.inventory_limit && product.sales_count >= product.inventory_limit),
-    })),
+    sessions,
+    reviews,
+    domainData: { sessions, reviews },
   };
 }
 

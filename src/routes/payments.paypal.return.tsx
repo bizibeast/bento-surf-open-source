@@ -47,7 +47,9 @@ function PayPalReturnPage() {
           const path = creatorUsername
             ? publicProductSuccessPath(creatorUsername, productSlug)
             : `/p/${encodeURIComponent(productSlug)}/success`;
-          window.location.replace(`${path}?${query}`);
+          window.location.replace(
+            `${(import.meta.env.VITE_PUBLIC_URL || "http://localhost:8080").replace(/\/$/, "")}${path}?${query}`,
+          );
         }, 500);
       })
       .catch((error) => {

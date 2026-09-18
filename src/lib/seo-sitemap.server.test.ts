@@ -227,13 +227,13 @@ describe("sitemap XML", () => {
 
   it("renders escaped URL entries and never exceeds the shard limit", () => {
     const xml = renderSitemapUrlSet([
-      { loc: "https://bento.surf/@a?x=1&y=2", lastmod: "2026-08-20T12:00:00.000Z" },
+      { loc: "http://localhost:8080/@a?x=1&y=2", lastmod: "2026-08-20T12:00:00.000Z" },
       ...Array.from({ length: SITEMAP_SHARD_SIZE }, (_, index) => ({
-        loc: `https://bento.surf/@creator-${index}`,
+        loc: `http://localhost:8080/@creator-${index}`,
       })),
     ]);
 
-    expect(xml).toContain("https://bento.surf/@a?x=1&amp;y=2");
+    expect(xml).toContain("http://localhost:8080/@a?x=1&amp;y=2");
     expect(xml.match(/<url>/g)).toHaveLength(SITEMAP_SHARD_SIZE);
   });
 });

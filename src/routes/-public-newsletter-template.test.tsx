@@ -65,4 +65,66 @@ describe("public newsletter template", () => {
     expect(screen.getByRole("article")).toHaveTextContent("Paid post unavailable");
     expect(screen.queryByRole("link", { name: /Subscribe to/ })).toBeNull();
   });
+
+  it("keeps creator identity and navigation around a published post", () => {
+    render(
+      <PublicNewsletterPostView
+        data={
+          {
+            chrome: {
+              creator: {
+                id: "11111111-1111-4111-8111-111111111111",
+                username: "ari",
+                display_name: "Ari",
+                bio: "Helping creators publish",
+                avatar_url: null,
+                cover_url: null,
+                theme: "light",
+                accent_color: "indigo",
+                primary_font: null,
+                secondary_font: null,
+                header_mode: "with_photo",
+                is_pro: false,
+                badge_hidden: false,
+              },
+              pages: [
+                {
+                  id: "newsletter-page",
+                  name: "Newsletters",
+                  slug: "newsletters",
+                  href: "/@ari/newsletters",
+                  url: null,
+                  system: "newsletter",
+                },
+              ],
+              customDomain: null,
+            },
+            activePageId: "newsletter-page",
+            creator: { username: "ari" },
+            publication: {
+              title: "Studio Notes",
+              slug: "studio-notes",
+              postalAddress: "Bengaluru, India",
+            },
+            issue: {
+              subject: "Launch day",
+              previewText: "We are live",
+              visibility: "public",
+              templateId: "bold-digest",
+              content: [{ id: "body", type: "paragraph", text: "Launch body" }],
+            },
+            paidProduct: null,
+          } as never
+        }
+      />,
+    );
+
+    expect(document.querySelector("aside > p")).toHaveTextContent("Ari");
+    expect(screen.getByText("Helping creators publish")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Newsletters" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByText("Launch body")).toBeVisible();
+  });
 });

@@ -4,6 +4,7 @@ import {
   NewsletterPaidPost,
 } from "@/components/email-marketing/NewsletterDocument";
 import { PublicNewsletterTheme } from "@/components/email-marketing/PublicNewsletterArchive";
+import { PublicCreatorShell } from "@/components/public/PublicCreatorShell";
 import { DecodedImage } from "@/components/DecodedImage";
 import { getPublicNewsletterIssue } from "@/lib/newsletter.functions";
 import { resolveNewsletterTemplate } from "@/lib/newsletter-templates";
@@ -49,43 +50,48 @@ export function PublicNewsletterPostView({
   data: ReturnType<typeof Route.useLoaderData>;
 }) {
   const logoUrl = safeMediaUrl(data.publication.logoUrl);
-  return (
-    <PublicNewsletterTheme creator={data.creator}>
-      <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6 sm:py-14">
-        <Link
-          to={publicNewsletterPublicationPath(data.creator.username, data.publication.slug)}
-          className="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground"
-        >
-          {logoUrl ? (
-            <DecodedImage src={logoUrl} alt="" className="size-7 rounded-md object-cover" />
-          ) : null}
-          ← {data.publication.title}
-        </Link>
-        {data.issue.visibility === "paid" ? (
-          <NewsletterPaidPost
-            subject={data.issue.subject}
-            previewText={data.issue.previewText}
-            paidProduct={
-              data.paidProduct
-                ? {
-                    title: data.paidProduct.title,
-                    url: publicProductPath(data.creator.username, data.paidProduct.publicSlug),
-                  }
-                : null
-            }
-          />
-        ) : data.issue.content ? (
-          <NewsletterDocument
-            subject={data.issue.subject}
-            previewText={data.issue.previewText}
-            content={data.issue.content}
-            presentation={resolveNewsletterTemplate(data.issue.templateId)?.presentation}
-          />
+  const content = (
+    <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6 sm:py-14">
+      <Link
+        to={publicNewsletterPublicationPath(data.creator.username, data.publication.slug)}
+        className="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground"
+      >
+        {logoUrl ? (
+          <DecodedImage src={logoUrl} alt="" className="size-7 rounded-md object-cover" />
         ) : null}
-        <footer className="mt-10 text-center text-xs text-muted-foreground">
-          {data.publication.postalAddress}
-        </footer>
-      </div>
-    </PublicNewsletterTheme>
+        ← {data.publication.title}
+      </Link>
+      {data.issue.visibility === "paid" ? (
+        <NewsletterPaidPost
+          subject={data.issue.subject}
+          previewText={data.issue.previewText}
+          paidProduct={
+            data.paidProduct
+              ? {
+                  title: data.paidProduct.title,
+                  url: publicProductPath(data.creator.username, data.paidProduct.publicSlug),
+                }
+              : null
+          }
+        />
+      ) : data.issue.content ? (
+        <NewsletterDocument
+          subject={data.issue.subject}
+          previewText={data.issue.previewText}
+          content={data.issue.content}
+          presentation={resolveNewsletterTemplate(data.issue.templateId)?.presentation}
+        />
+      ) : null}
+      <footer className="mt-10 text-center text-xs text-muted-foreground">
+        {data.publication.postalAddress}
+      </footer>
+    </div>
+  );
+  return data.chrome ? (
+    <PublicCreatorShell chrome={data.chrome} activePageId={data.activePageId ?? null}>
+      {content}
+    </PublicCreatorShell>
+  ) : (
+    <PublicNewsletterTheme creator={data.creator}>{content}</PublicNewsletterTheme>
   );
 }

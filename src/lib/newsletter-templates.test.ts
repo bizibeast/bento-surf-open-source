@@ -46,32 +46,11 @@ describe("newsletter templates", () => {
     expect(first.map((block) => block.id)).not.toEqual(second.map((block) => block.id));
   });
 
-  it("does not generate image blocks that point to removed marketing assets", () => {
-    const imageUrls = templateIds.flatMap((templateId) =>
-      createTemplatePostContent(templateId).flatMap((block) =>
-        block.type === "image"
-          ? [block.url]
-          : block.type === "section"
-            ? block.columns.flat().flatMap((child) => (child.type === "image" ? [child.url] : []))
-            : [],
-      ),
-    );
-
-    expect(
-      imageUrls.filter(
-        (url) =>
-          url.startsWith("/marketing/") ||
-          url === "/branding/landing-og.jpg" ||
-          url === "/branding/bento-preview.png",
-      ),
-    ).toEqual([]);
-  });
-
   it.each(templateIds)("renders %s through email and web renderers", (templateId) => {
     const template = getNewsletterTemplate(templateId);
     const content = createTemplatePostContent(templateId);
     const email = renderNewsletterEmailDocument({
-      appUrl: "https://app.bento.surf",
+      appUrl: "http://localhost:8080",
       content,
       products: [],
       presentation: template.presentation,

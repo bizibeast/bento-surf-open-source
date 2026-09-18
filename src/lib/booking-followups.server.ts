@@ -1,4 +1,3 @@
-import { configuredAppOrigin } from "@/lib/application-urls";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Booking tables ship through the matching migration. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { enqueueEmail } from "./email.server";
@@ -11,7 +10,7 @@ import { webinarReminderStage } from "./webinar";
 const db = () => supabaseAdmin as any;
 
 function appUrl() {
-  return configuredAppOrigin(process.env.VITE_APP_URL);
+  return (process.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "");
 }
 
 function randomToken() {

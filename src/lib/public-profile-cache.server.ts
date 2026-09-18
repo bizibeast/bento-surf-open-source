@@ -1,4 +1,4 @@
-const PUBLIC_PROFILE_CACHE_VERSION = "v1";
+const PUBLIC_PROFILE_CACHE_VERSION = "v2";
 const PUBLIC_PROFILE_TTL_SECONDS = 30;
 const MISSING_PROFILE_TTL_SECONDS = 10;
 
@@ -41,5 +41,36 @@ export async function writePublicProfileCache<T>(key: string, value: T | null) {
     await cache.put(new Request(key), response);
   } catch (error) {
     console.warn("[public-profile-cache] write failed; profile data was still served", error);
+  }
+}
+
+export async function clearPublicProfileCache(
+  username: string,
+  pageSlugs: string[] = [],
+  hostnames: string[] = [],
+) {
+  const cache = defaultCache();
+  if (!cache) return;
+  const slugs = new Set([
+    "",
+    "calendar",
+    "store",
+    "products",
+    "insights",
+    "newsletter",
+    "newsletters",
+    ...pageSlugs,
+  ]);
+  const keys = [...slugs].flatMap((slug) => {
+    const suffix = slug ? [slug] : [];
+    return [
+      publicProfileCacheKey(null, [username, ...suffix]),
+      ...hostnames.map((hostname) => publicProfileCacheKey(hostname, suffix)),
+    ];
+  });
+  try {
+    await Promise.all(keys.map((key) => cache.delete(new Request(key))));
+  } catch (error) {
+    console.warn("[public-profile-cache] clear failed", error);
   }
 }

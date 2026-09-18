@@ -1,3 +1,4 @@
+import { productWebsite, type ProductWebsite } from "./product-website";
 import { z } from "zod";
 import { publicProductPath } from "./application-urls";
 
@@ -43,6 +44,15 @@ export type CommerceOfferKind = (typeof COMMERCE_OFFER_KINDS)[number];
 export type CommerceGrowthKind = (typeof COMMERCE_GROWTH_KINDS)[number];
 export type CommercePricingType = "free" | "one_time" | "subscription";
 export type CommerceProductStatus = "draft" | "published" | "archived";
+
+export function commerceProductKindPricingError(
+  kind: CommerceProductKind,
+  pricingType: CommercePricingType,
+) {
+  return kind === "paid_community" && pricingType === "free"
+    ? "Paid communities require paid pricing."
+    : null;
+}
 
 const COMMERCE_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -124,6 +134,7 @@ export type CommerceBuyerAnswer = {
 };
 
 export type CommerceProductSettings = {
+  website?: ProductWebsite;
   files?: CommerceAsset[];
   durationMinutes?: number;
   timezone?: string;
@@ -245,6 +256,11 @@ export function commerceProductPublishabilityError(
 ) {
   const settings = product.settings ?? {};
   if (!product.description.trim()) return "Add a product description before publishing.";
+  const pricingError = commerceProductKindPricingError(
+    product.kind,
+    product.pricing_type ?? "free",
+  );
+  if (pricingError) return pricingError;
   switch (product.kind) {
     case "digital_product":
       if (!Array.isArray(settings.files) || settings.files.length === 0) {
@@ -1082,7 +1098,7 @@ function commerceSettingArray(value: unknown) {
  * Product settings mix public merchandising with private fulfilment data.
  * Every public product response must pass through this runtime allowlist.
  */
-export function sanitizeCommerceSettingsForPublic(
+function sanitizeCommerceDeliverySettingsForPublic(
   kind: CommerceProductKind,
   rawSettings: unknown,
 ): CommerceProductSettings {
@@ -1191,4 +1207,22 @@ export function sanitizeCommerceSettingsForPublic(
     case "bento_affiliate":
       return {};
   }
+}
+
+export function sanitizeCommerceSettingsForPublic(
+  kind: CommerceProductKind,
+  rawSettings: unknown,
+): CommerceProductSettings {
+  const settings = commerceSettingRecord(rawSettings);
+  return {
+    ...sanitizeCommerceDeliverySettingsForPublic(kind, rawSettings),
+    ...(settings.website ? { website: productWebsite(settings.website) } : {}),
+    ...(Array.isArray(settings.benefits)
+      ? {
+          benefits: settings.benefits
+            .filter((item): item is string => typeof item === "string")
+            .slice(0, 100),
+        }
+      : {}),
+  };
 }

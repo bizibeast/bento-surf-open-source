@@ -1,8 +1,8 @@
 import { publicProductUrl, publicProfileUrl } from "./application-urls";
 import {
   creatorIndexingMeta,
-  DEFAULT_OPEN_GRAPH_IMAGE_PATH,
-  DEFAULT_OPEN_GRAPH_IMAGE_VERSION,
+  LANDING_OPEN_GRAPH_IMAGE_PATH,
+  LANDING_OPEN_GRAPH_IMAGE_VERSION,
 } from "./open-graph";
 import { safePublicMediaUrl } from "./safe-url";
 import { jsonLdScript } from "./seo-structured-data";
@@ -15,7 +15,7 @@ type PublicCalendarSeoData = {
     noindex?: boolean | null;
     onboarded?: boolean | null;
   };
-  pages: Array<{ name: string; system?: string }>;
+  pages: Array<{ name: string; system?: string | null }>;
   sessions: Array<{
     slug: string;
     title: string;
@@ -36,7 +36,7 @@ export function publicCalendarHead(data: PublicCalendarSeoData, baseUrl?: string
   const avatar = safePublicMediaUrl(data.profile.avatarUrl);
   const image = avatar
     ? new URL(avatar, base).toString()
-    : `${base}${DEFAULT_OPEN_GRAPH_IMAGE_PATH}?v=${DEFAULT_OPEN_GRAPH_IMAGE_VERSION}`;
+    : `${base}${LANDING_OPEN_GRAPH_IMAGE_PATH}?v=${LANDING_OPEN_GRAPH_IMAGE_VERSION}`;
   const schema = {
     "@context": "https://schema.org",
     "@type": "CollectionPage",

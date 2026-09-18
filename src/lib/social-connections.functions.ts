@@ -3,7 +3,6 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { enforceRequestRateLimit, readResponseText } from "@/lib/request-security.server";
-import { configuredAppOrigin } from "@/lib/application-urls";
 import type { Database, Json } from "@/integrations/supabase/types";
 import {
   decryptServerSecret,
@@ -59,7 +58,7 @@ export function instagramConnectionScopes(_intent?: InstagramConnectionIntent) {
 
 export const instagramRedirectUri = () =>
   process.env.META_INSTAGRAM_REDIRECT_URI?.trim() ||
-  `${configuredAppOrigin(process.env.VITE_APP_URL)}/integrations/instagram/callback`;
+  `${process.env.VITE_APP_URL?.trim() || "http://localhost:8080"}/integrations/instagram/callback`;
 
 const metaPayloadSchema = z
   .object({

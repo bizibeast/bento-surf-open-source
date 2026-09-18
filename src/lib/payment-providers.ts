@@ -55,11 +55,11 @@ export const CREATOR_PAYMENT_PROVIDER_DEFINITIONS: readonly CreatorPaymentProvid
     directConnect: true,
     docsUrl: "https://docs.stripe.com/keys",
     setupNote:
-      "The application accepts only Stripe restricted keys (rk_test_ or rk_live_), encrypts them at rest, and charges your Stripe account directly. Never paste a secret key beginning with sk_.",
+      "this application accepts only Stripe restricted keys (rk_test_ or rk_live_), encrypts them at rest, and charges your Stripe account directly. Never paste a secret key beginning with sk_.",
     creatorSetupSteps: [
       "In Stripe, open Developers → API keys → Create restricted key, choose custom permissions, then reset every permission and Connect permission to None.",
       "Allow Checkout Sessions write, Payment Intents read, Charges read, Subscriptions read, and Webhook Endpoints write.",
-      "Paste the restricted key in the application. It verifies the account and creates its signed webhook automatically.",
+      "Paste the restricted key in this application. this application verifies the account and creates its signed webhook automatically.",
     ],
   },
   {
@@ -76,11 +76,11 @@ export const CREATOR_PAYMENT_PROVIDER_DEFINITIONS: readonly CreatorPaymentProvid
     directConnect: true,
     docsUrl: "https://docs.dodopayments.com/developer-resources/integration-guide",
     setupNote:
-      "The application encrypts your Dodo API key and automatically creates the signed webhook. Dodo remains the merchant of record for eligible digital products and sends payouts directly to you.",
+      "this application encrypts your Dodo API key and automatically creates the signed webhook. Dodo remains the merchant of record for eligible digital products and sends payouts directly to you.",
     creatorSetupSteps: [
       "Create and verify a Dodo Payments business.",
       "Generate a dedicated API key from Developer → API keys.",
-      "Paste the key into the application. It verifies your business, creates the signed webhook, and keeps products in sync.",
+      "Paste the key into this application. this application verifies your business, creates the signed webhook, and keeps products in sync.",
     ],
   },
   {
@@ -100,8 +100,8 @@ export const CREATOR_PAYMENT_PROVIDER_DEFINITIONS: readonly CreatorPaymentProvid
       "Uses Polar OAuth and keeps eligible digital products, checkout, tax handling, and payouts in the creator's Polar organization. Polar does not support human services or physical goods.",
     creatorSetupSteps: [
       "Choose Connect Polar and sign in to Polar.",
-      "Select the organization that should own products and payouts, then approve the application's requested access.",
-      "Complete organization details and payouts in Polar; the application then syncs products and creates verified webhooks.",
+      "Select the organization that should own products and payouts, then approve this application's requested access.",
+      "Complete organization details and payouts in Polar; this application then syncs products and creates verified webhooks.",
     ],
   },
   {
@@ -127,11 +127,11 @@ export const CREATOR_PAYMENT_PROVIDER_DEFINITIONS: readonly CreatorPaymentProvid
     directConnect: true,
     docsUrl: "https://razorpay.com/docs/payments/payment-gateway/web-integration/standard/",
     setupNote:
-      "The application verifies and encrypts your Razorpay keys, creates Orders server-side, and verifies every checkout and webhook signature. Razorpay settles sales directly to your account.",
+      "this application verifies and encrypts your Razorpay keys, creates Orders server-side, and verifies every checkout and webhook signature. Razorpay settles sales directly to your account.",
     creatorSetupSteps: [
-      "Finish activation in Razorpay, then generate Test keys for staging or Live keys for production.",
-      "Paste the Key ID and Key Secret in the application. They are verified server-side and encrypted at rest.",
-      "Add the application's unique webhook URL with payment.captured, payment.failed, and refund.processed.",
+      "Finish activation in Razorpay, then generate Test keys for staging or Live keys for this deployment.",
+      "Paste the Key ID and Key Secret in this application. They are verified server-side and encrypted at rest.",
+      "Add this application's unique webhook URL with payment.captured, payment.failed, and refund.processed.",
     ],
   },
   {
@@ -148,11 +148,11 @@ export const CREATOR_PAYMENT_PROVIDER_DEFINITIONS: readonly CreatorPaymentProvid
     directConnect: true,
     docsUrl: "https://docs.creem.io/api-reference/introduction",
     setupNote:
-      "The application verifies and encrypts your Creem API key. Creem remains the merchant of record, handles eligible checkout and tax obligations, and sends payouts directly to you.",
+      "this application verifies and encrypts your Creem API key. Creem remains the merchant of record, handles eligible checkout and tax obligations, and sends payouts directly to you.",
     creatorSetupSteps: [
-      "Create a Creem account and generate a Test API key for staging or a Live API key for production.",
-      "Paste the API key in the application. It is verified server-side and encrypted at rest.",
-      "Add the application's unique URL in Creem Developers → Webhooks, select the requested events, and paste the generated webhook secret back into the application.",
+      "Create a Creem account and generate a Test API key for staging or a Live API key for this deployment.",
+      "Paste the API key in this application. It is verified server-side and encrypted at rest.",
+      "Add this application's unique URL in Creem Developers → Webhooks, select the requested events, and paste the generated webhook secret back into this application.",
     ],
   },
   {
@@ -178,11 +178,11 @@ export const CREATOR_PAYMENT_PROVIDER_DEFINITIONS: readonly CreatorPaymentProvid
     directConnect: true,
     docsUrl: "https://developer.paypal.com/api/rest/authentication/",
     setupNote:
-      "The application encrypts the creator's PayPal REST app secret, creates Orders server-side, verifies PayPal signatures, and charges 0% platform fee. Sales settle directly to the creator's PayPal account.",
+      "this application encrypts the creator's PayPal REST app secret, creates Orders server-side, verifies PayPal signatures, and charges 0% platform fee. Sales settle directly to the creator's PayPal account.",
     creatorSetupSteps: [
       "Open PayPal Developer → Apps & Credentials and create a dedicated REST app.",
-      "Choose Sandbox for staging or Live for production, then copy the Client ID and Client Secret.",
-      "Paste both in the application. It verifies the app and registers the signed webhook automatically.",
+      "Choose Sandbox for staging.example.com or Live for this deployment, then copy the Client ID and Client Secret.",
+      "Paste both in this application. this application verifies the app and registers the signed webhook automatically.",
     ],
   },
 ] as const;

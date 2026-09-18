@@ -14,13 +14,6 @@ vi.mock("featurebase-js", () => ({ default: featurebase, hide, shutdown, whenRea
 describe("FeaturebaseIdentitySync", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("does not boot Featurebase without an explicitly configured app ID", () => {
-    render(<FeaturebaseIdentitySync appId={null} theme="light" />);
-
-    expect(featurebase).not.toHaveBeenCalled();
-    expect(whenReady).not.toHaveBeenCalled();
-  });
-
   it("boots Messenger with the signed identity on the core SDK instance", () => {
     render(
       <FeaturebaseIdentitySync

@@ -12,21 +12,6 @@ describe("founder PostHog analytics", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
-    vi.unstubAllEnvs();
-  });
-
-  it("fails closed when the PostHog project id is absent", async () => {
-    vi.stubEnv("POSTHOG_PROJECT_ID", "");
-    const fetcher = vi.fn(async () => response([]));
-
-    const data = await getFounderWebAnalytics(7, {
-      apiKey: "phx_test",
-      projectId: "",
-      fetcher: fetcher as typeof fetch,
-    });
-
-    expect(data.available).toBe(false);
-    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it("fails closed when the read-only reporting key is absent", async () => {

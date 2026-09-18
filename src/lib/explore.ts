@@ -61,9 +61,15 @@ export const EXPLORE_CATEGORY_IDS = EXPLORE_CATEGORIES.map((category) => categor
 
 export type ExploreCategory = (typeof EXPLORE_CATEGORIES)[number]["id"];
 
+export const EXPLORE_EXCLUDED_USERNAMES = new Set<string>();
+
 export const exploreCategorySchema = z.enum(
   EXPLORE_CATEGORY_IDS as [ExploreCategory, ...ExploreCategory[]],
 );
+
+export function isExploreProfileExcluded(username: string) {
+  return EXPLORE_EXCLUDED_USERNAMES.has(username.trim().toLowerCase().replace(/^@/, ""));
+}
 
 export function exploreCategoryLabel(value: string) {
   return EXPLORE_CATEGORIES.find((category) => category.id === value)?.choiceLabel ?? "Creator";

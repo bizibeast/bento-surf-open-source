@@ -1,4 +1,4 @@
-const PUBLIC_PAGE_CACHE_VERSION = "v1";
+const PUBLIC_PAGE_CACHE_VERSION = "v2";
 const DEFAULT_PUBLIC_PAGE_TTL_SECONDS = 30;
 
 const RESERVED_APPLICATION_SEGMENTS = new Set([
@@ -27,6 +27,7 @@ const RESERVED_APPLICATION_SEGMENTS = new Set([
   "payments",
   "post-scheduler",
   "products",
+  "pricing",
   "reset-password",
   "review",
   "robots.txt",

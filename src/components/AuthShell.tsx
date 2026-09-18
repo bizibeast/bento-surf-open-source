@@ -1,5 +1,5 @@
 import type { InputHTMLAttributes, ReactNode } from "react";
-import { configuredPublicOrigin } from "@/lib/application-urls";
+import { normalizeOrigin, PRODUCTION_PUBLIC_ORIGIN } from "@/lib/application-urls";
 import { BentoFullLogo } from "@/components/BentoBrand";
 
 export function AuthShell({ children }: { children: ReactNode }) {
@@ -34,7 +34,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
 export function AuthBrand() {
   return (
     <a
-      href={configuredPublicOrigin(import.meta.env.VITE_PUBLIC_URL)}
+      href={normalizeOrigin(import.meta.env.VITE_PUBLIC_URL, PRODUCTION_PUBLIC_ORIGIN)}
       aria-label="bento.surf home"
       className="transition-opacity hover:opacity-60"
     >

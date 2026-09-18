@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { NewsletterPreview } from "./NewsletterPreview";
 
 const content = [
@@ -11,8 +11,6 @@ const paidProduct = {
   title: "Studio Notes membership",
   url: "/@ari/products/studio-notes",
 };
-
-afterEach(() => vi.unstubAllEnvs());
 
 function renderPreview(
   webVisibility: "private" | "public" | "paid" = "public",
@@ -34,15 +32,6 @@ function renderPreview(
 }
 
 describe("NewsletterPreview", () => {
-  it("uses the configured public origin in email previews", () => {
-    vi.stubEnv("VITE_PUBLIC_URL", "https://public.example");
-    renderPreview();
-
-    const source = screen.getByTitle("Email desktop preview").getAttribute("srcdoc") ?? "";
-    expect(source).toContain("https://public.example/branding/bento-logo.png");
-    expect(source).not.toContain("https://bento.surf");
-  });
-
   it("uses the production email shell at exact desktop and mobile widths", () => {
     renderPreview();
 

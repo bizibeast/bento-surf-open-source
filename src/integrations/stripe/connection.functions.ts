@@ -7,7 +7,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { createPaymentOauthState, consumePaymentOauthState } from "@/lib/payment-oauth.server";
 import { requireExclusiveCreatorPaymentProvider } from "@/lib/payment-connection-policy.server";
 import { encryptServerSecret } from "@/lib/secret-crypto.server";
-import { configuredAppOrigin, publicProfileUrl } from "@/lib/application-urls";
+import { publicProfileUrl } from "@/lib/application-urls";
 import {
   STRIPE_PROVIDER,
   STRIPE_DIRECT_ENABLED_EVENTS,
@@ -314,7 +314,7 @@ export const beginStripeConnection = createServerFn({ method: "POST" })
       supabaseAdmin.auth.admin.getUserById(context.userId),
     ]);
     const state = await createPaymentOauthState(context.userId, STRIPE_PROVIDER);
-    const origin = configuredAppOrigin(process.env.VITE_APP_URL);
+    const origin = (process.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "");
     return {
       url: stripeAuthorizeUrl(state, {
         email: authUser?.user?.email,

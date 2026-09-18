@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { isStagingHostname } from "@/lib/application-urls";
 import {
   configureCreemWebhook,
   connectCreemApiKey,
@@ -51,7 +52,9 @@ export function CreemApiKeyDialog({
   const [webhookSecret, setWebhookSecret] = useState("");
   const [replaceKey, setReplaceKey] = useState(false);
   const [environment, setEnvironment] = useState<"test" | "production">(() =>
-    import.meta.env.VITE_APP_ENV === "production" ? "production" : "test",
+    typeof window !== "undefined" && isStagingHostname(window.location.hostname)
+      ? "test"
+      : "production",
   );
   const connectionQuery = useQuery({
     queryKey: ["my-creem-connection"],

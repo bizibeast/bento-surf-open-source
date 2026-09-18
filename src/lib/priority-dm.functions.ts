@@ -97,6 +97,34 @@ async function assertCanReply(request: any) {
   }
 }
 
+export async function sendCreatorPriorityDmMessageForUser(
+  client: any,
+  creatorId: string,
+  input: { requestId: string; body: string },
+) {
+  const request = await creatorRequest(client, input.requestId, creatorId);
+  await assertCanReply(request);
+  return appendPriorityDmMessageAndNotify(
+    { requestId: request.id, sender: "creator", body: input.body, orderId: null },
+    enqueuePriorityDmMessageToBuyerEmail,
+  );
+}
+
+export async function setPriorityDmConversationClosedForUser(
+  client: any,
+  creatorId: string,
+  input: { requestId: string; closed: boolean },
+) {
+  const request = await creatorRequest(client, input.requestId, creatorId);
+  const { error } = await (supabaseAdmin as any)
+    .from("commerce_priority_dm_requests")
+    .update({ status: input.closed ? "closed" : "read" })
+    .eq("id", request.id)
+    .eq("creator_id", creatorId);
+  if (error) throw new Error(error.message);
+  return { id: request.id, closed: input.closed };
+}
+
 async function currentBuyer() {
   const identity = await currentCustomerSession();
   if (!identity) throw new Error("Sign in to your customer library to continue.");

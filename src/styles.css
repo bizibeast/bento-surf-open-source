@@ -537,6 +537,36 @@ textarea {
   }
 }
 
+/* The authenticated sidebar changes the Link editor's usable width without
+   changing viewport breakpoints. Switch layouts from the workspace width so
+   the canvas never gets squeezed into a clipped desktop column. */
+.link-editor-shell {
+  container: link-editor / inline-size;
+}
+
+@container link-editor (min-width: 64rem) {
+  .link-editor-layout {
+    grid-template-columns: 380px minmax(0, 1fr);
+    column-gap: 2.75rem;
+    overflow: visible;
+  }
+
+  .link-editor-profile {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    align-items: flex-start;
+    min-height: calc(100vh - 4rem);
+    overflow: visible;
+    padding: 0 0.5rem 2rem 0.25rem;
+    text-align: left;
+  }
+
+  .link-editor-canvas {
+    overflow: visible;
+  }
+}
+
 /* react-grid-layout overrides for our aesthetic */
 .react-grid-item.react-grid-placeholder {
   background: var(--color-accent) !important;

@@ -248,10 +248,11 @@ describe("LinkedIn content insights", () => {
           { status: 200 },
         ),
       )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ error: { code: 10, message: "Metric unavailable" } }), {
-          status: 403,
-        }),
+      .mockImplementation(
+        async () =>
+          new Response(JSON.stringify({ error: { code: 10, message: "Metric unavailable" } }), {
+            status: 403,
+          }),
       );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -557,5 +558,114 @@ describe("LinkedIn content insights", () => {
     );
 
     expect(page.content[0]).toMatchObject({ likes: null, comments: 3, engagements: 15 });
+  });
+
+  it("loads YouTube uploads from the stored OAuth channel instead of an account default", async () => {
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/channels")) {
+        expect(url.searchParams.get("id")).toBe("stored-channel");
+        expect(url.searchParams.has("mine")).toBe(false);
+        return new Response(
+          JSON.stringify({
+            items: [{ contentDetails: { relatedPlaylists: { uploads: "uploads-playlist" } } }],
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.pathname.endsWith("/playlistItems")) {
+        return new Response(
+          JSON.stringify({ items: [{ contentDetails: { videoId: "video-1" } }] }),
+          { status: 200 },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: "video-1",
+              snippet: { title: "Recent upload", publishedAt: "2026-08-06T05:34:33.000Z" },
+              statistics: { viewCount: "1200", likeCount: "40", commentCount: "5" },
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const page = await fetchSocialContentInsightsPage(
+      {
+        id: "connection",
+        provider: "youtube",
+        provider_user_id: "stored-channel",
+        provider_handle: "creator",
+        scopes: ["https://www.googleapis.com/auth/youtube.readonly"],
+      },
+      "token",
+    );
+
+    expect(page.content[0]).toMatchObject({
+      remotePostId: "video-1",
+      views: 1200,
+      likes: 40,
+      comments: 5,
+      engagements: 45,
+    });
+  });
+});
+
+it("keeps Facebook posts when the optional insights expansion is rejected", async () => {
+  const fetchMock = vi.fn(async (input: string | URL) => {
+    const url = new URL(String(input));
+    return url.searchParams.get("fields")?.includes("insights.metric")
+      ? new Response(JSON.stringify({ error: { message: "Metric unavailable" } }), { status: 400 })
+      : new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: "fb-1",
+                message: "Still available",
+                created_time: "2026-09-01T00:00:00Z",
+                reactions: { summary: { total_count: 3 } },
+              },
+            ],
+          }),
+        );
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const result = await fetchSocialContentInsightsPage(
+    { id: "fb", provider: "facebook", provider_user_id: "page", scopes: ["read_insights"] },
+    "test-token",
+  );
+  expect(result.content[0]).toMatchObject({ caption: "Still available", likes: 3, views: null });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
+it("keeps supported Threads metrics when shares is rejected", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: string | URL) => {
+      const url = new URL(String(input));
+      const metric = url.searchParams.get("metric");
+      if (!metric)
+        return new Response(
+          JSON.stringify({ data: [{ id: "thread", timestamp: "2026-09-01T00:00:00Z" }] }),
+        );
+      return metric === "shares"
+        ? new Response(JSON.stringify({ error: { message: "Not supported" } }), { status: 400 })
+        : new Response(JSON.stringify({ data: [{ name: metric, total_value: { value: 5 } }] }));
+    }),
+  );
+  const result = await fetchSocialContentInsightsPage(
+    { id: "th", provider: "threads", provider_user_id: "person" },
+    "test-token",
+  );
+  expect(result.content[0]).toMatchObject({
+    views: 5,
+    likes: 5,
+    comments: 5,
+    shares: 10,
+    engagements: 20,
   });
 });

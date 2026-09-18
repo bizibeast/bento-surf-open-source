@@ -16,11 +16,10 @@ vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => mocks.navigate,
 }));
 
+vi.mock("@/components/MarketingNavbar", () => ({ MarketingNavbar: () => null }));
 vi.mock("@/components/DecodedImage", () => ({ DecodedImage: () => null }));
 vi.mock("@/components/MobileTabSelect", () => ({ MobileTabSelect: () => null }));
-vi.mock("@/components/PublicAppChrome", () => ({
-  PublicAppChrome: ({ children }: { children: ReactNode }) => <>{children}</>,
-}));
+vi.mock("@/components/marketing/MarketingFooter", () => ({ MarketingFooter: () => null }));
 
 import { Route } from "./explore";
 

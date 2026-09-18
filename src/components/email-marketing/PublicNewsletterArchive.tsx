@@ -1,3 +1,7 @@
+import { PublicCreatorShell } from "@/components/public/PublicCreatorShell";
+import { PublicSystemPageCanvas } from "@/components/public/PublicSystemPageCanvas";
+import type { PublicCreatorChrome } from "@/lib/public-creator-chrome.server";
+import type { SystemPageItem, SystemItemLayout } from "@/lib/page-system-layout";
 import type { CSSProperties, ReactNode } from "react";
 import { BlockRenderer, type Block } from "@/components/blocks/BlockRenderer";
 import { DecodedImage } from "@/components/DecodedImage";
@@ -5,10 +9,8 @@ import { FontApplier } from "@/components/FontApplier";
 import { PatternBackdrop } from "@/components/patterns/PatternBackdrop";
 import {
   publicNewsletterPostPath,
-  publicNewsletterPublicationPath,
   publicNewslettersPath,
   publicProductPath,
-  publicProfilePath,
 } from "@/lib/application-urls";
 import {
   ACCENT_PALETTE,
@@ -32,6 +34,8 @@ export type PublicNewsletterCreator = {
 };
 
 export type PublicNewsletterArchiveData = {
+  chrome?: PublicCreatorChrome;
+  activePageId?: string | null;
   creator: PublicNewsletterCreator;
   publication: {
     title: string;
@@ -51,6 +55,11 @@ export type PublicNewsletterArchiveData = {
 };
 
 export type PublicNewsletterDirectoryData = {
+  chrome: PublicCreatorChrome;
+  page: { id: string };
+  blocks: Parameters<typeof PublicSystemPageCanvas>[0]["blocks"];
+  systemItems: SystemPageItem[];
+  systemLayout: SystemItemLayout[];
   creator: PublicNewsletterCreator;
   publications: Array<{
     title: string;
@@ -68,6 +77,7 @@ function themeStyle(creator: PublicNewsletterCreator) {
     ACCENT_PALETTE.find((accent) => accent.id === accentId)?.hex ??
     (/^#[0-9a-f]{6}$/i.test(accentId) ? accentId : "#6366f1");
   return {
+    accentHex,
     themeMode: dark ? ("dark" as const) : ("light" as const),
     variables: (dark
       ? {
@@ -106,7 +116,7 @@ export function PublicNewsletterTheme({
   creator: PublicNewsletterCreator;
   children: ReactNode;
 }) {
-  const { themeMode, variables } = themeStyle(creator);
+  const { accentHex, themeMode, variables } = themeStyle(creator);
   const patternSettings: PatternSettings = {
     ...DEFAULT_SETTINGS,
     ...(creator.patternSettings ?? {}),
@@ -125,7 +135,7 @@ export function PublicNewsletterTheme({
         <PatternBackdrop
           pattern={(creator.pattern as PatternId) || "none"}
           settings={patternSettings}
-          accentHex="#9ca3af"
+          accentHex={accentHex}
           theme={themeMode}
         />
       </div>
@@ -162,50 +172,22 @@ export function PublicNewsletterDirectoryContent({
   data: PublicNewsletterDirectoryData;
 }) {
   return (
-    <PublicNewsletterTheme creator={data.creator}>
-      <div className="mx-auto w-full max-w-4xl px-4 py-10 sm:px-6 sm:py-14">
-        <header className="rounded-2xl border border-border bg-card p-6 shadow-sm sm:p-9">
-          <a
-            href={publicProfilePath(data.creator.username)}
-            className="text-sm font-semibold text-muted-foreground hover:text-foreground"
-          >
-            @{data.creator.username}
-          </a>
-          <h1 className="mt-3 text-4xl text-foreground sm:text-5xl" style={headlineStyle}>
-            Newsletters by {data.creator.displayName}
-          </h1>
-          {data.creator.bio ? (
-            <p className="mt-4 max-w-2xl leading-7 text-muted-foreground">{data.creator.bio}</p>
-          ) : null}
-        </header>
-        <section aria-label="Publications" className="mt-6 grid gap-4 sm:grid-cols-2">
-          {data.publications.map((publication) => (
-            <a
-              key={publication.slug}
-              href={publicNewsletterPublicationPath(data.creator.username, publication.slug)}
-              className="group rounded-2xl border border-border bg-card p-5 shadow-sm transition hover:-translate-y-0.5 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <PublicationLogo
-                url={publication.logoUrl}
-                title={publication.title}
-                className="size-12 rounded-xl object-cover"
-              />
-              <h2 className="mt-5 text-2xl text-foreground" style={headlineStyle}>
-                {publication.title}
-              </h2>
-              {publication.description ? (
-                <p className="mt-2 line-clamp-3 text-sm leading-6 text-muted-foreground">
-                  {publication.description}
-                </p>
-              ) : null}
-              <span className="mt-5 inline-flex text-sm font-semibold text-primary">
-                View publication →
-              </span>
-            </a>
-          ))}
-        </section>
-      </div>
-    </PublicNewsletterTheme>
+    <PublicCreatorShell chrome={data.chrome} activePageId={data.page.id}>
+      <section aria-label="Publications">
+        {data.blocks.length || data.systemItems.length ? (
+          <PublicSystemPageCanvas
+            username={data.creator.username}
+            blocks={data.blocks}
+            systemItems={data.systemItems}
+            systemLayout={data.systemLayout}
+          />
+        ) : (
+          <div className="rounded-2xl border border-border bg-card p-8 text-sm text-muted-foreground">
+            No newsletters yet.
+          </div>
+        )}
+      </section>
+    </PublicCreatorShell>
   );
 }
 
@@ -218,83 +200,88 @@ export function PublicNewsletterArchiveContent({
   beforeContent?: ReactNode;
   emailCaptureInteractive: boolean;
 }) {
-  return (
-    <PublicNewsletterTheme creator={data.creator}>
-      <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6 sm:py-14">
-        {beforeContent}
-        <a
-          href={publicNewslettersPath(data.creator.username)}
-          className="mb-4 inline-flex text-sm font-semibold text-muted-foreground hover:text-foreground"
-        >
-          ← All newsletters
-        </a>
-        <header className="rounded-2xl border border-border bg-card p-7 shadow-sm sm:p-10">
-          <PublicationLogo
-            url={data.publication.logoUrl}
-            title={data.publication.title}
-            className="mb-5 size-14 rounded-xl object-cover"
-          />
-          <p className="text-sm text-muted-foreground">{data.creator.displayName}</p>
-          <h1 className="mt-2 text-4xl text-foreground" style={headlineStyle}>
-            {data.publication.title}
-          </h1>
-          {data.publication.description ? (
-            <p className="mt-4 leading-7 text-muted-foreground">{data.publication.description}</p>
-          ) : null}
-          {data.paidProduct ? (
-            <a
-              href={publicProductPath(data.creator.username, data.paidProduct.publicSlug)}
-              className="mt-6 inline-flex rounded-lg bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground"
-            >
-              Subscribe to paid posts
-            </a>
-          ) : null}
-        </header>
-        {data.signupBlock ? (
-          <section className="mx-auto mt-6 max-w-sm" aria-label="Newsletter signup">
-            <BlockRenderer
-              block={data.signupBlock}
-              emailCaptureInteractive={emailCaptureInteractive}
-            />
-          </section>
+  const content = (
+    <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6 sm:py-14">
+      {beforeContent}
+      <a
+        href={publicNewslettersPath(data.creator.username)}
+        className="mb-4 inline-flex text-sm font-semibold text-muted-foreground hover:text-foreground"
+      >
+        ← All newsletters
+      </a>
+      <header className="rounded-2xl border border-border bg-card p-7 shadow-sm sm:p-10">
+        <PublicationLogo
+          url={data.publication.logoUrl}
+          title={data.publication.title}
+          className="mb-5 size-14 rounded-xl object-cover"
+        />
+        <p className="text-sm text-muted-foreground">{data.creator.displayName}</p>
+        <h1 className="mt-2 text-4xl text-foreground" style={headlineStyle}>
+          {data.publication.title}
+        </h1>
+        {data.publication.description ? (
+          <p className="mt-4 leading-7 text-muted-foreground">{data.publication.description}</p>
         ) : null}
-        <section className="mt-8 space-y-3" aria-label="Newsletter posts">
-          {data.issues.length ? (
-            data.issues.map((issue) => (
-              <a
-                key={issue.slug}
-                href={publicNewsletterPostPath(
-                  data.creator.username,
-                  data.publication.slug,
-                  issue.slug,
-                )}
-                className="block rounded-xl border border-border bg-card p-5 shadow-sm transition hover:-translate-y-0.5 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <div className="flex items-center justify-between gap-4">
-                  <h2 className="text-xl text-foreground" style={headlineStyle}>
-                    {issue.subject}
-                  </h2>
-                  {issue.visibility === "paid" ? (
-                    <span className="rounded-md bg-primary px-2.5 py-1 text-[10px] font-semibold text-primary-foreground">
-                      Paid
-                    </span>
-                  ) : null}
-                </div>
-                {issue.previewText ? (
-                  <p className="mt-2 text-sm text-muted-foreground">{issue.previewText}</p>
-                ) : null}
-              </a>
-            ))
-          ) : (
-            <p className="rounded-xl border border-border bg-card p-5 text-sm text-muted-foreground">
-              No public posts yet.
-            </p>
-          )}
+        {data.paidProduct ? (
+          <a
+            href={publicProductPath(data.creator.username, data.paidProduct.publicSlug)}
+            className="mt-6 inline-flex rounded-lg bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground"
+          >
+            Subscribe to paid posts
+          </a>
+        ) : null}
+      </header>
+      {data.signupBlock ? (
+        <section className="mx-auto mt-6 max-w-sm" aria-label="Newsletter signup">
+          <BlockRenderer
+            block={data.signupBlock}
+            emailCaptureInteractive={emailCaptureInteractive}
+          />
         </section>
-        <footer className="mt-10 text-center text-xs text-muted-foreground">
-          {data.publication.postalAddress}
-        </footer>
-      </div>
-    </PublicNewsletterTheme>
+      ) : null}
+      <section className="mt-8 space-y-3" aria-label="Newsletter posts">
+        {data.issues.length ? (
+          data.issues.map((issue) => (
+            <a
+              key={issue.slug}
+              href={publicNewsletterPostPath(
+                data.creator.username,
+                data.publication.slug,
+                issue.slug,
+              )}
+              className="block rounded-xl border border-border bg-card p-5 shadow-sm transition hover:-translate-y-0.5 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <div className="flex items-center justify-between gap-4">
+                <h2 className="text-xl text-foreground" style={headlineStyle}>
+                  {issue.subject}
+                </h2>
+                {issue.visibility === "paid" ? (
+                  <span className="rounded-md bg-primary px-2.5 py-1 text-[10px] font-semibold text-primary-foreground">
+                    Paid
+                  </span>
+                ) : null}
+              </div>
+              {issue.previewText ? (
+                <p className="mt-2 text-sm text-muted-foreground">{issue.previewText}</p>
+              ) : null}
+            </a>
+          ))
+        ) : (
+          <p className="rounded-xl border border-border bg-card p-5 text-sm text-muted-foreground">
+            No public posts yet.
+          </p>
+        )}
+      </section>
+      <footer className="mt-10 text-center text-xs text-muted-foreground">
+        {data.creator.displayName}
+      </footer>
+    </div>
+  );
+  return data.chrome ? (
+    <PublicCreatorShell chrome={data.chrome} activePageId={data.activePageId ?? null}>
+      {content}
+    </PublicCreatorShell>
+  ) : (
+    <PublicNewsletterTheme creator={data.creator}>{content}</PublicNewsletterTheme>
   );
 }

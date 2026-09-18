@@ -345,6 +345,7 @@ function EmailMarketingPage() {
     queryError(marketingQuery.error) ||
     queryError(recipientCountsQuery.error);
   const locked = Boolean(marketing?.locked);
+  const navigationSections = locked ? (["overview"] as const) : visibleSections;
   const loading =
     publicationsQuery.isLoading || Boolean(selectedPublicationId && publicationQuery.isLoading);
 
@@ -376,7 +377,7 @@ function EmailMarketingPage() {
                 aria-label="Publication destinations"
                 className="hidden min-w-0 items-center overflow-x-auto sm:flex"
               >
-                {visibleSections.map((destination) => (
+                {navigationSections.map((destination) => (
                   <button
                     key={destination}
                     type="button"
@@ -401,7 +402,7 @@ function EmailMarketingPage() {
                   onChange={(event) => navigateSection(event.target.value as EmailMarketingSection)}
                   className="min-w-0 flex-1 rounded-lg border border-black/[0.08] bg-white px-3 py-2.5 text-sm font-semibold text-[#17213a] outline-none focus:border-[#3478f6]/45"
                 >
-                  {visibleSections.map((destination) => (
+                  {navigationSections.map((destination) => (
                     <option key={destination} value={destination}>
                       {sectionLabels[destination]}
                     </option>

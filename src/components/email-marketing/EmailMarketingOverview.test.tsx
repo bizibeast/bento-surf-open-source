@@ -42,7 +42,7 @@ describe("EmailMarketingOverview", () => {
     render(
       <EmailMarketingOverview
         publication={publication}
-        creatorName="Ada"
+        creatorName="Yash"
         subscriberCount={42}
         contactUsage={contactUsage}
         posts={posts}
@@ -51,7 +51,7 @@ describe("EmailMarketingOverview", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: "Welcome back, Ada." })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Welcome back, Yash." })).toBeVisible();
     expect(screen.getByText(publication.title)).toBeVisible();
     const totals = screen.getByRole("region", { name: "Email Marketing totals" });
     expect(totals).toHaveTextContent("42 subscribers in this publication");
@@ -65,7 +65,7 @@ describe("EmailMarketingOverview", () => {
     render(
       <EmailMarketingOverview
         publication={publication}
-        creatorName="Ada"
+        creatorName="Yash"
         subscriberCount={42}
         contactUsage={contactUsage}
         posts={posts}
@@ -85,7 +85,7 @@ describe("EmailMarketingOverview", () => {
     render(
       <EmailMarketingOverview
         publication={publication}
-        creatorName="Ada"
+        creatorName="Yash"
         subscriberCount={42}
         contactUsage={contactUsage}
         posts={posts}
@@ -113,7 +113,7 @@ describe("EmailMarketingOverview", () => {
     render(
       <EmailMarketingOverview
         publication={{ ...publication, status: "draft", title: "First Publication" }}
-        creatorName="Ada"
+        creatorName="Yash"
         subscriberCount={0}
         contactUsage={{ limit: 500, subscribed: 0 }}
         posts={[]}
@@ -136,7 +136,7 @@ describe("EmailMarketingOverview", () => {
     render(
       <EmailMarketingOverview
         publication={publication}
-        creatorName="Ada"
+        creatorName="Yash"
         subscriberCount={0}
         contactUsage={{ limit: 500, subscribed: 0 }}
         posts={[]}
@@ -156,7 +156,7 @@ describe("EmailMarketingOverview", () => {
     const { rerender } = render(
       <EmailMarketingOverview
         publication={null}
-        creatorName="Ada"
+        creatorName="Yash"
         subscriberCount={0}
         contactUsage={contactUsage}
         posts={[]}
@@ -170,7 +170,7 @@ describe("EmailMarketingOverview", () => {
     rerender(
       <EmailMarketingOverview
         publication={null}
-        creatorName="Ada"
+        creatorName="Yash"
         subscriberCount={0}
         contactUsage={contactUsage}
         posts={[]}
@@ -184,7 +184,7 @@ describe("EmailMarketingOverview", () => {
     rerender(
       <EmailMarketingOverview
         publication={publication}
-        creatorName="Ada"
+        creatorName="Yash"
         subscriberCount={0}
         contactUsage={contactUsage}
         posts={[]}
@@ -198,7 +198,7 @@ describe("EmailMarketingOverview", () => {
     rerender(
       <EmailMarketingOverview
         publication={null}
-        creatorName="Ada"
+        creatorName="Yash"
         subscriberCount={0}
         contactUsage={contactUsage}
         posts={[]}

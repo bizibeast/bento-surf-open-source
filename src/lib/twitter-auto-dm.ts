@@ -1,3 +1,4 @@
+import type { AutoDmMetrics } from "./auto-dm-metrics";
 import { z } from "zod";
 
 export const TWITTER_DM_TRIGGER_TYPES = [
@@ -124,6 +125,7 @@ export function twitterConnectionReadinessMessage(
 }
 
 export type TwitterDmAutomation = {
+  metrics?: AutoDmMetrics;
   id: string;
   connectionId: string;
   connectionHandle: string;
@@ -142,6 +144,7 @@ export type TwitterDmAutomation = {
 };
 
 export type TwitterDmActivity = {
+  automationId?: string | null;
   id: string;
   automationName: string | null;
   eventType: TwitterEventType;

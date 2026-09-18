@@ -919,7 +919,7 @@ export const CATEGORIES: { key: PlatformCategory; label: string }[] = [
   { key: "custom", label: "Custom" },
   { key: "monetize", label: "Sell & Grow" },
   { key: "social", label: "Social" },
-  { key: "video", label: "Video" },
+  { key: "video", label: "Video platforms" },
   { key: "music", label: "Music" },
   { key: "dev", label: "Developer" },
   { key: "design", label: "Design" },

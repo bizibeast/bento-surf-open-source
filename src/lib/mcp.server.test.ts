@@ -39,10 +39,8 @@ const authInfo: AuthInfo = {
   extra: { userId: "00000000-0000-4000-8000-000000000001" },
 };
 
-const appOrigin = "https://self.example";
-
 function request(body: unknown) {
-  return new Request(`${appOrigin}/mcp`, {
+  return new Request("http://localhost:8080/mcp", {
     method: "POST",
     headers: {
       accept: "application/json, text/event-stream",
@@ -72,12 +70,12 @@ describe("Bento MCP HTTP surface", () => {
     process.env.SUPABASE_URL = "https://example.supabase.co";
     try {
       const response = await handleBentoMcpRequest(
-        new Request(`${appOrigin}/.well-known/oauth-protected-resource`),
-        appOrigin,
+        new Request("http://localhost:8080/.well-known/oauth-protected-resource"),
+        "http://localhost:8080",
       );
       expect(response?.status).toBe(200);
       await expect(response?.json()).resolves.toMatchObject({
-        resource: `${appOrigin}/mcp`,
+        resource: "http://localhost:8080/mcp",
         authorization_servers: ["https://example.supabase.co/auth/v1"],
       });
     } finally {
@@ -85,24 +83,18 @@ describe("Bento MCP HTTP surface", () => {
     }
   });
 
-  it("rejects MCP metadata and requests on an unrelated host", async () => {
-    const metadata = await handleBentoMcpRequest(
-      new Request("https://attacker.example/.well-known/oauth-protected-resource"),
-      appOrigin,
-    );
+  it("leaves the app-host MCP page to the frontend router", async () => {
     const response = await handleBentoMcpRequest(
-      new Request("https://attacker.example/mcp"),
-      appOrigin,
+      new Request("http://localhost:8080/mcp"),
+      "https://app.example.com",
     );
-
-    expect(metadata).toBeNull();
     expect(response).toBeNull();
   });
 
   it("challenges unauthenticated MCP requests", async () => {
     const response = await handleBentoMcpRequest(
       request({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
-      appOrigin,
+      "http://localhost:8080",
       async () => {
         throw new (await import("./request-security.server")).RequestHttpError(401, "Unauthorized");
       },
@@ -221,7 +213,7 @@ describe("Bento MCP tools", () => {
   });
 
   it("advertises the Bento toolset and importable skill", async () => {
-    const handler = createMcpHandler(() => createBentoMcpServer(authInfo, appOrigin));
+    const handler = createMcpHandler(() => createBentoMcpServer(authInfo, "http://localhost:8080"));
     const toolsResponse = await handler.fetch(
       request({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
       { authInfo },
@@ -247,6 +239,11 @@ describe("Bento MCP tools", () => {
         "manage_earn",
         "list_products",
         "list_bookings",
+        "get_priority_dm_conversations",
+        "send_priority_dm_message",
+        "set_priority_dm_closed",
+        "get_scheduler_workspace",
+        "manage_scheduler",
       ]),
     );
     const storeTool = toolsPayload.result.tools.find(
@@ -287,7 +284,9 @@ describe("Bento MCP tools", () => {
       saveSocialPostForUser,
       saveAutoDmAutomation,
     };
-    const handler = createMcpHandler(() => createBentoMcpServer(authInfo, appOrigin, operations));
+    const handler = createMcpHandler(() =>
+      createBentoMcpServer(authInfo, "http://localhost:8080", operations),
+    );
 
     const postResponse = await handler.fetch(
       request({
@@ -340,13 +339,87 @@ describe("Bento MCP tools", () => {
     );
   });
 
-  it("maps page, product, and calendar mutations to the creator operations", async () => {
+  it("maps creator workspace mutations to the matching operations", async () => {
+    const getPriorityDmConversations = vi.fn(async () => [{ id: "request-1", status: "unread" }]);
+    const sendPriorityDmMessage = vi.fn(async () => ({ id: "message-1" }));
+    const setPriorityDmClosed = vi.fn(async () => ({ id: "request-1", closed: true }));
+    const getSchedulerWorkspace = vi.fn(async () => ({
+      accounts: [],
+      posts: [],
+      postingSchedule: null,
+    }));
+    const manageScheduler = vi.fn(async () => ({
+      accounts: [],
+      posts: [],
+      postingSchedule: null,
+    }));
+    const mcpOperations = {
+      ...defaultBentoMcpOperations,
+      getPriorityDmConversations,
+      sendPriorityDmMessage,
+      setPriorityDmClosed,
+      getSchedulerWorkspace,
+      manageScheduler,
+    };
+    const mcpHandler = createMcpHandler(() =>
+      createBentoMcpServer(authInfo, "http://localhost:8080", mcpOperations),
+    );
+
+    for (const call of [
+      { name: "get_priority_dm_conversations", arguments: { filter: "open", limit: 25 } },
+      {
+        name: "send_priority_dm_message",
+        arguments: {
+          requestId: "00000000-0000-4000-8000-000000000040",
+          body: "Thanks for reaching out.",
+        },
+      },
+      {
+        name: "set_priority_dm_closed",
+        arguments: {
+          requestId: "00000000-0000-4000-8000-000000000040",
+          closed: true,
+        },
+      },
+      { name: "get_scheduler_workspace", arguments: {} },
+      {
+        name: "manage_scheduler",
+        arguments: {
+          action: "cancel_post",
+          id: "00000000-0000-4000-8000-000000000050",
+        },
+      },
+    ]) {
+      const response = await mcpHandler.fetch(
+        request({ jsonrpc: "2.0", id: call.name, method: "tools/call", params: call }),
+        { authInfo },
+      );
+      expect(response.status).toBe(200);
+      expect((await payload(response)).result.isError).not.toBe(true);
+    }
+
+    expect(getPriorityDmConversations).toHaveBeenCalledWith(authInfo.extra?.userId, "open", 25);
+    expect(sendPriorityDmMessage).toHaveBeenCalledWith(
+      authInfo.extra?.userId,
+      expect.objectContaining({ body: "Thanks for reaching out." }),
+    );
+    expect(setPriorityDmClosed).toHaveBeenCalledWith(
+      authInfo.extra?.userId,
+      expect.objectContaining({ closed: true }),
+    );
+    expect(manageScheduler).toHaveBeenCalledWith(
+      authInfo.extra?.userId,
+      expect.objectContaining({ action: "cancel_post" }),
+    );
+
     const mutatePage = vi.fn(async () => ({
       id: "page-1",
       user_id: authInfo.extra?.userId as string,
       name: "Resources",
       slug: "resources",
       position: 1,
+      system: null,
+      is_visible: true,
       url: null,
       created_at: new Date(0).toISOString(),
       updated_at: new Date(0).toISOString(),
@@ -362,7 +435,9 @@ describe("Bento MCP tools", () => {
       mutateProduct,
       mutateCalendar,
     };
-    const handler = createMcpHandler(() => createBentoMcpServer(authInfo, appOrigin, operations));
+    const handler = createMcpHandler(() =>
+      createBentoMcpServer(authInfo, "http://localhost:8080", operations),
+    );
 
     for (const call of [
       {

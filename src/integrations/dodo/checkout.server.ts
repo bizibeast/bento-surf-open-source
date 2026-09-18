@@ -13,11 +13,7 @@ import {
   persistCommerceCheckoutGrowth,
   type CommerceCheckoutGrowth,
 } from "@/lib/commerce-growth.server";
-import {
-  configuredAppOrigin,
-  publicProductSuccessPath,
-  publicProductUrl,
-} from "@/lib/application-urls";
+import { publicProductSuccessPath, publicProductUrl } from "@/lib/application-urls";
 import { creatorPaymentCompatibility } from "@/lib/payment-providers";
 import {
   dodoClientForCreatorAccount,
@@ -39,10 +35,6 @@ type CheckoutProduct = {
   currency: string;
   billing_interval: "day" | "week" | "month" | "year" | null;
 };
-
-function appUrl() {
-  return configuredAppOrigin(process.env.VITE_APP_URL);
-}
 
 function randomAccessToken() {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -237,13 +229,19 @@ export async function createDodoCommerceCheckout(input: {
       product_cart: [{ product_id: remoteProductId, quantity: 1 }],
       customer: { email: buyerEmail, name: input.name || undefined },
       billing_currency: input.product.currency.toUpperCase() as Currency,
-      feature_flags: { allow_currency_selection: false },
+      feature_flags: {
+        allow_currency_selection: false,
+        allow_customer_editing_email: false,
+        allow_customer_editing_name: !input.name?.trim(),
+        allow_phone_number_collection: false,
+        require_phone_number: false,
+      },
       metadata: {
         bento_session_id: sessionId,
         bento_product_id: input.product.id,
         bento_creator_id: input.product.creator_id,
       },
-      return_url: `${appUrl()}${publicProductSuccessPath(
+      return_url: `${(process.env.VITE_PUBLIC_URL || "http://localhost:8080").replace(/\/$/, "")}${publicProductSuccessPath(
         input.product.creator_username,
         input.product.public_slug,
       )}?${success.toString()}`,

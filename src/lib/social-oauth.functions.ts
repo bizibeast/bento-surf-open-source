@@ -1,4 +1,3 @@
-import { configuredAppOrigin } from "@/lib/application-urls";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Provider payloads are intentionally normalized at the boundary. */
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
@@ -613,3 +612,4 @@ export const disconnectSocialConnection = createServerFn({ method: "POST" })
     if (error) throw new Error("The account could not be disconnected.");
     return { ok: true };
   });
+import { configuredAppOrigin } from "@/lib/application-urls";

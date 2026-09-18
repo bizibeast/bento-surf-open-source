@@ -33,6 +33,6 @@ Every public creator-owned resource belongs beneath `/@username`. Use the helper
 Username changes are limited to once every 30 days. The previous username remains a temporary
 alias for 14 days and uses a 307 redirect; after that, the username may be claimed by anyone.
 
-Private application, authentication, provider callback, and tokenized access routes remain on the
-configured application origin and are not username-scoped. Legacy public routes must redirect to their current
+Private application, authentication, provider callback, and tokenized access routes remain on
+`app.example.com` and are not username-scoped. Legacy public routes must redirect to their current
 canonical creator URL instead of being removed.

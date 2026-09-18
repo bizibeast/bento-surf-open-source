@@ -1,3 +1,4 @@
+import type { AutoDmMetrics } from "./auto-dm-metrics";
 import { z } from "zod";
 
 export const INSTAGRAM_DM_TRIGGER_TYPES = [
@@ -127,6 +128,7 @@ export function instagramConnectionReadinessMessage(
 }
 
 export type InstagramDmAutomation = {
+  metrics?: AutoDmMetrics;
   id: string;
   connectionId: string;
   connectionHandle: string;
@@ -160,6 +162,7 @@ export type InstagramDmAutomation = {
 };
 
 export type InstagramDmActivity = {
+  automationId?: string | null;
   id: string;
   automationName: string | null;
   eventType: "comment" | "message";

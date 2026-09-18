@@ -55,7 +55,7 @@ describe("safe URL handling", () => {
   it("removes capabilities without dropping harmless success state", () => {
     expect(
       stripUrlSearchParameters(
-        "https://app.bento.surf/p/item/success?order=order-1&access=secret#receipt",
+        "http://localhost:8080/p/item/success?order=order-1&access=secret#receipt",
         ["access"],
       ),
     ).toBe("/p/item/success?order=order-1#receipt");
@@ -80,12 +80,10 @@ describe("safe URL handling", () => {
   });
 
   it("uses only trusted hosts for authentication callbacks", () => {
-    expect(trustedApplicationOrigin("https://self.example/login", "https://self.example")).toBe(
-      "https://self.example",
-    );
+    expect(trustedApplicationOrigin("http://localhost:8080/login")).toBe("http://localhost:8080");
     expect(trustedApplicationOrigin("https://creator.example/login")).toBe("http://localhost:8080");
-    expect(trustedApplicationOrigin("https://evil.example", "https://self.example")).toBe(
-      "https://self.example",
+    expect(trustedApplicationOrigin("https://evil.example", "http://localhost:8080")).toBe(
+      "http://localhost:8080",
     );
   });
 });

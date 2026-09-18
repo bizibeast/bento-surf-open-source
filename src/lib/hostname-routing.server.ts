@@ -122,8 +122,8 @@ function isCreatorProductSuccessPath(pathname: string) {
 /**
  * Keep marketing, account, and creator URLs on deliberate hostnames.
  *
- * The configured public origin serves marketing and collision-free /@username creator pages.
- * The configured app origin serves authentication, editor, settings, integrations, and checkout.
+ * | bento.surf: marketing and collision-free /@username creator pages
+ * - app.example.com: authentication, editor, settings, integrations, checkout
  * - existing /username links: permanent redirect to /@username
  *
  * API, webhook, CDN, and preview-image requests remain valid on both origins so

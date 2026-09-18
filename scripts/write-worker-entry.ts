@@ -62,14 +62,33 @@ const sourceWranglerResult = parseConfigFileTextToJson(
   sourceWranglerPath,
   await readFile(sourceWranglerPath, "utf8"),
 );
-if (sourceWranglerResult.error) {
-  throw new Error("wrangler.jsonc is not valid JSONC.");
-}
+if (sourceWranglerResult.error) throw new Error("wrangler.jsonc is not valid JSONC.");
 const sourceWrangler = sourceWranglerResult.config as Record<string, unknown>;
-const { $schema: _schema, main: _main, assets, ...deploymentConfig } = sourceWrangler;
-Object.assign(generatedWrangler, deploymentConfig, {
+const safeDeploymentKeys = [
+  "ai",
+  "assets",
+  "browser",
+  "compatibility_date",
+  "compatibility_flags",
+  "no_bundle",
+  "observability",
+  "preview_urls",
+  "queues",
+  "r2_buckets",
+  "ratelimits",
+  "rules",
+  "triggers",
+  "workers_dev",
+] as const;
+const safeDeploymentConfig = Object.fromEntries(
+  safeDeploymentKeys.flatMap((key) => (key in sourceWrangler ? [[key, sourceWrangler[key]]] : [])),
+);
+Object.assign(generatedWrangler, safeDeploymentConfig, {
   main: "worker.mjs",
-  assets: { ...(assets as Record<string, unknown>), directory: "../public" },
+  assets: {
+    ...((safeDeploymentConfig.assets as Record<string, unknown> | undefined) || {}),
+    directory: "../public",
+  },
 });
 await writeFile(generatedWranglerPath, `${JSON.stringify(generatedWrangler, null, 2)}\n`, "utf8");
 

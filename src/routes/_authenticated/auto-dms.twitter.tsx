@@ -1,3 +1,4 @@
+import { AutoDmMetrics, AutoDmFlow, AutoDmActivityRow } from "@/components/AutoDmDetails";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode } from "react";
@@ -489,7 +490,14 @@ function TwitterAutoDmPage() {
                   <div className="mt-5 divide-y divide-border/65">
                     {(data?.activity || []).length ? (
                       data?.activity.map((event: TwitterDmActivity) => (
-                        <ActivityRow key={event.id} event={event} />
+                        <AutoDmActivityRow
+                          key={event.id}
+                          event={event}
+                          automation={data?.automations.find(
+                            (automation: TwitterDmAutomation) =>
+                              automation.id === event.automationId,
+                          )}
+                        />
                       ))
                     ) : (
                       <div
@@ -939,6 +947,7 @@ function AutomationRow({
   onToggle: (enabled: boolean) => void;
   onDelete: () => void;
 }) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [testOpen, setTestOpen] = useState(false);
   const [testText, setTestText] = useState(automation.keywords[0] || "link");
   const testResult = testTwitterAutomation(automation, testText);
@@ -961,7 +970,16 @@ function AutomationRow({
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="truncate font-sans font-semibold">{automation.name}</h3>
+            <h3 className="truncate font-sans font-semibold">
+              <button
+                type="button"
+                aria-expanded={detailsOpen}
+                onClick={() => setDetailsOpen(!detailsOpen)}
+                className="text-left hover:underline focus-visible:outline focus-visible:outline-primary"
+              >
+                {automation.name}
+              </button>
+            </h3>
             <span
               className={`${micro.soft} rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground`}
             >
@@ -1014,6 +1032,16 @@ function AutomationRow({
           <Trash2 className="size-4" />
         </button>
       </div>
+      <AutoDmMetrics automation={automation} />
+      <button
+        type="button"
+        className={`${micro.btnOutline} mt-3`}
+        aria-expanded={detailsOpen}
+        onClick={() => setDetailsOpen(!detailsOpen)}
+      >
+        {detailsOpen ? "Hide flow" : "View automation flow"}
+      </button>
+      {detailsOpen && <AutoDmFlow automation={automation} />}
       {testOpen && (
         <div className="mt-4 rounded-2xl bg-[#f2f5fb] p-4">
           {isEngagement ? (
@@ -1040,44 +1068,6 @@ function AutomationRow({
         </div>
       )}
     </article>
-  );
-}
-
-function ActivityRow({ event }: { event: TwitterDmActivity }) {
-  return (
-    <div className="flex items-start justify-between gap-4 py-4">
-      <div className="min-w-0">
-        <p className="truncate text-sm font-semibold">
-          {event.automationName || "X Auto-DM"} · {event.senderLabel}
-        </p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {event.eventType === "like"
-            ? "Like"
-            : event.eventType === "retweet"
-              ? "Repost"
-              : event.eventType === "mention"
-                ? "Reply"
-                : "DM"}
-          {event.matchedKeyword ? ` · ${event.matchedKeyword}` : ""}
-          {event.errorMessage ? ` · ${event.errorMessage}` : ""}
-        </p>
-      </div>
-      <EventStatus status={event.status} />
-    </div>
-  );
-}
-
-function EventStatus({ status }: { status: TwitterDmActivity["status"] }) {
-  const tone =
-    status === "sent"
-      ? "bg-emerald-500/10 text-emerald-700"
-      : status === "failed"
-        ? "bg-rose-500/10 text-rose-700"
-        : "bg-[#f2f5fb] text-[#17213a]/65";
-  return (
-    <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase ${tone}`}>
-      {status}
-    </span>
   );
 }
 

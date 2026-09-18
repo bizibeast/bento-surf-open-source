@@ -145,7 +145,7 @@ export function AppearancePanel() {
         <Section id="header" icon={User} label="Header" open={open} onOpen={setOpen}>
           <div className="grid grid-cols-2 gap-2">
             {[
-              { id: "no_banner", label: "No Banner", desc: "Hide profile" },
+              { id: "no_banner", label: "Without photo", desc: "Hide avatar" },
               { id: "with_photo", label: "With Photo", desc: "Show profile" },
             ].map((opt) => (
               <button

@@ -111,7 +111,7 @@ describe("Bento add-on billing server boundary", () => {
       DODO_STORAGE_10GB_YEARLY_ADDON_ID: "storage-yearly",
       DODO_STORE_MONTHLY_PRODUCT_ID: "store-monthly",
       DODO_STORE_YEARLY_PRODUCT_ID: "store-yearly",
-      VITE_APP_URL: "https://app.bento.surf",
+      VITE_APP_URL: "http://localhost:8080",
     });
     mocks.checkoutCreate.mockResolvedValue({
       checkout_url: "https://checkout.dodopayments.com/session",

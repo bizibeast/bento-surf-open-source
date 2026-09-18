@@ -10,6 +10,7 @@ export default {
     const pathname = new URL(request.url).pathname;
     if (
       pathname !== "/image" &&
+      pathname !== "/youtube-stream" &&
       !/^(?:\/(?:youtube-session|webshare))?\/tunnel(?:\/|$)/u.test(pathname)
     ) {
       return mediaResolver.fetch(request, env);

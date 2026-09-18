@@ -9,14 +9,14 @@ vi.mock("@/lib/profile.functions", () => ({
 }));
 
 vi.mock("@/lib/upload", () => ({
-  uploadFile: vi.fn().mockResolvedValue("https://cdn.example.com/acme-logo.png"),
+  uploadFile: vi.fn().mockResolvedValue("https://cdn.bento.surf/acme-logo.png"),
 }));
 
 vi.mock("@/lib/link-metadata.functions", () => ({
   fetchLinkMetadata: vi.fn().mockResolvedValue({
-    url: "https://product.example/",
-    title: "Example Product",
-    favicon: "https://product.example/favicon.svg",
+    url: "https://behooked.ai/",
+    title: "BeHooked",
+    favicon: "https://behooked.ai/favicon.svg",
     color: "#007cff",
   }),
 }));
@@ -42,7 +42,8 @@ describe("AddBlockPicker", () => {
       "true",
     );
     expect(screen.getByRole("button", { name: "Image" })).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Video" })).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Video" })).toBeInTheDocument();
+    expect(within(categoryRail).getByRole("button", { name: "Video platforms" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Audio" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Quote" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Location" })).toBeInTheDocument();
@@ -154,7 +155,7 @@ describe("AddBlockPicker", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Custom link" }));
     fireEvent.change(screen.getByRole("textbox", { name: "URL" }), {
-      target: { value: "product.example" },
+      target: { value: "behooked.ai" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
 
@@ -162,12 +163,12 @@ describe("AddBlockPicker", () => {
       expect(onAdd).toHaveBeenCalledWith({
         type: "generic_link",
         content: {
-          title: "Example Product",
-          url: "https://product.example/",
+          title: "BeHooked",
+          url: "https://behooked.ai/",
           description: "",
           color: "#007cff",
         },
-        cover_url: "https://product.example/favicon.svg",
+        cover_url: "https://behooked.ai/favicon.svg",
         w: 2,
         h: 1,
       }),
@@ -293,7 +294,7 @@ describe("AddBlockPicker", () => {
             expect.objectContaining({ company: "Beta", logo: "" }),
             expect.objectContaining({
               company: "Acme",
-              logo: "https://cdn.example.com/acme-logo.png",
+              logo: "https://cdn.bento.surf/acme-logo.png",
             }),
           ],
         },

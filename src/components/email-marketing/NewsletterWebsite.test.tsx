@@ -110,17 +110,17 @@ describe("NewsletterWebsite", () => {
         onSettings={onSettings}
         onTemplates={onTemplates}
         onEditPost={onEditPost}
-        publicOrigin="https://bento.surf"
+        publicOrigin="http://localhost:8080"
       />,
     );
 
     expect(screen.getByRole("link", { name: "Open publication page" })).toHaveAttribute(
       "href",
-      "https://bento.surf/@ari-canonical/newsletters/studio-notes",
+      "http://localhost:8080/@ari-canonical/newsletters/studio-notes",
     );
     expect(screen.getByRole("link", { name: "View all publications" })).toHaveAttribute(
       "href",
-      "https://bento.surf/@ari-canonical/newsletters",
+      "http://localhost:8080/@ari-canonical/newsletters",
     );
     expect(screen.getByRole("heading", { name: "Public pages" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Paid pages" })).toBeVisible();
@@ -143,7 +143,7 @@ describe("NewsletterWebsite", () => {
     expect(onToggleBento).toHaveBeenCalledWith(false);
     expect(screen.getByRole("link", { name: "View live page for Launch" })).toHaveAttribute(
       "href",
-      "https://bento.surf/@ari-canonical/newsletters/studio-notes/launch",
+      "http://localhost:8080/@ari-canonical/newsletters/studio-notes/launch",
     );
     fireEvent.click(screen.getByRole("button", { name: "Edit Launch" }));
     expect(onEditPost).toHaveBeenCalledWith("post-1");

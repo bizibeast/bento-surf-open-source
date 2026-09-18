@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import Featurebase, { hide, shutdown, whenReady } from "featurebase-js";
 
 type FeaturebaseIdentitySyncProps = {
-  appId: string | null;
+  appId: string;
   enableAuthenticatedIdentity?: boolean;
   featurebaseJwt?: string | null;
   theme: "light" | "dark";
@@ -20,8 +20,6 @@ export function FeaturebaseIdentitySync({
   theme,
 }: FeaturebaseIdentitySyncProps) {
   useEffect(() => {
-    if (!appId) return;
-
     // `undefined` means the authenticated identity query is still loading.
     // Waiting avoids an anonymous boot immediately followed by secure
     // re-identification, which Featurebase correctly warns about when
@@ -63,7 +61,6 @@ export function FeaturebaseIdentitySync({
   }, [appId, enableAuthenticatedIdentity, featurebaseJwt, theme]);
 
   useEffect(() => {
-    if (!appId) return;
     return () => {
       try {
         shutdown();
@@ -71,7 +68,7 @@ export function FeaturebaseIdentitySync({
         console.warn("[bento] Featurebase Messenger could not shut down cleanly.", error);
       }
     };
-  }, [appId]);
+  }, []);
 
   return null;
 }

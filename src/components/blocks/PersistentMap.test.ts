@@ -2,29 +2,29 @@ import { describe, expect, it } from "vitest";
 import { resolveMapsOrigin } from "./PersistentMap";
 
 describe("resolveMapsOrigin", () => {
-  it("uses the configured public origin", () => {
+  it("uses the configured staging origin", () => {
     expect(
       resolveMapsOrigin(
-        "https://staging.example",
-        "staging.example",
-        "https://public.example/link",
+        "http://localhost:8080",
+        "staging.example.com",
+        "http://localhost:8080/link",
       ),
-    ).toBe("https://public.example");
+    ).toBe("http://localhost:8080");
   });
 
-  it("keeps custom-domain maps on the configured public origin", () => {
+  it("keeps custom-domain maps on Bento's restricted production origin", () => {
     expect(
-      resolveMapsOrigin("https://creator.example", "creator.example", "https://public.example"),
-    ).toBe("https://public.example");
+      resolveMapsOrigin("https://creator.example", "creator.example", "http://localhost:8080"),
+    ).toBe("http://localhost:8080");
   });
 
   it("keeps local development on its current origin", () => {
-    expect(resolveMapsOrigin("http://localhost:8080", "localhost", "https://public.example")).toBe(
+    expect(resolveMapsOrigin("http://localhost:8080", "localhost", "http://localhost:8080")).toBe(
       "http://localhost:8080",
     );
   });
 
-  it("fails closed to the local-safe origin for invalid configuration", () => {
+  it("fails closed to the production origin for invalid configuration", () => {
     expect(resolveMapsOrigin("https://evil.example", "evil.example", "not a url")).toBe(
       "http://localhost:8080",
     );

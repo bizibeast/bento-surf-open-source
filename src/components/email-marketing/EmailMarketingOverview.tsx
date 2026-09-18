@@ -135,7 +135,9 @@ export function EmailMarketingOverview({
     if (locked) {
       return (
         <section className="py-16 text-center">
-          <h2 className="font-ui-display text-3xl text-[#17213a]">Email Marketing needs Store</h2>
+          <h2 className="font-ui-display text-3xl text-[#17213a]">
+            Email Marketing is included with the Creator plan
+          </h2>
           <p className="mt-2 text-sm text-[#17213a]/50">
             Review your plan before creating a publication or writing posts.
           </p>

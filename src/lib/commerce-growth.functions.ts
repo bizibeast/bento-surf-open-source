@@ -21,7 +21,6 @@ import type {
 import { entitlementUpgradeMessage, planHasEntitlement, type PlanId } from "./plans";
 import { getPlan, requirePlanEntitlement } from "./plan.server";
 import { enforceRequestRateLimit } from "./request-security.server";
-import { configuredPublicOrigin, publicProductUrl, publicProfileUrl } from "./application-urls";
 
 const uuid = z.string().uuid();
 const newsletterCaptureResultSchema = z.object({
@@ -1133,11 +1132,7 @@ export const sendAudienceCampaignTest = createServerFn({ method: "POST" })
               id: product.id,
               title: product.title,
               description: product.description,
-              url: publicProductUrl(
-                profile.username,
-                product.public_slug,
-                process.env.VITE_PUBLIC_URL,
-              ),
+              url: `http://localhost:8080/@${encodeURIComponent(profile.username)}/products/${encodeURIComponent(product.public_slug)}`,
               priceAmount: product.price_amount,
               currency: product.currency,
               billingInterval: product.billing_interval,
@@ -1155,8 +1150,8 @@ export const sendAudienceCampaignTest = createServerFn({ method: "POST" })
         payload: {
           creatorName: profile?.display_name || profile?.username || "Broadcast test",
           creatorUrl: profile?.username
-            ? publicProfileUrl(profile.username, null, process.env.VITE_PUBLIC_URL)
-            : configuredPublicOrigin(process.env.VITE_PUBLIC_URL),
+            ? `http://localhost:8080/@${encodeURIComponent(profile.username)}`
+            : "http://localhost:8080",
           subject: `[Test] ${campaign.subject}`,
           previewText: campaign.preview_text,
           body: campaign.body_markdown,

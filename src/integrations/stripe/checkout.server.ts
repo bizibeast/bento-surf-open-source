@@ -14,11 +14,7 @@ import {
   persistCommerceCheckoutGrowth,
   type CommerceCheckoutGrowth,
 } from "@/lib/commerce-growth.server";
-import {
-  configuredAppOrigin,
-  publicProductSuccessPath,
-  publicProductUrl,
-} from "@/lib/application-urls";
+import { publicProductSuccessPath, publicProductUrl } from "@/lib/application-urls";
 
 type CheckoutProduct = {
   id: string;
@@ -34,10 +30,6 @@ type CheckoutProduct = {
   currency: string;
   billing_interval: "day" | "week" | "month" | "year" | null;
 };
-
-function appUrl() {
-  return configuredAppOrigin(process.env.VITE_APP_URL);
-}
 
 function randomAccessToken() {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -118,7 +110,7 @@ export async function createStripeCommerceCheckout(input: {
   }
 
   const success = new URL(
-    `${appUrl()}${publicProductSuccessPath(
+    `${(process.env.VITE_PUBLIC_URL || "http://localhost:8080").replace(/\/$/, "")}${publicProductSuccessPath(
       input.product.creator_username,
       input.product.public_slug,
     )}`,

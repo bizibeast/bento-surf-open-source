@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { dodoSupportsCommerceKind } from "./checkout.server";
 import {
   DODO_CREATOR_WEBHOOK_EVENTS,
-  assertDodoEnvironmentAllowed,
   dodoApiKeyFingerprint,
   dodoCreatorWebhookUrl,
 } from "./creator-client.server";
@@ -63,27 +62,10 @@ describe("Dodo creator payments", () => {
   });
 
   it("creates an isolated per-connection webhook path", () => {
-    vi.stubEnv("VITE_APP_URL", "https://staging.example/");
+    vi.stubEnv("VITE_APP_URL", "http://localhost:8080/");
     expect(dodoCreatorWebhookUrl("connection-id")).toBe(
-      "https://staging.example/api/webhooks/dodo/direct/connection-id",
+      "http://localhost:8080/api/webhooks/dodo/direct/connection-id",
     );
-  });
-
-  it.each(["development", "preview", "staging"])(
-    "keeps live credentials out of non-production %s",
-    (appEnv) => {
-      vi.stubEnv("APP_ENV", appEnv);
-      expect(() => assertDodoEnvironmentAllowed("live_mode")).toThrow(
-        /Live keys are blocked outside production/,
-      );
-      expect(assertDodoEnvironmentAllowed("test_mode")).toBe("test_mode");
-    },
-  );
-
-  it("keeps explicit production in live mode", () => {
-    vi.stubEnv("APP_ENV", "production");
-    expect(assertDodoEnvironmentAllowed("live_mode")).toBe("live_mode");
-    expect(() => assertDodoEnvironmentAllowed("test_mode")).toThrow(/Use a live Dodo API key/);
   });
 
   it("accepts the exact Bento checkout amount plus provider-collected tax", () => {

@@ -56,7 +56,7 @@ export async function resolveCommerceCheckoutGrowth(input: {
   }
   if (requestsAdjustment && !creatorPaymentSupportsCheckoutAdjustments(input.provider)) {
     throw new Error(
-      "This offer uses a discount or paid add-on that the connected payment gateway cannot price safely. Connect Stripe, PayPal, or Razorpay.",
+      "That code or add-on is not available for this offer. Remove it to continue at the displayed price.",
     );
   }
 

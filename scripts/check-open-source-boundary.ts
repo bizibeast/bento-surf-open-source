@@ -29,11 +29,13 @@ const IGNORED_DIRECTORIES = new Set([
 ]);
 const TEXT_FILE = /\.(?:[cm]?[jt]sx?|jsonc?|ya?ml|toml|md|txt|env|html?|css)$/i;
 const ENV_EXAMPLE_FILE = /(?:^|[/\\])\.env\.example$/i;
-const TEST_FILE = /\.(?:test|spec)\.[^/]+$/i;
+export const OPEN_SOURCE_TEST_FILE = /\.(?:test|spec)\.[^/]+$/i;
+const FORBIDDEN_SECRET_FILE =
+  /(?:^|\/)(?:\.env(?!\.example$)|credentials\.json$)|\.(?:pem|key|p12|pfx|dump|bak|zip|tar|tgz|gz|map)$/i;
 const brand = ["ben", "to"].join("");
 const domain = ["sur", "f"].join("");
 
-const ALL_TEXT_RULES: Array<{ reason: string; pattern: RegExp }> = [
+export const OPEN_SOURCE_ALL_TEXT_RULES: Array<{ reason: string; pattern: RegExp }> = [
   {
     reason: "credential-shaped secret",
     pattern:
@@ -51,7 +53,7 @@ const ALL_TEXT_RULES: Array<{ reason: string; pattern: RegExp }> = [
   },
 ];
 
-const TEXT_RULES: Array<{ reason: string; pattern: RegExp }> = [
+export const OPEN_SOURCE_IDENTITY_RULES: Array<{ reason: string; pattern: RegExp }> = [
   {
     reason: "private production identity",
     pattern: new RegExp(`https?:\\/\\/(?:[a-z0-9-]+\\.)?${brand}\\.${domain}\\b`, "i"),
@@ -93,7 +95,7 @@ function isPublicTextFile(file: string) {
 
 const run = promisify(execFile);
 
-async function trackedFiles(root: string): Promise<string[] | null> {
+async function repositoryFiles(root: string): Promise<string[] | null> {
   let stdout: string;
   try {
     ({ stdout } = await run("git", ["-C", root, "rev-parse", "--is-inside-work-tree"]));
@@ -102,10 +104,18 @@ async function trackedFiles(root: string): Promise<string[] | null> {
   }
 
   if (stdout.trim() !== "true") return null;
-  const listed = await run("git", ["-C", root, "ls-files", "-z"]);
+  const listed = await run("git", [
+    "-C",
+    root,
+    "ls-files",
+    "-z",
+    "--cached",
+    "--others",
+    "--exclude-standard",
+  ]);
   return listed.stdout
     .split("\0")
-    .filter(isPublicTextFile)
+    .filter(Boolean)
     .map((file) => resolve(root, file));
 }
 
@@ -129,19 +139,24 @@ export async function checkOpenSourceBoundary(root: string): Promise<BoundaryVio
   const absoluteRoot = resolve(root);
   const violations: BoundaryViolation[] = [];
 
-  for (const file of (await trackedFiles(absoluteRoot)) ?? (await findFiles(absoluteRoot))) {
+  for (const file of (await repositoryFiles(absoluteRoot)) ?? (await findFiles(absoluteRoot))) {
     const relativeFile = toRelativePath(absoluteRoot, file);
+    if (FORBIDDEN_SECRET_FILE.test(relativeFile)) {
+      violations.push({ file: relativeFile, reason: "forbidden secret file" });
+      continue;
+    }
+    if (!isPublicTextFile(relativeFile)) continue;
     if (EXCLUDED_PATHS.some((path) => relativeFile.startsWith(path))) {
       violations.push({ file: relativeFile, reason: "excluded marketing path" });
       continue;
     }
 
     const contents = await readFile(file, "utf8");
-    for (const { reason, pattern } of ALL_TEXT_RULES) {
+    for (const { reason, pattern } of OPEN_SOURCE_ALL_TEXT_RULES) {
       if (pattern.test(contents)) violations.push({ file: relativeFile, reason });
     }
-    if (TEST_FILE.test(relativeFile)) continue;
-    for (const { reason, pattern } of TEXT_RULES) {
+    if (OPEN_SOURCE_TEST_FILE.test(relativeFile)) continue;
+    for (const { reason, pattern } of OPEN_SOURCE_IDENTITY_RULES) {
       if (pattern.test(contents)) violations.push({ file: relativeFile, reason });
     }
   }

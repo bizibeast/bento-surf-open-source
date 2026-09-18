@@ -107,7 +107,7 @@ function successfulDownloadFixture() {
 describe("commerce download boundary", () => {
   it("ignores unrelated paths", async () => {
     const response = await handleCommerceDownloadRequest(
-      new Request("https://app.bento.surf/library/"),
+      new Request("http://localhost:8080/library/"),
       envWithLimiter(),
     );
     expect(response).toBeNull();
@@ -115,7 +115,7 @@ describe("commerce download boundary", () => {
 
   it("rejects methods other than GET and HEAD", async () => {
     const response = await handleCommerceDownloadRequest(
-      new Request(`https://app.bento.surf${COMMERCE_DOWNLOAD_PATH}${"a".repeat(24)}/asset`, {
+      new Request(`http://localhost:8080${COMMERCE_DOWNLOAD_PATH}${"a".repeat(24)}/asset`, {
         method: "POST",
       }),
       envWithLimiter(),
@@ -125,7 +125,7 @@ describe("commerce download boundary", () => {
 
   it("rejects malformed capability links before database access", async () => {
     const response = await handleCommerceDownloadRequest(
-      new Request(`https://app.bento.surf${COMMERCE_DOWNLOAD_PATH}short/asset`),
+      new Request(`http://localhost:8080${COMMERCE_DOWNLOAD_PATH}short/asset`),
       envWithLimiter(),
     );
     expect(response?.status).toBe(400);
@@ -135,7 +135,7 @@ describe("commerce download boundary", () => {
     const env = envWithLimiter(false);
     const token = "sensitive-capability-token";
     const response = await handleCommerceDownloadRequest(
-      new Request(`https://app.bento.surf${COMMERCE_DOWNLOAD_PATH}${token}/asset`),
+      new Request(`http://localhost:8080${COMMERCE_DOWNLOAD_PATH}${token}/asset`),
       env,
     );
     expect(response?.status).toBe(429);
@@ -148,9 +148,7 @@ describe("commerce download boundary", () => {
   it("streams a verified creator-owned object with safe private download headers and an audit", async () => {
     const fixture = successfulDownloadFixture();
     const response = await handleCommerceDownloadRequest(
-      new Request(
-        `https://app.bento.surf${COMMERCE_DOWNLOAD_PATH}sensitive-capability-token/asset`,
-      ),
+      new Request(`http://localhost:8080${COMMERCE_DOWNLOAD_PATH}sensitive-capability-token/asset`),
       fixture.env as never,
       fixture.context,
       {
@@ -195,9 +193,7 @@ describe("commerce download boundary", () => {
     };
 
     const response = await handleCommerceDownloadRequest(
-      new Request(
-        `https://app.bento.surf${COMMERCE_DOWNLOAD_PATH}sensitive-capability-token/asset`,
-      ),
+      new Request(`http://localhost:8080${COMMERCE_DOWNLOAD_PATH}sensitive-capability-token/asset`),
       fixture.env as never,
       fixture.context,
       {
@@ -242,9 +238,7 @@ describe("commerce download boundary", () => {
     });
 
     const response = await handleCommerceDownloadRequest(
-      new Request(
-        `https://app.bento.surf${COMMERCE_DOWNLOAD_PATH}sensitive-capability-token/asset`,
-      ),
+      new Request(`http://localhost:8080${COMMERCE_DOWNLOAD_PATH}sensitive-capability-token/asset`),
       fixture.env as never,
       fixture.context,
       {
@@ -287,9 +281,7 @@ describe("commerce download boundary", () => {
     });
     fixture.db.from.mockImplementationOnce(() => productQuery as never);
     const response = await handleCommerceDownloadRequest(
-      new Request(
-        `https://app.bento.surf${COMMERCE_DOWNLOAD_PATH}sensitive-capability-token/asset`,
-      ),
+      new Request(`http://localhost:8080${COMMERCE_DOWNLOAD_PATH}sensitive-capability-token/asset`),
       fixture.env as never,
       fixture.context,
       {

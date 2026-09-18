@@ -12,11 +12,7 @@ import {
   persistCommerceCheckoutGrowth,
   type CommerceCheckoutGrowth,
 } from "@/lib/commerce-growth.server";
-import {
-  configuredAppOrigin,
-  publicProductSuccessPath,
-  publicProductUrl,
-} from "@/lib/application-urls";
+import { publicProductSuccessPath, publicProductUrl } from "@/lib/application-urls";
 import { creatorPaymentCompatibility } from "@/lib/payment-providers";
 
 type CheckoutProduct = {
@@ -33,10 +29,6 @@ type CheckoutProduct = {
   currency: string;
   billing_interval: "day" | "week" | "month" | "year" | null;
 };
-
-function appUrl() {
-  return configuredAppOrigin(process.env.VITE_APP_URL);
-}
 
 function randomAccessToken() {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -223,7 +215,7 @@ export async function createPolarCommerceCheckout(input: {
       products: [remoteProductId],
       customerEmail: buyerEmail,
       customerName: input.name || null,
-      successUrl: `${appUrl()}${publicProductSuccessPath(
+      successUrl: `${(process.env.VITE_PUBLIC_URL || "http://localhost:8080").replace(/\/$/, "")}${publicProductSuccessPath(
         input.product.creator_username,
         input.product.public_slug,
       )}?${successQuery.toString().replace("%7BCHECKOUT_ID%7D", "{CHECKOUT_ID}")}`,

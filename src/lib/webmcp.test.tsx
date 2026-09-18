@@ -207,8 +207,8 @@ describe("safeWebMcpPathname", () => {
 
 describe("Bento remote MCP setup", () => {
   it("returns the Codex Streamable HTTP command", () => {
-    expect(bentoRemoteMcpSetup("codex", "https://mcp.bento.surf/mcp")).toBe(
-      "codex mcp add bento --url https://mcp.bento.surf/mcp",
+    expect(bentoRemoteMcpSetup("codex", "http://localhost:8080/mcp")).toBe(
+      "codex mcp add bento --url http://localhost:8080/mcp",
     );
   });
 });

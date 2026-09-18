@@ -47,7 +47,7 @@ export const geocodeMapLocation = createServerFn({ method: "POST" })
       headers: {
         Accept: "application/json",
         "Accept-Language": "en",
-        "User-Agent": "BentoSurfMapEditor/1.0",
+        "User-Agent": "bento.surf-map-editor/1.0 (+http://localhost:8080)",
       },
       signal: AbortSignal.timeout(10_000),
     });

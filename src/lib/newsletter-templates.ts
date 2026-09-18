@@ -94,7 +94,7 @@ const LONG_TEMPLATE_BLUEPRINTS: Array<{
     accent: "#e4572e",
     background: "#fffaf4",
     canvas: "#efe7dc",
-    image: "/branding/bento-logo.png",
+    image: "/marketing/scheduler-workspace-wide.webp",
     headline: "Good morning: here is what matters",
     intro:
       "Start with the one development your readers should understand before the day gets noisy.",
@@ -113,7 +113,7 @@ const LONG_TEMPLATE_BLUEPRINTS: Array<{
     accent: "#264653",
     background: "#f7fbfa",
     canvas: "#dce7e5",
-    image: "/branding/bento-logo.png",
+    image: "/branding/landing-og.jpg",
     headline: "The story behind the story",
     intro:
       "Set the scene, name the tension, and give the reader a reason to stay for the full argument.",
@@ -132,7 +132,7 @@ const LONG_TEMPLATE_BLUEPRINTS: Array<{
     accent: "#006d77",
     background: "#f3fbfb",
     canvas: "#cfe5e6",
-    image: "/branding/bento-logo.png",
+    image: "/marketing/scheduler-workspace.webp",
     headline: "This week in the market",
     intro:
       "Lead with the movement, then explain the forces underneath it without making readers decode a dashboard.",
@@ -151,7 +151,7 @@ const LONG_TEMPLATE_BLUEPRINTS: Array<{
     accent: "#9b5de5",
     background: "#fcf9ff",
     canvas: "#eadff5",
-    image: "/branding/bento-logo.png",
+    image: "/marketing/bizibeast-banner.webp",
     headline: "What I made this month",
     intro: "Use the opening to connect the work to the question or obsession that shaped it.",
     quote: "Process is part of the work, not a footnote.",
@@ -169,7 +169,7 @@ const LONG_TEMPLATE_BLUEPRINTS: Array<{
     accent: "#3a86ff",
     background: "#f6f9ff",
     canvas: "#dce8fb",
-    image: "/branding/bento-logo.png",
+    image: "/marketing/scheduler-workspace-square.webp",
     headline: "A better way to get the job done",
     intro: "Explain the customer problem first, then show exactly what changed in the product.",
     quote: "Small workflow improvements compound every day.",
@@ -187,7 +187,7 @@ const LONG_TEMPLATE_BLUEPRINTS: Array<{
     accent: "#2a9d8f",
     background: "#f5fcfa",
     canvas: "#d7ece7",
-    image: "/branding/bento-logo.png",
+    image: "/branding/bento-preview.png",
     headline: "From friction to a repeatable result",
     intro:
       "Introduce the customer in their own context, then make the before-and-after easy to understand.",
@@ -206,7 +206,7 @@ const LONG_TEMPLATE_BLUEPRINTS: Array<{
     accent: "#ff7b00",
     background: "#fffaf2",
     canvas: "#f2dfc7",
-    image: "/branding/bento-logo.png",
+    image: "/marketing/scheduler-workspace-vertical.webp",
     headline: "Learn one useful thing",
     intro:
       "State the outcome, teach the core idea, and keep the exercise close to the explanation.",
@@ -225,7 +225,7 @@ const LONG_TEMPLATE_BLUEPRINTS: Array<{
     accent: "#5f0f40",
     background: "#fff8fc",
     canvas: "#eedce8",
-    image: "/branding/bento-logo.png",
+    image: "/branding/landing-og.jpg",
     headline: "The internet, edited down",
     intro:
       "Tell readers the theme connecting this edition before walking through the recommendations.",
@@ -244,7 +244,7 @@ const LONG_TEMPLATE_BLUEPRINTS: Array<{
     accent: "#0077b6",
     background: "#f5fbff",
     canvas: "#d9eaf3",
-    image: "/branding/bento-logo.png",
+    image: "/marketing/bizibeast-banner.webp",
     headline: "A weekend well spent",
     intro:
       "Open with a sense of place, then organize the guide around moments rather than a flat directory.",
@@ -263,7 +263,7 @@ const LONG_TEMPLATE_BLUEPRINTS: Array<{
     accent: "#bc6c25",
     background: "#fffaf3",
     canvas: "#eadbc8",
-    image: "/branding/bento-logo.png",
+    image: "/branding/landing-og.jpg",
     headline: "A recipe worth repeating",
     intro:
       "Bring readers into the kitchen with the story, then keep the method simple enough to follow.",
@@ -282,7 +282,7 @@ const LONG_TEMPLATE_BLUEPRINTS: Array<{
     accent: "#588157",
     background: "#f8fbf6",
     canvas: "#dde8d8",
-    image: "/branding/bento-logo.png",
+    image: "/marketing/scheduler-workspace-square.webp",
     headline: "Make space for what restores you",
     intro:
       "Meet the reader where they are and offer one realistic practice rather than an impossible routine.",
@@ -301,7 +301,7 @@ const LONG_TEMPLATE_BLUEPRINTS: Array<{
     accent: "#6d597a",
     background: "#fcf9fd",
     canvas: "#e6ddeb",
-    image: "/branding/bento-logo.png",
+    image: "/branding/landing-og.jpg",
     headline: "Let’s talk about the book",
     intro:
       "Summarize the central tension without spoiling the experience, then invite readers into the discussion.",
@@ -320,7 +320,7 @@ const LONG_TEMPLATE_BLUEPRINTS: Array<{
     accent: "#ef476f",
     background: "#fff8fa",
     canvas: "#f1dce2",
-    image: "/branding/bento-logo.png",
+    image: "/marketing/bizibeast-avatar.webp",
     headline: "Inside the latest conversation",
     intro: "Introduce the guest and the question that made this conversation worth recording.",
     quote: "The useful answer usually begins after the obvious one.",
@@ -338,7 +338,7 @@ const LONG_TEMPLATE_BLUEPRINTS: Array<{
     accent: "#118ab2",
     background: "#f4fbfd",
     canvas: "#d8eaf0",
-    image: "/branding/bento-logo.png",
+    image: "/marketing/bizibeast-banner.webp",
     headline: "Meet this month’s member",
     intro:
       "Show the person behind the work, then make their path useful to readers at a similar stage.",
@@ -357,7 +357,7 @@ const LONG_TEMPLATE_BLUEPRINTS: Array<{
     accent: "#073b4c",
     background: "#f4f9fa",
     canvas: "#d5e2e5",
-    image: "/branding/bento-logo.png",
+    image: "/marketing/scheduler-workspace.webp",
     headline: "The findings at a glance",
     intro:
       "Lead with the decision the research can improve, then show the evidence in a scannable sequence.",
@@ -376,7 +376,7 @@ const LONG_TEMPLATE_BLUEPRINTS: Array<{
     accent: "#4361ee",
     background: "#f6f8ff",
     canvas: "#dde3f6",
-    image: "/branding/bento-logo.png",
+    image: "/marketing/scheduler-workspace-wide.webp",
     headline: "Work worth applying for",
     intro:
       "Explain how the roles were selected so readers trust the list and know who each opportunity suits.",
@@ -395,7 +395,7 @@ const LONG_TEMPLATE_BLUEPRINTS: Array<{
     accent: "#8338ec",
     background: "#fbf7ff",
     canvas: "#e9dcf5",
-    image: "/branding/bento-logo.png",
+    image: "/branding/bento-preview.png",
     headline: "What is happening in the community",
     intro:
       "Start with the most important decision or milestone, then give members clear ways to participate.",
@@ -414,7 +414,7 @@ const LONG_TEMPLATE_BLUEPRINTS: Array<{
     accent: "#a44a3f",
     background: "#fff9f6",
     canvas: "#ecdeda",
-    image: "/branding/bento-logo.png",
+    image: "/marketing/scheduler-workspace-vertical.webp",
     headline: "Notes from the turning season",
     intro:
       "Use a personal scene to open the letter, then connect it to the work and ideas that shaped the quarter.",
@@ -741,7 +741,7 @@ export const NEWSLETTER_TEMPLATES: NewsletterTemplate[] = [
       { type: "heading", text: "Inside the story" },
       {
         type: "image",
-        url: "/branding/bento-logo.png",
+        url: "/branding/landing-og.jpg",
         alt: "Featured visual",
         caption: "Set the scene with one strong image.",
       },
@@ -896,10 +896,10 @@ export function createTemplatePostContent(id: NewsletterTemplateId): NewsletterC
       type: "image",
       url:
         template.category === "Business"
-          ? "/branding/bento-logo.png"
+          ? "/marketing/scheduler-workspace-wide.webp"
           : template.category === "Community"
-            ? "/branding/bento-logo.png"
-            : "/branding/bento-logo.png",
+            ? "/marketing/bizibeast-banner.webp"
+            : "/branding/landing-og.jpg",
       alt: `${template.name} feature image`,
       caption: "Replace this image with your own.",
     });

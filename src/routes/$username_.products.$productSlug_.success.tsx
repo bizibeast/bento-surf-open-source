@@ -19,13 +19,13 @@ import {
   getPublicCommerceProduct,
 } from "@/lib/commerce.functions";
 import {
-  configuredPublicOrigin,
   normalizePublicUsername,
   publicProductPath,
   publicProductSuccessPath,
   publicProfileUrl,
 } from "@/lib/application-urls";
 import { clearCheckoutRecovery } from "@/lib/checkout-recovery";
+import { productAccentTextColor, productWebsite } from "@/lib/product-website";
 import { stripUrlSearchParameters } from "@/lib/safe-url";
 
 // The trailing underscore keeps this URL out of the product page's route layout.
@@ -64,7 +64,16 @@ export const Route = createFileRoute("/$username_/products/$productSlug_/success
 
 function CommerceSuccessPage() {
   const data = Route.useLoaderData();
-  const { access, order } = Route.useSearch();
+  const { access: queryAccess, order } = Route.useSearch();
+  const [access, setAccess] = useState(queryAccess);
+  useEffect(() => {
+    const key = "bento:purchase-access:" + order;
+    if (queryAccess) {
+      window.sessionStorage.setItem(key, queryAccess);
+      window.sessionStorage.setItem("bento:product-access:" + data.product.id, queryAccess);
+      setAccess(queryAccess);
+    } else setAccess(window.sessionStorage.getItem(key) || undefined);
+  }, [queryAccess, order, data.product.id]);
   const [pollingExpired, setPollingExpired] = useState(false);
   useEffect(() => {
     if (!access) return;
@@ -96,6 +105,13 @@ function CommerceSuccessPage() {
     if (!priorityDmRequestId) return;
     window.location.replace(`/library/priority-dm/${priorityDmRequestId}`);
   }, [confirmation.data?.state, priorityDmRequestId]);
+  const recoveredAccess = confirmation.data?.accessToken;
+  useEffect(() => {
+    if (!recoveredAccess || access) return;
+    window.sessionStorage.setItem("bento:purchase-access:" + order, recoveredAccess);
+    window.sessionStorage.setItem("bento:product-access:" + data.product.id, recoveredAccess);
+    setAccess(recoveredAccess);
+  }, [access, data.product.id, order, recoveredAccess]);
   const isConfirmed = confirmation.data?.state === "confirmed";
   const accessStatus = useQuery({
     queryKey: ["commerce-access-ready", data?.product.id, access],
@@ -124,11 +140,21 @@ function CommerceSuccessPage() {
   const accessBelongsToProduct = accessStatus.data?.product?.id === data.product.id;
   const isAccessDelayed =
     Boolean(isConfirmed && access && !accessBelongsToProduct) && pollingExpired;
+  const website = productWebsite(data.product.settings?.website);
+  const accentStyle = {
+    background: website.accent,
+    color: productAccentTextColor(website.accent),
+  };
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#f7f8fc] px-4 py-10 text-[#17213a]">
+    <div
+      className="relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-10 text-[#17213a]"
+      style={{ background: `color-mix(in oklab, ${website.accent} 7%, #ffffff)` }}
+    >
       <FontApplier headline={data.creator.secondary_font} body={data.creator.primary_font} />
-      <div className="pointer-events-none absolute -left-20 -top-20 size-72 rounded-full bg-[#dceaff] blur-2xl" />
-      <div className="pointer-events-none absolute -bottom-24 right-[-3rem] size-80 rounded-full bg-[#ffc928]/25 blur-3xl" />
+      <div
+        className="pointer-events-none absolute -left-20 -top-20 size-72 rounded-full opacity-20 blur-2xl"
+        style={{ background: website.accent }}
+      />
       <main className="relative w-full max-w-xl overflow-hidden rounded-[38px] border border-white bg-white/90 p-7 text-center shadow-[0_40px_120px_-55px_rgba(23,33,58,.7)] backdrop-blur-xl sm:p-10">
         <span
           className={`mx-auto flex size-16 items-center justify-center rounded-full text-white ${
@@ -136,8 +162,9 @@ function CommerceSuccessPage() {
               ? "bg-emerald-500 shadow-[0_16px_34px_-18px_rgba(16,185,129,.9)]"
               : isUnavailable
                 ? "bg-rose-500"
-                : "bg-[#3478f6]"
+                : ""
           }`}
+          style={!isConfirmed && !isUnavailable ? accentStyle : undefined}
         >
           {isConfirmed ? (
             <Check className="size-7" />
@@ -149,8 +176,9 @@ function CommerceSuccessPage() {
         </span>
         <div
           className={`mt-6 text-[10px] font-semibold uppercase tracking-[0.18em] ${
-            isConfirmed ? "text-emerald-600" : isUnavailable ? "text-rose-600" : "text-[#3478f6]"
+            isConfirmed ? "text-emerald-600" : isUnavailable ? "text-rose-600" : ""
           }`}
+          style={!isConfirmed && !isUnavailable ? { color: website.accent } : undefined}
         >
           {isConfirmed
             ? "Order confirmed"
@@ -202,36 +230,59 @@ function CommerceSuccessPage() {
           <Link
             to="/access/$token"
             params={{ token: access }}
-            className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[#3478f6] px-5 py-4 text-sm font-semibold text-white shadow-[0_16px_32px_-20px_rgba(52,120,246,.9)]"
+            className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-4 text-sm font-semibold shadow-lg"
+            style={accentStyle}
           >
-            Open my purchase <LockKeyhole className="size-4" />
+            {data.product.kind === "coaching_call" ? "Choose a session time" : "Open my purchase"}{" "}
+            <LockKeyhole className="size-4" />
           </Link>
         ) : isAccessDelayed ? (
           <a
-            href="/library/"
-            className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[#17213a] px-5 py-4 text-sm font-semibold text-white"
+            href={
+              (import.meta.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "") +
+              "/library/"
+            }
+            className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-4 text-sm font-semibold"
+            style={accentStyle}
           >
             Check customer library <ArrowRight className="size-4" />
           </a>
         ) : isConfirmed && access ? (
-          <div className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[#dceaff] px-5 py-4 text-sm font-semibold text-[#3478f6]">
+          <div
+            className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-4 text-sm font-semibold"
+            style={{
+              background: `color-mix(in oklab, ${website.accent} 12%, white)`,
+              color: website.accent,
+            }}
+          >
             <LoaderCircle className="size-4 animate-spin" /> Preparing private access…
           </div>
         ) : isProcessing ? (
-          <div className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[#dceaff] px-5 py-4 text-sm font-semibold text-[#3478f6]">
+          <div
+            className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-4 text-sm font-semibold"
+            style={{
+              background: `color-mix(in oklab, ${website.accent} 12%, white)`,
+              color: website.accent,
+            }}
+          >
             <LoaderCircle className="size-4 animate-spin" /> Checking secure payment…
           </div>
         ) : isDelayed ? (
           <a
-            href="/library/"
-            className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[#17213a] px-5 py-4 text-sm font-semibold text-white"
+            href={
+              (import.meta.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "") +
+              "/library/"
+            }
+            className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-4 text-sm font-semibold"
+            style={accentStyle}
           >
             Check customer library <ArrowRight className="size-4" />
           </a>
         ) : (
           <Link
             to={publicProductPath(data.creator.username, data.product.public_slug)}
-            className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[#17213a] px-5 py-4 text-sm font-semibold text-white"
+            className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-4 text-sm font-semibold"
+            style={accentStyle}
           >
             Back to product <ArrowRight className="size-4" />
           </Link>
@@ -241,8 +292,12 @@ function CommerceSuccessPage() {
           <div className="mt-1 font-mono">{order}</div>
         </div>
         <a
-          href="/library/"
-          className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-[#3478f6] underline decoration-[#3478f6]/25 underline-offset-4"
+          href={
+            (import.meta.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "") +
+            "/library/"
+          }
+          className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold underline underline-offset-4"
+          style={{ color: website.accent }}
         >
           Open customer library <ArrowRight className="size-3.5" />
         </a>
@@ -254,7 +309,7 @@ function CommerceSuccessPage() {
             <ShoppingBag className="size-3.5" /> Creator storefront
           </a>
           <a
-            href={configuredPublicOrigin(import.meta.env.VITE_PUBLIC_URL)}
+            href="http://localhost:8080"
             className="inline-flex items-center gap-1.5 hover:text-[#17213a]"
           >
             <BentoBrand iconClassName="size-5" /> <ExternalLink className="size-3.5" />

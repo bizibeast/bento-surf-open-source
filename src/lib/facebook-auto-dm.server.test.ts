@@ -49,12 +49,12 @@ describe("Facebook Auto-DM webhook security", () => {
     vi.stubEnv("FACEBOOK_WEBHOOK_VERIFY_TOKEN", VERIFY_TOKEN);
     const accepted = await handleFacebookWebhookVerification(
       new Request(
-        `https://bento.surf/api/webhooks/facebook?hub.mode=subscribe&hub.verify_token=${VERIFY_TOKEN}&hub.challenge=hello-meta`,
+        `http://localhost:8080/api/webhooks/facebook?hub.mode=subscribe&hub.verify_token=${VERIFY_TOKEN}&hub.challenge=hello-meta`,
       ),
     );
     const rejected = await handleFacebookWebhookVerification(
       new Request(
-        "https://bento.surf/api/webhooks/facebook?hub.mode=subscribe&hub.verify_token=wrong&hub.challenge=hello-meta",
+        "http://localhost:8080/api/webhooks/facebook?hub.mode=subscribe&hub.verify_token=wrong&hub.challenge=hello-meta",
       ),
     );
 
@@ -90,7 +90,7 @@ describe("Facebook Auto-DM webhook security", () => {
     });
     const sendBatch = vi.fn().mockResolvedValue(undefined);
     const response = await handleFacebookWebhook(
-      new Request("https://bento.surf/api/webhooks/facebook", {
+      new Request("http://localhost:8080/api/webhooks/facebook", {
         method: "POST",
         headers: { "x-hub-signature-256": await signature(body) },
         body,

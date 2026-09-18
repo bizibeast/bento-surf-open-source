@@ -47,12 +47,12 @@ describe("Instagram Auto-DM webhook security", () => {
     vi.stubEnv("INSTAGRAM_WEBHOOK_VERIFY_TOKEN", VERIFY_TOKEN);
     const accepted = await handleInstagramWebhookVerification(
       new Request(
-        `https://bento.surf/api/webhooks/instagram?hub.mode=subscribe&hub.verify_token=${VERIFY_TOKEN}&hub.challenge=hello-meta`,
+        `http://localhost:8080/api/webhooks/instagram?hub.mode=subscribe&hub.verify_token=${VERIFY_TOKEN}&hub.challenge=hello-meta`,
       ),
     );
     const rejected = await handleInstagramWebhookVerification(
       new Request(
-        "https://bento.surf/api/webhooks/instagram?hub.mode=subscribe&hub.verify_token=wrong&hub.challenge=hello-meta",
+        "http://localhost:8080/api/webhooks/instagram?hub.mode=subscribe&hub.verify_token=wrong&hub.challenge=hello-meta",
       ),
     );
 
@@ -111,7 +111,7 @@ describe("Instagram Auto-DM webhook security", () => {
       ],
     });
     const sendBatch = vi.fn().mockResolvedValue(undefined);
-    const request = new Request("https://bento.surf/api/webhooks/instagram", {
+    const request = new Request("http://localhost:8080/api/webhooks/instagram", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -151,7 +151,7 @@ describe("Instagram Auto-DM webhook security", () => {
       })),
     });
     const sendBatch = vi.fn().mockResolvedValue(undefined);
-    const request = new Request("https://bento.surf/api/webhooks/instagram", {
+    const request = new Request("http://localhost:8080/api/webhooks/instagram", {
       method: "POST",
       headers: {
         "content-type": "application/json",

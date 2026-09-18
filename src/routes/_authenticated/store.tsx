@@ -1,3 +1,5 @@
+import { STORE_TEMPLATE_DRAFTS } from "@/lib/product-website";
+import { ProductWebsiteEditor } from "@/components/commerce/ProductWebsiteEditor";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
@@ -109,7 +111,7 @@ const tabSchema = z.enum(["products", "growth", "orders", "audience", "analytics
 const optionalKindSchema = z.enum(COMMERCE_PRODUCT_KINDS).optional().catch(undefined);
 
 export const Route = createFileRoute("/_authenticated/store")({
-  head: () => ({ meta: [{ title: "Products" }] }),
+  head: () => ({ meta: [{ title: "Products | this deployment" }] }),
   validateSearch: z.object({
     tab: tabSchema.default("products").catch("products"),
     create: optionalKindSchema,
@@ -232,7 +234,7 @@ function ProductsPage() {
     (create && isCommerceGrowthKind(create)) || (editing && isCommerceGrowthKind(editing.kind)),
   );
   const paymentBlockedCreate = Boolean(
-    data && create && isCommerceOfferKind(create) && !paymentReady,
+    data && !data.locked && create && isCommerceOfferKind(create) && !paymentReady,
   );
   const builderOpen = Boolean(
     (edit && editing?.kind !== "newsletter") ||
@@ -264,6 +266,15 @@ function ProductsPage() {
   }, [navigate, tab]);
 
   useEffect(() => {
+    if (data?.locked && create && isCommerceOfferKind(create)) {
+      toast.error("Creating and publishing products requires the Store plan.");
+      void navigate({
+        to: "/store",
+        search: { tab: "products", create: undefined, edit: undefined },
+        replace: true,
+      });
+      return;
+    }
     if (!paymentBlockedCreate) return;
     toast.error("Connect a payment gateway before creating a Store product.");
     void navigate({
@@ -271,7 +282,7 @@ function ProductsPage() {
       search: { tab: "products", create: undefined, edit: undefined },
       replace: true,
     });
-  }, [navigate, paymentBlockedCreate]);
+  }, [navigate, paymentBlockedCreate, data?.locked, create]);
 
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ["my-commerce"] });
@@ -292,7 +303,7 @@ function ProductsPage() {
   const addBlockMutation = useMutation({
     mutationFn: (productId: string) =>
       addCommerceProductBlock({ data: { productId, pageId: null } }),
-    onSuccess: () => toast.success("Added to your page"),
+    onSuccess: () => toast.success("Added to your this application"),
     onError: (error) => toast.error(error instanceof Error ? error.message : "Could not add block"),
   });
 
@@ -348,10 +359,13 @@ function ProductsPage() {
           <span className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-[#dfeaff] text-[#245fd0]">
             <ShoppingBag className="size-6" />
           </span>
-          <h1 className="mt-5 font-ui-display text-3xl font-normal">Turn your page into a store</h1>
+          <h1 className="mt-5 font-ui-display text-3xl font-normal">
+            Turn your this application into a store
+          </h1>
           <p className="mx-auto mt-3 max-w-lg text-sm leading-relaxed text-[#17213a]/55">
-            The store is included with the Store plan. Upgrade to sell digital products, coaching,
-            courses, memberships, communities, collect leads, and use connected payments.
+            this application Store is included with the Store plan. Upgrade to sell digital
+            products, coaching, courses, memberships, communities, collect leads, and use connected
+            payments.
           </p>
           <UpgradeDialog
             feature="storeCards"
@@ -451,14 +465,14 @@ function ProductsPage() {
           <div className="relative grid gap-7 lg:grid-cols-[1.2fr_1fr] lg:items-end">
             <div>
               <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold text-[#dceaff]">
-                <Sparkles className="size-3.5" /> Your creator business, in one application
+                <Sparkles className="size-3.5" /> Your creator business, inside this application
               </div>
               <h2 className="mt-4 max-w-xl font-ui-display text-4xl leading-[1.02] sm:text-5xl">
                 Turn beautiful blocks into things people can buy.
               </h2>
               <p className="mt-4 max-w-xl text-sm leading-6 text-white/55">
-                The application hosts the product page, checkout hand-off, secure delivery, audience
-                data, and access experience. Your storefront stays minimal.
+                this application hosts the product page, checkout hand-off, secure delivery,
+                audience data, and access experience. Your storefront stays minimal.
               </p>
             </div>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-2">
@@ -477,7 +491,7 @@ function ProductsPage() {
           <div className="mt-4 flex items-start gap-3 rounded-[24px] border border-[#3478f6]/18 bg-[#dceaff] px-4 py-3.5 text-sm text-[#245fd0]">
             <Check className="mt-0.5 size-4 shrink-0" />
             <div>
-              <strong>Safe test checkout is active.</strong> Orders in this deployment use mock
+              <strong>Safe test checkout is active.</strong> Orders on staging.example.com use mock
               money; no card is charged and no payout is created.
             </div>
           </div>
@@ -713,7 +727,7 @@ function StoreOnboarding({
             </h3>
             <p className="mt-2 max-w-xl text-sm leading-6 text-[#17213a]/52">
               Connect where money should go, start from a useful template, then customise the live
-              product card before it reaches your page.
+              product card before it reaches your this application.
             </p>
           </div>
           <div className="grid grid-cols-3 gap-2 text-xs sm:min-w-[390px]">
@@ -749,7 +763,7 @@ function StoreOnboarding({
               <div className="text-xs font-semibold text-[#3478f6]">Step 1 of 3</div>
               <h4 className="mt-1 font-ui-display text-2xl">Connect your payment gateway</h4>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-[#17213a]/52">
-                Store products stay locked until the application verifies that payments, payouts,
+                Store products stay locked until this application verifies that payments, payouts,
                 and the webhook are ready. Sales then settle directly into your provider account.
               </p>
               {selectedProvider && (
@@ -860,7 +874,7 @@ function ProductsPanel({
         </div>
         <h3 className="mt-5 font-ui-display text-3xl">Your first offer belongs here.</h3>
         <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[#17213a]/50">
-          Pick a product type. The application creates its setup flow, hosted page, and storefront
+          Pick a product type. this application creates its setup flow, hosted page, and storefront
           block.
         </p>
         <button
@@ -1110,8 +1124,8 @@ function GrowthPanel({
           </div>
           <h3 className="mt-5 font-ui-display text-3xl">Grow without creating a product.</h3>
           <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-[#17213a]/50">
-            Collect emails and applications, or add your tracked referral link. These are simple
-            actions-not items for sale.
+            Collect emails and applications, or add your tracked this application referral link.
+            These are simple actions-not items for sale.
           </p>
           <div className="mx-auto mt-6 grid max-w-xl gap-3 sm:grid-cols-2">
             <button
@@ -1126,7 +1140,7 @@ function GrowthPanel({
               onClick={() => onCreate("bento_affiliate")}
               className="rounded-[22px] bg-[#f0ad00] px-5 py-4 text-sm font-semibold text-[#17213a]"
             >
-              Add my affiliate link
+              Add my this application affiliate link
             </button>
           </div>
         </div>
@@ -1574,7 +1588,7 @@ function DeleteProductDialog({
             Delete {product?.title || "this item"}?
           </DialogTitle>
           <p className="mt-3 text-sm leading-6 text-[#17213a]/55">
-            This removes its storefront blocks and attached setup. Items with orders cannot be
+            This removes its this application blocks and attached setup. Items with orders cannot be
             deleted, so receipts and customer access always stay safe.
           </p>
           <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
@@ -1627,7 +1641,7 @@ function OrdersPanel({
       <EmptyPanel
         icon={Inbox}
         title="No orders yet"
-        body="Test a published product in this deployment to see the complete buyer and fee record here."
+        body="Test a published product on staging.example.com to see the complete buyer and fee record here."
       />
     );
   return (
@@ -2003,7 +2017,7 @@ function PayoutsPanel({ data }: { data: CommerceDashboardData | undefined }) {
           </div>
         )}
         <p className="mt-3 max-w-xl text-sm leading-6 text-white/50">
-          The application never holds this money. Sales settle directly into your connected payment
+          this application never holds this money. Sales settle directly into your connected payment
           provider, which remains the source of truth for available balance, payout timing, taxes,
           disputes, and withdrawals.
         </p>
@@ -2014,7 +2028,7 @@ function PayoutsPanel({ data }: { data: CommerceDashboardData | undefined }) {
       <div className="rounded-[30px] border border-black/[0.07] bg-[#dceaff] p-6">
         <BadgePercent className="size-6 text-[#3478f6]" />
         <div className="mt-5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#245fd0]/60">
-          Your platform fee
+          Your this application fee
         </div>
         <div className="mt-1 font-ui-display text-4xl text-[#245fd0]">{fee}</div>
         <p className="mt-3 text-sm leading-6 text-[#245fd0]/65">
@@ -2071,7 +2085,7 @@ function ProductKindPicker({
         <DialogTitle className="font-ui-display text-3xl">What do you want to sell?</DialogTitle>
         <p className="-mt-2 text-sm text-[#17213a]/50">
           Pick an offer type for its dedicated setup, hosted page, checkout, and delivery flow. Lead
-          forms and affiliate links now live in the Grow tab.
+          forms and this application affiliate links now live in the Grow tab.
         </p>
         <section className="mt-6">
           <h3 className="font-sans text-sm font-semibold">Sell</h3>
@@ -2127,52 +2141,6 @@ type ProductDraft = {
   settings: CommerceProductSettings;
   inventory_limit: number | null;
   noindex: boolean;
-};
-
-const STORE_TEMPLATE_DRAFTS: Partial<
-  Record<CommerceProductKind, Pick<ProductDraft, "title" | "subtitle" | "description">>
-> = {
-  digital_product: {
-    title: "My digital download",
-    subtitle: "A practical resource your buyer can use right away.",
-    description:
-      "Explain what is included, who it is for, and the result this download helps the buyer achieve.",
-  },
-  course: {
-    title: "My mini course",
-    subtitle: "A clear path from idea to outcome.",
-    description:
-      "Outline what students will learn, how the lessons are delivered, and the result they can expect.",
-  },
-  webinar: {
-    title: "My live workshop",
-    subtitle: "Learn with me in a focused live session.",
-    description:
-      "Share the topic, who should attend, the agenda, and what participants will leave with.",
-  },
-  paid_community: {
-    title: "My community",
-    subtitle: "A focused space to learn and grow together.",
-    description:
-      "Explain who the community is for, what members receive, and how often you will show up.",
-  },
-  membership: {
-    title: "My membership",
-    subtitle: "Ongoing access to resources and support.",
-    description:
-      "Describe the recurring benefits, new content cadence, and what members can expect each month.",
-  },
-  priority_dm: {
-    title: "Priority message",
-    subtitle: "Send me a paid message and move to the front of my inbox.",
-    description:
-      "Share what you need help with and I will reply within the promised response time.",
-  },
-  bundle: {
-    title: "Creator bundle",
-    subtitle: "Get several of my best products in one purchase.",
-    description: "A curated collection of downloads, courses, and resources sold together.",
-  },
 };
 
 function draftFor(
@@ -2378,7 +2346,9 @@ function GrowthActionBuilder({
                       onChange={(event) => set("title", event.target.value)}
                       className={inputClass}
                       placeholder={
-                        isLeadForm ? "Join my email list" : "Build your page with my link"
+                        isLeadForm
+                          ? "Join my email list"
+                          : "Build your this application with my link"
                       }
                     />
                   </Field>
@@ -2402,7 +2372,7 @@ function GrowthActionBuilder({
                     placeholder={
                       isLeadForm
                         ? "Explain what you collect and what happens after submission."
-                        : "Share a concise reason to create a page through your referral link."
+                        : "Share a concise reason to create a this application through your referral link."
                     }
                   />
                 </Field>
@@ -2421,7 +2391,7 @@ function GrowthActionBuilder({
                   />
                 </Field>
                 <div className="rounded-2xl bg-[#ece7ff] px-4 py-3 text-xs leading-5 text-[#654bb0]">
-                  The application publishes this action and adds its matching block as soon as you
+                  this application publishes this action and adds its matching block as soon as you
                   create it.
                 </div>
               </FormSection>
@@ -2701,8 +2671,8 @@ function ProductBuilder({
                       </Field>
                     )}
                     <div className="rounded-2xl bg-[#dceaff] px-4 py-3 text-xs leading-5 text-[#245fd0]">
-                      Platform fee: 0% on every plan. Your payment provider’s processing or
-                      merchant-of-record fees remain separate.
+                      this application platform fee: 0% on every plan. Your payment provider’s
+                      processing or merchant-of-record fees remain separate.
                     </div>
                   </FormSection>
                 )}
@@ -2717,7 +2687,25 @@ function ProductBuilder({
                 )}
 
                 {activeStep.id === "page" && (
-                  <FormSection eyebrow="Page" title="Finish the call to action">
+                  <FormSection eyebrow="Page" title="Design your sales page">
+                    <ProductWebsiteEditor
+                      value={draft.settings.website}
+                      onChange={(website) => setSetting("website", website)}
+                      title={draft.title}
+                      subtitle={draft.subtitle}
+                      cover={draft.cover_url}
+                    />
+                    <Field label="What buyers get (one benefit per line)">
+                      <textarea
+                        rows={4}
+                        className={inputClass}
+                        value={(draft.settings.benefits || []).join("\n")}
+                        onChange={(event) =>
+                          setSetting("benefits", event.target.value.split("\n").slice(0, 30))
+                        }
+                        placeholder="Describe the value, not the file names"
+                      />
+                    </Field>
                     <div className="grid gap-4 sm:grid-cols-2">
                       <Field label="Button label">
                         <input
@@ -3160,7 +3148,7 @@ function SpecificProductFields({
         </Field>
         <div className="rounded-2xl bg-[#eef5ff] px-4 py-3 text-xs leading-5 text-[#245fd0]">
           Paid requests appear in your standalone Priority DM inbox. Email notifications let you
-          reply directly, or reply from the application and the buyer receives your response by
+          reply directly, or reply from this application and the buyer receives your response by
           email.
         </div>
       </FormSection>
@@ -3241,11 +3229,11 @@ function SpecificProductFields({
       </FormSection>
     );
   return (
-    <FormSection eyebrow="Referral" title="The application tracks the referral">
+    <FormSection eyebrow="Referral" title="this application tracks the referral">
       <div className="rounded-2xl bg-[#fff3c6] px-4 py-4 text-sm leading-6 text-[#7b5800]">
-        The public block points to signup with your creator attribution. Clicks are recorded
-        immediately; commission eligibility and payout rules remain controlled by the instance
-        operator.
+        The public block points to this application signup with your creator attribution. Clicks are
+        recorded immediately; commission eligibility and payout rules remain centrally controlled by
+        this application.
       </div>
     </FormSection>
   );

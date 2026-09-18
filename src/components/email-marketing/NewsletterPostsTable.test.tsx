@@ -47,7 +47,7 @@ describe("NewsletterPostsTable", () => {
         posts={posts}
         creatorUsername="ari"
         publicationSlug="studio-notes"
-        publicOrigin="https://bento.surf"
+        publicOrigin="http://localhost:8080"
         onEdit={vi.fn()}
         onDuplicate={vi.fn()}
         onPreview={vi.fn()}
@@ -74,7 +74,7 @@ describe("NewsletterPostsTable", () => {
         posts={posts}
         creatorUsername="ari"
         publicationSlug="studio-notes"
-        publicOrigin="https://bento.surf"
+        publicOrigin="http://localhost:8080"
         onEdit={vi.fn()}
         onDuplicate={vi.fn()}
         onPreview={vi.fn()}
@@ -93,7 +93,7 @@ describe("NewsletterPostsTable", () => {
     expect(screen.getByText("Sent", { selector: "span" })).toHaveAttribute("data-status", "sent");
     expect(screen.getByRole("link", { name: "View live post Launch recap" })).toHaveAttribute(
       "href",
-      "https://bento.surf/@ari/newsletters/studio-notes/launch-recap",
+      "http://localhost:8080/@ari/newsletters/studio-notes/launch-recap",
     );
     expect(screen.queryByRole("link", { name: "View live post September draft" })).toBeNull();
     expect(document.body).not.toHaveTextContent(/issue/i);

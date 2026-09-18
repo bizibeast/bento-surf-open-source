@@ -1,6 +1,4 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { parseConfigFileTextToJson } from "typescript";
+import { DODO_ADDON_ENV_NAMES, isDodoAddonConfigurationReady } from "../src/lib/billing-addons";
 
 type Target = "production" | "staging";
 
@@ -18,20 +16,8 @@ function supabaseProjectId(value: string) {
   return hostname.slice(0, -suffix.length);
 }
 
-function wranglerOrigins() {
-  const path = resolve(process.cwd(), "wrangler.jsonc");
-  const result = parseConfigFileTextToJson(path, readFileSync(path, "utf8"));
-  if (result.error) throw new Error("wrangler.jsonc is not valid JSONC.");
-  const vars = (result.config?.vars ?? {}) as Record<string, string>;
-  return {
-    app: new URL(vars.VITE_APP_URL).origin,
-    public: new URL(vars.VITE_PUBLIC_URL).origin,
-  };
-}
-
 function configuredOrigin(name: "VITE_APP_URL" | "VITE_PUBLIC_URL", target: Target) {
-  const value = required(name);
-  const url = new URL(value);
+  const url = new URL(required(name));
   if (!/^https?:$/.test(url.protocol) || url.username || url.password) {
     throw new Error(`${name} must be an HTTP(S) origin.`);
   }
@@ -49,42 +35,53 @@ function verify(target: Target) {
   const publicUrl = configuredOrigin("VITE_PUBLIC_URL", target);
   const projectUrl = required("VITE_SUPABASE_URL");
   const projectId = supabaseProjectId(projectUrl);
-  const productionProjectId = process.env.PRODUCTION_SUPABASE_PROJECT_ID?.trim();
+  const productionProjectId = required("PRODUCTION_SUPABASE_PROJECT_ID");
+  const polarEnvironment = required("POLAR_ENVIRONMENT");
+  const paypalEnvironment = required("PAYPAL_ENVIRONMENT");
   required("VITE_SUPABASE_PUBLISHABLE_KEY");
-  const configuredProjectId = process.env.VITE_SUPABASE_PROJECT_ID?.trim();
-  if (configuredProjectId && configuredProjectId !== projectId) {
-    throw new Error("VITE_SUPABASE_PROJECT_ID does not match VITE_SUPABASE_URL.");
+  DODO_ADDON_ENV_NAMES.forEach(required);
+  if (!isDodoAddonConfigurationReady(process.env)) {
+    throw new Error("Dodo add-on IDs must be unique.");
   }
 
   if (target === "staging") {
-    if (productionProjectId && projectId === productionProjectId) {
+    if (projectId === productionProjectId) {
       throw new Error("Refusing to build staging with the production Supabase project.");
     }
-    if (process.env.DODO_PAYMENTS_ENVIRONMENT === "live_mode") {
-      throw new Error("Staging cannot use Dodo Payments live mode.");
+    const configuredProjectId = process.env.VITE_SUPABASE_PROJECT_ID?.trim();
+    if (configuredProjectId && configuredProjectId !== projectId) {
+      throw new Error("VITE_SUPABASE_PROJECT_ID does not match VITE_SUPABASE_URL.");
+    }
+    if (process.env.DODO_PAYMENTS_ENVIRONMENT !== "test_mode") {
+      throw new Error("A staging build must use Dodo Payments test mode.");
     }
     const commerceProvider = process.env.COMMERCE_PAYMENT_PROVIDER || "mock";
     if (!["disabled", "mock", "stripe", "paypal", "razorpay", "polar"].includes(commerceProvider)) {
       throw new Error("Staging creator commerce has an unknown payment provider.");
     }
-    if (process.env.POLAR_ENVIRONMENT === "production") {
-      throw new Error("Staging cannot use Polar production mode.");
+    if (polarEnvironment !== "sandbox") {
+      throw new Error("Polar must use its sandbox environment in staging.");
     }
-    if (process.env.PAYPAL_ENVIRONMENT === "production") {
-      throw new Error("Staging cannot use PayPal production mode.");
+    if (paypalEnvironment !== "sandbox") {
+      throw new Error("PayPal must use its sandbox environment in staging.");
     }
   }
 
   if (target === "production") {
-    const wrangler = wranglerOrigins();
-    if (wrangler.app !== appUrl || wrangler.public !== publicUrl) {
-      throw new Error("Build-time VITE origins must match wrangler.jsonc.");
-    }
-    if (productionProjectId && projectId !== productionProjectId) {
+    if (projectId !== productionProjectId) {
       throw new Error("A production build must use the production Supabase project.");
+    }
+    if (process.env.DODO_PAYMENTS_ENVIRONMENT !== "live_mode") {
+      throw new Error("A production build must use Dodo Payments live mode.");
     }
     if (process.env.COMMERCE_PAYMENT_PROVIDER === "mock") {
       throw new Error("Mock creator commerce is forbidden in production.");
+    }
+    if (polarEnvironment !== "production") {
+      throw new Error("Polar must use its production environment in production.");
+    }
+    if (paypalEnvironment !== "production") {
+      throw new Error("PayPal must use its production environment in production.");
     }
   }
 

@@ -1,4 +1,3 @@
-import { configuredAppOrigin } from "@/lib/application-urls";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Google payloads are normalized at this boundary. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { decryptServerSecret, encryptServerSecret } from "./secret-crypto.server";
@@ -13,7 +12,7 @@ const GOOGLE_SCOPES = [
 ];
 
 function appOrigin() {
-  return configuredAppOrigin(process.env.VITE_APP_URL);
+  return (process.env.VITE_APP_URL?.trim() || "http://localhost:8080").replace(/\/$/, "");
 }
 
 export function googleCalendarRedirectUri() {

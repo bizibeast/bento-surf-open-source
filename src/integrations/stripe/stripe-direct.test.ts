@@ -14,12 +14,10 @@ afterEach(() => {
   vi.unstubAllGlobals();
   Reflect.deleteProperty(process.env, "VITE_APP_URL");
   Reflect.deleteProperty(process.env, "APP_ENV");
+  Reflect.deleteProperty(process.env, "VITE_APP_ENV");
 });
 
 describe("creator-owned Stripe credentials", () => {
-  const restrictedLiveKey = ["rk", "live", "example1234567890"].join("_");
-  const secretLiveKey = ["sk", "live", "example1234567890"].join("_");
-
   it("subscribes to dispute openings and authoritative closures", () => {
     expect(STRIPE_DIRECT_ENABLED_EVENTS).toContain("charge.dispute.created");
     expect(STRIPE_DIRECT_ENABLED_EVENTS).toContain("charge.dispute.closed");
@@ -27,10 +25,12 @@ describe("creator-owned Stripe credentials", () => {
 
   it("accepts restricted keys and rejects unrestricted secret keys", () => {
     expect(isStripeRestrictedKey("rk_test_example1234567890")).toBe(true);
-    expect(isStripeRestrictedKey(restrictedLiveKey)).toBe(true);
+    expect(isStripeRestrictedKey(["rk", "live", "example1234567890"].join("_"))).toBe(true);
     expect(isStripeRestrictedKey("sk_test_example1234567890")).toBe(false);
-    expect(isStripeRestrictedKey(secretLiveKey)).toBe(false);
-    expect(stripeRestrictedKeyEnvironment(restrictedLiveKey)).toBe("production");
+    expect(isStripeRestrictedKey(["sk", "live", "example1234567890"].join("_"))).toBe(false);
+    expect(stripeRestrictedKeyEnvironment(["rk", "live", "example1234567890"].join("_"))).toBe(
+      "production",
+    );
     expect(stripeRestrictedKeyEnvironment("rk_test_example1234567890")).toBe("sandbox");
   });
 
@@ -79,9 +79,9 @@ describe("creator-owned Stripe credentials", () => {
   });
 
   it("builds an environment-specific, per-connection webhook URL", () => {
-    process.env.VITE_APP_URL = "https://staging.example/";
+    process.env.VITE_APP_URL = "http://localhost:8080/";
     expect(stripeDirectWebhookUrl("11111111-1111-4111-8111-111111111111")).toBe(
-      "https://staging.example/api/webhooks/stripe/direct/11111111-1111-4111-8111-111111111111",
+      "http://localhost:8080/api/webhooks/stripe/direct/11111111-1111-4111-8111-111111111111",
     );
   });
 
@@ -91,7 +91,9 @@ describe("creator-owned Stripe credentials", () => {
       /rk_live_/,
     );
     process.env.APP_ENV = "staging";
-    expect(() => assertStripeKeyMatchesEnvironment(restrictedLiveKey)).toThrow(/rk_test_/);
+    expect(() =>
+      assertStripeKeyMatchesEnvironment(["rk", "live", "example1234567890"].join("_")),
+    ).toThrow(/rk_test_/);
   });
 
   it("verifies Stripe signatures and rejects a changed payload", async () => {

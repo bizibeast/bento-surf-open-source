@@ -1,4 +1,3 @@
-import { configuredAppOrigin } from "@/lib/application-urls";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Customer library tables are intentionally service-role only. */
 import { createServerFn } from "@tanstack/react-start";
 import { deleteCookie, getCookie, setCookie } from "@tanstack/react-start/server";
@@ -31,7 +30,7 @@ const tokenSchema = z
 const uuidSchema = z.string().uuid();
 
 function appUrl() {
-  return configuredAppOrigin(process.env.VITE_APP_URL);
+  return (process.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "");
 }
 
 function setCustomerSessionCookie(token: string) {

@@ -6,6 +6,12 @@ const MAX_COVER_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_TUNNEL_MILLISECONDS = 30 * 60 * 1_000;
 const UPSTREAM_ATTEMPT_MILLISECONDS = 9_000;
 const COVER_LINK_LIFESPAN_SECONDS = 90;
+const YOUTUBE_STREAM_LIFESPAN_SECONDS = 90;
+const YOUTUBE_PLAYER_RESPONSE_BYTES = 512 * 1024;
+const YOUTUBE_PLAYER_URL = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false";
+const YOUTUBE_ANDROID_USER_AGENT = "com.google.android.youtube/20.10.38 (Linux; U; Android 14)";
+const YOUTUBE_IOS_USER_AGENT =
+  "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3 like Mac OS X)";
 const MEDIA_EXTENSIONS = new Map([
   ["audio/mpeg", "mp3"],
   ["audio/mp4", "m4a"],
@@ -212,6 +218,180 @@ function safeAttachmentFilename(value: string | null, extension: string) {
     .trim()
     .slice(0, 120);
   return `${basename || "bento-media"}.${extension}`;
+}
+
+type YouTubeFormat = {
+  bitrate?: unknown;
+  height?: unknown;
+  itag?: unknown;
+  mimeType?: unknown;
+  url?: unknown;
+};
+
+type YouTubePlayerResponse = {
+  playabilityStatus?: { status?: unknown };
+  videoDetails?: { lengthSeconds?: unknown };
+  streamingData?: {
+    adaptiveFormats?: YouTubeFormat[];
+    formats?: YouTubeFormat[];
+  };
+};
+
+function safeGoogleVideoUrl(value: unknown) {
+  if (typeof value !== "string" || value.length > 4_096) return null;
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      (url.port && url.port !== "443") ||
+      (host !== "googlevideo.com" && !host.endsWith(".googlevideo.com")) ||
+      url.pathname !== "/videoplayback"
+    ) {
+      return null;
+    }
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+async function youtubePlayer(videoId: string, signal: AbortSignal) {
+  const clients = [
+    {
+      name: "ANDROID",
+      version: "20.10.38",
+      userAgent: YOUTUBE_ANDROID_USER_AGENT,
+      extra: { androidSdkVersion: 34 },
+    },
+    {
+      name: "IOS",
+      version: "20.10.4",
+      userAgent: YOUTUBE_IOS_USER_AGENT,
+      extra: { deviceModel: "iPhone16,2" },
+    },
+  ] as const;
+  for (const client of clients) {
+    try {
+      const response = await fetch(YOUTUBE_PLAYER_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json", "user-agent": client.userAgent },
+        body: JSON.stringify({
+          context: {
+            client: {
+              clientName: client.name,
+              clientVersion: client.version,
+              ...client.extra,
+              hl: "en",
+              gl: "US",
+            },
+          },
+          videoId,
+          contentCheckOk: true,
+          racyCheckOk: true,
+        }),
+        redirect: "manual",
+        signal: AbortSignal.any([signal, AbortSignal.timeout(UPSTREAM_ATTEMPT_MILLISECONDS)]),
+      });
+      if (!response.ok) continue;
+      const bytes = await readBoundedBytes(response, YOUTUBE_PLAYER_RESPONSE_BYTES);
+      const payload = JSON.parse(new TextDecoder().decode(bytes)) as YouTubePlayerResponse;
+      if (payload.playabilityStatus?.status !== "OK") continue;
+      const duration = Number(payload.videoDetails?.lengthSeconds);
+      if (Number.isFinite(duration) && duration > 1_500) throw new Error("youtube-video-too-long");
+      return { payload, userAgent: client.userAgent };
+    } catch (error) {
+      if (error instanceof Error && error.message === "youtube-video-too-long") throw error;
+    }
+  }
+  throw new Error("youtube-video-unavailable");
+}
+
+function youtubeFormat(payload: YouTubePlayerResponse, request: CobaltRequestBody) {
+  const audioOnly = request.downloadMode === "audio";
+  const candidates = audioOnly
+    ? (payload.streamingData?.adaptiveFormats ?? []).filter(
+        (format) =>
+          typeof format.mimeType === "string" &&
+          format.mimeType.startsWith("audio/") &&
+          Number.isInteger(format.itag) &&
+          safeGoogleVideoUrl(format.url),
+      )
+    : (payload.streamingData?.formats ?? []).filter(
+        (format) =>
+          typeof format.mimeType === "string" &&
+          format.mimeType.startsWith("video/") &&
+          Number.isInteger(format.itag) &&
+          safeGoogleVideoUrl(format.url),
+      );
+  if (!candidates.length) return null;
+  if (audioOnly) {
+    return candidates.sort((left, right) => Number(left.bitrate) - Number(right.bitrate))[0];
+  }
+  const maximum = request.videoQuality === "max" ? Infinity : Number(request.videoQuality);
+  const ordered = candidates.sort((left, right) => Number(right.height) - Number(left.height));
+  return Number.isFinite(maximum)
+    ? (ordered.find((format) => Number(format.height) <= maximum) ?? ordered.at(-1))
+    : ordered[0];
+}
+
+function base64Url(bytes: Uint8Array) {
+  return btoa(String.fromCharCode(...bytes))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/u, "");
+}
+
+async function youtubeStreamSignature(
+  secret: string,
+  videoId: string,
+  itag: number,
+  expires: number,
+) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(`${videoId}:${itag}:${expires}`),
+  );
+  return base64Url(new Uint8Array(signature));
+}
+
+async function youtubeFallbackPayload(
+  request: CobaltRequestBody,
+  env: MediaResolverEnv,
+  publicOrigin: string,
+  signal: AbortSignal,
+) {
+  const secret = env.RESOLVER_SHARED_SECRET?.trim();
+  const videoId = typeof request.url === "string" ? youtubeVideoIdFromUrl(request.url) : null;
+  if (!secret || !videoId) return null;
+  const { payload } = await youtubePlayer(videoId, signal);
+  const format = youtubeFormat(payload, request);
+  const itag = Number(format?.itag);
+  const mimeType = typeof format?.mimeType === "string" ? format.mimeType.split(";", 1)[0] : "";
+  const extension = MEDIA_EXTENSIONS.get(mimeType);
+  if (!format || !Number.isInteger(itag) || !extension) return null;
+  const expires = Math.floor(Date.now() / 1_000) + YOUTUBE_STREAM_LIFESPAN_SECONDS;
+  const signature = await youtubeStreamSignature(secret, videoId, itag, expires);
+  const url = new URL("/youtube-stream", publicOrigin);
+  url.searchParams.set("v", videoId);
+  url.searchParams.set("itag", String(itag));
+  url.searchParams.set("expires", String(expires));
+  url.searchParams.set("signature", signature);
+  return {
+    status: "tunnel",
+    url: url.toString(),
+    filename: `youtube_${videoId}.${extension}`,
+  };
 }
 
 type CobaltUpstream = { key: string; url: URL };
@@ -527,6 +707,7 @@ async function resolveMedia(request: Request, env: MediaResolverEnv, url: URL) {
     const parsedRequest = parseCobaltRequestBody(body);
     const probeYouTube =
       typeof parsedRequest?.url === "string" && Boolean(youtubeVideoIdFromUrl(parsedRequest.url));
+    const preferYouTubeStream = probeYouTube && parsedRequest?.downloadMode === "audio";
     let lastErrorPayload: unknown = null;
     for (const candidate of cobaltUpstreamCandidates(env, body)) {
       try {
@@ -537,18 +718,38 @@ async function resolveMedia(request: Request, env: MediaResolverEnv, url: URL) {
           request.signal,
         );
         if (isSuccessfulCobaltPayload(payload)) {
-          if (
-            !probeYouTube ||
-            (await probeCobaltTunnel(rawPayload, candidate.upstream, request.signal))
-          ) {
-            return noStoreJson(payload);
-          }
+          if (!probeYouTube) return noStoreJson(payload);
+          if (!(await probeCobaltTunnel(rawPayload, candidate.upstream, request.signal))) continue;
+          if (!preferYouTubeStream) return noStoreJson(payload);
+          const fresh = await requestCobalt(
+            candidate.upstream,
+            candidate.body,
+            url.origin,
+            request.signal,
+          );
+          if (isSuccessfulCobaltPayload(fresh.payload)) return noStoreJson(fresh.payload);
+          lastErrorPayload = fresh.payload;
           continue;
         }
         lastErrorPayload = payload;
-        if (!isRetryableCobaltError(payload)) return noStoreJson(payload);
+        if (!probeYouTube && !isRetryableCobaltError(payload)) return noStoreJson(payload);
       } catch {
         // Try the next configured zero-cost route.
+      }
+    }
+    if (parsedRequest && probeYouTube) {
+      try {
+        const fallback = await youtubeFallbackPayload(
+          parsedRequest,
+          env,
+          url.origin,
+          request.signal,
+        );
+        if (fallback) return noStoreJson(fallback);
+      } catch (error) {
+        if (error instanceof Error && error.message === "youtube-video-too-long") {
+          return noStoreJson({ status: "error", error: { code: "error.api.content.too_long" } });
+        }
       }
     }
     return lastErrorPayload
@@ -1017,6 +1218,126 @@ async function tunnelMedia(request: Request, env: MediaResolverEnv, url: URL) {
   });
 }
 
+async function tunnelYouTubeStream(request: Request, env: MediaResolverEnv, url: URL) {
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return noStoreJson({ error: "Method not allowed" }, 405, { allow: "GET, HEAD" });
+  }
+  const secret = env.RESOLVER_SHARED_SECRET?.trim();
+  const videoId = url.searchParams.get("v") ?? "";
+  const itag = Number(url.searchParams.get("itag"));
+  const expires = Number(url.searchParams.get("expires"));
+  const signature = url.searchParams.get("signature") ?? "";
+  const now = Math.floor(Date.now() / 1_000);
+  if (
+    !secret ||
+    !/^[A-Za-z0-9_-]{11}$/u.test(videoId) ||
+    !Number.isSafeInteger(itag) ||
+    itag <= 0 ||
+    !Number.isSafeInteger(expires) ||
+    expires < now ||
+    expires > now + YOUTUBE_STREAM_LIFESPAN_SECONDS ||
+    !/^[A-Za-z0-9_-]{43}$/u.test(signature) ||
+    !constantTimeEqual(signature, await youtubeStreamSignature(secret, videoId, itag, expires))
+  ) {
+    return noStoreJson({ error: "This download link expired" }, 404);
+  }
+  if (!env.TUNNEL_RATE_LIMITER) {
+    return noStoreJson({ error: "Media resolver is temporarily unavailable" }, 503);
+  }
+  const clientAddress = request.headers.get("cf-connecting-ip")?.trim() || "missing-cloudflare-ip";
+  const limited = await env.TUNNEL_RATE_LIMITER.limit({
+    key: `media-tunnel:${clientAddress}`.slice(0, 512),
+  });
+  if (!limited.success) {
+    return noStoreJson({ error: "Too many downloads. Please wait a minute and try again." }, 429, {
+      "retry-after": "60",
+    });
+  }
+
+  try {
+    const { payload: player, userAgent } = await youtubePlayer(videoId, request.signal);
+    const format = [
+      ...(player.streamingData?.formats ?? []),
+      ...(player.streamingData?.adaptiveFormats ?? []),
+    ].find((candidate) => candidate.itag === itag);
+    const initialProviderUrl = safeGoogleVideoUrl(format?.url);
+    if (!initialProviderUrl) throw new Error("youtube-format-unavailable");
+    let providerUrl: URL = initialProviderUrl;
+
+    const headers = new Headers({ accept: "*/*", "user-agent": userAgent });
+    for (const name of ["range", "if-range"]) {
+      const value = request.headers.get(name);
+      if (value) headers.set(name, value);
+    }
+    let response: Response | undefined;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      response = await fetch(providerUrl, {
+        method: request.method,
+        headers,
+        redirect: "manual",
+        signal: AbortSignal.any([request.signal, AbortSignal.timeout(MAX_TUNNEL_MILLISECONDS)]),
+      });
+      if (response.status < 300 || response.status >= 400) break;
+      const location: string | null = response.headers.get("location");
+      const nextUrl: URL | null = location
+        ? safeGoogleVideoUrl(new URL(location, providerUrl).toString())
+        : null;
+      await response.body?.cancel("youtube-redirect").catch(() => undefined);
+      if (!nextUrl) throw new Error("invalid-youtube-redirect");
+      providerUrl = nextUrl;
+    }
+    if (!response?.ok || response.status >= 300) {
+      await response?.body?.cancel("youtube-upstream-error").catch(() => undefined);
+      throw new Error("youtube-stream-unavailable");
+    }
+
+    const contentType = response.headers.get("content-type")?.split(";", 1)[0].toLowerCase();
+    const extension = contentType ? MEDIA_EXTENSIONS.get(contentType) : undefined;
+    if (!contentType || !extension) {
+      await response.body?.cancel("unsupported-youtube-media").catch(() => undefined);
+      throw new Error("unsupported-youtube-media");
+    }
+    const contentLength = response.headers.get("content-length");
+    if (
+      contentLength &&
+      (!/^\d+$/u.test(contentLength) || Number(contentLength) > MAX_TUNNEL_BYTES)
+    ) {
+      await response.body?.cancel("youtube-media-too-large").catch(() => undefined);
+      return noStoreJson({ error: "This media file is larger than Bento's 512 MB limit" }, 413);
+    }
+
+    const requestedFilename = url.searchParams.get("bento_filename");
+    const outputHeaders = new Headers({
+      "cache-control": "private, no-store",
+      "content-disposition": `attachment; filename="${safeAttachmentFilename(requestedFilename, extension)}"`,
+      "content-type": contentType,
+      "cross-origin-resource-policy": "same-site",
+      "x-content-type-options": "nosniff",
+    });
+    for (const name of [
+      "accept-ranges",
+      "content-length",
+      "content-range",
+      "etag",
+      "last-modified",
+    ]) {
+      const value = response.headers.get(name);
+      if (value) outputHeaders.set(name, value);
+    }
+    const body =
+      request.method === "HEAD" || !response.body
+        ? null
+        : streamWithByteLimit(response.body, MAX_TUNNEL_BYTES, request.signal);
+    return new Response(body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: outputHeaders,
+    });
+  } catch {
+    return noStoreJson({ error: "Download unavailable" }, 502);
+  }
+}
+
 async function health(request: Request, env: MediaResolverEnv) {
   if (!isAuthorized(request, env)) return noStoreJson({ ok: false }, 401);
   try {
@@ -1114,6 +1435,7 @@ export default {
       return resolveMedia(request, env, url);
     }
     if (url.pathname === "/image") return tunnelCoverImage(request, env, url);
+    if (url.pathname === "/youtube-stream") return tunnelYouTubeStream(request, env, url);
     if (/^(?:\/(?:youtube-session|webshare))?\/tunnel(?:\/|$)/u.test(url.pathname)) {
       return tunnelMedia(request, env, url);
     }

@@ -41,7 +41,7 @@ async function createSignedRequest(
 }
 
 function deletionRequest(signedRequest: string) {
-  return new Request("https://app.bento.surf/api/integrations/instagram/data-deletion", {
+  return new Request("http://localhost:8080/api/integrations/instagram/data-deletion", {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ signed_request: signedRequest }),
@@ -68,7 +68,7 @@ describe("Meta Instagram data requests", () => {
     process.env = {
       ...originalEnv,
       META_INSTAGRAM_APP_SECRET: "meta-app-secret",
-      VITE_APP_URL: "https://app.bento.surf",
+      VITE_APP_URL: "http://localhost:8080",
     };
     rpc.mockResolvedValue({
       data: "2026-07-30T12:00:00.000Z",
@@ -86,7 +86,7 @@ describe("Meta Instagram data requests", () => {
       confirmation_code: string;
     };
     expect(body.url).toBe(
-      `https://app.bento.surf/integrations/instagram/data-deletion?code=${body.confirmation_code}`,
+      `http://localhost:8080/integrations/instagram/data-deletion?code=${body.confirmation_code}`,
     );
     expect(rpc).toHaveBeenCalledWith(
       "purge_instagram_account_data",
@@ -106,7 +106,7 @@ describe("Meta Instagram data requests", () => {
     });
     const completed = await handleInstagramDataDeletionStatusRequest(
       new Request(
-        `https://app.bento.surf/api/integrations/instagram/data-deletion/status?code=${confirmationCode}`,
+        `http://localhost:8080/api/integrations/instagram/data-deletion/status?code=${confirmationCode}`,
       ),
     );
     expect(completed.status).toBe(200);
@@ -117,7 +117,7 @@ describe("Meta Instagram data requests", () => {
 
     const invalid = await handleInstagramDataDeletionStatusRequest(
       new Request(
-        "https://app.bento.surf/api/integrations/instagram/data-deletion/status?code=not-a-code",
+        "http://localhost:8080/api/integrations/instagram/data-deletion/status?code=not-a-code",
       ),
     );
     expect(invalid.status).toBe(404);

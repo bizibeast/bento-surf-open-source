@@ -1,3 +1,6 @@
+import { productWebsiteSchema, STORE_TEMPLATE_DRAFTS } from "./product-website";
+import { loadPublicCreatorPage } from "./profile.functions";
+import { loadPublicCreatorChrome } from "./public-creator-chrome.server";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Commerce tables are introduced by the pending staging migration; remove after regenerating Supabase types. */
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
@@ -21,6 +24,7 @@ import {
   commerceDeliveryIntegrationError,
   commerceKind,
   commerceProductBlockContent,
+  commerceProductKindPricingError,
   commerceProductPublishabilityError,
   type CommerceBuyerAnswer,
   type CommerceFormField,
@@ -61,17 +65,28 @@ import {
 } from "./commerce-assets.server";
 import { communityMemberName } from "./community-member";
 import { resolvePublicUsername } from "./username-alias.server";
-import {
-  configuredAppOrigin,
-  configuredPublicOrigin,
-  publicProductSuccessPath,
-} from "./application-urls";
+import { publicProductSuccessPath } from "./application-urls";
 import { currentCustomerSession } from "./customer-library-auth.server";
 import { priorityDmFollowUpAnswer } from "./priority-dm";
 import { loadPriorityDmPaidFollowUp } from "./priority-dm.server";
+import { decryptServerSecret, encryptServerSecret } from "./secret-crypto.server";
 
 const uuidSchema = z.string().uuid();
 const pageIdSchema = uuidSchema.nullable().optional();
+
+export async function commerceAccessTokenFromConfirmation(
+  state: ReturnType<typeof commerceOrderConfirmationState>,
+  metadata: Record<string, unknown> | null | undefined,
+  decrypt: (ciphertext: string) => Promise<string> = decryptServerSecret,
+) {
+  if (state !== "confirmed" || typeof metadata?.access_token_ciphertext !== "string") return null;
+  try {
+    const token = await decrypt(metadata.access_token_ciphertext);
+    return isPlausibleCommerceAccessToken(token) ? token : null;
+  } catch {
+    return null;
+  }
+}
 const httpUrlSchema = z
   .string()
   .trim()
@@ -159,6 +174,16 @@ export const productDraftSchema = z
     if (JSON.stringify(value.settings).length > 100_000) {
       context.addIssue({ code: "custom", message: "Product settings are too large." });
     }
+    if (
+      value.settings.website !== undefined &&
+      !productWebsiteSchema.safeParse(value.settings.website).success
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Check your product website settings and section image URLs.",
+        path: ["settings", "website"],
+      });
+    }
     if (unsafeCommerceSetting(value.settings)) {
       context.addIssue({ code: "custom", message: "Product settings contain invalid data." });
     }
@@ -183,6 +208,10 @@ export const productDraftSchema = z
         path: ["pricing_type"],
         message: "Priority messages and bundles use one-time pricing.",
       });
+    }
+    const kindPricingError = commerceProductKindPricingError(value.kind, value.pricing_type);
+    if (kindPricingError) {
+      context.addIssue({ code: "custom", path: ["pricing_type"], message: kindPricingError });
     }
     const settings = value.settings;
     if (value.kind === "priority_dm") {
@@ -489,12 +518,8 @@ function commerceDb(client: unknown) {
   return client as any;
 }
 
-function appUrl() {
-  return configuredAppOrigin(process.env.VITE_APP_URL);
-}
-
 function publicAppUrl() {
-  return configuredPublicOrigin(process.env.VITE_PUBLIC_URL);
+  return (process.env.VITE_PUBLIC_URL || "http://localhost:8080").replace(/\/$/, "");
 }
 
 function deliveredCourseLesson(row: any) {
@@ -986,6 +1011,15 @@ export async function validateCommerceProductPublication(
   creatorId: string,
   product: CommerceProductRow,
 ) {
+  const starter = STORE_TEMPLATE_DRAFTS[product.kind];
+  if (
+    starter &&
+    (product.title.trim() === starter.title || product.description.trim() === starter.description)
+  ) {
+    throw new Error(
+      "Replace the starter title and description with your own offer before publishing.",
+    );
+  }
   await requireCommerceKind(creatorId, product.kind);
   const reason = commerceProductPublishabilityError(product);
   if (reason) throw new Error(reason);
@@ -1300,6 +1334,7 @@ function publicCommerceProduct(product: CommerceProductRow) {
     sales_count: product.sales_count,
     noindex: product.noindex,
     published_at: product.published_at,
+    updated_at: product.updated_at,
     settings: sanitizeCommerceSettingsForPublic(product.kind, product.settings),
   };
 }
@@ -1308,9 +1343,30 @@ export const getPublicCommerceStore = createServerFn({ method: "GET" })
   .validator((input) => z.object({ username: z.string().min(1).max(64) }).parse(input))
   .handler(async ({ data }) => {
     await enforceRequestRateLimit("PUBLIC_API_RATE_LIMITER", "commerce-store");
+    const canvas = await loadPublicCreatorPage({ username: data.username }, "store", null);
+    if (canvas && !canvas.notFound && canvas.page) {
+      const products = canvas.systemItems
+        .filter((item) => item.kind === "product")
+        .map((item) => item.data as ReturnType<typeof publicCommerceProduct>);
+      return {
+        ...canvas,
+        page: canvas.page,
+        products,
+        domainData: { products },
+        isStandalone: false as const,
+      };
+    }
     const db = commerceDb(supabaseAdmin);
     const resolved = await resolvePublicUsername(db, data.username);
     if (!resolved) return null;
+    const dedicatedPage = await db
+      .from("pages")
+      .select("id")
+      .eq("user_id", resolved.userId)
+      .eq("system", "store")
+      .maybeSingle();
+    if (dedicatedPage.error) throw new Error(dedicatedPage.error.message);
+    if (dedicatedPage.data) return null;
     const [{ data: profile, error: profileError }, { data: products, error: productsError }, plan] =
       await Promise.all([
         db
@@ -1330,12 +1386,24 @@ export const getPublicCommerceStore = createServerFn({ method: "GET" })
       ]);
     if (profileError) throw new Error(profileError.message);
     if (productsError) throw new Error(productsError.message);
-    if (!profile?.store_page_enabled || !planHasEntitlement(plan, "storeCards")) return null;
+    if (!profile || !planHasEntitlement(plan, "storeCards")) return null;
+    if (
+      !profile.store_page_enabled &&
+      !(products || []).some(
+        (product: CommerceProductRow) =>
+          planHasEntitlement(plan, commerceEntitlement(product.kind)) &&
+          !commerceProductKindPricingError(product.kind, product.pricing_type),
+      )
+    )
+      return null;
     return {
+      isStandalone: true as const,
       profile,
-      products: (products ?? [])
-        .filter((product: CommerceProductRow) =>
-          planHasEntitlement(plan, commerceEntitlement(product.kind)),
+      products: ((products ?? []) as CommerceProductRow[])
+        .filter(
+          (product: CommerceProductRow) =>
+            planHasEntitlement(plan, commerceEntitlement(product.kind)) &&
+            !commerceProductKindPricingError(product.kind, product.pricing_type),
         )
         .map(publicCommerceProduct),
     };
@@ -1358,7 +1426,29 @@ export const getPublicCommerceProduct = createServerFn({ method: "GET" })
     const db = commerceDb(supabaseAdmin);
     let productQuery = db.from("commerce_products").select("*").eq("status", "published");
     if ("slug" in data) {
-      productQuery = productQuery.eq("slug", data.slug);
+      const exact = await productQuery.eq("slug", data.slug).maybeSingle();
+      if (exact.error) throw new Error(exact.error.message);
+      if (exact.data) {
+        productQuery = db
+          .from("commerce_products")
+          .select("*")
+          .eq("id", exact.data.id)
+          .eq("status", "published");
+      } else {
+        const candidates = await db
+          .from("commerce_products")
+          .select("id")
+          .eq("status", "published")
+          .eq("public_slug", data.slug)
+          .limit(2);
+        if (candidates.error) throw new Error(candidates.error.message);
+        if (candidates.data?.length !== 1) return null;
+        productQuery = db
+          .from("commerce_products")
+          .select("*")
+          .eq("id", candidates.data[0].id)
+          .eq("status", "published");
+      }
     } else {
       const creator = await resolvePublicUsername(db, data.username);
       if (!creator) return null;
@@ -1371,11 +1461,13 @@ export const getPublicCommerceProduct = createServerFn({ method: "GET" })
     if (!product) return null;
     if (!planHasEntitlement(await getPlan(product.creator_id), commerceEntitlement(product.kind)))
       return null;
+    if (commerceProductKindPricingError(product.kind, product.pricing_type)) return null;
     const [
       { data: creatorWithProvider, error: creatorError },
       { data: lessons, error: lessonError },
       { data: bumpRule, error: bumpRuleError },
       { data: bundleProducts, error: bundleProductsError },
+      chrome,
     ] = await Promise.all([
       db
         .from("profiles")
@@ -1410,9 +1502,11 @@ export const getPublicCommerceProduct = createServerFn({ method: "GET" })
             .eq("status", "published")
             .in("id", product.settings.bundledProductIds)
         : Promise.resolve({ data: [], error: null }),
+      loadPublicCreatorChrome(product.creator_id),
     ]);
     if (creatorError) throw new Error(creatorError.message);
     if (!creatorWithProvider) throw new Error("Creator not found.");
+    if (!chrome) throw new Error("Creator not found.");
     if (lessonError) throw new Error(lessonError.message);
     if (bumpRuleError) throw new Error(bumpRuleError.message);
     if (bundleProductsError) throw new Error(bundleProductsError.message);
@@ -1487,6 +1581,8 @@ export const getPublicCommerceProduct = createServerFn({ method: "GET" })
     return {
       product: publicCommerceProduct(product),
       creator,
+      chrome,
+      activePageId: chrome.pages.find((page) => page.system === "store")?.id ?? null,
       availabilityError:
         bookingReadinessError ||
         (await commerceRuntimeAvailabilityError(product, paymentProvider, bookingReadiness)),
@@ -1568,6 +1664,16 @@ export const getCommerceOrderConfirmation = createServerFn({ method: "GET" })
       if (error) throw new Error(error.message);
       session = sessionByCheckout;
     }
+    if (!session && order && uuidSchema.safeParse(order.metadata?.bento_session_id).success) {
+      const { data: sessionByOrder, error } = await db
+        .from("commerce_payment_sessions")
+        .select("status,metadata")
+        .eq("id", String(order.metadata!.bento_session_id))
+        .eq("product_id", data.productId)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      session = sessionByOrder;
+    }
 
     const state = commerceOrderConfirmationState({
       orderStatus: order?.status,
@@ -1580,10 +1686,15 @@ export const getCommerceOrderConfirmation = createServerFn({ method: "GET" })
       uuidSchema.safeParse(metadata?.priority_dm_request_id).success
         ? String(metadata.priority_dm_request_id)
         : null;
+    const accessToken = await commerceAccessTokenFromConfirmation(
+      state,
+      session?.metadata ?? order?.metadata,
+    );
     return {
       state,
       orderId: order?.id || null,
       priorityDmRequestId,
+      accessToken,
     };
   });
 
@@ -1833,6 +1944,7 @@ export const createCommerceCheckout = createServerFn({ method: "POST" })
         email: z.string().trim().email().max(254),
         name: z.string().trim().max(120).optional(),
         recordingAddon: z.boolean().default(false),
+        newsletterOptIn: z.boolean().default(false),
         discountCode: z.string().trim().max(32).optional(),
         bumpProductId: uuidSchema.optional(),
         answers: z
@@ -1964,6 +2076,7 @@ export const createCommerceCheckout = createServerFn({ method: "POST" })
       recordingAddonAmount,
       attribution: data.attribution,
     });
+    growth.attribution.newsletter_opt_in = String(data.newsletterOptIn);
     if (growth.bumpProductId) {
       const bumpAvailability = await commerceOrderBumpAvailability(db, {
         bumpProductId: growth.bumpProductId,
@@ -2078,11 +2191,14 @@ export const createCommerceCheckout = createServerFn({ method: "POST" })
       ? `free_${await tokenHash(`${product.id}:${normalizedBuyerEmail}`)}`
       : `${provider}_${crypto.randomUUID()}`;
     const accessToken = isHostedAccessKind(product.kind) ? randomAccessToken() : null;
+    const encryptedAccessToken = accessToken ? await encryptServerSecret(accessToken) : null;
     const fulfillmentMetadata = {
       test: provider === "mock",
       free_claim: isFreeClaim,
+      newsletter_opt_in: data.newsletterOptIn,
       recording_addon_selected: recordingAddon.selected,
       recording_addon_amount: recordingAddon.amount,
+      ...(encryptedAccessToken ? { access_token_ciphertext: encryptedAccessToken } : {}),
       ...(buyerAnswers.length ? { buyer_answers: buyerAnswers } : {}),
       ...(priorityDmRequest
         ? {
@@ -2134,7 +2250,7 @@ export const createCommerceCheckout = createServerFn({ method: "POST" })
     const query = new URLSearchParams({ order: fulfillment.order_id });
     if (accessToken) query.set("access", accessToken);
     return {
-      url: `${appUrl()}${publicProductSuccessPath(profile.username, product.public_slug)}?${query}`,
+      url: `${(process.env.VITE_PUBLIC_URL || "http://localhost:8080").replace(/\/$/, "")}${publicProductSuccessPath(profile.username, product.public_slug)}?${query}`,
       test: provider === "mock",
     };
   });

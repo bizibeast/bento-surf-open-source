@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { isStagingHostname } from "@/lib/application-urls";
 import {
   connectPayPalApiCredentials,
   getMyPayPalConnection,
@@ -27,7 +28,9 @@ export function PayPalApiCredentialsDialog({
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [environment, setEnvironment] = useState<"sandbox" | "production">(
-    import.meta.env.VITE_APP_ENV === "production" ? "production" : "sandbox",
+    typeof window !== "undefined" && isStagingHostname(window.location.hostname)
+      ? "sandbox"
+      : "production",
   );
   const [replaceCredentials, setReplaceCredentials] = useState(false);
   const connectionQuery = useQuery({
@@ -113,7 +116,7 @@ export function PayPalApiCredentialsDialog({
                   <p className="font-semibold">Create a dedicated PayPal REST app</p>
                   <ol className="mt-2 list-decimal space-y-1 pl-5 text-muted-foreground">
                     <li>Open PayPal Developer → Apps &amp; Credentials.</li>
-                    <li>Select Sandbox for staging or Live for production.</li>
+                    <li>Select Sandbox on staging.example.com or Live on bento.surf.</li>
                     <li>Create an app for Bento, then copy its Client ID and Client Secret.</li>
                     <li>Paste both below. Bento verifies them and registers its webhook.</li>
                   </ol>

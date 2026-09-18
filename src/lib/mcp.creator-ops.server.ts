@@ -1,4 +1,3 @@
-import { configuredPublicOrigin } from "@/lib/application-urls";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Creator tables can be ahead of generated database types. */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
@@ -9,7 +8,16 @@ import {
   blockTypeSchema,
   pageIdInputSchema,
 } from "./blocks.functions";
-import { pageNameSchema, pageUrlSchema, slugifyPageName, uniquePageSlug } from "./pages.functions";
+import {
+  pageNameSchema,
+  pageUrlSchema,
+  createPageForCreator,
+  renamePageForCreator,
+  deletePageForCreator,
+  setSystemPageVisibility,
+  isHomepageNewsletterSignup,
+  reconcileNewsletterPageVisibility,
+} from "./pages.functions";
 import {
   productDraftSchema,
   resolveProductNoindex,
@@ -35,7 +43,6 @@ import {
   entitlementUpgradeMessage,
   planHasEntitlement,
   planLimits,
-  planName,
 } from "./plans";
 import { getPlan, requirePlanEntitlement } from "./plan.server";
 import { availabilityFromRow, availabilitySchema, DEFAULT_AVAILABILITY } from "./booking";
@@ -53,9 +60,7 @@ import {
   randomCommunityAccessToken,
 } from "./community.functions";
 import { normalizeCommunityResources } from "./community-member";
-import { editableProfileColumns, profileUpdateSchema } from "./profile.functions";
-import { updateProfileWithRls } from "./profile-query";
-import { isPremiumPattern } from "./plans";
+import { editableProfileColumns, updateProfileForCreator } from "./profile.functions";
 import { analyticsDays } from "./plans";
 import { historyStart, rangeStart } from "./analytics.functions";
 import { enforceRequestRateLimit } from "./request-security.server";
@@ -84,53 +89,14 @@ export async function mutatePage(context: CreatorMcpContext, input: unknown) {
   await enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "mcp-page", context.userId);
   const client = context.supabase;
   if (data.action === "delete") {
-    const { data: deleted, error } = await client
-      .from("pages")
-      .delete()
-      .eq("id", data.id)
-      .eq("user_id", context.userId)
-      .select("id")
-      .maybeSingle();
-    if (error || !deleted) throw new Error("Page not found.");
-    return { id: deleted.id, deleted: true };
+    await deletePageForCreator(client, context.userId, data.id);
+    return { id: data.id, deleted: true };
   }
   if (data.action === "rename") {
-    const slug = await uniquePageSlug(client, context.userId, slugifyPageName(data.name), data.id);
-    const { data: page, error } = await client
-      .from("pages")
-      .update({ name: data.name.trim(), slug })
-      .eq("id", data.id)
-      .eq("user_id", context.userId)
-      .select("*")
-      .maybeSingle();
-    if (error || !page) throw new Error("Page not found.");
-    return page;
+    return renamePageForCreator(client, context.userId, data);
   }
 
-  const { count, error: countError } = await client
-    .from("pages")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", context.userId);
-  if (countError) throw new Error("Pages could not be counted.");
-  const plan = await getPlan(context.userId);
-  const limit = planLimits(plan).maxPages;
-  if (limit !== null && (count || 0) + 1 >= limit) {
-    throw new Error(`${planName(plan)} includes ${limit} pages. Delete a page or upgrade.`);
-  }
-  const slug = await uniquePageSlug(client, context.userId, slugifyPageName(data.name));
-  const { data: page, error } = await client
-    .from("pages")
-    .insert({
-      user_id: context.userId,
-      name: data.name.trim(),
-      slug,
-      position: count || 0,
-      url: data.url ?? null,
-    })
-    .select("*")
-    .single();
-  if (error || !page) throw new Error("Page could not be created.");
-  return page;
+  return createPageForCreator(client, context.userId, data);
 }
 
 export const blockMutationSchema = z.discriminatedUnion("action", [
@@ -196,9 +162,11 @@ export async function mutateBlock(context: CreatorMcpContext, input: unknown) {
       .delete()
       .eq("id", data.id)
       .eq("user_id", context.userId)
-      .select("id")
+      .select("id,type,content,page_id")
       .maybeSingle();
     if (error || !deleted) throw new Error("Block not found.");
+    if (isHomepageNewsletterSignup(deleted))
+      await reconcileNewsletterPageVisibility(client, context.userId);
     return { id: deleted.id, deleted: true };
   }
   if (data.action === "layout") {
@@ -233,7 +201,7 @@ export async function mutateBlock(context: CreatorMcpContext, input: unknown) {
   if (data.action === "update") {
     const { data: existing, error: existingError } = await client
       .from("blocks")
-      .select("type,content")
+      .select("type,content,page_id")
       .eq("id", data.id)
       .eq("user_id", context.userId)
       .maybeSingle();
@@ -255,6 +223,8 @@ export async function mutateBlock(context: CreatorMcpContext, input: unknown) {
       .select("*")
       .single();
     if (error) throw new Error("Block could not be updated.");
+    if (isHomepageNewsletterSignup(existing) || isHomepageNewsletterSignup(block))
+      await reconcileNewsletterPageVisibility(client, context.userId);
     return block;
   }
 
@@ -291,6 +261,8 @@ export async function mutateBlock(context: CreatorMcpContext, input: unknown) {
     .select("*")
     .single();
   if (error || !block) throw new Error("Block could not be created.");
+  if (isHomepageNewsletterSignup(block))
+    await reconcileNewsletterPageVisibility(client, context.userId);
   return block;
 }
 
@@ -718,7 +690,13 @@ export async function mutateCalendar(context: CreatorMcpContext, input: unknown)
       .select("username,calendar_page_enabled,calendar_page_name")
       .single();
     if (error) throw new Error("Calendar page could not be updated.");
-    await clearPublicBookingCalendarCache(profile.username);
+    await setSystemPageVisibility(
+      context.supabase,
+      context.userId,
+      "calendar",
+      Boolean(profile.calendar_page_enabled),
+      data.action === "rename_public_page" ? data.name : undefined,
+    );
     return profile;
   }
   if (data.action === "set_review_visibility") {
@@ -1600,7 +1578,9 @@ export async function getProfileWorkspace(context: CreatorMcpContext) {
       context.supabase
         .from("pages")
         .select("id", { count: "exact", head: true })
-        .eq("user_id", context.userId),
+        .eq("user_id", context.userId)
+        .is("system", null)
+        .is("url", null),
       context.supabase
         .from("blocks")
         .select("id", { count: "exact", head: true })
@@ -1627,25 +1607,8 @@ export async function getProfileWorkspace(context: CreatorMcpContext) {
 }
 
 export async function updateCreatorProfile(context: CreatorMcpContext, input: unknown) {
-  const data = profileUpdateSchema.parse(input);
   await enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "mcp-profile", context.userId);
-  const settingFont = Boolean(data.primary_font) || Boolean(data.secondary_font);
-  const settingPremiumPattern = typeof data.pattern === "string" && isPremiumPattern(data.pattern);
-  if (settingFont || settingPremiumPattern) {
-    const plan = await getPlan(context.userId);
-    const entitlement = settingFont ? "customFonts" : "allThemes";
-    if (!planHasEntitlement(plan, entitlement)) {
-      throw new Error(entitlementUpgradeMessage(entitlement));
-    }
-  }
-  return updateProfileWithRls(context.userId, data, (userId, updates) =>
-    context.supabase
-      .from("profiles")
-      .update(updates)
-      .eq("id", userId)
-      .select(editableProfileColumns)
-      .single(),
-  );
+  return updateProfileForCreator(context.supabase, context.userId, input);
 }
 
 export async function getAnalyticsWorkspace(
@@ -1779,7 +1742,7 @@ export async function getEarnWorkspace(context: CreatorMcpContext) {
   }
   return {
     account,
-    referralUrl: `${configuredPublicOrigin(process.env.VITE_PUBLIC_URL)}/r/${account.code}`,
+    referralUrl: `${(process.env.VITE_PUBLIC_URL || "http://localhost:8080").replace(/\/$/, "")}/r/${account.code}`,
     clicks: clicks.count || 0,
     referrals: referrals.data || [],
     commissions: commissions.data || [],
@@ -1825,7 +1788,7 @@ export async function mutateEarn(context: CreatorMcpContext, input: unknown) {
     if (error || !account) throw new Error("Referral code could not be updated.");
     return {
       code: account.code,
-      referralUrl: `${configuredPublicOrigin(process.env.VITE_PUBLIC_URL)}/r/${account.code}`,
+      referralUrl: `${(process.env.VITE_PUBLIC_URL || "http://localhost:8080").replace(/\/$/, "")}/r/${account.code}`,
     };
   }
   const { data: payoutId, error } = await client.rpc("request_referral_payout", {

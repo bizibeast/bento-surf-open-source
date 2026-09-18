@@ -6,7 +6,7 @@ describe("Link social Insights WebMCP tools", () => {
   it("reads visibility and requires approval before changing it", async () => {
     const setEnabled = vi.fn().mockResolvedValue({
       enabled: true,
-      publicUrl: "https://bento.surf/creator/insights",
+      publicUrl: "http://localhost:8080/creator/insights",
     });
     const tools = createLinkSocialInsightsWebMcpTools({
       enabled: false,
@@ -28,7 +28,7 @@ describe("Link social Insights WebMCP tools", () => {
     await expect(write.execute({ enabled: true }, { signal })).resolves.toMatchObject({
       structuredContent: {
         enabled: true,
-        publicUrl: "https://bento.surf/creator/insights",
+        publicUrl: "http://localhost:8080/creator/insights",
       },
     });
     expect(setEnabled).toHaveBeenCalledWith(true);

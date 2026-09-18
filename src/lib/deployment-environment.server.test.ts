@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  PRODUCTION_SUPABASE_PROJECT_ID,
   getDeploymentEnvironment,
   getStagingIsolationErrors,
   stagingResponseHeaders,
@@ -30,19 +31,11 @@ describe("deployment environment isolation", () => {
     });
   });
 
-  it("does not assume a production Supabase project", () => {
-    expect(getStagingIsolationErrors({ APP_ENV: "staging" })).not.toContainEqual(
-      expect.stringContaining("production Supabase project"),
-    );
-  });
-
   it("rejects production data and billing credentials in staging", () => {
-    const productionProjectId = "production-project";
     const errors = getStagingIsolationErrors({
       ...safeStagingEnv,
-      PRODUCTION_SUPABASE_PROJECT_ID: productionProjectId,
-      SUPABASE_PROJECT_ID: productionProjectId,
-      SUPABASE_URL: `https://${productionProjectId}.supabase.co`,
+      SUPABASE_PROJECT_ID: PRODUCTION_SUPABASE_PROJECT_ID,
+      SUPABASE_URL: `https://${PRODUCTION_SUPABASE_PROJECT_ID}.supabase.co`,
       DODO_PAYMENTS_ENVIRONMENT: "live_mode",
       CUSTOM_DOMAINS_ENABLED: "true",
     });

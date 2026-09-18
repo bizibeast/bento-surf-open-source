@@ -1,14 +1,24 @@
 import { spawnSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
+import { DODO_ADDON_ENV_NAMES } from "../src/lib/billing-addons";
 
 const projectRef = ["abcdefghij", "klmnopqrst"].join("");
+const productionProjectRef = ["zyxwvutsrq", "ponmlkjihg"].join("");
+const addonEnv = Object.fromEntries(
+  DODO_ADDON_ENV_NAMES.map((name, index) => [name, `addon_${index + 1}`]),
+);
 const validEnv = {
+  ...addonEnv,
   VITE_APP_URL: "https://app.self.invalid",
   VITE_PUBLIC_URL: "https://public.self.invalid",
   VITE_SUPABASE_PROJECT_ID: projectRef,
   VITE_SUPABASE_URL: `https://${projectRef}.supabase.co`,
   VITE_SUPABASE_PUBLISHABLE_KEY: "publishable-example-key",
+  PRODUCTION_SUPABASE_PROJECT_ID: productionProjectRef,
+  DODO_PAYMENTS_ENVIRONMENT: "test_mode",
+  POLAR_ENVIRONMENT: "sandbox",
+  PAYPAL_ENVIRONMENT: "sandbox",
 };
 
 function runVerifier(target: "staging" | "production", overrides: Record<string, string> = {}) {
@@ -48,9 +58,9 @@ describe("self-host deployment environment", () => {
     expect(runVerifier("production", { COMMERCE_PAYMENT_PROVIDER: "mock" }).status).not.toBe(0);
   });
 
-  it("rejects production build origins that differ from wrangler.jsonc", () => {
+  it("rejects a production build pointed at a non-production Supabase project", () => {
     const result = runVerifier("production");
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("must match wrangler.jsonc");
+    expect(result.stderr).toContain("production Supabase project");
   });
 });

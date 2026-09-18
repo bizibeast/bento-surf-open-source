@@ -126,7 +126,7 @@ describe("PublicationPicker", () => {
     });
     await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(screen.getByText("Upload a square (1:1) image for the best result.")).toBeVisible();
-    fireEvent.change(screen.getByLabelText("Sender name"), { target: { value: "Ada" } });
+    fireEvent.change(screen.getByLabelText("Sender name"), { target: { value: "Yash" } });
     fireEvent.change(screen.getByLabelText("Reply-to email"), {
       target: { value: "hello@example.com" },
     });
@@ -174,7 +174,7 @@ describe("PublicationPicker", () => {
       target: { value: "Product updates" },
     });
     await user.click(screen.getByRole("button", { name: "Continue" }));
-    fireEvent.change(screen.getByLabelText("Sender name"), { target: { value: "Ada" } });
+    fireEvent.change(screen.getByLabelText("Sender name"), { target: { value: "Yash" } });
     fireEvent.change(screen.getByLabelText("Postal address"), {
       target: { value: "Bengaluru, India" },
     });

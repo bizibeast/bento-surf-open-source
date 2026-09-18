@@ -20,38 +20,23 @@ const calendar = {
 
 describe("public calendar SEO", () => {
   it("adds canonical and social metadata for the creator calendar", () => {
-    const head = publicCalendarHead(calendar, "https://public.example");
+    const head = publicCalendarHead(calendar);
     expect(head.links).toContainEqual({
       rel: "canonical",
-      href: "https://public.example/@coach/calendar",
+      href: "http://localhost:8080/@coach/calendar",
     });
     expect(head.meta).toContainEqual({
       property: "og:url",
-      content: "https://public.example/@coach/calendar",
+      content: "http://localhost:8080/@coach/calendar",
     });
     expect(head.meta).toContainEqual({
       property: "og:image",
-      content: "https://public.example/cdn/coach.webp",
-    });
-  });
-
-  it("uses the shared default preview when the creator has no avatar", () => {
-    const head = publicCalendarHead(
-      {
-        ...calendar,
-        profile: { ...calendar.profile, avatarUrl: null },
-      },
-      "https://public.example",
-    );
-
-    expect(head.meta).toContainEqual({
-      property: "og:image",
-      content: "https://public.example/branding/bento-logo.png?v=20260813",
+      content: "http://localhost:8080/cdn/coach.webp",
     });
   });
 
   it("describes only the real bookable sessions shown on the page", () => {
-    const head = publicCalendarHead(calendar, "https://public.example");
+    const head = publicCalendarHead(calendar);
     const schema = JSON.parse(head.scripts[0].children);
     expect(schema).toMatchObject({
       "@type": "CollectionPage",
@@ -65,7 +50,7 @@ describe("public calendar SEO", () => {
             item: {
               "@type": "Service",
               duration: "PT60M",
-              url: "https://public.example/@coach/products/strategy-call",
+              url: "http://localhost:8080/@coach/products/strategy-call",
             },
           },
         ],
@@ -74,13 +59,10 @@ describe("public calendar SEO", () => {
   });
 
   it("inherits creator search visibility", () => {
-    const head = publicCalendarHead(
-      {
-        ...calendar,
-        profile: { ...calendar.profile, noindex: true },
-      },
-      "https://public.example",
-    );
+    const head = publicCalendarHead({
+      ...calendar,
+      profile: { ...calendar.profile, noindex: true },
+    });
 
     expect(head.meta).toContainEqual({
       name: "robots",

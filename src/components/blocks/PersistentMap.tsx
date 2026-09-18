@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { StoredMapView } from "@/lib/map.functions";
-import { configuredPublicOrigin } from "@/lib/application-urls";
 
 type Props = StoredMapView & {
   interactive: boolean;
@@ -15,16 +14,20 @@ export function resolveMapsOrigin(
   configuredPublicUrl?: string,
 ) {
   if (/^(localhost|127\.0\.0\.1)$/.test(currentHostname)) return currentOrigin;
-  return configuredPublicOrigin(configuredPublicUrl);
+  try {
+    return new URL(configuredPublicUrl || "http://localhost:8080").origin;
+  } catch {
+    return "http://localhost:8080";
+  }
 }
 
 function mapsOrigin() {
-  if (typeof window === "undefined") {
-    return configuredPublicOrigin(import.meta.env.VITE_PUBLIC_URL);
-  }
+  if (typeof window === "undefined") return "http://localhost:8080";
 
-  // Keep the key-bearing iframe on the configured public origin while the editor
-  // can run on a separate application origin.
+  // Keep the key-bearing iframe on Bento's public origin. The browser key is
+  // restricted to this stable origin, while the editor can move independently
+  // to app.example.com without invalidating Google Maps. Custom domains also
+  // inherit the same trusted map origin, and staging uses staging.example.com.
   return resolveMapsOrigin(
     window.location.origin,
     window.location.hostname,

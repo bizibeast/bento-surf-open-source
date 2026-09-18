@@ -185,7 +185,7 @@ function PriorityDmInboxPage() {
           <Link
             to="/store"
             search={{ tab: "products", create: "priority_dm" }}
-            className={micro.btnOutline}
+            className={micro.btnPrimaryCompact}
           >
             New product
           </Link>

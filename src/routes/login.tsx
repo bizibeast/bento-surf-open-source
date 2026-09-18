@@ -34,7 +34,6 @@ function LoginPage() {
       if (!email.trim() || email.trim().length > 254 || !password || password.length > 128) {
         const message = "Enter your email and password to sign in.";
         setAuthError(message);
-        toast.error(message);
         return { ok: false, message: "Sign-in needs valid credentials." };
       }
       setLoading(true);
@@ -50,7 +49,6 @@ function LoginPage() {
       } catch (error) {
         const message = getAuthErrorMessage(error);
         setAuthError(message);
-        toast.error(message);
         return {
           ok: false,
           message: "Sign-in did not complete. Review the form error and try again.",
@@ -79,7 +77,7 @@ function LoginPage() {
     } catch (error) {
       const message = getAuthErrorMessage(error);
       setAuthError(message);
-      toast.error(message, { id: toastId });
+      toast.dismiss(toastId);
     } finally {
       setGoogleLoading(false);
     }

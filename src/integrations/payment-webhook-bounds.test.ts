@@ -27,7 +27,7 @@ describe("payment webhook request bounds", () => {
     ],
   ])("rejects oversized %s payloads before verification or database work", async (_name, run) => {
     const response = await run(
-      new Request("https://bento.surf/api/webhooks/test", {
+      new Request("http://localhost:8080/api/webhooks/test", {
         method: "POST",
         headers: oversizedHeaders,
         body: "{}",
@@ -39,7 +39,7 @@ describe("payment webhook request bounds", () => {
 
   it("bounds creator-owned PayPal webhooks before loading the connection", async () => {
     const response = await handleDirectPayPalWebhook(
-      new Request("https://bento.surf/api/webhooks/paypal/direct/test", {
+      new Request("http://localhost:8080/api/webhooks/paypal/direct/test", {
         method: "POST",
         headers: oversizedHeaders,
         body: "{}",
@@ -52,7 +52,7 @@ describe("payment webhook request bounds", () => {
 
   it("returns a controlled response when the optional Stripe Connect webhook is disabled", async () => {
     const response = await handleStripeWebhook(
-      new Request("https://app.bento.surf/api/webhooks/stripe", {
+      new Request("http://localhost:8080/api/webhooks/stripe", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{}",

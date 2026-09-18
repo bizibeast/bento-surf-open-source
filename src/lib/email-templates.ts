@@ -654,7 +654,7 @@ export function renderBentoEmail(input: EmailTemplateInput): RenderedEmail {
               ${newsletterDocument ? newsletterDocument.html : `<p style="margin:20px 0 0;font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:16px;line-height:26px;font-weight:400;color:#5f6368">${escapeHtml(copy.body)}</p><a class="bento-button" href="${escapeHtml(copy.href)}" style="display:inline-block;margin-top:28px;padding:14px 20px;border-radius:14px;background:#171717;color:#ffffff;text-decoration:none;font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:14px;line-height:20px;font-weight:700">${escapeHtml(copy.cta)}</a>`}
               <div style="height:1px;background:#ecebe7;margin:34px 0 0"></div>
               ${footer}
-              <p style="margin:10px 0 0;font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:12px;line-height:18px;color:#9a9a96">© ${escapeHtml(instanceName)}</p>
+              <p style="margin:10px 0 0;font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:12px;line-height:18px;color:#9a9a96">© bento.surf</p>
             </td>
           </tr>
         </table>
@@ -664,8 +664,8 @@ export function renderBentoEmail(input: EmailTemplateInput): RenderedEmail {
 </body>
 </html>`;
   const text = newsletterDocument
-    ? `${copy.eyebrow}\n\n${copy.title}\n\n${newsletterDocument.text}${input.category === "marketing" && input.unsubscribeUrl ? `\n\nUnsubscribe: ${input.unsubscribeUrl}` : ""}${postalAddress ? `\n${postalAddress}` : ""}\n\n- ${instanceName}`
-    : `${copy.eyebrow}\n\n${copy.title}\n\n${copy.body}\n\n${copy.cta}: ${copy.href}${input.category === "marketing" && input.unsubscribeUrl ? `\n\nUnsubscribe: ${input.unsubscribeUrl}` : ""}${postalAddress ? `\n${postalAddress}` : ""}\n\n- ${instanceName}`;
+    ? `${copy.eyebrow}\n\n${copy.title}\n\n${newsletterDocument.text}${input.category === "marketing" && input.unsubscribeUrl ? `\n\nUnsubscribe: ${input.unsubscribeUrl}` : ""}${postalAddress ? `\n${postalAddress}` : ""}\n\n- bento.surf`
+    : `${copy.eyebrow}\n\n${copy.title}\n\n${copy.body}\n\n${copy.cta}: ${copy.href}${input.category === "marketing" && input.unsubscribeUrl ? `\n\nUnsubscribe: ${input.unsubscribeUrl}` : ""}${postalAddress ? `\n${postalAddress}` : ""}\n\n- bento.surf`;
   return {
     subject: copy.subject,
     html,

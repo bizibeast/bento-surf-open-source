@@ -1,13 +1,13 @@
+import { PublicCreatorShell } from "@/components/public/PublicCreatorShell";
+import { PublicSystemPageCanvas } from "@/components/public/PublicSystemPageCanvas";
 import { createFileRoute, notFound, redirect } from "@tanstack/react-router";
 import { ArrowLeft, ArrowUpRight, ShoppingBag } from "lucide-react";
 import { useMemo } from "react";
 import { BentoFullLogo } from "@/components/BentoBrand";
-import { DecodedImage } from "@/components/DecodedImage";
 import { FontApplier } from "@/components/FontApplier";
 import { getPublicCommerceStore } from "@/lib/commerce.functions";
 import { commerceKind, pricingLabel, type CommerceProductRecord } from "@/lib/commerce";
 import {
-  configuredPublicOrigin,
   normalizePublicUsername,
   publicProductPath,
   publicProfilePath,
@@ -62,8 +62,8 @@ export const Route = createFileRoute("/$username_/store")({
 });
 
 function PublicStorePage() {
-  const { profile, products } = Route.useLoaderData();
-  const avatarUrl = safeMediaUrl(profile.avatar_url);
+  const data = Route.useLoaderData();
+  const { profile, products } = data;
   const webMcpTools = useMemo(
     () => [
       {
@@ -99,11 +99,22 @@ function PublicStorePage() {
     [products, profile],
   );
   useWebMcpTools(webMcpTools);
+  if (!data.isStandalone)
+    return (
+      <PublicCreatorShell chrome={data.chrome} activePageId={data.page.id}>
+        <PublicSystemPageCanvas
+          username={profile.username}
+          blocks={data.blocks}
+          systemItems={data.systemItems}
+          systemLayout={data.systemLayout}
+        />
+      </PublicCreatorShell>
+    );
   return (
-    <div className="min-h-screen bg-[#f7f8fc] text-[#17213a]">
+    <div className="min-h-screen bg-[#faf8f4] text-[#17213a]">
       <FontApplier headline={profile.secondary_font} body={profile.primary_font} />
-      <header className="border-b border-black/[0.05] bg-white/80 backdrop-blur-xl">
-        <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4 sm:px-6">
+      <header className="border-b border-black/[0.05] bg-[#faf8f4]/85 backdrop-blur-xl">
+        <div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-4 sm:px-6">
           <a
             href={publicProfilePath(profile.username)}
             aria-label="Back to creator page"
@@ -112,38 +123,19 @@ function PublicStorePage() {
             <ArrowLeft className="size-4" />
           </a>
           <a href={publicProfilePath(profile.username)} className="flex min-w-0 items-center gap-3">
-            {avatarUrl ? (
-              <DecodedImage
-                src={avatarUrl}
-                alt=""
-                width={72}
-                height={72}
-                className="size-9 rounded-full object-cover"
-              />
-            ) : (
-              <span className="flex size-9 items-center justify-center rounded-full bg-[#17213a] font-display text-white">
-                {String(profile.display_name || profile.username)
-                  .slice(0, 1)
-                  .toUpperCase()}
-              </span>
-            )}
             <span className="truncate text-sm font-semibold">
               {profile.display_name || profile.username}
             </span>
           </a>
-          <a
-            href={configuredPublicOrigin(import.meta.env.VITE_PUBLIC_URL)}
-            className="ml-auto"
-            aria-label="Bento Surf home"
-          >
+          <a href="http://localhost:8080" className="ml-auto" aria-label="bento.surf home">
             <BentoFullLogo className="h-6 w-auto" />
           </a>
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 py-10 sm:px-6 sm:py-14">
+      <main className="mx-auto max-w-7xl px-4 py-10 sm:px-6 sm:py-14">
         <div className="max-w-2xl">
-          <div className="flex size-12 items-center justify-center rounded-2xl bg-[#dceaff] text-[#245fd0]">
+          <div className="flex size-12 items-center justify-center rounded-2xl bg-[#17213a] text-white">
             <ShoppingBag className="size-5" />
           </div>
           <h1 className="mt-5 font-display text-5xl leading-none sm:text-6xl">Store</h1>
@@ -159,25 +151,24 @@ function PublicStorePage() {
                 <a
                   key={product.id}
                   href={publicProductPath(profile.username, product.public_slug)}
-                  className="group overflow-hidden rounded-[28px] border border-black/[0.06] bg-white shadow-[0_28px_70px_-55px_rgba(23,33,58,.6)] transition hover:-translate-y-1 hover:shadow-[0_32px_75px_-48px_rgba(23,33,58,.7)]"
+                  className="group overflow-hidden rounded-[28px] border border-black/[0.06] bg-white/85 shadow-[0_28px_70px_-55px_rgba(23,33,58,.6)] transition hover:-translate-y-1 hover:shadow-[0_32px_75px_-48px_rgba(23,33,58,.7)]"
                 >
-                  <div
-                    className="aspect-[16/10] p-5"
-                    style={{
-                      background: coverUrl
-                        ? `linear-gradient(180deg,rgba(23,33,58,.02),rgba(23,33,58,.45)),url("${coverUrl.replaceAll('"', "%22")}") center/cover`
-                        : `linear-gradient(145deg,${definition.accent}24,#f8faff 72%)`,
-                    }}
-                  >
+                  {coverUrl ? (
+                    <div
+                      className="aspect-[16/10] bg-cover bg-center"
+                      style={{
+                        backgroundImage: `linear-gradient(180deg,rgba(23,33,58,.02),rgba(23,33,58,.22)),url("${coverUrl.replaceAll('"', "%22")}")`,
+                      }}
+                    />
+                  ) : null}
+                  <div className="p-5">
                     <span
                       className="inline-flex rounded-xl px-2.5 py-1 text-[10px] font-semibold text-white"
                       style={{ background: definition.accent }}
                     >
                       {definition.shortLabel}
                     </span>
-                  </div>
-                  <div className="p-5">
-                    <div className="flex items-start justify-between gap-3">
+                    <div className="mt-4 flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <h2 className="font-display text-2xl leading-tight">{product.title}</h2>
                         {product.subtitle && (
@@ -202,7 +193,7 @@ function PublicStorePage() {
             })}
           </div>
         ) : (
-          <div className="mt-9 rounded-[28px] border border-black/[0.06] bg-white p-8 text-sm text-[#17213a]/50">
+          <div className="mt-9 rounded-[28px] border border-black/[0.06] bg-white/85 p-8 text-sm text-[#17213a]/50">
             This creator has not published any products yet.
           </div>
         )}

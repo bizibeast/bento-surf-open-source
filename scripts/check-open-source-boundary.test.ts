@@ -130,7 +130,7 @@ describe("open-source boundary", () => {
     ]);
   });
 
-  test("uses tracked Git files and keeps CLI output value-safe", async () => {
+  test("uses repository files and keeps CLI output value-safe", async () => {
     const root = await mkdtemp(join(tmpdir(), "bento-boundary-"));
     roots.push(root);
     await mkdir(join(root, ".github/workflows"), { recursive: true });
@@ -163,6 +163,7 @@ describe("open-source boundary", () => {
     );
 
     expect(await checkOpenSourceBoundary(root)).toEqual([
+      { file: ".env", reason: "forbidden secret file" },
       { file: ".env.example", reason: "populated Origin Trial token" },
       { file: ".github/workflows/put-release.yml", reason: "excluded marketing path" },
       { file: "src/config.ts", reason: "private production identity" },
@@ -181,11 +182,29 @@ describe("open-source boundary", () => {
     }
 
     expect(output).toBe(
-      ".env.example: populated Origin Trial token\n.github/workflows/put-release.yml: excluded marketing path\nsrc/config.ts: private production identity\n",
+      ".env: forbidden secret file\n.env.example: populated Origin Trial token\n.github/workflows/put-release.yml: excluded marketing path\nsrc/config.ts: private production identity\n",
     );
     expect(errors).toBe("");
     expect(`${output}${errors}`).not.toContain(privateHost);
     expect(`${output}${errors}`).not.toContain(untrackedSecret);
     expect(`${output}${errors}`).not.toContain(originTrialToken);
+  });
+
+  test("blocks untracked secret files and credential-shaped values", async () => {
+    const root = await mkdtemp(join(tmpdir(), "bento-boundary-"));
+    roots.push(root);
+    await mkdir(join(root, "src"), { recursive: true });
+    await writeFile(join(root, "src/safe.ts"), "export const safe = true;\n");
+    await run("git", ["init", "--quiet"], { cwd: root });
+    await run("git", ["add", "src/safe.ts"], { cwd: root });
+
+    const credential = ["sk", "live", "abcdefghijklmnopqrstuvwxyz"].join("_");
+    await writeFile(join(root, ".env"), `PROVIDER_SECRET=${credential}\n`);
+    await writeFile(join(root, "src/leak.ts"), `export const leaked = "${credential}";\n`);
+
+    expect(await checkOpenSourceBoundary(root)).toEqual([
+      { file: ".env", reason: "forbidden secret file" },
+      { file: "src/leak.ts", reason: "credential-shaped secret" },
+    ]);
   });
 });

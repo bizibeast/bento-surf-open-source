@@ -1,5 +1,4 @@
 import {
-  configuredPublicOrigin,
   publicNewsletterPostPath,
   publicNewsletterPublicationPath,
   publicNewslettersPath,
@@ -72,6 +71,7 @@ export type PublicProductHeadData = {
     sales_count?: number;
     noindex?: boolean | null;
     published_at?: string | null;
+    updated_at?: string | null;
   };
   creator: {
     username: string;
@@ -90,11 +90,84 @@ export function creatorIndexingMeta(profile: {
     : [];
 }
 
-export const DEFAULT_OPEN_GRAPH_IMAGE_PATH = "/branding/bento-logo.png";
-export const DEFAULT_OPEN_GRAPH_IMAGE_VERSION = "20260813";
+export const LANDING_OPEN_GRAPH_IMAGE_PATH = "/branding/landing-og.jpg";
+export const LANDING_OPEN_GRAPH_IMAGE_VERSION = "20260813";
+export const LANDING_OPEN_GRAPH_IMAGE_WIDTH = 1_200;
+export const LANDING_OPEN_GRAPH_IMAGE_HEIGHT = 630;
 
 function publicBaseUrl(value?: string) {
-  return configuredPublicOrigin(value);
+  return (value || "http://localhost:8080").replace(/\/$/, "");
+}
+
+export function landingPageCanonicalUrl(baseUrl?: string) {
+  return publicBaseUrl(baseUrl);
+}
+
+export function landingPageOpenGraphImageUrl(baseUrl?: string) {
+  return `${publicBaseUrl(baseUrl)}${LANDING_OPEN_GRAPH_IMAGE_PATH}?v=${LANDING_OPEN_GRAPH_IMAGE_VERSION}`;
+}
+
+export function landingPageHead(baseUrl?: string) {
+  const canonical = landingPageCanonicalUrl(baseUrl);
+  const image = landingPageOpenGraphImageUrl(baseUrl);
+  const title = "bento.surf - the creator business operating system";
+  const description =
+    "Run your creator page, store, bookings, social posts, Instagram automations, courses, and community from one beautiful Bento.";
+  const ogTitle = "bento.surf - run your creator business from one place";
+  const ogDescription =
+    "Replace a stack of creator tools with one storefront and operating system.";
+  const imageAlt = "Grow and monetize your social media on automation with AI agents on bento.surf";
+  const organizationId = `${canonical}/#organization`;
+  const organization = {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "@id": organizationId,
+    name: "bento.surf",
+    url: canonical,
+    logo: `${canonical}/icon-512.png`,
+    sameAs: [
+      "https://www.instagram.com/bento.surf/",
+      "https://x.com/bentosurf",
+      "https://www.linkedin.com/company/bento-surf/",
+      "https://www.youtube.com/@Bento-Surf",
+    ],
+  };
+  const website = {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "@id": `${canonical}/#website`,
+    name: "bento.surf",
+    alternateName: "Bento",
+    url: canonical,
+    publisher: { "@id": organizationId },
+  };
+
+  return {
+    meta: [
+      { title },
+      { name: "description", content: description },
+      { property: "og:type", content: "website" },
+      { property: "og:title", content: ogTitle },
+      { property: "og:description", content: ogDescription },
+      { property: "og:url", content: canonical },
+      { property: "og:image", content: image },
+      { property: "og:image:secure_url", content: image },
+      { property: "og:image:type", content: "image/jpeg" },
+      { property: "og:image:width", content: String(LANDING_OPEN_GRAPH_IMAGE_WIDTH) },
+      { property: "og:image:height", content: String(LANDING_OPEN_GRAPH_IMAGE_HEIGHT) },
+      { property: "og:image:alt", content: imageAlt },
+      { name: "twitter:card", content: "summary_large_image" },
+      { name: "twitter:title", content: ogTitle },
+      { name: "twitter:description", content: ogDescription },
+      { name: "twitter:image", content: image },
+      { name: "twitter:image:alt", content: imageAlt },
+    ],
+    links: [{ rel: "canonical", href: canonical }],
+    scripts: [organization, website].map((schema) => ({
+      type: "application/ld+json",
+      children: JSON.stringify(schema),
+    })),
+  };
 }
 
 function metadataDescription(value: string) {
@@ -390,7 +463,12 @@ export function publicProductHead(data: PublicProductHeadData, baseUrl?: string)
       `Buy ${data.product.title} from ${creatorName} on bento.surf.`,
   );
   const canonical = publicProductUrl(data.creator.username, data.product.public_slug, base);
-  const cover = data.product.cover_url?.trim() || null;
+  const uploadedCover = data.product.cover_url?.trim() || null;
+  const cover =
+    uploadedCover ||
+    `${base}/api/og/${encodeURIComponent(data.creator.username)}/products/${encodeURIComponent(
+      data.product.public_slug,
+    )}.jpg?v=${encodeURIComponent(data.product.updated_at || data.product.published_at || "1")}`;
   const imageAlt = `${data.product.title} by ${creatorName}`;
   const price =
     typeof data.product.price_amount === "number" && Number.isFinite(data.product.price_amount)
@@ -400,7 +478,7 @@ export function publicProductHead(data: PublicProductHeadData, baseUrl?: string)
     ? data.product.currency!.toUpperCase()
     : null;
   const productSchema =
-    cover && price !== null && currency
+    price !== null && currency
       ? {
           "@context": "https://schema.org",
           "@type": "Product",
@@ -439,15 +517,20 @@ export function publicProductHead(data: PublicProductHeadData, baseUrl?: string)
         }
       : null;
 
-  const imageMeta = cover
-    ? [
-        { property: "og:image", content: cover },
-        { property: "og:image:secure_url", content: cover },
-        { property: "og:image:alt", content: imageAlt },
-        { name: "twitter:image", content: cover },
-        { name: "twitter:image:alt", content: imageAlt },
-      ]
-    : [];
+  const imageMeta = [
+    { property: "og:image", content: cover },
+    { property: "og:image:secure_url", content: cover },
+    { property: "og:image:alt", content: imageAlt },
+    ...(!uploadedCover
+      ? [
+          { property: "og:image:type", content: "image/jpeg" },
+          { property: "og:image:width", content: String(OPEN_GRAPH_IMAGE_WIDTH) },
+          { property: "og:image:height", content: String(OPEN_GRAPH_IMAGE_HEIGHT) },
+        ]
+      : []),
+    { name: "twitter:image", content: cover },
+    { name: "twitter:image:alt", content: imageAlt },
+  ];
 
   return {
     meta: [
@@ -458,7 +541,7 @@ export function publicProductHead(data: PublicProductHeadData, baseUrl?: string)
       { property: "og:description", content: description },
       { property: "og:url", content: canonical },
       ...imageMeta,
-      { name: "twitter:card", content: cover ? "summary_large_image" : "summary" },
+      { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:title", content: title },
       { name: "twitter:description", content: description },
       ...creatorIndexingMeta({

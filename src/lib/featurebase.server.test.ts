@@ -12,7 +12,7 @@ function decodePart(part: string) {
 describe("createFeaturebaseJwt", () => {
   it("creates a signed one-hour HS256 identity token", async () => {
     const token = await createFeaturebaseJwt(
-      { userId: "user-123", email: " Creator@Example.com ", name: "Ada" },
+      { userId: "user-123", email: " Creator@Example.com ", name: "Yash" },
       "featurebase-test-secret-with-enough-entropy",
       1_700_000_000,
     );
@@ -22,7 +22,7 @@ describe("createFeaturebaseJwt", () => {
     expect(decodePart(payload)).toEqual({
       userId: "user-123",
       email: "creator@example.com",
-      name: "Ada",
+      name: "Yash",
       iat: 1_700_000_000,
       exp: 1_700_003_600,
     });
@@ -59,7 +59,7 @@ describe("resolveFeaturebaseName", () => {
     expect(
       resolveFeaturebaseName({
         username: "bizibeast",
-        displayName: "Ada Lovelace",
+        displayName: "Yash Gawde",
         metadataFullName: "OAuth Name",
         metadataName: "Auth Name",
         email: "creator@example.com",
@@ -71,11 +71,11 @@ describe("resolveFeaturebaseName", () => {
     expect(
       resolveFeaturebaseName({
         username: " ",
-        displayName: " Ada Lovelace ",
+        displayName: " Yash Gawde ",
         metadataFullName: "OAuth Name",
         email: "creator@example.com",
       }),
-    ).toBe("Ada Lovelace");
+    ).toBe("Yash Gawde");
 
     expect(
       resolveFeaturebaseName({

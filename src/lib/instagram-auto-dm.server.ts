@@ -1812,8 +1812,10 @@ export async function processInstagramDmQueueMessage(
 
     if (confirmationFlow && activeRunId && runFollowSettings?.enabled) {
       let follows = true;
+      let followVerified = false;
       try {
         follows = await getInstagramUserFollowState(connection, event.senderId);
+        followVerified = follows;
       } catch (error) {
         // Follower verification is an enrichment gate, not a reason to strand a
         // valid Meta interaction. Provider failures fail open and are observable.
@@ -1823,7 +1825,8 @@ export async function processInstagramDmQueueMessage(
         });
       }
       if (follows) {
-        await updateRun(activeRunId, { follow_verified_at: new Date().toISOString() });
+        if (followVerified)
+          await updateRun(activeRunId, { follow_verified_at: new Date().toISOString() });
       } else if (followRecheckCount >= runFollowSettings.maxRechecks) {
         if (runFollowSettings.failAction === "withhold") {
           const response = await sendInstagramTextMessage(

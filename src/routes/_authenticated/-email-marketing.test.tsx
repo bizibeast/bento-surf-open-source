@@ -119,7 +119,7 @@ describe("Email Marketing workspace", () => {
         id: "22222222-2222-4222-8222-222222222222",
         title: "Tech & Trends Weekly",
         description: "Weekly notes",
-        sender_name: "Ada",
+        sender_name: "Yash",
         reply_to_email: null,
         postal_address: "Bengaluru, India",
         accent_color: null,
@@ -156,7 +156,7 @@ describe("Email Marketing workspace", () => {
         },
       ],
       products: [],
-      creatorUsername: "Ada",
+      creatorUsername: "Yash",
     } as never);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const EmailMarketingPage = Route.options.component as ComponentType;
@@ -292,7 +292,7 @@ describe("Email Marketing workspace", () => {
         slug: "studio-notes",
         title: "Studio Notes",
         description: "Notes from the studio",
-        sender_name: "Ada",
+        sender_name: "Yash",
         reply_to_email: null,
         postal_address: "Bengaluru, India",
         accent_color: "#3478f6",
@@ -317,7 +317,7 @@ describe("Email Marketing workspace", () => {
         },
       ],
       products: [],
-      creatorUsername: "ada",
+      creatorUsername: "yash",
     });
     client.setQueryData(["my-email-marketing"], {
       locked: false,
@@ -408,7 +408,7 @@ describe("Email Marketing workspace", () => {
       },
       posts: [],
       products: [],
-      creatorUsername: "Ada",
+      creatorUsername: "Yash",
     });
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: Infinity } },
@@ -481,7 +481,7 @@ describe("Email Marketing workspace", () => {
         id: publicationId,
         title: "Studio Notes",
         description: "Weekly notes",
-        sender_name: "Ada",
+        sender_name: "Yash",
         reply_to_email: null,
         postal_address: "Bengaluru, India",
         accent_color: null,
@@ -490,7 +490,7 @@ describe("Email Marketing workspace", () => {
       },
       posts: [],
       products: [],
-      creatorUsername: "Ada",
+      creatorUsername: "Yash",
     });
     client.setQueryData(["my-email-marketing"], {
       locked: true,
@@ -515,6 +515,8 @@ describe("Email Marketing workspace", () => {
     );
 
     expect(await screen.findByText(/Email marketing is included with Store/i)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Overview" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Broadcasts" })).toBeNull();
     expect(getPublicationRecipientCounts).not.toHaveBeenCalled();
   });
 
@@ -543,7 +545,7 @@ describe("Email Marketing workspace", () => {
         title: "Studio Notes",
         slug: "studio-notes",
         description: "Weekly notes",
-        sender_name: "Ada",
+        sender_name: "Yash",
         reply_to_email: null,
         postal_address: "Bengaluru, India",
         accent_color: null,
@@ -553,7 +555,7 @@ describe("Email Marketing workspace", () => {
       },
       posts: [],
       products: [],
-      creatorUsername: "Ada",
+      creatorUsername: "Yash",
     });
     client.setQueryData(["my-email-marketing"], {
       locked: false,

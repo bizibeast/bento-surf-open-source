@@ -34,10 +34,10 @@ describe("X Auto-DM webhook security", () => {
   it("answers the CRC challenge with an HMAC of the token", async () => {
     vi.stubEnv("X_CLIENT_SECRET", SECRET);
     const crc = await handleTwitterWebhookCrc(
-      new Request("https://bento.surf/api/webhooks/twitter?crc_token=challenge-token"),
+      new Request("http://localhost:8080/api/webhooks/twitter?crc_token=challenge-token"),
     );
     const rejected = await handleTwitterWebhookCrc(
-      new Request("https://bento.surf/api/webhooks/twitter"),
+      new Request("http://localhost:8080/api/webhooks/twitter"),
     );
     const expected = await twitterWebhookCrcResponse("challenge-token");
 
@@ -91,7 +91,7 @@ describe("X Auto-DM webhook security", () => {
     });
     const sent: unknown[] = [];
     const response = await handleTwitterWebhook(
-      new Request("https://bento.surf/api/webhooks/twitter", {
+      new Request("http://localhost:8080/api/webhooks/twitter", {
         method: "POST",
         headers: { "x-twitter-webhooks-signature": await signature(body) },
         body,

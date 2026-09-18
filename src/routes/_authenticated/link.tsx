@@ -1,9 +1,9 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { UpgradeDialog } from "@/components/UpgradeDialog";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { DecodedImage } from "@/components/DecodedImage";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import GridLayout, { type Layout, type LayoutItem } from "react-grid-layout/legacy";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -43,8 +43,17 @@ import {
   deleteBlock,
   updateBlockLayout,
 } from "@/lib/blocks.functions";
-import { getMyPages, createPage, renamePage, deletePage } from "@/lib/pages.functions";
-import { PageTabs, type PageTab } from "@/components/PageTabs";
+import {
+  getMyPages,
+  createPage,
+  renamePage,
+  deletePage,
+  reorderMyPages,
+} from "@/lib/pages.functions";
+import { PageTabs } from "@/components/PageTabs";
+import { SystemPageTile, systemPageManagement } from "@/components/pages/SystemPageTile";
+import { getMySystemPageCanvas, saveMySystemPageLayout } from "@/lib/page-system-layout.functions";
+import type { SystemPageItem } from "@/lib/page-system-layout";
 import { ShareCard } from "@/components/ShareCard";
 import { AppearancePanel } from "@/components/AppearancePanel";
 import { PatternBackdrop } from "@/components/patterns/PatternBackdrop";
@@ -78,7 +87,7 @@ import {
 } from "@/lib/social-embeds";
 import { errorMessage } from "@/lib/errors";
 import { normalizePlan, planHasEntitlement, planName } from "@/lib/plans";
-import { renamePublicCalendarPage, setPublicCalendarPage } from "@/lib/booking.functions";
+import { setPublicCalendarPage } from "@/lib/booking.functions";
 import { setPublicSocialInsights } from "@/lib/social-analytics.functions";
 import { publicProfilePath, publicProfileUrl } from "@/lib/application-urls";
 import { nextEmptyGridRow } from "@/lib/grid-geometry";
@@ -100,17 +109,42 @@ const LinkEditPanel = lazy(() =>
 
 type BlockType = Database["public"]["Enums"]["block_type"];
 type DashboardBlock = Block & { x: number; y: number; position: number };
+type CanvasTile = Pick<DashboardBlock, "id" | "x" | "y" | "w" | "h" | "position"> & {
+  block?: DashboardBlock;
+  systemItem?: SystemPageItem;
+};
+type SystemPageCanvas = Awaited<ReturnType<typeof getMySystemPageCanvas>>;
+type LayoutSave = {
+  pageId: string | null;
+  items: Array<Pick<CanvasTile, "id" | "x" | "y" | "w" | "h" | "position">>;
+};
 type PageRow = Database["public"]["Tables"]["pages"]["Row"];
 type ProfileUpdate = Database["public"]["Tables"]["profiles"]["Update"];
 
+// Keep the newest queued write per page across Link unmounts, scoped to this user's query cache.
+const pendingPageLayouts = new WeakMap<QueryClient, Map<string | null, LayoutSave>>();
+
+function getCanvasBlocks(queryClient: QueryClient, pageId: string | null) {
+  const cached = queryClient.getQueryData<Awaited<ReturnType<typeof getMyBlocks>>>([
+    "my-blocks",
+    pageId,
+  ]);
+  return cached && pendingPageLayouts.get(queryClient)?.has(pageId)
+    ? cached
+    : getMyBlocks({ data: { pageId } });
+}
+
 export const Route = createFileRoute("/_authenticated/link")({
   head: () => ({ meta: [{ title: "Editor | bento.surf" }] }),
-  validateSearch: z.object({ analytics: z.boolean().optional().catch(undefined) }),
+  validateSearch: z.object({
+    analytics: z.boolean().optional().catch(undefined),
+    page: z.string().uuid().optional().catch(undefined),
+  }),
   loader: ({ context }) => {
     context.queryClient.prefetchQuery({ queryKey: ["my-profile"], queryFn: () => getMyProfile() });
     context.queryClient.prefetchQuery({
       queryKey: ["my-blocks", null],
-      queryFn: () => getMyBlocks({ data: { pageId: null } }),
+      queryFn: () => getCanvasBlocks(context.queryClient, null),
     });
     context.queryClient.prefetchQuery({ queryKey: ["my-pages"], queryFn: () => getMyPages() });
     context.queryClient.prefetchQuery({
@@ -131,7 +165,7 @@ function sortLayoutItems(items: readonly LayoutItem[]): LayoutItem[] {
   return [...items].sort((a, b) => a.y - b.y || a.x - b.x || a.i.localeCompare(b.i));
 }
 
-function desktopLayoutSignature(blocks: DashboardBlock[]) {
+function desktopLayoutSignature(blocks: CanvasTile[]) {
   return [...blocks]
     .sort((a, b) => a.position - b.position || a.y - b.y || a.x - b.x || a.id.localeCompare(b.id))
     .map((b) => `${b.id}:${b.x},${b.y},${b.w},${b.h},${b.position}`)
@@ -145,7 +179,7 @@ function layoutItemsSignature(items: readonly LayoutItem[]) {
     .join("|");
 }
 
-function mobileLayoutFromDesktop(blocks: DashboardBlock[]): LayoutItem[] {
+function mobileLayoutFromDesktop(blocks: CanvasTile[]): LayoutItem[] {
   const sorted = [...blocks].sort(
     (a, b) => a.position - b.position || a.y - b.y || a.x - b.x || a.id.localeCompare(b.id),
   );
@@ -298,7 +332,8 @@ function DashboardPage() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const search = Route.useSearch();
-  const [activePageId, setActivePageId] = useState<string | null>(null);
+  const setActivePageId = (id: string | null) =>
+    navigate({ to: "/link", search: (previous) => ({ ...previous, page: id ?? undefined }) });
   const [analyticsOpen, setAnalyticsOpen] = useState(Boolean(search.analytics));
   // The _authenticated route gate guarantees we have a session here.
   const { data: profile } = useQuery({ queryKey: ["my-profile"], queryFn: () => getMyProfile() });
@@ -308,12 +343,48 @@ function DashboardPage() {
   });
   const creatorPlan = normalizePlan(profile?.plan_id, Boolean(profile?.is_pro));
   const liveSocialEnabled = planHasEntitlement(creatorPlan, "liveSocialPreviews");
-  const { data: pages = [] } = useQuery({ queryKey: ["my-pages"], queryFn: () => getMyPages() });
+  const { data: allPages = [], isSuccess: pagesLoaded } = useQuery({
+    queryKey: ["my-pages"],
+    queryFn: () => getMyPages(),
+  });
+  const pages = allPages.filter((page) => page.is_visible);
+  const activePage = pages.find((page) => page.id === search.page && !page.url);
+  const activePageId = activePage?.id ?? null;
+  const management = activePage?.system
+    ? systemPageManagement[activePage.system as SystemPageItem["system"]]
+    : null;
   const { data: savedBlocks = [] } = useQuery({
     queryKey: ["my-blocks", activePageId],
-    queryFn: () => getMyBlocks({ data: { pageId: activePageId } }),
+    queryFn: () => getCanvasBlocks(qc, activePageId),
   });
   const blocks = savedBlocks as DashboardBlock[];
+  const {
+    data: systemCanvas,
+    isPending: systemPending,
+    error: systemError,
+  } = useQuery({
+    queryKey: ["my-system-page", activePageId],
+    queryFn: () => {
+      const cached = qc.getQueryData<SystemPageCanvas>(["my-system-page", activePageId]);
+      return cached && pendingPageLayouts.get(qc)?.has(activePageId)
+        ? cached
+        : getMySystemPageCanvas({ data: { pageId: activePageId! } });
+    },
+    enabled: Boolean(activePage?.system),
+  });
+  const canvasTiles = useMemo<CanvasTile[]>(
+    () =>
+      [
+        ...blocks.map((block) => ({ ...block, block })),
+        ...(systemCanvas?.layout ?? []).flatMap(({ itemKey, ...geometry }) => {
+          const systemItem = systemCanvas?.items.find((item) => item.key === itemKey);
+          return systemItem ? [{ id: `system:${itemKey}`, ...geometry, systemItem }] : [];
+        }),
+      ]
+        .sort((a, b) => a.y - b.y || a.x - b.x || a.id.localeCompare(b.id))
+        .map((tile, position) => ({ ...tile, position })),
+    [blocks, systemCanvas],
+  );
   const { data: setupBlocks = [] } = useQuery({
     queryKey: ["setup-block-types"],
     queryFn: () => getMySetupBlocks(),
@@ -333,8 +404,7 @@ function DashboardPage() {
   useEffect(() => {
     if (!profile?.id || normalizePlan(profile.plan_id, Boolean(profile.is_pro)) !== "free") return;
     if (!consumePostOnboardingUpgradePrompt(window.localStorage, profile.id)) return;
-    captureProductEvent("onboarding_upgrade_prompt_viewed");
-    setWelcomeUpgradeOpen(true);
+    // Upgrade remains available on demand; finishing onboarding opens the editor.
   }, [profile?.id, profile?.is_pro, profile?.plan_id]);
 
   const markPreviewedOrShared = () => {
@@ -345,8 +415,14 @@ function DashboardPage() {
 
   // If the active page disappears (e.g. deleted), fall back to Home.
   useEffect(() => {
-    if (activePageId && !pages.some((p) => p.id === activePageId)) setActivePageId(null);
-  }, [pages, activePageId]);
+    if (pagesLoaded && search.page && !activePage) {
+      void navigate({
+        to: "/link",
+        search: (previous) => ({ ...previous, page: undefined }),
+        replace: true,
+      });
+    }
+  }, [pagesLoaded, search.page, activePage, navigate]);
 
   // Returning from Dodo checkout. The webhook flips is_pro asynchronously, so
   // poll the profile briefly, then clean the URL.
@@ -388,11 +464,12 @@ function DashboardPage() {
           position: prev.length,
           user_id: "",
           url: input.url ?? null,
+          system: null,
+          is_visible: true,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
         qc.setQueryData<PageRow[]>(["my-pages"], [...prev, optimistic]);
-        if (!input.url) setActivePageId(tempId);
         return { prev, tempId, isLink: !!input.url };
       },
       onSuccess: (row, _input, ctx) => {
@@ -449,6 +526,24 @@ function DashboardPage() {
         toast.error(e.message);
       },
     }),
+    reorder: useMutation({
+      mutationFn: (pageIds: string[]) => reorderMyPages({ data: { pageIds } }),
+      onMutate: async (pageIds) => {
+        await qc.cancelQueries({ queryKey: ["my-pages"] });
+        const prev = qc.getQueryData<PageRow[]>(["my-pages"]) ?? [];
+        const byId = new Map(prev.map((page) => [page.id, page]));
+        qc.setQueryData<PageRow[]>(
+          ["my-pages"],
+          pageIds.map((id) => byId.get(id)).filter((page): page is PageRow => page !== undefined),
+        );
+        return { prev };
+      },
+      onError: (error: Error, _pageIds, ctx) => {
+        if (ctx?.prev) qc.setQueryData(["my-pages"], ctx.prev);
+        toast.error(error.message);
+      },
+      onSettled: () => qc.invalidateQueries({ queryKey: ["my-pages"] }),
+    }),
   };
   const calendarPageMut = useMutation({
     mutationFn: (enabled: boolean) => setPublicCalendarPage({ data: { enabled } }),
@@ -461,6 +556,7 @@ function DashboardPage() {
             }
           : current,
       );
+      void qc.invalidateQueries({ queryKey: ["my-pages"] });
       void qc.invalidateQueries({ queryKey: ["booking-workspace"] });
       if (!result.enabled) setActivePageId(null);
       toast.success(
@@ -472,23 +568,13 @@ function DashboardPage() {
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Could not update calendar page"),
   });
-  const calendarPageNameMut = useMutation({
-    mutationFn: (name: string) => renamePublicCalendarPage({ data: { name } }),
-    onSuccess: (result) => {
-      qc.setQueryData<Awaited<ReturnType<typeof getMyProfile>> | null>(["my-profile"], (current) =>
-        current ? { ...current, calendar_page_name: result.name } : current,
-      );
-      toast.success("Calendar page renamed");
-    },
-    onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Could not rename calendar page"),
-  });
   const insightsPageMut = useMutation({
     mutationFn: (enabled: boolean) => setPublicSocialInsights({ data: { enabled } }),
     onSuccess: (result) => {
       qc.setQueryData<Awaited<ReturnType<typeof getMyProfile>> | null>(["my-profile"], (current) =>
         current ? { ...current, social_insights_enabled: result.enabled } : current,
       );
+      void qc.invalidateQueries({ queryKey: ["my-pages"] });
       toast.success(result.enabled ? "Insights page added" : "Insights page removed");
     },
     onError: (error) =>
@@ -507,6 +593,7 @@ function DashboardPage() {
       qc.setQueryData<Awaited<ReturnType<typeof getMyProfile>> | null>(["my-profile"], (current) =>
         current ? { ...current, store_page_enabled: enabled } : current,
       );
+      void qc.invalidateQueries({ queryKey: ["my-pages"] });
       if (!enabled) setActivePageId(null);
       toast.success(enabled ? "Store page added" : "Store page removed");
     },
@@ -530,65 +617,16 @@ function DashboardPage() {
       });
     },
     onSuccess: async (_, enabled) => {
-      await qc.invalidateQueries({ queryKey: ["email-marketing"] });
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["email-marketing"] }),
+        qc.invalidateQueries({ queryKey: ["my-pages"] }),
+      ]);
       if (!enabled) setActivePageId(null);
       toast.success(enabled ? "Newsletter page added" : "Newsletter page removed");
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Could not update Newsletter page"),
   });
-  const editorPages: PageTab[] = [
-    ...pages,
-    ...(profile?.calendar_page_enabled
-      ? [
-          {
-            id: "__calendar",
-            name: profile.calendar_page_name || "Calendar",
-            slug: "calendar",
-            href: publicProfileUrl(profile.username, "calendar", import.meta.env.VITE_PUBLIC_URL),
-            system: "calendar" as const,
-          },
-        ]
-      : []),
-    ...(profile?.social_insights_enabled
-      ? [
-          {
-            id: "__insights",
-            name: "Insights",
-            slug: "insights",
-            href: publicProfileUrl(profile.username, "insights", import.meta.env.VITE_PUBLIC_URL),
-            system: "insights" as const,
-          },
-        ]
-      : []),
-    ...(profile?.store_page_enabled
-      ? [
-          {
-            id: "__store",
-            name: "Store",
-            slug: "store",
-            href: publicProfileUrl(profile.username, "store", import.meta.env.VITE_PUBLIC_URL),
-            system: "store" as const,
-          },
-        ]
-      : []),
-    ...(profile?.username && newsletter?.publication?.status === "published"
-      ? [
-          {
-            id: "__newsletter",
-            name: "Newsletters",
-            slug: "newsletters",
-            href: publicProfileUrl(
-              profile.username,
-              "newsletters",
-              import.meta.env.VITE_PUBLIC_URL,
-            ),
-            system: "newsletter" as const,
-          },
-        ]
-      : []),
-  ];
-
   useEffect(() => {
     if (profile && !profile.onboarded) navigate({ to: "/onboarding", replace: true });
   }, [profile, navigate]);
@@ -631,29 +669,32 @@ function DashboardPage() {
     setInteractiveMapId(null);
   }, [activePageId, effectiveViewMode]);
 
-  const desktopSig = useMemo(() => desktopLayoutSignature(blocks), [blocks]);
+  const desktopSig = useMemo(() => desktopLayoutSignature(canvasTiles), [canvasTiles]);
 
   useEffect(() => {
     const shouldRebuildFromDesktop = mobileDesktopSigRef.current !== desktopSig;
     setMobileLayout((current) => {
-      if (blocks.length === 0) return null;
-      const blockIds = new Set(blocks.map((b) => b.id));
+      if (canvasTiles.length === 0) return null;
+      const blockIds = new Set(canvasTiles.map((b) => b.id));
       const hasSameBlocks =
-        current?.length === blocks.length && current.every((item) => blockIds.has(item.i));
+        current?.length === canvasTiles.length && current.every((item) => blockIds.has(item.i));
       return !current || !hasSameBlocks || shouldRebuildFromDesktop
-        ? mobileLayoutFromDesktop(blocks)
+        ? mobileLayoutFromDesktop(canvasTiles)
         : current;
     });
     mobileDesktopSigRef.current = desktopSig;
-  }, [blocks, desktopSig]);
+  }, [canvasTiles, desktopSig]);
 
   // Desktop is the source of truth. Phone keeps its own packed state derived from
   // desktop order, so phone edits never overwrite laptop coordinates.
   const layout = useMemo<LayoutItem[]>(() => {
     const cols = effectiveViewMode === "phone" ? COLS_PHONE : COLS_LAPTOP;
-    const sorted = [...blocks].sort((a, b) => a.position - b.position);
+    const sorted = [...canvasTiles].sort((a, b) => a.position - b.position);
     if (effectiveViewMode === "phone") {
-      return mobileLayout ?? mobileLayoutFromDesktop(blocks);
+      const ids = new Set(canvasTiles.map((tile) => tile.id));
+      return mobileLayout?.length === ids.size && mobileLayout.every((item) => ids.has(item.i))
+        ? mobileLayout
+        : mobileLayoutFromDesktop(canvasTiles);
     }
     return sorted.map((b) => {
       const w = Math.min(Math.max(b.w, 1), cols);
@@ -662,16 +703,44 @@ function DashboardPage() {
       const y = Math.max(b.y ?? 0, 0);
       return { i: b.id, x, y, w, h };
     });
-  }, [blocks, effectiveViewMode, mobileLayout]);
+  }, [canvasTiles, effectiveViewMode, mobileLayout]);
 
   const layoutMut = useMutation({
-    mutationFn: async (
-      items: Array<{ id: string; x: number; y: number; w: number; h: number; position: number }>,
-    ) => updateBlockLayout({ data: { items } }),
+    scope: { id: "link-page-layout" },
+    mutationFn: async ({ pageId, items }: LayoutSave) => {
+      const ordinary = items.filter((item) => !item.id.startsWith("system:"));
+      const system = items
+        .filter((item) => item.id.startsWith("system:"))
+        .map(({ id, ...geometry }, position) => ({
+          ...geometry,
+          position,
+          itemKey: id.slice("system:".length),
+        }));
+      const results = await Promise.allSettled([
+        ...(ordinary.length ? [updateBlockLayout({ data: { items: ordinary } })] : []),
+        ...(pageId && system.length
+          ? [saveMySystemPageLayout({ data: { pageId, items: system } })]
+          : []),
+      ]);
+      const failed = results.find((result) => result.status === "rejected");
+      if (failed) throw failed.reason;
+    },
+    onError: (error) => toast.error(errorMessage(error, "Could not save page layout.")),
+    onSettled: (_data, _error, saved) => {
+      const { pageId } = saved;
+      const pending = pendingPageLayouts.get(qc);
+      if (pending?.get(pageId) !== saved) return;
+      pending.delete(pageId);
+      void qc.invalidateQueries({ queryKey: ["my-blocks", pageId], refetchType: "none" });
+      void qc.invalidateQueries({ queryKey: ["my-system-page", pageId], refetchType: "none" });
+    },
   });
 
   const lastSavedSigRef = useRef<string>("");
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingLayoutRef = useRef<LayoutSave | null>(null);
+  const layoutMutateRef = useRef(layoutMut.mutate);
+  layoutMutateRef.current = layoutMut.mutate;
   const sigOf = (
     items: Array<{ id: string; x: number; y: number; w: number; h: number; position: number }>,
   ) =>
@@ -681,12 +750,16 @@ function DashboardPage() {
       .map((i) => `${i.id}:${i.x},${i.y},${i.w},${i.h},${i.position}`)
       .join("|");
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    lastSavedSigRef.current = "";
+    return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    },
-    [],
-  );
+      if (pendingLayoutRef.current) {
+        layoutMutateRef.current(pendingLayoutRef.current);
+        pendingLayoutRef.current = null;
+      }
+    };
+  }, [activePageId]);
 
   const createMut = useMutation({
     mutationFn: async (input: NewBlockPayload) => {
@@ -694,7 +767,7 @@ function DashboardPage() {
       const w = Math.min(Math.max(input.w ?? 2, 1), cols);
       const h = Math.max(input.h ?? 2, 1);
       const x = 0;
-      const y = nextEmptyGridRow(blocks);
+      const y = nextEmptyGridRow(canvasTiles);
       let content = input.content;
       if (input.type === "map" && content?.location && !storedMapView(content)) {
         content = await enrichMapContent(content, (location) =>
@@ -750,25 +823,51 @@ function DashboardPage() {
       h: l.h,
       position: i,
     }));
+    const sig = sigOf(items);
+    const shouldSave = Boolean(
+      options?.force || (lastSavedSigRef.current && sig !== lastSavedSigRef.current),
+    );
+    if (!lastSavedSigRef.current && !options?.force) lastSavedSigRef.current = sig;
+    if (shouldSave) {
+      const pending = { pageId: activePageId, items };
+      if (!pendingPageLayouts.has(qc)) pendingPageLayouts.set(qc, new Map());
+      pendingPageLayouts.get(qc)!.set(activePageId, pending);
+      pendingLayoutRef.current = pending;
+      // Cancel before writing: a read already in flight must not restore older geometry.
+      void qc.cancelQueries({ queryKey: ["my-blocks", activePageId], exact: true });
+      void qc.cancelQueries({ queryKey: ["my-system-page", activePageId], exact: true });
+    }
     qc.setQueryData<DashboardBlock[]>(["my-blocks", activePageId], (prev) =>
       (prev ?? []).map((b) => {
         const item = items.find((i) => i.id === b.id);
         return item ? { ...b, ...item } : b;
       }),
     );
+    if (activePage?.system) {
+      qc.setQueryData<SystemPageCanvas>(["my-system-page", activePageId], (current) =>
+        current
+          ? {
+              ...current,
+              layout: items
+                .filter((item) => item.id.startsWith("system:"))
+                .map(({ id, ...geometry }) => ({
+                  ...geometry,
+                  itemKey: id.slice("system:".length),
+                })),
+            }
+          : current,
+      );
+    }
     if (changedByNormalize) setGridResetKey((k) => k + 1);
 
-    const sig = sigOf(items);
-    if (!lastSavedSigRef.current && !options?.force) {
-      lastSavedSigRef.current = sig;
-      return;
-    }
-    if (sig === lastSavedSigRef.current && !options?.force) return;
+    if (!shouldSave) return;
 
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       lastSavedSigRef.current = sig;
-      layoutMut.mutate(items);
+      const pending = pendingLayoutRef.current;
+      pendingLayoutRef.current = null;
+      if (pending) layoutMut.mutate(pending);
     }, 400);
   };
 
@@ -1034,80 +1133,107 @@ function DashboardPage() {
         className="pointer-events-none fixed inset-0 -z-10 overflow-hidden"
         style={{ background: "var(--background)" }}
       >
-        {/* Patterns are intentionally rendered in neutral gray, independent of the accent color. */}
         <PatternBackdrop
           pattern={activePattern}
           settings={patternSettings}
-          accentHex="#9ca3af"
+          accentHex={accentHex}
           theme={themeMode}
         />
       </div>
 
       <div
-        className={`mx-auto w-full ${effectiveViewMode === "phone" ? "max-w-none px-0 pb-32 pt-8" : "max-w-6xl px-3 pb-32 pt-8 lg:px-6 lg:pb-32 lg:pt-0 lg:min-h-[calc(100vh-4rem)]"}`}
+        className={`link-editor-shell mx-auto w-full ${effectiveViewMode === "phone" ? "max-w-none px-0 pb-32 pt-8" : "max-w-6xl px-3 pb-32 pt-8 lg:px-6 lg:pb-32 lg:min-h-[calc(100vh-4rem)]"}`}
       >
         <div
           className={
             effectiveViewMode === "phone"
               ? "mx-auto w-full max-w-[430px] px-4 transition-all duration-300"
-              : "grid grid-cols-1 gap-8 lg:grid-cols-[380px_1fr] lg:gap-11 lg:overflow-visible"
+              : "link-editor-layout grid grid-cols-1 gap-8"
           }
         >
-          {headerMode === "with_photo" && (
-            <aside
-              className={
-                effectiveViewMode === "phone"
-                  ? "flex w-full flex-col items-center text-center mb-6 text-foreground"
-                  : "flex w-full flex-col items-center text-center text-foreground lg:sticky lg:top-0 lg:self-start lg:items-start lg:text-left lg:overflow-visible lg:min-h-[calc(100vh-4rem)] lg:py-8 lg:pl-1 lg:pr-2"
+          <aside
+            className={
+              effectiveViewMode === "phone"
+                ? "flex w-full flex-col items-center text-center mb-6 text-foreground"
+                : "link-editor-profile flex w-full flex-col items-center text-center text-foreground"
+            }
+          >
+            <ProfileSidebar
+              profile={profile}
+              initials={initials}
+              showAvatar={headerMode === "with_photo"}
+              pageTabs={
+                <>
+                  <PageTabs
+                    pages={pages}
+                    activeId={activePageId}
+                    mode="editor"
+                    phoneEditor={effectiveViewMode === "phone"}
+                    menuStyle={accentVars as React.CSSProperties}
+                    onSelect={(id) => {
+                      setActivePageId(id);
+                    }}
+                    onCreate={(input) => pagesMut.create.mutate(input)}
+                    onCreateCalendar={() => calendarPageMut.mutate(true)}
+                    onCreateInsights={() => insightsPageMut.mutate(true)}
+                    onCreateStore={() => storePageMut.mutate(true)}
+                    onCreateNewsletter={
+                      newsletter?.publication ? () => newsletterPageMut.mutate(true) : undefined
+                    }
+                    onRename={(id, name) => pagesMut.rename.mutate({ id, name })}
+                    onDelete={(id) => {
+                      const system = pages.find((page) => page.id === id)?.system;
+                      if (system) setActivePageId(null);
+                      switch (system) {
+                        case "calendar":
+                          calendarPageMut.mutate(false);
+                          break;
+                        case "insights":
+                          insightsPageMut.mutate(false);
+                          break;
+                        case "store":
+                          storePageMut.mutate(false);
+                          break;
+                        case "newsletter":
+                          newsletterPageMut.mutate(false);
+                          break;
+                        default:
+                          pagesMut.remove.mutate(id);
+                      }
+                    }}
+                    onReorder={(pageIds) => pagesMut.reorder.mutate(pageIds)}
+                  />
+                </>
               }
-            >
-              <ProfileSidebar
-                profile={profile}
-                initials={initials}
-                pageTabs={
-                  <>
-                    <PageTabs
-                      pages={editorPages}
-                      activeId={activePageId}
-                      mode="editor"
-                      phoneEditor={effectiveViewMode === "phone"}
-                      menuStyle={accentVars as React.CSSProperties}
-                      onSelect={(id) => {
-                        setActivePageId(id);
-                      }}
-                      onCreate={(input) => pagesMut.create.mutate(input)}
-                      onCreateCalendar={() => calendarPageMut.mutate(true)}
-                      onCreateInsights={() => insightsPageMut.mutate(true)}
-                      onCreateStore={() => storePageMut.mutate(true)}
-                      onCreateNewsletter={
-                        newsletter?.publication ? () => newsletterPageMut.mutate(true) : undefined
-                      }
-                      onRename={(id, name) =>
-                        id === "__calendar"
-                          ? calendarPageNameMut.mutate(name)
-                          : pagesMut.rename.mutate({ id, name })
-                      }
-                      onDelete={(id) =>
-                        id === "__calendar"
-                          ? calendarPageMut.mutate(false)
-                          : id === "__insights"
-                            ? insightsPageMut.mutate(false)
-                            : id === "__store"
-                              ? storePageMut.mutate(false)
-                              : id === "__newsletter"
-                                ? newsletterPageMut.mutate(false)
-                                : pagesMut.remove.mutate(id)
-                      }
-                    />
-                  </>
-                }
-              />
-            </aside>
-          )}
+            />
+          </aside>
 
-          <div className="lg:overflow-visible lg:pb-32 lg:pt-8 lg:-mx-6 lg:px-6">
+          <main className="link-editor-canvas min-w-0 pb-32" aria-labelledby="page-canvas-title">
+            <header className="mb-4 flex items-center justify-between gap-3 px-3">
+              <h1 id="page-canvas-title" className="font-ui-display text-xl">
+                {activePage?.name ?? "Home"}
+              </h1>
+              {management && (
+                <Link
+                  to={management.href}
+                  className="no-drag rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium hover:bg-accent"
+                >
+                  {management.label}
+                </Link>
+              )}
+            </header>
+            {activePage?.system && systemPending && (
+              <p role="status" className="px-3 py-4 text-sm text-muted-foreground">
+                Loading page content…
+              </p>
+            )}
+            {systemError && (
+              <p role="alert" className="px-3 py-4 text-sm text-destructive">
+                {errorMessage(systemError, "Could not load page content.")}
+              </p>
+            )}
             <div ref={containerRef} className="mx-auto w-full transition-all duration-300">
-              {blocks.length === 0 ? (
+              {canvasTiles.length === 0 ? (
                 <div className="flex h-[420px] flex-col items-center justify-center gap-3 text-center">
                   <div className="font-ui-display text-2xl">Your canvas is empty</div>
                   <p className="max-w-xs text-sm text-muted-foreground">
@@ -1130,7 +1256,7 @@ function DashboardPage() {
                   }));
                   return (
                     <GridLayout
-                      key={`grid-${effectiveViewMode}-${gridResetKey}`}
+                      key={`grid-${activePageId ?? "home"}-${effectiveViewMode}-${gridResetKey}`}
                       className="layout"
                       layout={baseLayout}
                       cols={COLS}
@@ -1220,38 +1346,46 @@ function DashboardPage() {
                         handleLayoutChange(snapped as Layout, { force: true, pinnedId: item.i });
                       }}
                     >
-                      {blocks.map((b) => {
-                        const mapInteractive = b.type === "map" && interactiveMapId === b.id;
-                        const isActive = activeId === b.id || mapInteractive;
-                        const live = liveSize && liveSize.id === b.id ? liveSize : null;
-                        const layoutItem = layout.find((item) => item.i === b.id);
-                        const dispW = live ? live.w : (layoutItem?.w ?? b.w);
-                        const dispH = live ? live.h : (layoutItem?.h ?? b.h);
-                        const renderBlock = { ...b, w: dispW, h: dispH } as Block;
+                      {canvasTiles.map((tile) => {
+                        const b = tile.block;
+                        const mapInteractive = b?.type === "map" && interactiveMapId === tile.id;
+                        const isActive = activeId === tile.id || mapInteractive;
+                        const live = liveSize && liveSize.id === tile.id ? liveSize : null;
+                        const layoutItem = layout.find((item) => item.i === tile.id);
+                        const dispW = live ? live.w : (layoutItem?.w ?? tile.w);
+                        const dispH = live ? live.h : (layoutItem?.h ?? tile.h);
                         return (
                           <div
-                            key={b.id}
-                            data-block-id={b.id}
-                            className={`group relative rounded-[28px] transition hover:z-30 hover:ring-2 hover:ring-foreground hover:ring-offset-2 hover:ring-offset-background ${isActive || linkPanel?.id === b.id ? "z-30 ring-2 ring-foreground ring-offset-2 ring-offset-background" : ""}`}
+                            key={tile.id}
+                            data-block-id={b?.id}
+                            data-system-item-key={tile.systemItem?.key}
+                            onClick={() => setActiveId(tile.id)}
+                            className={`group relative rounded-[28px] transition hover:z-30 hover:ring-2 hover:ring-foreground hover:ring-offset-2 hover:ring-offset-background ${isActive || linkPanel?.id === tile.id ? "z-30 ring-2 ring-foreground ring-offset-2 ring-offset-background" : ""}`}
                           >
                             <div style={creatorFontVars} className="contents">
-                              <BlockRenderer
-                                block={renderBlock}
-                                liveSocialEnabled={liveSocialEnabled}
-                                mapInteractive={mapInteractive}
-                                onMapViewChange={
-                                  b.type === "map"
-                                    ? (view) =>
-                                        handlePanelChange(b.id, {
-                                          ...(b.content ?? {}),
-                                          ...view,
-                                        })
-                                    : undefined
-                                }
-                              />
+                              {tile.systemItem ? (
+                                <SystemPageTile item={tile.systemItem} />
+                              ) : (
+                                b && (
+                                  <BlockRenderer
+                                    block={{ ...b, w: dispW, h: dispH }}
+                                    liveSocialEnabled={liveSocialEnabled}
+                                    mapInteractive={mapInteractive}
+                                    onMapViewChange={
+                                      b.type === "map"
+                                        ? (view) =>
+                                            handlePanelChange(b.id, {
+                                              ...(b.content ?? {}),
+                                              ...view,
+                                            })
+                                        : undefined
+                                    }
+                                  />
+                                )
+                              )}
                             </div>
                             {/* Overlay swallows clicks so links don't navigate while editing */}
-                            {!mapInteractive && (
+                            {b && !mapInteractive && (
                               <div
                                 className="absolute inset-0 z-[1] cursor-move rounded-[28px]"
                                 onClick={(event) => {
@@ -1260,26 +1394,30 @@ function DashboardPage() {
                                 }}
                               />
                             )}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                delMut.mutate(b.id);
-                              }}
-                              aria-label="Delete block"
-                              className={`no-drag absolute -left-1 -top-1 z-10 inline-flex size-10 items-center justify-center rounded-xl bg-background shadow-md ring-1 ring-border transition hover:bg-destructive hover:text-destructive-foreground group-hover:opacity-100 sm:-left-2 sm:-top-2 sm:size-8 ${isActive ? "opacity-100" : "opacity-0"}`}
-                            >
-                              <Trash2 className="size-3.5" />
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openEditFor(b as Block);
-                              }}
-                              aria-label="Edit block"
-                              className={`no-drag absolute -right-1 -top-1 z-10 inline-flex size-10 items-center justify-center rounded-xl bg-background shadow-md ring-1 ring-border transition hover:bg-foreground hover:text-background group-hover:opacity-100 sm:-right-2 sm:-top-2 sm:size-8 ${isActive ? "opacity-100" : "opacity-0"}`}
-                            >
-                              <Pencil className="size-3.5" />
-                            </button>
+                            {b && (
+                              <>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    delMut.mutate(b.id);
+                                  }}
+                                  aria-label="Delete block"
+                                  className={`no-drag absolute -left-1 -top-1 z-10 inline-flex size-10 items-center justify-center rounded-xl bg-background shadow-md ring-1 ring-border transition hover:bg-destructive hover:text-destructive-foreground group-hover:opacity-100 sm:-left-2 sm:-top-2 sm:size-8 ${isActive ? "opacity-100" : "opacity-0"}`}
+                                >
+                                  <Trash2 className="size-3.5" />
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openEditFor(b as Block);
+                                  }}
+                                  aria-label="Edit block"
+                                  className={`no-drag absolute -right-1 -top-1 z-10 inline-flex size-10 items-center justify-center rounded-xl bg-background shadow-md ring-1 ring-border transition hover:bg-foreground hover:text-background group-hover:opacity-100 sm:-right-2 sm:-top-2 sm:size-8 ${isActive ? "opacity-100" : "opacity-0"}`}
+                                >
+                                  <Pencil className="size-3.5" />
+                                </button>
+                              </>
+                            )}
 
                             {/* pt-3 acts as a hover bridge so cursor can travel from card to toolbar without losing :hover */}
                             <div
@@ -1287,14 +1425,16 @@ function DashboardPage() {
                             >
                               <SizePresetToolbar
                                 current={{ w: dispW, h: dispH }}
-                                onPick={(w, h) => applyPresetFor(b.id, w, h)}
-                                isMap={b.type === "map"}
+                                onPick={(w, h) => applyPresetFor(tile.id, w, h)}
+                                isMap={b?.type === "map"}
                                 mapInteractive={mapInteractive}
                                 onEditMap={() => {
                                   setInteractiveMapId(null);
-                                  openEditFor(b as Block);
+                                  if (b) openEditFor(b);
                                 }}
-                                onToggleMapInteraction={() => void toggleMapInteractionFor(b)}
+                                onToggleMapInteraction={() => {
+                                  if (b) void toggleMapInteractionFor(b);
+                                }}
                               />
                             </div>
                           </div>
@@ -1305,7 +1445,7 @@ function DashboardPage() {
                 })()
               )}
             </div>
-          </div>
+          </main>
         </div>
 
         <ShareBar
@@ -2010,9 +2150,11 @@ function ProfileSidebar({
   profile,
   initials,
   pageTabs,
+  showAvatar,
 }: {
   profile: ProfileLite;
   initials: string;
+  showAvatar: boolean;
   pageTabs?: React.ReactNode;
 }) {
   const qc = useQueryClient();
@@ -2036,49 +2178,51 @@ function ProfileSidebar({
 
   return (
     <>
-      <div className="relative">
-        <button
-          type="button"
-          onClick={() => fileRef.current?.click()}
-          aria-label="Change avatar"
-          data-onboarding-target="avatar"
-          className="group relative block"
-        >
-          {profile?.avatar_url ? (
-            <DecodedImage
-              src={profile.avatar_url}
-              alt=""
-              width={640}
-              height={640}
-              loading="eager"
-              fetchPriority="high"
-              className="size-32 rounded-full object-cover ring-1 ring-border lg:size-40"
-            />
-          ) : (
-            <div
-              className="flex size-32 items-center justify-center rounded-full bg-foreground font-display text-5xl text-background lg:size-40"
-              style={{
-                fontFamily: "var(--font-user-headline, var(--font-ui-display))",
-              }}
-            >
-              {initials}
+      {showAvatar && (
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            aria-label="Change avatar"
+            data-onboarding-target="avatar"
+            className="group relative block"
+          >
+            {profile?.avatar_url ? (
+              <DecodedImage
+                src={profile.avatar_url}
+                alt=""
+                width={640}
+                height={640}
+                loading="eager"
+                fetchPriority="high"
+                className="size-32 rounded-full object-cover ring-1 ring-border lg:size-40"
+              />
+            ) : (
+              <div
+                className="flex size-32 items-center justify-center rounded-full bg-foreground font-display text-5xl text-background lg:size-40"
+                style={{
+                  fontFamily: "var(--font-user-headline, var(--font-ui-display))",
+                }}
+              >
+                {initials}
+              </div>
+            )}
+            <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 text-white opacity-0 transition group-hover:opacity-100">
+              <Camera className="size-6" />
             </div>
-          )}
-          <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 text-white opacity-0 transition group-hover:opacity-100">
-            <Camera className="size-6" />
-          </div>
-        </button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) upload(f);
-          }}
-        />
-      </div>
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) upload(f);
+            }}
+          />
+        </div>
+      )}
 
       <div className="mt-4 flex items-center gap-1.5">
         <EditableText

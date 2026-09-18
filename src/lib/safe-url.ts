@@ -1,5 +1,3 @@
-import { configuredAppOrigin, DEFAULT_APP_ORIGIN, DEFAULT_PUBLIC_ORIGIN } from "./application-urls";
-
 const PRIVATE_DOMAIN_SUFFIXES = [
   ".internal",
   ".intranet",
@@ -189,17 +187,25 @@ function isTrustedApplicationOrigin(url: URL) {
 }
 
 export function trustedApplicationOrigin(current: unknown, configured?: unknown) {
-  const configuredOrigin = configuredAppOrigin(
-    typeof configured === "string" ? configured : undefined,
-  );
-  if (typeof configured === "string" && configured.trim()) return configuredOrigin;
   if (typeof current === "string") {
     try {
-      const url = new URL(current);
-      if (isTrustedApplicationOrigin(url)) return url.origin;
+      const currentUrl = new URL(current);
+      if (typeof configured === "string" && configured.trim()) {
+        const configuredOrigin = configuredAppOrigin(configured);
+        if (
+          currentUrl.origin === configuredOrigin &&
+          !currentUrl.username &&
+          !currentUrl.password &&
+          ["http:", "https:"].includes(currentUrl.protocol)
+        ) {
+          return configuredOrigin;
+        }
+      }
+      if (isTrustedApplicationOrigin(currentUrl)) return currentUrl.origin;
     } catch {
-      // Fall back to the local-safe application origin.
+      // Fall through to the local-safe origin.
     }
   }
   return DEFAULT_APP_ORIGIN;
 }
+import { configuredAppOrigin, DEFAULT_APP_ORIGIN, DEFAULT_PUBLIC_ORIGIN } from "./application-urls";

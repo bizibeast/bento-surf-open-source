@@ -1,4 +1,4 @@
-import { configuredAppOrigin } from "@/lib/application-urls";
+import { loadAutoDmMetrics } from "./auto-dm-metrics.server";
 /* eslint-disable @typescript-eslint/no-explicit-any -- New service-role tables are typed after the migration is deployed. */
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
@@ -94,11 +94,12 @@ async function dashboard(userId: string, plan?: PlanId) {
     throw new Error("Unable to load X automations.");
   }
 
+  const metrics = await loadAutoDmMetrics(userId, "twitter");
   const byId = new Map(connections.map((connection) => [connection.id, connection]));
   return {
     locked: false,
     plan: resolvedPlan,
-    webhookUrl: `${configuredAppOrigin(process.env.VITE_APP_URL)}/api/webhooks/twitter`,
+    webhookUrl: `${(process.env.VITE_APP_URL?.trim() || "http://localhost:8080").replace(/\/$/, "")}/api/webhooks/twitter`,
     configured: Boolean(
       process.env.X_CLIENT_ID &&
       process.env.X_CLIENT_SECRET &&
@@ -133,6 +134,7 @@ async function dashboard(userId: string, plan?: PlanId) {
         connectionNeedsReconnect: readiness.needsReconnect,
         connectionReadinessMessage: twitterConnectionReadinessMessage(readiness.issues),
         connectionLastVerifiedAt: connection?.last_verified_at || null,
+        metrics: metrics.get(row.id),
         name: row.name,
         triggerType: row.trigger_type,
         keywords: row.keywords || [],
@@ -145,6 +147,7 @@ async function dashboard(userId: string, plan?: PlanId) {
     }),
     activity: (events || []).map((row: any): TwitterDmActivity => ({
       id: row.id,
+      automationId: row.automation_id || null,
       automationName: row.automation?.name || null,
       eventType: row.event_type,
       senderLabel: row.sender_username ? `@${row.sender_username}` : "X user",

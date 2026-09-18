@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { PublicCreatorChrome } from "@/lib/public-creator-chrome.server";
 import { render, screen } from "@testing-library/react";
 import { getRouter } from "@/router";
 import {
@@ -19,6 +20,20 @@ import {
 } from "@/lib/open-graph";
 
 vi.mock("@/components/patterns/PatternBackdrop", () => ({ PatternBackdrop: () => null }));
+beforeEach(() => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(680);
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 const creator = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -246,6 +261,75 @@ describe("public newsletter routes", () => {
     render(
       <PublicNewsletterDirectoryContent
         data={{
+          chrome: {
+            creator: {
+              ...creator,
+              theme: "dark",
+              bio: "Helping creators publish",
+              cover_url: null,
+              header_mode: "no_banner",
+              is_pro: true,
+              onboarded: true,
+              noindex: false,
+              plan_id: "creator",
+              badge_hidden: false,
+              calendar_page_enabled: false,
+              calendar_page_name: "Calendar",
+              social_insights_enabled: false,
+              store_page_enabled: false,
+              meta_title: null,
+              meta_description: null,
+              updated_at: "2026-09-05",
+            },
+            pages: [
+              {
+                id: "newsletter-page",
+                position: 0,
+                updated_at: "2026-09-05",
+                name: "Newsletters",
+                href: "/@ari/newsletters",
+                slug: "newsletters",
+                url: null,
+                system: "newsletter",
+              },
+              {
+                id: "about",
+                position: 1,
+                updated_at: "2026-09-05",
+                name: "About",
+                href: "/@ari/about",
+                slug: "about",
+                url: null,
+                system: null,
+              },
+            ],
+            customDomain: null,
+          } as PublicCreatorChrome,
+          page: { id: "newsletter-page" },
+          blocks: [],
+          systemLayout: [],
+          systemItems: [
+            {
+              key: "publication:studio",
+              pageId: "newsletter-page",
+              kind: "publication",
+              system: "newsletter",
+              title: "Studio Notes",
+              data: { slug: "studio-notes", description: "Studio dispatches" },
+              defaultW: 4,
+              defaultH: 2,
+            },
+            {
+              key: "publication:product",
+              pageId: "newsletter-page",
+              kind: "publication",
+              system: "newsletter",
+              title: "Product Notes",
+              data: { slug: "product-notes", description: "Product updates" },
+              defaultW: 4,
+              defaultH: 2,
+            },
+          ],
           creator: {
             username: "ari",
             displayName: "Ari",
@@ -261,6 +345,9 @@ describe("public newsletter routes", () => {
     );
 
     expect(screen.getByRole("region", { name: "Publications" })).toBeVisible();
+    expect(document.querySelector("aside > p")).toHaveTextContent("Ari");
+    expect(screen.getByText("Helping creators publish")).toBeVisible();
+    expect(screen.getByRole("link", { name: "About" })).toHaveAttribute("href", "/@ari/about");
     expect(screen.getByRole("link", { name: /Studio Notes/ })).toHaveAttribute(
       "href",
       "/@ari/newsletters/studio-notes",
@@ -334,17 +421,86 @@ describe("public newsletter routes", () => {
     );
   });
 
+  it("keeps the shared creator shell on newsletter publication details", () => {
+    const newsletterPage = {
+      id: "newsletter-page",
+      position: 1,
+      updated_at: "2026-09-05",
+      name: "Newsletters",
+      href: "/@ari/newsletters",
+      slug: "newsletters",
+      url: null,
+      system: "newsletter" as const,
+    };
+    const chrome = {
+      creator: {
+        ...creator,
+        bio: "Helping creators publish",
+        cover_url: null,
+        header_mode: "with_photo",
+        is_pro: true,
+        onboarded: true,
+        noindex: false,
+        plan_id: "creator",
+        badge_hidden: false,
+        calendar_page_enabled: false,
+        calendar_page_name: "Calendar",
+        social_insights_enabled: false,
+        store_page_enabled: false,
+        meta_title: null,
+        meta_description: null,
+        updated_at: "2026-09-05",
+      },
+      pages: [
+        {
+          id: "about",
+          position: 0,
+          updated_at: "2026-09-05",
+          name: "About",
+          href: "/@ari/about",
+          slug: "about",
+          url: null,
+          system: null,
+        },
+        newsletterPage,
+      ],
+      customDomain: null,
+    } as PublicCreatorChrome;
+    const archiveData = {
+      chrome,
+      activePageId: newsletterPage.id,
+      creator: { username: "ari", displayName: "Ari" },
+      publication: {
+        title: "Studio Notes",
+        slug: "studio-notes",
+        description: "Notes from the studio",
+        postalAddress: "Bengaluru, India",
+      },
+      paidProduct: null,
+      issues: [],
+    };
+
+    render(<PublicNewsletterArchiveContent emailCaptureInteractive data={archiveData as never} />);
+    expect(document.querySelector("aside > p")).toHaveTextContent("Ari");
+    expect(screen.getByText("Helping creators publish")).toBeVisible();
+    expect(screen.getByRole("link", { name: "About" })).toHaveAttribute("href", "/@ari/about");
+    expect(screen.getByRole("link", { name: "Newsletters" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
   it("emits canonical sanitized social metadata and noindexes paid teasers", () => {
     const directoryHead = publicNewsletterDirectoryHead(
       {
         creator: { username: "ari", displayName: "Ari" },
         publications: [{ title: "Studio Notes" }, { title: "Product Notes" }],
       },
-      "https://bento.surf",
+      "http://localhost:8080",
     );
     expect(directoryHead.links).toContainEqual({
       rel: "canonical",
-      href: "https://bento.surf/@ari/newsletters",
+      href: "http://localhost:8080/@ari/newsletters",
     });
     const archiveHead = publicNewsletterArchiveHead(
       {
@@ -355,15 +511,15 @@ describe("public newsletter routes", () => {
           description: "Notes <b>weekly</b>",
         },
       },
-      "https://bento.surf",
+      "http://localhost:8080",
     );
     expect(archiveHead.links).toContainEqual({
       rel: "canonical",
-      href: "https://bento.surf/@ari/newsletters/studio-notes",
+      href: "http://localhost:8080/@ari/newsletters/studio-notes",
     });
     expect(archiveHead.meta).toContainEqual({
       property: "og:url",
-      content: "https://bento.surf/@ari/newsletters/studio-notes",
+      content: "http://localhost:8080/@ari/newsletters/studio-notes",
     });
     expect(JSON.stringify(archiveHead)).not.toContain("<script>");
 
@@ -378,11 +534,11 @@ describe("public newsletter routes", () => {
           visibility: "paid",
         },
       },
-      "https://bento.surf",
+      "http://localhost:8080",
     );
     expect(issueHead.links).toContainEqual({
       rel: "canonical",
-      href: "https://bento.surf/@ari/newsletters/studio-notes/members-only",
+      href: "http://localhost:8080/@ari/newsletters/studio-notes/members-only",
     });
     expect(issueHead.meta).toContainEqual({
       name: "robots",

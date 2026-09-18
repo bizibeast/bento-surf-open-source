@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
+import { getPlan } from "./plan.server";
 
 vi.mock("./request-security.server", () => ({ enforceRequestRateLimit: vi.fn() }));
 vi.mock("./plan.server", () => ({
@@ -20,6 +21,8 @@ import {
   mutateBlock,
   mutateCalendar,
   mutatePage,
+  updateCreatorProfile,
+  getProfileWorkspace,
   mutateProduct,
   mergeMcpBlockContent,
   mergeMcpProductDraft,
@@ -30,6 +33,227 @@ const context: CreatorMcpContext = {
   userId: "00000000-0000-4000-8000-000000000001",
   supabase: {} as SupabaseClient<Database>,
 };
+
+describe("MCP owned-page behavior", () => {
+  function clientFor(pageRows: any[] = []) {
+    const rows: Record<string, any[]> = {
+      pages: pageRows,
+      blocks: [],
+      newsletter_publications: [],
+      profiles: [
+        {
+          id: context.userId,
+          username: "owner",
+          calendar_page_enabled: false,
+          calendar_page_name: "Calendar",
+        },
+      ],
+    };
+    const calls: any[] = [];
+    const client = {
+      from: (table: string) => {
+        const state: any = { table, filters: [], action: "select" };
+        calls.push(state);
+        const result = () => {
+          let matches = (rows[table] ?? []).filter((row) =>
+            state.filters.every(([key, value]: any[]) =>
+              Array.isArray(value) ? value.includes(row[key]) : row[key] === value,
+            ),
+          );
+          if (state.desc) matches = [...matches].sort((a, b) => b.position - a.position);
+          if (state.action === "insert") {
+            const row = { id: "22222222-2222-4222-8222-222222222222", ...state.value };
+            rows[table].push(row);
+            matches = [row];
+          }
+          if (state.action === "update") matches.forEach((row) => Object.assign(row, state.value));
+          if (state.action === "delete")
+            rows[table] = rows[table].filter((row) => !matches.includes(row));
+          return {
+            data: state.single
+              ? matches[0]
+                ? { ...matches[0] }
+                : null
+              : matches.map((row) => ({ ...row })),
+            count: matches.length,
+            error: null,
+          };
+        };
+        const query: any = {
+          select: () => query,
+          eq: (key: string, value: any) => {
+            state.filters.push([key, value]);
+            return query;
+          },
+          is: (key: string, value: any) => {
+            state.filters.push([key, value]);
+            return query;
+          },
+          neq: () => query,
+          in: (key: string, value: any) => {
+            state.filters.push([key, value]);
+            return query;
+          },
+          order: (_key: string, options: any) => {
+            state.desc = options?.ascending === false;
+            return query;
+          },
+          limit: () => query,
+          update: (value: any) => {
+            state.action = "update";
+            state.value = value;
+            return query;
+          },
+          insert: (value: any) => {
+            state.action = "insert";
+            state.value = value;
+            return query;
+          },
+          delete: () => {
+            state.action = "delete";
+            return query;
+          },
+          single: async () => {
+            state.single = true;
+            return result();
+          },
+          maybeSingle: async () => {
+            state.single = true;
+            return result();
+          },
+          then: (resolve: any) => Promise.resolve(result()).then(resolve),
+        };
+        return query;
+      },
+    };
+    return {
+      ctx: { ...context, supabase: client as unknown as SupabaseClient<Database> },
+      rows,
+      calls,
+    };
+  }
+  const systemRow = () => ({
+    id: "11111111-1111-4111-8111-111111111111",
+    user_id: context.userId,
+    system: "calendar",
+    slug: "__system_calendar",
+    name: "Calendar",
+    position: 3,
+    url: null,
+  });
+
+  it("rejects system deletion and preserves its row", async () => {
+    const test = clientFor([systemRow()]);
+    await expect(mutatePage(test.ctx, { action: "delete", id: systemRow().id })).rejects.toThrow(
+      "Hide system pages from their page settings.",
+    );
+    expect(test.rows.pages).toHaveLength(1);
+  });
+  it("renames a system label without rewriting its slug", async () => {
+    const test = clientFor([systemRow()]);
+    await expect(
+      mutatePage(test.ctx, { action: "rename", id: systemRow().id, name: "Office hours" }),
+    ).resolves.toMatchObject({ name: "Office hours", slug: "__system_calendar" });
+  });
+  it("excludes system and external rows from hosted quotas and permits external links at the limit", async () => {
+    vi.mocked(getPlan).mockResolvedValueOnce("free").mockResolvedValueOnce("free");
+    const test = clientFor([
+      systemRow(),
+      ...Array.from({ length: 6 }, (_, i) => ({
+        id: `external-${i}`,
+        user_id: context.userId,
+        system: null,
+        url: "https://example.com",
+        slug: `external-${i}`,
+        position: i + 4,
+      })),
+    ]);
+    await expect(mutatePage(test.ctx, { action: "create", name: "About" })).resolves.toMatchObject({
+      slug: "about",
+      position: 10,
+    });
+    test.rows.pages.push(
+      ...Array.from({ length: 4 }, (_, i) => ({
+        id: `hosted-${i}`,
+        user_id: context.userId,
+        system: null,
+        url: null,
+        slug: `hosted-${i}`,
+        position: 11 + i,
+      })),
+    );
+    await expect(
+      mutatePage(test.ctx, { action: "create", name: "Outside", url: "https://example.org" }),
+    ).resolves.toMatchObject({ url: "https://example.org" });
+  });
+  it("synchronizes MCP calendar visibility and name into the same owned row", async () => {
+    const test = clientFor([systemRow()]);
+    adminFrom.mockImplementation(test.ctx.supabase.from);
+    await mutateCalendar(test.ctx, { action: "set_public_page", enabled: true });
+    expect(test.rows.pages[0]).toMatchObject({ is_visible: true });
+    await mutateCalendar(test.ctx, { action: "rename_public_page", name: "Office hours" });
+    expect(test.rows.pages[0]).toMatchObject({ name: "Office hours", slug: "__system_calendar" });
+  });
+
+  it.each(["update", "delete"])(
+    "reconciles MCP homepage signup creation and %s",
+    async (action) => {
+      const test = clientFor([
+        { ...systemRow(), system: "newsletter", slug: "__system_newsletter", is_visible: false },
+      ]);
+      test.rows.newsletter_publications.push({
+        id: systemRow().id,
+        creator_id: context.userId,
+        status: "published",
+      });
+      const block = (await mutateBlock(test.ctx, {
+        action: "create",
+        type: "email_capture",
+        content: { newsletterPublicationId: systemRow().id },
+      })) as any;
+      expect(test.rows.pages[0].is_visible).toBe(true);
+      await mutateBlock(test.ctx, {
+        action,
+        id: block.id,
+        ...(action === "update" ? { content: { newsletterPublicationId: null } } : {}),
+      });
+      expect(test.rows.pages[0].is_visible).toBe(false);
+    },
+  );
+
+  it("uses the shared Store gate and owned row for MCP profile updates", async () => {
+    const test = clientFor([
+      { ...systemRow(), system: "store", slug: "__system_store", is_visible: false },
+    ]);
+    vi.mocked(getPlan).mockResolvedValueOnce("free");
+    await expect(updateCreatorProfile(test.ctx, { store_page_enabled: true })).rejects.toThrow(
+      "Upgrade",
+    );
+    expect(test.rows.pages[0].is_visible).toBe(false);
+    vi.mocked(getPlan).mockResolvedValueOnce("store");
+    await updateCreatorProfile(test.ctx, { store_page_enabled: true });
+    expect(test.rows.profiles[0].store_page_enabled).toBe(true);
+    expect(test.rows.pages[0].is_visible).toBe(true);
+    await updateCreatorProfile(test.ctx, { store_page_enabled: false });
+    expect(test.rows.pages[0].is_visible).toBe(false);
+  });
+
+  it("uses hosted-only counts in the MCP profile workspace", async () => {
+    const test = clientFor([
+      systemRow(),
+      { id: "external", user_id: context.userId, system: null, url: "https://example.org" },
+      { id: "hosted", user_id: context.userId, system: null, url: null },
+    ]);
+    adminFrom.mockImplementation(test.ctx.supabase.from);
+    const result = await getProfileWorkspace(test.ctx);
+    expect(test.calls.find((call) => call.table === "pages").filters).toEqual([
+      ["user_id", context.userId],
+      ["system", null],
+      ["url", null],
+    ]);
+    expect(result.usage.pages).toBe(2);
+  });
+});
 
 describe("Bento MCP creator-operation validation", () => {
   beforeEach(() => adminFrom.mockReset());

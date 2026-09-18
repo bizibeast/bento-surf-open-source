@@ -87,6 +87,7 @@ describe("commerce fulfillment helpers", () => {
         { stripe_checkout_session_id: "cs_123" },
       ),
     ).toEqual({
+      newsletter_opt_in: false,
       stripe_checkout_session_id: "cs_123",
       buyer_answers: [{ question: "Company", answer: "Bento" }],
     });
@@ -135,6 +136,7 @@ describe("commerce fulfillment helpers", () => {
         },
       ),
     ).toEqual({
+      newsletter_opt_in: false,
       stripe_checkout_session_id: "cs_123",
       buyer_answers: [{ question: "Priority follow-up", answer: "Forged question" }],
     });
@@ -155,7 +157,7 @@ describe("commerce fulfillment helpers", () => {
           stripe_checkout_session_id: "cs_123",
         },
       ),
-    ).toEqual({ stripe_checkout_session_id: "cs_123" });
+    ).toEqual({ newsletter_opt_in: false, stripe_checkout_session_id: "cs_123" });
   });
 
   it("preserves the paid follow-up message-table character limit", () => {
@@ -214,4 +216,17 @@ describe("commerce fulfillment helpers", () => {
     ).rejects.toThrow("payment session could not be finalized");
     expect(mocks.enqueueCommerceOrderEmails).not.toHaveBeenCalled();
   });
+});
+
+it("takes newsletter consent only from the server-created checkout, never provider metadata", () => {
+  expect(
+    commerceOrderMetadata({
+      id: "s",
+      provider: "dodo",
+      attribution: { newsletter_opt_in: "true" },
+    }),
+  ).toMatchObject({ newsletter_opt_in: true });
+  expect(
+    commerceOrderMetadata({ id: "s", provider: "dodo" }, { newsletter_opt_in: true }),
+  ).toMatchObject({ newsletter_opt_in: false });
 });

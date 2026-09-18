@@ -186,14 +186,20 @@ function CommunityWorkspace() {
       <AppHeader
         title="Community"
         actions={
-          <Link
-            to="/store"
-            search={{ tab: "products", create: "paid_community", edit: undefined }}
-            className={micro.btnPrimaryCompact}
-          >
-            <Plus className="size-4" />
-            <span className="hidden sm:inline">New community</span>
-          </Link>
+          data.locked ? (
+            <Link to="/settings" search={{ section: "plan" }} className={micro.btnPrimaryCompact}>
+              Upgrade
+            </Link>
+          ) : (
+            <Link
+              to="/store"
+              search={{ tab: "products", create: "paid_community", edit: undefined }}
+              className={micro.btnPrimaryCompact}
+            >
+              <Plus className="size-4" />
+              <span className="hidden sm:inline">New community</span>
+            </Link>
+          )
         }
       />
 

@@ -1,7 +1,4 @@
 import { defineConfig, loadEnv } from "vite";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { parseConfigFileTextToJson } from "typescript";
 import tailwindcss from "@tailwindcss/vite";
 import tsConfigPaths from "vite-tsconfig-paths";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
@@ -13,22 +10,10 @@ export default defineConfig(({ mode, command }) => {
   // SSR/server bundles.
   const env = loadEnv(mode, process.cwd(), "VITE_");
   const privateEnv = loadEnv(mode, process.cwd(), "");
-  const wranglerResult = parseConfigFileTextToJson(
-    "wrangler.jsonc",
-    readFileSync(resolve(process.cwd(), "wrangler.jsonc"), "utf8"),
-  );
-  if (wranglerResult.error) throw new Error("wrangler.jsonc is not valid JSONC.");
-  const wranglerVars = (wranglerResult.config?.vars ?? {}) as Record<string, string>;
   env.VITE_APP_ENV = mode === "staging" ? "staging" : "production";
   env.VITE_APP_NAME = env.VITE_APP_NAME?.trim() || "Bento Surf";
-  env.VITE_APP_URL =
-    env.VITE_APP_URL?.trim() ||
-    (command === "build" ? wranglerVars.VITE_APP_URL?.trim() : "") ||
-    "http://localhost:8080";
-  env.VITE_PUBLIC_URL =
-    env.VITE_PUBLIC_URL?.trim() ||
-    (command === "build" ? wranglerVars.VITE_PUBLIC_URL?.trim() : "") ||
-    "http://localhost:8080";
+  env.VITE_APP_URL = env.VITE_APP_URL?.trim() || "http://localhost:8080";
+  env.VITE_PUBLIC_URL = env.VITE_PUBLIC_URL?.trim() || "http://localhost:8080";
   const uploadPostHogSourceMaps =
     command === "build" &&
     mode === "production" &&

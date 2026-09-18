@@ -1,4 +1,3 @@
-import { configuredAppOrigin } from "@/lib/application-urls";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Creem responses are normalized at the API boundary. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { decryptServerSecret } from "@/lib/secret-crypto.server";
@@ -106,7 +105,7 @@ export async function creemCredentialFingerprint(apiKey: string, environment: Cr
 }
 
 export function creemWebhookUrl(connectionId: string) {
-  const origin = configuredAppOrigin(process.env.VITE_APP_URL);
+  const origin = (process.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "");
   return `${origin}/api/webhooks/creem/direct/${encodeURIComponent(connectionId)}`;
 }
 

@@ -4,7 +4,6 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { enforceRequestRateLimit } from "./request-security.server";
-import { configuredAppOrigin, configuredPublicOrigin } from "./application-urls";
 import {
   PUBLIC_SOCIAL_PROVIDERS,
   deriveSocialPostStatus,
@@ -34,6 +33,7 @@ import {
 } from "./social-oauth.functions";
 import { fetchInstagramAccountProfile } from "./instagram-auto-dm.server";
 import { durableSocialAvatarUrl } from "./social-avatar.server";
+import { configuredAppOrigin, configuredPublicOrigin } from "./application-urls";
 import { requirePlanEntitlement } from "./plan.server";
 import { getPlan } from "./plan.server";
 import { planHasEntitlement, type PlanId } from "./plans";
@@ -46,7 +46,13 @@ const requireScheduler = (userId: string) =>
   );
 
 function connectionFromRow(row: any): SchedulerConnection {
-  const canPublish = socialConnectionCanPublish(row.provider, row.scopes);
+  const needsReconnect = row.status !== "active" || Boolean(row.reauth_required);
+  const canPublish = socialConnectionCanPublish(
+    row.provider,
+    row.scopes,
+    row.status,
+    Boolean(row.reauth_required),
+  );
   return {
     id: row.id,
     provider: row.provider,
@@ -58,7 +64,9 @@ function connectionFromRow(row: any): SchedulerConnection {
     canPublish,
     publishBlockReason: canPublish
       ? null
-      : "Reconnect Instagram from the scheduler and approve publishing access.",
+      : needsReconnect
+        ? "Reconnect this account before publishing."
+        : "Reconnect Instagram from the scheduler and approve publishing access.",
   };
 }
 
@@ -140,7 +148,7 @@ async function schedulerData(userId: string, plan?: PlanId) {
     db
       .from("social_connections")
       .select(
-        "id, provider, provider_handle, provider_display_name, provider_avatar_url, status, scopes, created_at",
+        "id, provider, provider_handle, provider_display_name, provider_avatar_url, status, scopes, reauth_required, created_at",
       )
       .eq("user_id", userId)
       .order("created_at", { ascending: true }),
@@ -329,14 +337,18 @@ export const saveSocialPost = createServerFn({ method: "POST" })
     const db = supabaseAdmin as any;
     const { data: connections, error: connectionError } = await db
       .from("social_connections")
-      .select("id, provider, status, scopes")
+      .select("id, provider, status, scopes, reauth_required")
       .eq("user_id", context.userId)
       .in("id", data.connectionIds);
     if (connectionError) throw new Error("Connected accounts could not be verified.");
     if ((connections || []).length !== new Set(data.connectionIds).size) {
       throw new Error("One or more selected accounts are unavailable.");
     }
-    if (connections.some((connection: any) => connection.status !== "active")) {
+    if (
+      connections.some(
+        (connection: any) => connection.status !== "active" || connection.reauth_required,
+      )
+    ) {
       throw new Error("Reconnect expired accounts before scheduling.");
     }
     if (connections.some((connection: any) => !isPublicSocialProvider(connection.provider))) {
@@ -344,7 +356,13 @@ export const saveSocialPost = createServerFn({ method: "POST" })
     }
     if (
       connections.some(
-        (connection: any) => !socialConnectionCanPublish(connection.provider, connection.scopes),
+        (connection: any) =>
+          !socialConnectionCanPublish(
+            connection.provider,
+            connection.scopes,
+            connection.status,
+            Boolean(connection.reauth_required),
+          ),
       )
     ) {
       throw new Error(

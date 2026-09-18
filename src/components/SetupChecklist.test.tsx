@@ -31,6 +31,13 @@ describe("SetupChecklist", () => {
       />,
     );
 
+    expect(
+      screen.getByRole("button", { name: "Open setup checklist, 0 of 6 complete" }),
+    ).toHaveClass(
+      "left-[calc(var(--app-sidebar-width)+1rem)]",
+      "transition-[left,background-color]",
+    );
+
     fireEvent.click(screen.getByRole("button", { name: "Open setup checklist, 0 of 6 complete" }));
 
     expect(screen.getByRole("heading", { name: "Your setup checklist" })).toBeInTheDocument();

@@ -39,6 +39,78 @@ export type Block = {
   cover_url?: string | null;
 };
 
+const hasText = (value: unknown) => typeof value === "string" && value.trim().length > 0;
+
+/** Public pages omit unfinished editor blocks instead of publishing setup prompts. */
+// eslint-disable-next-line react-refresh/only-export-components
+export function isCompletePublicBlock(block: Block) {
+  const c = block.content || {};
+
+  switch (block.type) {
+    case "heading":
+    case "section_title":
+    case "note":
+      return hasText(c.text);
+    case "quote":
+      return hasText(c.text) || hasText(c.title);
+    case "social_link":
+      return hasText(c.handle) || Boolean(safeNavigationHref(c.url, { allowRelative: true }));
+    case "generic_link":
+      return c.kind === "widget" || c.widgetUrl
+        ? Boolean(extractWidgetUrl(c.widgetUrl ?? c.url ?? ""))
+        : Boolean(safeNavigationHref(c.url, { allowRelative: true }));
+    case "image":
+      return Boolean(safeMediaUrl(c.url));
+    case "image_gallery":
+      return (
+        (hasText(c.platform) && hasText(c.handle)) ||
+        (Array.isArray(c.urls) && c.urls.some((url: unknown) => Boolean(safeMediaUrl(url))))
+      );
+    case "video": {
+      if (c.liveProvider === "youtube") return hasText(c.handle);
+      const provider = socialEmbedProviderFromContent(c);
+      const source = String(c.originalUrl || c.url || "");
+      return Boolean(provider ? socialEmbedUrl(provider, source) : safeMediaUrl(c.url));
+    }
+    case "spotify":
+      return Boolean(safeSpotifyEmbedUrl(c.url));
+    case "audio":
+      return Boolean(safeMediaUrl(c.url));
+    case "link_preview":
+    case "booking":
+      return Boolean(safeNavigationHref(c.url, { allowRelative: true }));
+    case "map": {
+      const lat = Number(c.mapLat);
+      const lng = Number(c.mapLng);
+      const zoom = Number(c.mapZoom);
+      return (
+        hasText(c.location) ||
+        (Number.isFinite(lat) &&
+          lat >= -90 &&
+          lat <= 90 &&
+          Number.isFinite(lng) &&
+          lng >= -180 &&
+          lng <= 180 &&
+          Number.isFinite(zoom) &&
+          zoom >= 2 &&
+          zoom <= 18)
+      );
+    }
+    case "contact":
+      return hasText(c.value);
+    case "experience":
+      return (
+        Array.isArray(c.items) &&
+        c.items.some((item: unknown) => {
+          if (!item || typeof item !== "object") return false;
+          return hasText((item as { company?: unknown }).company);
+        })
+      );
+    default:
+      return true;
+  }
+}
+
 type BlockRendererProps = {
   block: Block;
   mapInteractive?: boolean;

@@ -1,9 +1,9 @@
+import { BentoFullLogo } from "@/components/BentoBrand";
 import { createFileRoute, notFound, redirect } from "@tanstack/react-router";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 import {
-  ArrowLeft,
   ArrowRight,
   BadgePercent,
   Check,
@@ -23,9 +23,10 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { DecodedImage } from "@/components/DecodedImage";
-import { FontApplier } from "@/components/FontApplier";
+import { productWebsite, downloadBenefit, productAccentTextColor } from "@/lib/product-website";
 import {
   createCommerceCheckout,
+  getCommerceAccess,
   getPublicCommerceProduct,
   previewCommerceCheckout,
   recordCommerceAffiliateClick,
@@ -44,7 +45,6 @@ import { calculateCommerceCheckoutQuote, type CommerceCheckoutQuote } from "@/li
 import { captureProductEvent } from "@/lib/posthog";
 import { safeMediaUrl, safeNavigationHref } from "@/lib/safe-url";
 import {
-  configuredPublicOrigin,
   normalizePublicUsername,
   publicProductPath,
   publicProfileUrl,
@@ -52,7 +52,6 @@ import {
 import { readCheckoutRecovery, writeCheckoutRecovery } from "@/lib/checkout-recovery";
 import { publicProductHead } from "@/lib/open-graph";
 import { browserTimeZone } from "@/lib/timezones";
-import { BentoFullLogo } from "@/components/BentoBrand";
 import {
   requireWebMcpUserConfirmation,
   useWebMcpTools,
@@ -114,6 +113,8 @@ function PublicProductPage() {
   const [timeZone, setTimeZone] = useState("UTC");
   useEffect(() => setTimeZone(browserTimeZone()), []);
   const { product, creator } = data;
+  const website = productWebsite(product.settings?.website);
+  const brand = website.brand || creator.display_name || creator.username;
   const definition = commerceKind(product.kind);
   const Icon = PRODUCT_ICONS[product.kind as CommerceProductKind];
   const coverUrl = safeMediaUrl(product.cover_url);
@@ -168,95 +169,90 @@ function PublicProductPage() {
   useWebMcpTools(webMcpTools);
 
   return (
-    <div className="min-h-screen bg-[#f7f8fc] text-[#17213a]">
-      <FontApplier headline={creator.secondary_font} body={creator.primary_font} />
-      <div className="pointer-events-none fixed -left-20 -top-24 size-80 rounded-full bg-[#dceaff] blur-2xl" />
-      <div className="pointer-events-none fixed -bottom-32 right-[-4rem] size-96 rounded-full bg-[#ffc928]/20 blur-3xl" />
-      <header className="relative z-10 border-b border-black/[0.05] bg-white/65 backdrop-blur-xl">
-        <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4 sm:px-6">
+    <div
+      data-product-website
+      className="min-h-screen overflow-x-clip pb-24 font-sans text-[#17213a] lg:pb-0"
+      style={
+        {
+          background:
+            website.background === "white"
+              ? "#ffffff"
+              : website.background === "blue"
+                ? "#f0f5ff"
+                : "#faf8f4",
+          "--product-accent": website.accent,
+        } as React.CSSProperties
+      }
+    >
+      <header className="border-b border-black/[0.06]">
+        <div className="mx-auto flex min-h-20 max-w-7xl items-center justify-between gap-5 px-5 sm:px-10">
           <a
             href={publicProfileUrl(creator.username, null, import.meta.env.VITE_PUBLIC_URL)}
-            className="inline-flex size-10 items-center justify-center rounded-2xl border border-black/[0.07] bg-white"
-            aria-label="Back to storefront"
+            className="min-w-0 truncate text-lg font-semibold tracking-tight"
           >
-            <ArrowLeft className="size-4" />
+            {brand}
           </a>
-          <a
-            href={publicProfileUrl(creator.username, null, import.meta.env.VITE_PUBLIC_URL)}
-            className="flex min-w-0 items-center gap-3"
+          <nav
+            aria-label="Product navigation"
+            className="flex shrink-0 items-center gap-5 text-sm font-medium"
           >
-            {safeMediaUrl(creator.avatar_url) ? (
-              <DecodedImage
-                src={safeMediaUrl(creator.avatar_url)!}
-                alt=""
-                width={144}
-                height={144}
-                loading="eager"
-                className="size-9 rounded-full object-cover"
-              />
-            ) : (
-              <span className="flex size-9 items-center justify-center rounded-full bg-[#17213a] font-display text-white">
-                {String(creator.display_name || creator.username)
-                  .slice(0, 1)
-                  .toUpperCase()}
-              </span>
+            {benefits.length > 0 && (
+              <a className="hidden hover:underline sm:inline" href="#included">
+                What's included
+              </a>
             )}
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold">
-                {creator.display_name || creator.username}
-              </div>
-              <div className="truncate text-[11px] text-[#17213a]/42">
-                bento.surf/@{creator.username}
-              </div>
-            </div>
-          </a>
-          <a
-            href={configuredPublicOrigin(import.meta.env.VITE_PUBLIC_URL)}
-            aria-label="Bento Surf home"
-            className="ml-auto"
-          >
-            <BentoFullLogo className="h-6 w-auto" />
-          </a>
-        </div>
-      </header>
-
-      <main className="relative z-10 mx-auto grid w-full min-w-0 max-w-6xl gap-8 px-4 py-8 sm:px-6 sm:py-12 lg:grid-cols-[1.1fr_0.78fr] lg:items-start">
-        <div className="min-w-0">
-          <div className="overflow-hidden rounded-[36px] border border-white bg-white shadow-[0_34px_100px_-55px_rgba(23,33,58,.65)]">
-            <div
-              className="relative flex aspect-[16/10] items-start justify-between overflow-hidden p-6 sm:p-8"
+            <a
+              href="#purchase"
+              className="inline-flex items-center gap-2 rounded-lg px-4 py-2.5"
               style={{
-                background: coverUrl
-                  ? `linear-gradient(180deg,rgba(23,33,58,.02),rgba(23,33,58,.42)),url("${coverUrl.replaceAll('"', "%22")}") center/cover`
-                  : `linear-gradient(145deg,${definition.accent}2b,#f8faff 62%,#fff3c6)`,
+                background: website.accent,
+                color: productAccentTextColor(website.accent),
               }}
             >
-              <span
-                className="flex size-14 items-center justify-center rounded-[20px] shadow-lg"
-                style={{
-                  background: coverUrl ? "rgba(255,255,255,.92)" : definition.accent,
-                  color: coverUrl ? definition.accent : "white",
-                }}
-              >
-                <Icon className="size-6" />
-              </span>
-              <span className="rounded-full bg-white/88 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.15em] text-[#17213a] shadow-sm backdrop-blur-xl">
-                {definition.label}
-              </span>
-            </div>
-            <div className="p-6 sm:p-9">
-              <h1 className="font-display text-4xl leading-[1.02] sm:text-6xl">{product.title}</h1>
-              {product.subtitle && (
-                <p className="mt-4 text-lg leading-7 text-[#17213a]/55">{product.subtitle}</p>
-              )}
-              <div className="mt-7 whitespace-pre-wrap text-[15px] leading-7 text-[#17213a]/68">
+              {product.pricing_type === "free" ? "Get access" : "Get it now"}
+              <ArrowRight className="size-4" />
+            </a>
+          </nav>
+        </div>
+      </header>
+      <main className="mx-auto grid w-full min-w-0 max-w-7xl gap-10 px-5 py-12 sm:px-10 sm:py-20 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start lg:gap-16">
+        <div className="min-w-0">
+          <section className={website.layout === "centered" ? "text-center" : "text-left"}>
+            <p
+              className="mb-5 inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em]"
+              style={{ background: website.accent, color: productAccentTextColor(website.accent) }}
+            >
+              <Icon className="size-4" />
+              {definition.label}
+            </p>
+            <h1
+              className={
+                (website.font === "serif" ? "font-display" : "font-sans font-semibold") +
+                " text-balance text-5xl leading-[1.04] tracking-[-0.055em] sm:text-6xl xl:text-7xl"
+              }
+            >
+              {product.title}
+            </h1>
+            {product.subtitle && (
+              <p className="mt-6 text-xl leading-8 text-[#17213a]/65">{product.subtitle}</p>
+            )}
+            {coverUrl && (
+              <DecodedImage
+                src={coverUrl}
+                alt={product.title}
+                loading="eager"
+                className="mt-9 max-h-[540px] w-full rounded-2xl object-cover shadow-[0_24px_70px_-40px_rgba(23,33,58,.5)]"
+              />
+            )}
+            {product.description && (
+              <div className="mt-8 whitespace-pre-wrap text-base leading-8 text-[#17213a]/75">
                 {product.description}
               </div>
-            </div>
-          </div>
+            )}
+          </section>
 
           {benefits.length > 0 && (
-            <section className="mt-5 rounded-[32px] border border-black/[0.06] bg-white p-6 shadow-sm sm:p-8">
+            <section id="included" className="mt-12 border-t border-black/10 pt-8">
               <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#3478f6]">
                 What you get
               </div>
@@ -264,7 +260,7 @@ function PublicProductPage() {
                 {benefits.map((benefit: string) => (
                   <div
                     key={benefit}
-                    className="flex items-start gap-3 rounded-2xl bg-[#f7f8fc] px-4 py-3 text-sm leading-6"
+                    className="flex min-w-0 items-start gap-3 rounded-xl bg-white/70 px-4 py-4 text-sm leading-6 [overflow-wrap:anywhere]"
                   >
                     <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-[#dceaff] text-[#3478f6]">
                       <Check className="size-3" />
@@ -277,7 +273,7 @@ function PublicProductPage() {
           )}
 
           {product.kind === "course" && lessons.length > 0 && (
-            <section className="mt-5 rounded-[32px] border border-black/[0.06] bg-white p-6 shadow-sm sm:p-8">
+            <section className="mt-5 rounded-2xl border border-black/[0.06] bg-white p-6 shadow-sm sm:p-8">
               <div className="flex items-center gap-3">
                 <span className="flex size-11 items-center justify-center rounded-2xl bg-[#fff3c6] text-[#b47800]">
                   <GraduationCap className="size-5" />
@@ -339,7 +335,27 @@ function PublicProductPage() {
             </section>
           )}
 
-          <section className="mt-5 rounded-[32px] bg-[#17213a] p-6 text-white sm:p-8">
+          {website.sections.map((section) => (
+            <section key={section.id} className="mt-12 border-t border-black/10 pt-8">
+              {section.title && (
+                <h2 className="text-3xl font-semibold tracking-tight">{section.title}</h2>
+              )}
+              {section.body && (
+                <p className="mt-5 whitespace-pre-wrap text-base leading-8 text-[#17213a]/70">
+                  {section.body}
+                </p>
+              )}
+              {safeMediaUrl(section.imageUrl) && (
+                <DecodedImage
+                  src={safeMediaUrl(section.imageUrl)!}
+                  alt={section.title}
+                  loading="lazy"
+                  className="mt-6 max-h-[600px] w-full rounded-2xl object-contain"
+                />
+              )}
+            </section>
+          ))}
+          <section className="mt-12 rounded-2xl bg-[#17213a] p-6 text-white sm:p-8">
             <div className="grid gap-4 sm:grid-cols-3">
               <TrustPoint
                 icon={ShieldCheck}
@@ -360,10 +376,10 @@ function PublicProductPage() {
           </section>
         </div>
 
-        <aside className="min-w-0 lg:sticky lg:top-24">
+        <aside id="purchase" className="min-w-0 scroll-mt-8 lg:sticky lg:top-8">
           <PurchaseCard
             product={product}
-            definition={definition}
+            accent={website.accent}
             testCheckout={Boolean(data.testCheckout)}
             orderBump={data.orderBump}
             availabilityError={data.availabilityError}
@@ -371,20 +387,46 @@ function PublicProductPage() {
           />
         </aside>
       </main>
+      <a
+        href="#purchase"
+        className="fixed inset-x-4 bottom-4 z-50 flex items-center justify-between gap-4 rounded-xl px-5 py-4 text-sm font-semibold shadow-2xl lg:hidden"
+        style={{ background: website.accent, color: productAccentTextColor(website.accent) }}
+      >
+        <span>
+          {pricingLabel(
+            product.pricing_type,
+            product.price_amount,
+            product.currency,
+            product.billing_interval,
+          )}
+        </span>
+        <span className="inline-flex items-center gap-2">
+          {product.cta_label} <ArrowRight className="size-4" />
+        </span>
+      </a>
+      <footer className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 border-t border-black/10 px-5 py-8 text-xs text-[#17213a]/55 sm:px-10">
+        <span>{brand}</span>
+        <a href={publicProfileUrl(creator.username, "store", import.meta.env.VITE_PUBLIC_URL)}>
+          More from {brand}
+        </a>
+        <a href="http://localhost:8080" aria-label="Made with bento.surf">
+          <BentoFullLogo className="h-5 w-auto" />
+        </a>
+      </footer>
     </div>
   );
 }
 
 function PurchaseCard({
   product,
-  definition,
+  accent,
   testCheckout,
   orderBump,
   availabilityError,
   recordingAddonReady,
 }: {
   product: CommerceProductRecord;
-  definition: ReturnType<typeof commerceKind>;
+  accent: string;
   testCheckout: boolean;
   orderBump: {
     bump_product_id: string;
@@ -401,6 +443,17 @@ function PurchaseCard({
   recordingAddonReady: boolean;
 }) {
   const { checkout: checkoutState } = Route.useSearch();
+  const [ownedToken, setOwnedToken] = useState<string | null>(null);
+  useEffect(
+    () => setOwnedToken(window.sessionStorage.getItem("bento:product-access:" + product.id)),
+    [product.id],
+  );
+  const ownedAccess = useQuery({
+    queryKey: ["owned-product-access", product.id, ownedToken],
+    queryFn: () => getCommerceAccess({ data: { token: ownedToken! } }),
+    enabled: Boolean(ownedToken),
+    retry: false,
+  });
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [answers, setAnswers] = useState<Record<string, string>>({});
@@ -612,6 +665,7 @@ function PurchaseCard({
               email: next.email,
               name: next.name || undefined,
               recordingAddon: next.recordingAddon,
+              newsletterOptIn: next.marketingConsent,
               discountCode: next.discountCode,
               bumpProductId: next.bumpProductId,
               answers: next.answers,
@@ -703,6 +757,7 @@ function PurchaseCard({
           email,
           name: name || undefined,
           recordingAddon,
+          newsletterOptIn: marketingConsent,
           discountCode: appliedDiscountCode,
           bumpProductId,
           answers,
@@ -760,9 +815,28 @@ function PurchaseCard({
     onError: (error) => toast.error(error instanceof Error ? error.message : "Link could not open"),
   });
   const soldOut = product.inventory_limit && product.sales_count >= product.inventory_limit;
+  if (ownedToken && ownedAccess.data?.product?.id === product.id)
+    return (
+      <div className="rounded-2xl border border-black/10 bg-white p-7">
+        <h2 className="text-2xl font-semibold">Your purchase is ready</h2>
+        <p className="mt-3 text-sm text-muted-foreground">
+          You already have access to this product.
+        </p>
+        <a
+          className="mt-5 flex items-center justify-center rounded-lg bg-[#17213a] px-5 py-3 font-semibold text-white"
+          href={
+            (import.meta.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "") +
+            "/access/" +
+            ownedToken
+          }
+        >
+          Open my purchase
+        </a>
+      </div>
+    );
   if (completed)
     return (
-      <div className="rounded-[34px] border border-emerald-200 bg-emerald-50 p-7 text-emerald-900 shadow-[0_28px_80px_-52px_rgba(23,33,58,.65)]">
+      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-7 text-emerald-900 shadow-[0_28px_80px_-52px_rgba(23,33,58,.65)]">
         <span className="flex size-12 items-center justify-center rounded-full bg-emerald-500 text-white">
           <Check className="size-5" />
         </span>
@@ -771,7 +845,7 @@ function PurchaseCard({
       </div>
     );
   return (
-    <div className="overflow-hidden rounded-[34px] border border-black/[0.07] bg-white shadow-[0_28px_80px_-52px_rgba(23,33,58,.65)]">
+    <div className="overflow-hidden rounded-2xl border border-black/[0.07] bg-white shadow-[0_28px_80px_-52px_rgba(23,33,58,.65)]">
       {testCheckout && product.pricing_type !== "free" && (
         <div className="border-b border-[#3478f6]/15 bg-[#dceaff] px-6 py-3 text-center text-xs font-semibold text-[#245fd0]">
           Test checkout - no card is requested, no money is charged, and no payout is created.
@@ -809,7 +883,7 @@ function PurchaseCard({
             role="alert"
             className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900"
           >
-            This offer is temporarily unavailable. {availabilityError}
+            This offer is temporarily unavailable. Please contact the creator or try again later.
           </div>
         )}
         <form
@@ -841,26 +915,40 @@ function PurchaseCard({
           )}
           {product.kind !== "bento_affiliate" && (
             <>
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder="Email address"
-                className={inputClass}
-              />
-              <input
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="Name (optional)"
-                className={inputClass}
-              />
-              {product.kind !== "lead_form" ? (
-                <p className="px-1 text-[11px] leading-4 text-[#17213a]/48">
-                  By purchasing, you&apos;ll be subscribed to this creator&apos;s newsletter. You
-                  can unsubscribe anytime.
-                </p>
-              ) : null}
+              <label className="block text-xs font-semibold text-[#17213a]/70">
+                Email address
+                <input
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder="you@example.com"
+                  className={`${inputClass} mt-1.5`}
+                />
+              </label>
+              <label className="block text-xs font-semibold text-[#17213a]/70">
+                Name <span className="font-normal text-[#17213a]/50">(optional)</span>
+                <input
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="Your name"
+                  className={`${inputClass} mt-1.5`}
+                />
+              </label>
+              {product.kind !== "lead_form" && (
+                <label className="flex items-start gap-3 rounded-lg bg-[#f7f8fc] p-3 text-xs leading-5 text-[#17213a]/70">
+                  <input
+                    type="checkbox"
+                    checked={marketingConsent}
+                    onChange={(event) => setMarketingConsent(event.target.checked)}
+                    className="mt-1 size-4 shrink-0"
+                  />
+                  <span>
+                    Email me updates and offers from this creator. Optional; access does not depend
+                    on subscribing.
+                  </span>
+                </label>
+              )}
             </>
           )}
           {product.kind === "lead_form" &&
@@ -942,7 +1030,7 @@ function PurchaseCard({
             recordingAddonReady &&
             product.settings?.recordingAddonEnabled &&
             Number(product.settings.recordingAddonPrice || 0) > 0 && (
-              <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-black/[0.08] bg-[#f8faff] p-4">
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-black/[0.12] bg-white p-4">
                 <input
                   type="checkbox"
                   checked={recordingAddon}
@@ -1100,7 +1188,10 @@ function PurchaseCard({
               quotePreview.isPending
             }
             className="inline-flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-4 text-sm font-semibold text-white shadow-[0_16px_30px_-20px_rgba(23,33,58,.7)] transition hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-50"
-            style={{ background: definition.accent }}
+            style={{
+              background: accent,
+              color: productAccentTextColor(accent),
+            }}
           >
             {checkout.isPending ||
             lead.isPending ||
@@ -1124,7 +1215,7 @@ function PurchaseCard({
               ? "Your answers go directly to this creator."
               : product.pricing_type === "free"
                 ? "A private access link is created instantly."
-                : "Taxes and gateway fees are calculated during checkout."}
+                : "Your details carry over to checkout. The payment provider may require a billing address to calculate tax."}
         </p>
       </div>
       {product.pricing_type !== "free" && (
@@ -1171,7 +1262,7 @@ function checkoutAttribution() {
 }
 
 const inputClass =
-  "w-full rounded-2xl border border-black/[0.08] bg-[#f8faff] px-4 py-3.5 text-sm outline-none transition placeholder:text-[#17213a]/30 focus:border-[#3478f6]/45 focus:ring-4 focus:ring-[#3478f6]/10";
+  "w-full rounded-lg border border-black/[0.12] bg-white px-4 py-3.5 text-sm outline-none transition placeholder:text-[#17213a]/30 focus:border-[#3478f6]/45 focus:ring-4 focus:ring-[#3478f6]/10";
 
 function productBenefits(
   product: CommerceProductRecord,
@@ -1179,8 +1270,10 @@ function productBenefits(
   bundleProducts: Array<{ title: string }> = [],
 ) {
   const settings = product.settings || {};
+  if (settings.benefits?.some((benefit) => benefit.trim()))
+    return settings.benefits.filter((benefit) => benefit.trim());
   if (product.kind === "digital_product")
-    return (settings.files || []).map((file) => file.name).filter(Boolean);
+    return (settings.files || []).map((file, index) => downloadBenefit(file.name, index));
   if (product.kind === "coaching_call")
     return [
       `${settings.durationMinutes || 60}-minute session`,
@@ -1261,7 +1354,7 @@ function TrustPoint({
         <Icon className="size-4" />
       </span>
       <div className="mt-3 text-sm font-semibold">{title}</div>
-      <p className="mt-1 text-xs leading-5 text-white/42">{body}</p>
+      <p className="mt-1 text-xs leading-5 text-white/72">{body}</p>
     </div>
   );
 }

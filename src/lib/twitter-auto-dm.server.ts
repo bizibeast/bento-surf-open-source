@@ -1,4 +1,3 @@
-import { configuredAppOrigin } from "@/lib/application-urls";
 /* eslint-disable @typescript-eslint/no-explicit-any -- New service-role tables are typed after the migration is deployed. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { decryptServerSecret } from "./secret-crypto.server";
@@ -86,7 +85,7 @@ function webhookSigningSecret() {
 }
 
 function webhookUrl() {
-  return `${configuredAppOrigin(process.env.VITE_APP_URL)}/api/webhooks/twitter`;
+  return `${(process.env.VITE_APP_URL?.trim() || "http://localhost:8080").replace(/\/$/, "")}/api/webhooks/twitter`;
 }
 
 function timingSafeEqual(left: Uint8Array, right: Uint8Array) {

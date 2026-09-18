@@ -42,18 +42,19 @@ describe("PageTabs system pages", () => {
     const onSelect = vi.fn();
     const onDelete = vi.fn();
     const onRename = vi.fn();
+    const calendarId = "11111111-1111-4111-8111-111111111111";
     render(
       <PageTabs
         pages={[
           {
-            id: "__calendar",
+            id: calendarId,
             name: "Calendar",
             slug: "calendar",
             href: "/bizibeast/calendar",
             system: "calendar",
           },
         ]}
-        activeId="__calendar"
+        activeId={calendarId}
         mode="editor"
         onSelect={onSelect}
         onCreateCalendar={() => undefined}
@@ -62,20 +63,18 @@ describe("PageTabs system pages", () => {
       />,
     );
 
-    expect(screen.getByRole("link", { name: "Calendar" })).toHaveAttribute(
-      "href",
-      "/bizibeast/calendar",
-    );
+    expect(screen.queryByRole("link", { name: "Calendar" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Calendar" }));
+    expect(onSelect).toHaveBeenCalledWith(calendarId);
     fireEvent.click(screen.getByRole("button", { name: "Rename page" }));
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "Book a call" } });
     fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
-    expect(onRename).toHaveBeenCalledWith("__calendar", "Book a call");
+    expect(onRename).toHaveBeenCalledWith(calendarId, "Book a call");
 
     fireEvent.click(screen.getByRole("button", { name: "Delete page" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete page" }));
 
-    expect(onSelect).not.toHaveBeenCalled();
-    expect(onDelete).toHaveBeenCalledWith("__calendar");
+    expect(onDelete).toHaveBeenCalledWith(calendarId);
   });
 
   it("lets creators rename external links", () => {
@@ -119,6 +118,33 @@ describe("PageTabs system pages", () => {
     fireEvent.pointerEnter(screen.getByRole("button", { name: "Calendar" }));
 
     expect(onIntent).toHaveBeenCalledWith("__calendar");
+  });
+});
+
+describe("PageTabs editor reordering", () => {
+  it("exposes a keyboard-operable drag handle for each editor page", () => {
+    render(
+      <PageTabs
+        pages={[
+          { id: "11111111-1111-4111-8111-111111111111", name: "About", slug: "about" },
+          {
+            id: "22222222-2222-4222-8222-222222222222",
+            name: "Calendar",
+            slug: "calendar",
+            system: "calendar",
+          },
+        ]}
+        activeId={null}
+        mode="editor"
+        onSelect={() => undefined}
+        onReorder={() => undefined}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Reorder Calendar" })).toHaveAttribute(
+      "aria-roledescription",
+      "sortable",
+    );
   });
 });
 

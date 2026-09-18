@@ -86,7 +86,7 @@ async function providerJson(url: string, init: RequestInit, provider: SocialProv
       `${provider} rejected the post`;
     const providerMessage =
       code === "url_ownership_unverified"
-        ? "TikTok rejected the video URL because this instance's media domain is not verified under URL properties in the TikTok developer app. Verify domain ownership, then retry."
+        ? "TikTok rejected the video URL because app.example.com / bento.surf is not verified under URL properties in the TikTok developer app. Verify domain ownership, then retry."
         : code === "unaudited_client_can_only_post_to_private_accounts"
           ? "Unaudited / sandbox TikTok apps can only post when the TikTok account is private and privacy is Only me (SELF_ONLY)."
           : code === "privacy_level_option_mismatch"

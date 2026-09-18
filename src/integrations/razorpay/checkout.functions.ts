@@ -29,11 +29,7 @@ import {
   persistCommerceCheckoutGrowth,
   type CommerceCheckoutGrowth,
 } from "@/lib/commerce-growth.server";
-import {
-  configuredAppOrigin,
-  publicProductSuccessPath,
-  publicProductUrl,
-} from "@/lib/application-urls";
+import { publicProductSuccessPath, publicProductUrl } from "@/lib/application-urls";
 
 type CheckoutProduct = {
   id: string;
@@ -76,7 +72,7 @@ const orderIdSchema = z
 const signatureSchema = z.string().regex(/^[a-f0-9]{64}$/i);
 
 function appUrl() {
-  return configuredAppOrigin(process.env.VITE_APP_URL);
+  return (process.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "");
 }
 
 function randomAccessToken() {
@@ -384,5 +380,7 @@ export const verifyRazorpayCheckout = createServerFn({ method: "POST" })
             session.metadata.product_public_slug,
           )
         : `/p/${encodeURIComponent(session.metadata?.product_slug || "product")}/success`;
-    return { url: `${appUrl()}${successPath}?${query}` };
+    return {
+      url: `${(process.env.VITE_PUBLIC_URL || "http://localhost:8080").replace(/\/$/, "")}${successPath}?${query}`,
+    };
   });

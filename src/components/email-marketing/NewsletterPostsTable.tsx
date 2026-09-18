@@ -6,7 +6,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { configuredPublicOrigin, publicNewsletterPostPath } from "@/lib/application-urls";
+import {
+  normalizeOrigin,
+  PRODUCTION_PUBLIC_ORIGIN,
+  publicNewsletterPostPath,
+} from "@/lib/application-urls";
 import type { NewsletterIssueRecord } from "./NewsletterEditor";
 
 export type NewsletterPostTableRecord = NewsletterIssueRecord & {
@@ -63,7 +67,7 @@ export function NewsletterPostsTable({
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
-  const canonicalPublicOrigin = configuredPublicOrigin(publicOrigin);
+  const canonicalPublicOrigin = normalizeOrigin(publicOrigin, PRODUCTION_PUBLIC_ORIGIN);
   const visiblePosts = useMemo(() => {
     const search = query.trim().toLowerCase();
     return posts.filter((post) => {

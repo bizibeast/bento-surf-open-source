@@ -26,7 +26,7 @@ describe("analytics event validation and enrichment", () => {
   });
 
   it("reads Cloudflare geography without trusting client payload fields", () => {
-    const request = new Request("https://bento.surf/api/events", {
+    const request = new Request("http://localhost:8080/api/events", {
       headers: {
         "user-agent": "Mozilla/5.0 Firefox/130.0",
         "cf-ipcountry": "IN",

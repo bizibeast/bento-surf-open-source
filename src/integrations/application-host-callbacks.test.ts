@@ -11,8 +11,8 @@ afterEach(() => {
 });
 
 describe.each([
-  ["production", "https://app.bento.surf"],
-  ["staging", "https://app.test.bento.surf"],
+  ["production", "http://localhost:8080"],
+  ["staging", "http://localhost:8080"],
 ])("%s integration callbacks", (_environment, appOrigin) => {
   it("uses the application host for payment and booking OAuth callbacks", () => {
     vi.stubEnv("VITE_APP_URL", `${appOrigin}/`);

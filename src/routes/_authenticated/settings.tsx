@@ -131,7 +131,7 @@ import {
   exploreReviewStatusSchema,
   type ExploreCategory,
 } from "@/lib/explore";
-import { configuredMcpEndpoint, publicProfileUrl } from "@/lib/application-urls";
+import { publicProfileUrl } from "@/lib/application-urls";
 import { micro } from "@/lib/micro-app-ui";
 import {
   detectedBrowserTimeZone,
@@ -269,7 +269,7 @@ function SettingsPage() {
   const username = profile?.username ?? "username";
   const profileUrl = publicProfileUrl(username, null, import.meta.env.VITE_PUBLIC_URL);
   const publicHost = new URL(profileUrl).host;
-  const mcpUrl = configuredMcpEndpoint(import.meta.env.VITE_APP_URL);
+  const mcpUrl = "http://localhost:8080/mcp";
   const embedTitle = escapeHtmlAttribute(`${profile?.display_name || username} on bento.surf`);
   const embedCode = `<iframe src="${escapeHtmlAttribute(profileUrl)}" title="${embedTitle}" style="width:100%;height:720px;border:0;border-radius:24px" loading="lazy"></iframe>`;
 

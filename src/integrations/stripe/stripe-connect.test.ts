@@ -15,13 +15,13 @@ afterEach(() => {
 describe("Stripe Connect", () => {
   it("builds a state-bound OAuth URL with safe creator prefill", () => {
     process.env.STRIPE_CONNECT_CLIENT_ID = "ca_test_bento";
-    process.env.VITE_APP_URL = "https://app.test.bento.surf/";
+    process.env.VITE_APP_URL = "http://localhost:8080/";
 
     const url = new URL(
       stripeAuthorizeUrl("state-token", {
         email: "creator@example.com",
         businessName: "Creator Studio",
-        url: "https://test.bento.surf/@creator",
+        url: "http://localhost:8080/@creator",
       }),
     );
 
@@ -31,7 +31,7 @@ describe("Stripe Connect", () => {
     expect(url.searchParams.get("scope")).toBe("read_write");
     expect(url.searchParams.get("state")).toBe("state-token");
     expect(url.searchParams.get("redirect_uri")).toBe(
-      "https://app.test.bento.surf/integrations/stripe/callback",
+      "http://localhost:8080/integrations/stripe/callback",
     );
     expect(url.searchParams.get("stripe_user[email]")).toBe("creator@example.com");
     expect(url.searchParams.get("stripe_user[business_name]")).toBe("Creator Studio");

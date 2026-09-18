@@ -31,6 +31,12 @@ For Cloudflare, see [the deployment guide](docs/cloudflare.md). A compatible cod
 
 See [verification status](docs/verification.md) for the exact boundary between local checks and provider/deployment proof.
 
+## Product coverage
+
+The public tree contains the complete self-hostable creator and customer product: Link, Store, Email Marketing, Priority DM, Calendar, Community, Post Scheduler, Social Insights, Auto-DMs, Earn, Settings, customer checkout/library flows, remote OAuth MCP, and page-scoped WebMCP. Provider-backed features remain disabled until the instance owner supplies their own credentials and approvals.
+
+The reviewed private-source snapshot is recorded in [`docs/upstream-source.json`](docs/upstream-source.json). Corporate marketing and Bento-only founder operations remain outside the public boundary.
+
 ## Source boundary
 
 This repository includes the application and public creator/product pages. Corporate marketing pages and their related content are intentionally excluded. See [the source boundary](docs/source-boundary.md).

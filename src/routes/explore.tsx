@@ -174,7 +174,7 @@ function ExplorePage() {
                   }
                   ariaLabel="Explore category"
                 />
-                <div className="no-scrollbar -mx-4 hidden gap-2 overflow-x-auto px-4 pb-1 sm:flex lg:mx-0 lg:max-w-[62%] lg:px-0">
+                <div className="no-scrollbar -mx-4 hidden gap-2 overflow-x-auto px-4 pb-1 sm:flex lg:mx-0 lg:flex-1 lg:min-w-0 lg:pl-0 lg:pr-4">
                   <CategoryLink
                     active={!search.category}
                     label="All"

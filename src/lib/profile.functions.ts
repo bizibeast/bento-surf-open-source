@@ -1,4 +1,5 @@
-import { createServerFn } from "@tanstack/react-start";
+import { loadPublicCreatorChrome } from "@/lib/public-creator-chrome.server";
+import { createServerFn, createServerOnlyFn } from "@tanstack/react-start";
 import { getRequestHost } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
@@ -29,6 +30,9 @@ import { loadPublicSocialAnalytics } from "@/lib/social-analytics.functions";
 import type { Database, Json } from "@/integrations/supabase/types";
 import { isValidTimeZone } from "@/lib/timezones";
 import { resolvePublicUsername } from "@/lib/username-alias.server";
+import { setSystemPageVisibility, type PageSystem } from "./pages.functions";
+import { loadSystemPageCanvas } from "./page-system-layout.functions";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 type PublicProfileBlock = Pick<
   Database["public"]["Tables"]["blocks"]["Row"],
@@ -124,34 +128,43 @@ export const profileUpdateSchema = z.object({
 export const updateProfile = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) => profileUpdateSchema.parse(input))
-  .handler(async ({ data, context }) => {
-    const { supabase, userId } = context;
+  .handler(({ data, context }) => updateProfileForCreator(context.supabase, context.userId, data));
 
-    const settingFont = Boolean(data.primary_font) || Boolean(data.secondary_font);
-    const settingPremiumPattern =
-      typeof data.pattern === "string" && isPremiumPattern(data.pattern);
-    const enablingStorePage = data.store_page_enabled === true;
-    if (settingFont || settingPremiumPattern || enablingStorePage) {
-      const plan = await getPlan(userId);
-      const entitlement = settingFont
-        ? "customFonts"
-        : settingPremiumPattern
-          ? "allThemes"
-          : "storeCards";
-      if (!planHasEntitlement(plan, entitlement)) {
-        throw new Error(entitlementUpgradeMessage(entitlement));
-      }
+export async function updateProfileForCreator(
+  supabase: SupabaseClient<Database>,
+  userId: string,
+  input: unknown,
+) {
+  const data = profileUpdateSchema.parse(input);
+
+  const settingFont = Boolean(data.primary_font) || Boolean(data.secondary_font);
+  const settingPremiumPattern = typeof data.pattern === "string" && isPremiumPattern(data.pattern);
+  const enablingStorePage = data.store_page_enabled === true;
+  if (settingFont || settingPremiumPattern || enablingStorePage) {
+    const plan = await getPlan(userId);
+    const entitlement = settingFont
+      ? "customFonts"
+      : settingPremiumPattern
+        ? "allThemes"
+        : "storeCards";
+    if (!planHasEntitlement(plan, entitlement)) {
+      throw new Error(entitlementUpgradeMessage(entitlement));
     }
+  }
 
-    return updateProfileWithRls(userId, data, (authenticatedUserId, updates) =>
-      supabase
-        .from("profiles")
-        .update(updates)
-        .eq("id", authenticatedUserId)
-        .select(editableProfileColumns)
-        .single(),
-    );
-  });
+  const profile = await updateProfileWithRls(userId, data, (authenticatedUserId, updates) =>
+    supabase
+      .from("profiles")
+      .update(updates)
+      .eq("id", authenticatedUserId)
+      .select(editableProfileColumns)
+      .single(),
+  );
+  if (data.store_page_enabled !== undefined) {
+    await setSystemPageVisibility(supabase, userId, "store", data.store_page_enabled);
+  }
+  return profile;
+}
 
 const timeZoneSchema = z
   .string()
@@ -213,60 +226,47 @@ export const getPublicProfile = createServerFn({ method: "GET" })
     );
   });
 
-const publicProfileColumns =
-  "id, username, display_name, bio, avatar_url, cover_url, theme, accent_color, primary_font, secondary_font, header_mode, pattern, pattern_settings, is_pro, onboarded, noindex, plan_id, badge_hidden, calendar_page_enabled, calendar_page_name, social_insights_enabled, store_page_enabled, meta_title, meta_description, updated_at";
+export const loadPublicCreatorPage = createServerOnlyFn(loadPublicProfile);
 
 async function loadPublicProfile(
   selector: { username: string } | { userId: string },
   pageSlug: string | null,
   customDomain: string | null,
+  requestHost?: string,
 ) {
   const resolvedSelector =
     "username" in selector
       ? await resolvePublicUsername(supabaseAdmin, selector.username)
       : { userId: selector.userId };
   if (!resolvedSelector) return null;
-  const profileResult = await supabaseAdmin
-    .from("profiles")
-    .select(publicProfileColumns)
-    .eq("id", resolvedSelector.userId)
-    .maybeSingle();
-  const profile = readPublicProfileResult("profile", profileResult);
-  if (!profile) return null;
+  const chrome = await loadPublicCreatorChrome(
+    resolvedSelector.userId,
+    "username" in selector ? selector.username : undefined,
+    undefined,
+    requestHost,
+  );
+  if (!chrome || (customDomain && chrome.customDomain !== customDomain)) return null;
+  const { creator: profile, pages } = chrome;
+  customDomain = chrome.customDomain;
   const profilePlan = normalizePlan(profile.plan_id, Boolean(profile.is_pro));
-  profile.store_page_enabled =
-    profile.store_page_enabled && planHasEntitlement(profilePlan, "storeCards");
-  // Newsletter tables are introduced by the pending migration.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: publishedNewsletter, error: newsletterError } = await (supabaseAdmin as any)
-    .from("newsletter_publications")
-    .select("id")
-    .eq("creator_id", profile.id)
-    .eq("status", "published")
-    .limit(1)
-    .maybeSingle();
-  if (newsletterError) throw new Error("Unable to load public profile");
-  const newsletterPageEnabled = Boolean(publishedNewsletter);
-
-  const pagesResult = await supabaseAdmin
-    .from("pages")
-    .select("id, name, slug, position, url, updated_at")
-    .eq("user_id", profile.id)
-    .order("position", { ascending: true });
-  const pages = readPublicProfileResult("pages", pagesResult) ?? [];
+  const newsletterPageEnabled = pages.some((page) => page.system === "newsletter");
 
   let activePageId: string | null = null;
   let activePageSlug: string | null = null;
   let activePageName: string | null = null;
-  let activeSystemPage: "insights" | null = null;
+  let activeSystemPage: PageSystem | null = null;
   if (pageSlug) {
-    const match = pages.find((page) => page.slug === pageSlug && !page.url);
-    const insightsAvailable =
-      pageSlug === "insights" &&
-      profile.social_insights_enabled &&
-      planHasEntitlement(profilePlan, "socialAnalytics");
-    if (!match && !insightsAvailable) {
+    const system = pageSlug === "newsletters" ? "newsletter" : pageSlug;
+    const match =
+      pages.find((page) => page.system === system && !page.url) ??
+      pages.find((page) => page.slug === pageSlug && !page.url);
+    if (!match) {
       return {
+        chrome,
+        page: null,
+        systemItems: [],
+        systemLayout: [],
+        domainData: null,
         profile,
         pages,
         blocks: [],
@@ -279,29 +279,21 @@ async function loadPublicProfile(
         customDomain,
       };
     }
-    if (match) {
-      activePageId = match.id;
-      activePageSlug = match.slug;
-      activePageName = match.name;
-    } else {
-      activeSystemPage = "insights";
-      activePageSlug = "insights";
-      activePageName = "Social media insights";
-    }
+    activePageId = match.id;
+    activePageSlug = match.slug;
+    activePageName = match.name;
+    activeSystemPage = match.system as PageSystem | null;
   }
 
-  let allBlocks: PublicProfileBlock[] = [];
-  if (!activeSystemPage) {
-    let blocksQuery = supabaseAdmin
-      .from("blocks")
-      .select("id, type, content, cover_url, x, y, w, h, position, updated_at")
-      .eq("user_id", profile.id)
-      .order("position", { ascending: true });
-    if (activePageId) blocksQuery = blocksQuery.eq("page_id", activePageId);
-    else blocksQuery = blocksQuery.is("page_id", null);
-    const blocksResult = await blocksQuery;
-    allBlocks = readPublicProfileResult("blocks", blocksResult) ?? [];
-  }
+  let blocksQuery = supabaseAdmin
+    .from("blocks")
+    .select("id, type, content, cover_url, x, y, w, h, position, updated_at")
+    .eq("user_id", profile.id)
+    .order("position", { ascending: true });
+  if (activePageId) blocksQuery = blocksQuery.eq("page_id", activePageId);
+  else blocksQuery = blocksQuery.is("page_id", null);
+  const blocksResult = await blocksQuery;
+  const allBlocks: PublicProfileBlock[] = readPublicProfileResult("blocks", blocksResult) ?? [];
   const commerceProductIds = [
     ...new Set(
       allBlocks.flatMap((block) => {
@@ -339,7 +331,19 @@ async function loadPublicProfile(
   const socialInsights =
     activeSystemPage === "insights" ? await loadPublicSocialAnalytics(profile.id) : null;
 
+  const page =
+    activeSystemPage && activePageId
+      ? { id: activePageId, name: activePageName!, system: activeSystemPage }
+      : null;
+  const canvas = page
+    ? await loadSystemPageCanvas(supabaseAdmin, profile.id, page, socialInsights ?? undefined)
+    : null;
   return {
+    chrome,
+    page,
+    systemItems: canvas?.items ?? [],
+    systemLayout: canvas?.layout ?? [],
+    domainData: socialInsights,
     profile,
     pages,
     blocks,
@@ -353,11 +357,16 @@ async function loadPublicProfile(
   };
 }
 
-export function loadPublicProfileByUsername(username: string, pageSlug: string | null) {
+export function loadPublicProfileByUsername(
+  username: string,
+  pageSlug: string | null,
+  requestHost?: string,
+) {
   return loadPublicProfile(
     { username: username.toLowerCase() },
     pageSlug?.toLowerCase() ?? null,
     null,
+    requestHost,
   );
 }
 

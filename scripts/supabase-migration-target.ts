@@ -1,13 +1,11 @@
-export function verifySupabaseDatabaseUrl(
-  projectRef: string,
-  rawUrl: string,
-  confirmation = process.env.MIGRATION_CONFIRMATION,
-) {
-  const expectedProject = projectRef.trim().toLowerCase();
-  if (!/^[a-z0-9]{20}$/.test(expectedProject)) {
-    throw new Error("SUPABASE_PROJECT_ID must be a valid 20-character project reference.");
-  }
+export const SUPABASE_PROJECTS = {
+  staging: "pjraekywkqilhaqrxzpe",
+  production: "qefsatsrhpmgoahutkqu",
+} as const;
 
+export type SupabaseTarget = keyof typeof SUPABASE_PROJECTS;
+
+export function verifySupabaseDatabaseUrl(target: SupabaseTarget, rawUrl: string) {
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
@@ -19,21 +17,24 @@ export function verifySupabaseDatabaseUrl(
     throw new Error("SUPABASE_DB_URL must use the postgres or postgresql protocol.");
   }
 
+  const expectedProject = SUPABASE_PROJECTS[target];
   const hostname = parsed.hostname.toLowerCase();
   const username = decodeURIComponent(parsed.username).toLowerCase();
   const directHostMatches = hostname === `db.${expectedProject}.supabase.co`;
-  const poolerUserMatches =
-    hostname.endsWith(".pooler.supabase.com") && username === `postgres.${expectedProject}`;
+  const poolerUserMatches = username === `postgres.${expectedProject}`;
 
   if (!directHostMatches && !poolerUserMatches) {
-    throw new Error("Database target mismatch: the URL identifies a different Supabase project.");
-  }
-
-  if (confirmation !== `MIGRATE:${expectedProject}`) {
     throw new Error(
-      "Set MIGRATION_CONFIRMATION=MIGRATE:<SUPABASE_PROJECT_ID> to authorize this migration.",
+      `Database target mismatch: expected the ${target} Supabase project ${expectedProject}, but the URL identifies a different project.`,
     );
   }
 
-  return { hostname };
+  const expectedConfirmation = `${target.toUpperCase()}:${expectedProject}`;
+  if (process.env.MIGRATION_CONFIRMATION !== expectedConfirmation) {
+    throw new Error(
+      `Set MIGRATION_CONFIRMATION=${expectedConfirmation} to authorize this migration.`,
+    );
+  }
+
+  return { expectedProject, hostname };
 }

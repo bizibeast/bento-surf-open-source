@@ -1,3 +1,4 @@
+import type { AutoDmMetrics } from "./auto-dm-metrics";
 import { z } from "zod";
 
 export const FACEBOOK_DM_TRIGGER_TYPES = [
@@ -116,6 +117,7 @@ export function facebookConnectionReadinessMessage(
 }
 
 export type FacebookDmAutomation = {
+  metrics?: AutoDmMetrics;
   id: string;
   connectionId: string;
   connectionHandle: string;
@@ -145,6 +147,7 @@ export type FacebookDmAutomation = {
 };
 
 export type FacebookDmActivity = {
+  automationId?: string | null;
   id: string;
   automationName: string | null;
   eventType: "comment" | "message";

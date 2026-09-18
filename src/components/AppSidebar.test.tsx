@@ -23,44 +23,12 @@ describe("AppSidebar", () => {
   afterEach(() => {
     routerState.pathname = "/link";
     vi.unstubAllGlobals();
-    vi.unstubAllEnvs();
-  });
-
-  it("shows the canonical source link by default", () => {
-    render(
-      <AppSidebar
-        profile={{ display_name: "Creator", username: "creator" }}
-        collapsed={false}
-        onCollapsedChange={vi.fn()}
-      />,
-    );
-
-    expect(screen.getByRole("link", { name: "Source" })).toHaveAttribute(
-      "href",
-      "https://github.com/bizibeast/bento-surf-open-source",
-    );
-  });
-
-  it("shows the configured source link", () => {
-    vi.stubEnv("VITE_SOURCE_URL", "https://code.example/bento-surf");
-    render(
-      <AppSidebar
-        profile={{ display_name: "Creator", username: "creator" }}
-        collapsed={false}
-        onCollapsedChange={vi.fn()}
-      />,
-    );
-
-    expect(screen.getByRole("link", { name: "Source" })).toHaveAttribute(
-      "href",
-      "https://code.example/bento-surf",
-    );
   });
   it("expands on hover, collapses on leave, and hides settings when closed", () => {
     const onCollapsedChange = vi.fn();
     const { rerender } = render(
       <AppSidebar
-        profile={{ display_name: "Ada", username: "ada" }}
+        profile={{ display_name: "Yash", username: "yash" }}
         collapsed
         onCollapsedChange={onCollapsedChange}
       />,
@@ -150,7 +118,7 @@ describe("AppSidebar", () => {
 
     rerender(
       <AppSidebar
-        profile={{ display_name: "Ada", username: "ada" }}
+        profile={{ display_name: "Yash", username: "yash" }}
         collapsed={false}
         onCollapsedChange={onCollapsedChange}
       />,
@@ -166,7 +134,7 @@ describe("AppSidebar", () => {
       routerState.pathname = pathname;
       render(
         <AppSidebar
-          profile={{ display_name: "Ada", username: "ada" }}
+          profile={{ display_name: "Yash", username: "yash" }}
           collapsed={false}
           onCollapsedChange={vi.fn()}
         />,
@@ -182,7 +150,7 @@ describe("AppSidebar", () => {
   it("opens a scrollable modal navigation that closes on Escape", async () => {
     render(
       <AppSidebar
-        profile={{ display_name: "Ada", username: "ada" }}
+        profile={{ display_name: "Yash", username: "yash" }}
         collapsed
         onCollapsedChange={vi.fn()}
       />,
@@ -220,7 +188,7 @@ describe("AppSidebar", () => {
     );
     render(
       <AppSidebar
-        profile={{ display_name: "Ada", username: "ada" }}
+        profile={{ display_name: "Yash", username: "yash" }}
         collapsed
         onCollapsedChange={vi.fn()}
       />,
