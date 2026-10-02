@@ -28,6 +28,10 @@ const IGNORED_DIRECTORIES = new Set([
   "temp",
 ]);
 const TEXT_FILE = /\.(?:[cm]?[jt]sx?|jsonc?|ya?ml|toml|md|txt|env|html?|css)$/i;
+// ponytail: the Cursor Marketplace plugin has to name the hosted MCP and support contact.
+// Identity rules still apply to the app. Ceiling: anything under these prefixes can name that host.
+// Split the plugin into its own repo if the directory grows past the manifest.
+const CURSOR_PLUGIN_PREFIXES = [".cursor-plugin/", "cursor-plugin/"] as const;
 const ENV_EXAMPLE_FILE = /(?:^|[/\\])\.env\.example$/i;
 export const OPEN_SOURCE_TEST_FILE = /\.(?:test|spec)\.[^/]+$/i;
 const FORBIDDEN_SECRET_FILE =
@@ -93,6 +97,13 @@ function isPublicTextFile(file: string) {
   return TEXT_FILE.test(file) || ENV_EXAMPLE_FILE.test(file);
 }
 
+export function skipsOperatedIdentityRules(file: string) {
+  return (
+    OPEN_SOURCE_TEST_FILE.test(file) ||
+    CURSOR_PLUGIN_PREFIXES.some((prefix) => file.startsWith(prefix))
+  );
+}
+
 const run = promisify(execFile);
 
 async function repositoryFiles(root: string): Promise<string[] | null> {
@@ -155,7 +166,7 @@ export async function checkOpenSourceBoundary(root: string): Promise<BoundaryVio
     for (const { reason, pattern } of OPEN_SOURCE_ALL_TEXT_RULES) {
       if (pattern.test(contents)) violations.push({ file: relativeFile, reason });
     }
-    if (OPEN_SOURCE_TEST_FILE.test(relativeFile)) continue;
+    if (skipsOperatedIdentityRules(relativeFile)) continue;
     for (const { reason, pattern } of OPEN_SOURCE_IDENTITY_RULES) {
       if (pattern.test(contents)) violations.push({ file: relativeFile, reason });
     }

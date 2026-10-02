@@ -190,6 +190,39 @@ describe("open-source boundary", () => {
     expect(`${output}${errors}`).not.toContain(originTrialToken);
   });
 
+  test("allows the Cursor Marketplace plugin to name the hosted MCP", async () => {
+    const root = await mkdtemp(join(tmpdir(), "bento-boundary-"));
+    roots.push(root);
+    await mkdir(join(root, "cursor-plugin/.cursor-plugin"), { recursive: true });
+    await mkdir(join(root, ".cursor-plugin"), { recursive: true });
+    await mkdir(join(root, "src"), { recursive: true });
+    const hosted = ["https://mcp", ["ben", "to"].join(""), ["sur", "f"].join("")].join(".");
+    const support = ["support@", ["ben", "to"].join(""), ".", ["sur", "f"].join("")].join("");
+    const credential = ["sk", "live", "abcdefghijklmnopqrstuvwxyz"].join("_");
+    await writeFile(
+      join(root, "cursor-plugin/mcp.json"),
+      JSON.stringify({ mcpServers: { bento: { type: "http", url: `${hosted}/mcp` } } }),
+    );
+    await writeFile(
+      join(root, "cursor-plugin/README.md"),
+      `# Bento\n\n${hosted}/mcp\n\n${support}\n`,
+    );
+    await writeFile(
+      join(root, ".cursor-plugin/marketplace.json"),
+      JSON.stringify({ owner: { email: support } }),
+    );
+    await writeFile(
+      join(root, "cursor-plugin/leak.ts"),
+      `export const leaked = "${credential}";\n`,
+    );
+    await writeFile(join(root, "src/leak.ts"), `export const endpoint = "${hosted}";\n`);
+
+    expect(await checkOpenSourceBoundary(root)).toEqual([
+      { file: "cursor-plugin/leak.ts", reason: "credential-shaped secret" },
+      { file: "src/leak.ts", reason: "private production identity" },
+    ]);
+  });
+
   test("blocks untracked secret files and credential-shaped values", async () => {
     const root = await mkdtemp(join(tmpdir(), "bento-boundary-"));
     roots.push(root);
