@@ -37,6 +37,12 @@ The public tree contains the complete self-hostable creator and customer product
 
 The reviewed private-source snapshot is recorded in [`docs/upstream-source.json`](docs/upstream-source.json). Corporate marketing and Bento-only founder operations remain outside the public boundary.
 
+## Cursor Marketplace / MCP plugin
+
+The Cursor plugin for the hosted Bento remote MCP lives in [`cursor-plugin/`](cursor-plugin/README.md). It signs in with OAuth on a Bento account and does not include API keys. Install it from the Cursor Marketplace, or add the remote MCP URL by hand using that document.
+
+The plugin sits in its own directory so Cursor does not package this app's `skills/` tree as plugin components.
+
 ## Source boundary
 
 This repository includes the application and public creator/product pages. Corporate marketing pages and their related content are intentionally excluded. See [the source boundary](docs/source-boundary.md).

@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import {
   OPEN_SOURCE_ALL_TEXT_RULES,
   OPEN_SOURCE_IDENTITY_RULES,
-  OPEN_SOURCE_TEST_FILE,
+  skipsOperatedIdentityRules,
 } from "./check-open-source-boundary";
 
 export type HistoryViolation = { object: string; file: string; reason: string };
@@ -47,7 +47,7 @@ export async function checkOpenSourceHistory(root: string): Promise<HistoryViola
     } catch {
       continue;
     }
-    const rules = OPEN_SOURCE_TEST_FILE.test(item.file)
+    const rules = skipsOperatedIdentityRules(item.file)
       ? OPEN_SOURCE_ALL_TEXT_RULES
       : [...OPEN_SOURCE_ALL_TEXT_RULES, ...OPEN_SOURCE_IDENTITY_RULES];
     for (const { reason, pattern } of rules) {
