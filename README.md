@@ -41,7 +41,9 @@ The reviewed private-source snapshot is recorded in [`docs/upstream-source.json`
 
 The Cursor plugin for the hosted Bento remote MCP lives in [`cursor-plugin/`](cursor-plugin/README.md). It signs in with OAuth on a Bento account and does not include API keys. Install it from the Cursor Marketplace, or add the remote MCP URL by hand using that document.
 
-The plugin sits in its own directory so Cursor does not package this app's `skills/` tree as plugin components.
+The Grok Build plugin for the same hosted MCP lives in [`grok-plugin/`](grok-plugin/README.md). It is a marketplace package only. Grok Build loads that directory's MCP config; it does not change how this app runs.
+
+Each plugin sits in its own directory so a marketplace client does not package this app's `skills/` tree as plugin components.
 
 ## Source boundary
 

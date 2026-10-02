@@ -190,11 +190,12 @@ describe("open-source boundary", () => {
     expect(`${output}${errors}`).not.toContain(originTrialToken);
   });
 
-  test("allows the Cursor Marketplace plugin to name the hosted MCP", async () => {
+  test("allows marketplace plugins to name the hosted MCP", async () => {
     const root = await mkdtemp(join(tmpdir(), "bento-boundary-"));
     roots.push(root);
     await mkdir(join(root, "cursor-plugin/.cursor-plugin"), { recursive: true });
     await mkdir(join(root, ".cursor-plugin"), { recursive: true });
+    await mkdir(join(root, "grok-plugin/.grok-plugin"), { recursive: true });
     await mkdir(join(root, "src"), { recursive: true });
     const hosted = ["https://mcp", ["ben", "to"].join(""), ["sur", "f"].join("")].join(".");
     const support = ["support@", ["ben", "to"].join(""), ".", ["sur", "f"].join("")].join("");
@@ -210,6 +211,14 @@ describe("open-source boundary", () => {
     await writeFile(
       join(root, ".cursor-plugin/marketplace.json"),
       JSON.stringify({ owner: { email: support } }),
+    );
+    await writeFile(
+      join(root, "grok-plugin/README.md"),
+      `# Bento\n\n${hosted}/mcp\n\n${support}\n`,
+    );
+    await writeFile(
+      join(root, "grok-plugin/.grok-plugin/plugin.json"),
+      JSON.stringify({ author: { email: support }, license: "AGPL-3.0-only" }),
     );
     await writeFile(
       join(root, "cursor-plugin/leak.ts"),
