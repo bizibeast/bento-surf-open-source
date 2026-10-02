@@ -1,0 +1,17 @@
+{
+  "name": "bento",
+  "displayName": "Bento",
+  "version": "1.0.0",
+  "description": "Open-source Stan Store and Stanley.ai alternative. Connect a bento.surf creator workspace — a creator monetisation and distribution OS — pages, Store, Calendar, social publishing, Auto-DMs, and analytics via the hosted Bento MCP.",
+  "author": {
+    "name": "bento.surf",
+    "email": "support@bento.surf",
+    "url": "https://bento.surf"
+  },
+  "homepage": "https://bento.surf",
+  "repository": "https://github.com/bizibeast/bento-surf-open-source",
+  "license": "AGPL-3.0-only",
+  "keywords": ["bento", "bento.surf", "bento mcp", "creator store", "stan store"],
+  "logo": "assets/logo.png",
+  "mcpServers": ".mcp.json"
+}
