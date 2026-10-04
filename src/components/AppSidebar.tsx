@@ -2,8 +2,11 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
   BarChart3,
+  Brain,
   CalendarClock,
   CalendarDays,
+  Clock3,
+  Compass,
   House,
   BadgeDollarSign,
   Bot,
@@ -12,18 +15,41 @@ import {
   Menu,
   MessageCircleMore,
   MessagesSquare,
-  Settings,
   Store,
   UsersRound,
   X,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { DecodedImage } from "@/components/DecodedImage";
 import { BentoIcon } from "@/components/BentoBrand";
-import { safeMediaUrl } from "@/lib/safe-url";
+import { WorkspaceMenu } from "@/components/WorkspaceMenu";
+import type { WorkspaceSession } from "@/lib/workspace-session.server";
 
-export const APP_NAV_ITEMS = [
+type AppNavItem = {
+  label: string;
+  to:
+    | "/home"
+    | "/link"
+    | "/store"
+    | "/priority-dm"
+    | "/calendar"
+    | "/community"
+    | "/email-marketing"
+    | "/post-scheduler"
+    | "/social-insights"
+    | "/auto-dms"
+    | "/content"
+    | "/mcp"
+    | "/earn";
+  icon: LucideIcon;
+  description: string;
+  contentTab?: "agent" | "brain" | "discover";
+  routines?: boolean;
+};
+
+type SidebarSearch = { tab?: unknown; routines?: unknown };
+
+export const APP_NAV_ITEMS: ReadonlyArray<AppNavItem> = [
   { label: "Home", to: "/home", icon: House, description: "Your creator workspace" },
   { label: "Link", to: "/link", icon: Link2, description: "Edit your main page" },
   { label: "Store", to: "/store", icon: Store, description: "Products, orders and payouts" },
@@ -60,18 +86,42 @@ export const APP_NAV_ITEMS = [
     description: "Instagram, Facebook and X",
   },
   {
+    label: "Agent",
+    to: "/content",
+    icon: Bot,
+    description: "Research, write and prepare content",
+    contentTab: "agent",
+  },
+  {
+    label: "Brain",
+    to: "/content",
+    icon: Brain,
+    description: "Your context and content strategy",
+    contentTab: "brain",
+  },
+  {
+    label: "Routines",
+    to: "/content",
+    icon: Clock3,
+    description: "Automated content preparation",
+    contentTab: "agent",
+    routines: true,
+  },
+  {
+    label: "Discover",
+    to: "/content",
+    icon: Compass,
+    description: "Ideas from your niche and winners",
+    contentTab: "discover",
+  },
+  {
     label: "MCP",
     to: "/mcp",
     icon: Bot,
     description: "Connect your AI agent",
   },
   { label: "Earn", to: "/earn", icon: BadgeDollarSign, description: "Referrals and rewards" },
-] as const satisfies ReadonlyArray<{
-  label: string;
-  to: string;
-  icon: LucideIcon;
-  description: string;
-}>;
+];
 
 type SidebarProfile =
   | {
@@ -84,14 +134,17 @@ type SidebarProfile =
 
 export function AppSidebar({
   profile,
+  workspaceSession,
   collapsed,
   onCollapsedChange,
 }: {
   profile: SidebarProfile;
+  workspaceSession?: WorkspaceSession | null;
   collapsed: boolean;
   onCollapsedChange: (collapsed: boolean) => void;
 }) {
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const location = useRouterState({ select: (state) => state.location });
+  const pathname = location.pathname;
   const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => setMobileOpen(false), [pathname]);
@@ -122,17 +175,19 @@ export function AppSidebar({
         </header>
 
         <DialogPrimitive.Portal>
-          <DialogPrimitive.Overlay className="fixed inset-0 z-[59] bg-black/25 backdrop-blur-[2px] data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 lg:hidden" />
-          <DialogPrimitive.Content className="fixed inset-y-0 left-0 z-[60] flex h-dvh w-[min(14.5rem,86vw)] flex-col overflow-hidden border-r border-border bg-background p-2.5 shadow-2xl outline-none data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left lg:hidden">
+          <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px] data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 lg:hidden" />
+          <DialogPrimitive.Content className="fixed inset-y-0 left-0 z-50 flex h-dvh w-[min(14.5rem,86vw)] flex-col overflow-hidden border-r border-border bg-background p-2.5 shadow-2xl outline-none data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left lg:hidden">
             <DialogPrimitive.Title className="sr-only">App navigation</DialogPrimitive.Title>
             <DialogPrimitive.Description className="sr-only">
               Navigate between your Bento creator tools.
             </DialogPrimitive.Description>
             <SidebarPanel
               profile={profile}
+              workspaceSession={workspaceSession}
               collapsed={false}
               mobile
               pathname={pathname}
+              search={location.search}
               onNavigate={() => setMobileOpen(false)}
             />
           </DialogPrimitive.Content>
@@ -153,9 +208,11 @@ export function AppSidebar({
       >
         <SidebarPanel
           profile={profile}
+          workspaceSession={workspaceSession}
           collapsed={collapsed}
           mobile={false}
           pathname={pathname}
+          search={location.search}
           onNavigate={() => undefined}
         />
       </aside>
@@ -165,15 +222,19 @@ export function AppSidebar({
 
 function SidebarPanel({
   profile,
+  workspaceSession,
   collapsed,
   mobile,
   pathname: pathnameOverride,
+  search,
   onNavigate,
 }: {
   profile: SidebarProfile;
+  workspaceSession?: WorkspaceSession | null;
   collapsed: boolean;
   mobile: boolean;
   pathname?: string;
+  search?: SidebarSearch;
   onNavigate: () => void;
 }) {
   const pathname = pathnameOverride ?? "/home";
@@ -204,22 +265,22 @@ function SidebarPanel({
       </div>
 
       <nav
-        className="mt-4 flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain pr-0.5"
+        className="no-scrollbar mt-4 flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain pr-0.5"
         aria-label="Creator tools"
       >
         <div className="grid gap-1">
           {APP_NAV_ITEMS.slice(0, -1).map((item) => (
             <div
-              key={item.to}
+              key={item.label}
               className={
-                item.to === "/link" || item.to === "/post-scheduler" || item.to === "/mcp"
+                item.to === "/link" || item.to === "/post-scheduler" || item.label === "Agent"
                   ? "mt-1.5 border-t border-border/70 pt-2.5"
                   : undefined
               }
             >
               <SidebarLink
                 {...item}
-                active={isNavItemActive(pathname, item.to)}
+                active={isNavItemActive(pathname, search, item)}
                 collapsed={collapsed}
                 onNavigate={onNavigate}
               />
@@ -229,32 +290,42 @@ function SidebarPanel({
         <div className="mt-auto border-t border-border/70 pt-2.5">
           <SidebarLink
             {...APP_NAV_ITEMS.at(-1)!}
-            active={isNavItemActive(pathname, "/earn")}
+            active={pathname === "/earn"}
             collapsed={collapsed}
             onNavigate={onNavigate}
           />
         </div>
       </nav>
 
-      <ProfileCard profile={profile} collapsed={collapsed} />
+      <WorkspaceMenu session={workspaceSession} collapsed={collapsed} fallbackProfile={profile} />
     </>
   );
 }
 
-function isNavItemActive(pathname: string, to: (typeof APP_NAV_ITEMS)[number]["to"]) {
-  return to === "/auto-dms" || to === "/email-marketing"
-    ? pathname === to || pathname.startsWith(`${to}/`)
-    : pathname === to;
+function isNavItemActive(pathname: string, search: SidebarSearch | undefined, item: AppNavItem) {
+  if (item.contentTab) {
+    const tab = typeof search?.tab === "string" ? search.tab : "discover";
+    return (
+      pathname === "/content" &&
+      tab === item.contentTab &&
+      Boolean(search?.routines) === Boolean(item.routines)
+    );
+  }
+  return item.to === "/auto-dms" || item.to === "/email-marketing"
+    ? pathname === item.to || pathname.startsWith(`${item.to}/`)
+    : pathname === item.to;
 }
 
 function SidebarLink({
   label,
   to,
   icon: Icon,
+  contentTab,
+  routines,
   active,
   collapsed,
   onNavigate,
-}: (typeof APP_NAV_ITEMS)[number] & {
+}: AppNavItem & {
   active: boolean;
   collapsed: boolean;
   onNavigate: () => void;
@@ -262,6 +333,7 @@ function SidebarLink({
   return (
     <Link
       to={to}
+      search={contentTab ? { tab: contentTab, ...(routines ? { routines: true } : {}) } : undefined}
       onClick={onNavigate}
       aria-label={label}
       aria-current={active ? "page" : undefined}
@@ -275,43 +347,5 @@ function SidebarLink({
       <Icon className="size-4 shrink-0" />
       {!collapsed && <span className="truncate">{label}</span>}
     </Link>
-  );
-}
-
-function ProfileCard({ profile, collapsed }: { profile: SidebarProfile; collapsed: boolean }) {
-  const name = profile?.display_name?.trim() || profile?.username || "Your profile";
-  const avatarUrl = safeMediaUrl(profile?.avatar_url);
-  return (
-    <div
-      className={`mt-2 flex items-center gap-2 rounded-lg border border-border bg-card p-1.5 ${
-        collapsed ? "lg:flex-col" : ""
-      }`}
-    >
-      {avatarUrl ? (
-        <DecodedImage src={avatarUrl} alt="" className="size-8 shrink-0 rounded-lg object-cover" />
-      ) : (
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent font-ui-display text-base text-foreground">
-          {name.slice(0, 1).toUpperCase()}
-        </span>
-      )}
-      {!collapsed && (
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-xs font-semibold text-foreground">{name}</div>
-          {profile?.username && (
-            <div className="truncate text-[10px] text-muted-foreground">@{profile.username}</div>
-          )}
-        </div>
-      )}
-      {!collapsed && (
-        <Link
-          to="/settings"
-          aria-label="Settings"
-          title="Settings"
-          className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
-        >
-          <Settings className="size-3.5" />
-        </Link>
-      )}
-    </div>
   );
 }

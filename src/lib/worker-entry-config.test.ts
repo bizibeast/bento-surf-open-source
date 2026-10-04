@@ -40,8 +40,24 @@ describe("Cloudflare Worker entry configuration", () => {
     expect(contents).toContain("server.scheduled(controller, env, context)");
     expect(contents).toContain('resolve(process.cwd(), "wrangler.jsonc")');
     expect(contents).toContain("safeDeploymentKeys");
+    expect(contents).toContain('"images"');
     expect(contents).toContain("Object.assign(generatedWrangler, safeDeploymentConfig");
     expect(contents).not.toContain('"account_id"');
     expect(contents).not.toContain('"routes"');
+  });
+
+  it("queues due Social Insights refreshes from scheduled work", () => {
+    const server = readFileSync(resolve(process.cwd(), "src/server.ts"), "utf8");
+    expect(server).toContain("enqueueDueSocialInsightsRefreshes");
+    expect(server).toContain("env.SOCIAL_INSIGHTS_QUEUE");
+  });
+
+  it("configures independent Telegram queue delivery and its dead-letter queue", () => {
+    const config = readFileSync(resolve(process.cwd(), "wrangler.jsonc"), "utf8");
+    expect(config).toContain('"binding": "TELEGRAM_QUEUE"');
+    expect(config).toContain('"queue": "bento-telegram"');
+    expect(config).toContain('"dead_letter_queue": "bento-telegram-dlq"');
+    expect(config).toContain('"binding": "IMAGES"');
+    expect(config).not.toContain('"routes"');
   });
 });

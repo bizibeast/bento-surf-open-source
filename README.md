@@ -2,6 +2,8 @@
 
 Bento Surf is an AGPL-3.0-only, self-hosted creator application. This release is a local setup foundation: it includes application source, configuration examples, and migrations, but does not claim fresh-database, provider, MCP/WebMCP browser, or deployment proof.
 
+The creator app includes Content Agent, Brain, discovery and routines; multiple workspaces; knowledge and Telegram integrations; social analytics and scheduling, including Instagram Trial Reels; and the latest authenticated dark-mode UI.
+
 ## Local setup
 
 Install Bun and the Supabase CLI, then create a Supabase project you control.
@@ -11,7 +13,7 @@ bun install
 cp .env.example .env
 ```
 
-Set the core Supabase and URL values in `.env`, including `SUPABASE_PROJECT_ID`, `SUPABASE_DB_URL`, and `MIGRATION_CONFIRMATION=MIGRATE:<SUPABASE_PROJECT_ID>`. Preview and apply migrations only through the guarded workflow:
+Set `WORKSPACE_COOKIE_SIGNING_KEY` to an independent random value of at least 32 bytes. Set the core Supabase and URL values in `.env`, including `SUPABASE_PROJECT_ID`, `SUPABASE_DB_URL`, and `MIGRATION_CONFIRMATION=MIGRATE:<SUPABASE_PROJECT_ID>`. Preview and apply migrations only through the guarded workflow:
 
 ```sh
 bun scripts/migrate-supabase.ts --dry-run

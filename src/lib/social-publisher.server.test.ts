@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildInstagramMediaParams,
   buildTikTokPostInfo,
   socialPublishQueueBinding,
   tiktokRetryRemotePostId,
@@ -10,6 +11,24 @@ describe("provider queue routing", () => {
     expect(socialPublishQueueBinding("instagram")).toBe("SOCIAL_PUBLISH_QUEUE_META");
     expect(socialPublishQueueBinding("linkedin")).toBe("SOCIAL_PUBLISH_QUEUE_LINKEDIN");
     expect(socialPublishQueueBinding("reddit")).toBe("SOCIAL_PUBLISH_QUEUE_REDDIT");
+  });
+});
+
+describe("Instagram Reels publishing", () => {
+  it("adds Trial Reel parameters without changing standard Reels", () => {
+    expect(buildInstagramMediaParams).toBeTypeOf("function");
+    const media = { url: "https://example.com/reel.mp4", mimeType: "video/mp4" };
+
+    expect(buildInstagramMediaParams("Caption", media).has("trial_params")).toBe(false);
+    expect(
+      buildInstagramMediaParams("Caption", media, { trialReel: true }).get("trial_params"),
+    ).toBe(JSON.stringify({ graduation_strategy: "MANUAL" }));
+    expect(
+      buildInstagramMediaParams("Caption", media, {
+        trialReel: true,
+        graduationStrategy: "SS_PERFORMANCE",
+      }).get("trial_params"),
+    ).toBe(JSON.stringify({ graduation_strategy: "SS_PERFORMANCE" }));
   });
 });
 

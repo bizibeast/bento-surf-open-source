@@ -1,12 +1,23 @@
 import { describe, expect, it, vi } from "vitest";
 import { createAuthenticatedWebMcpTools } from "@/lib/webmcp-tools";
 import {
+  authenticatedQueryKeys,
   authenticatedWebMcpToolNames,
   createOpenWorkspaceWebMcpTool,
   WEBMCP_TOOLS_BY_ROUTE,
 } from "./_authenticated";
 
 describe("authenticated WebMCP route coverage", () => {
+  it("partitions top-level authenticated queries by workspace", () => {
+    expect(authenticatedQueryKeys("workspace-a")).toEqual({
+      profile: ["my-profile", "workspace-a"],
+      featurebaseIdentity: ["featurebase-identity", "workspace-a"],
+    });
+    expect(authenticatedQueryKeys("workspace-b").profile).not.toEqual(
+      authenticatedQueryKeys("workspace-a").profile,
+    );
+  });
+
   it("maps every creator workspace to registered shared tools", () => {
     expect(Object.keys(WEBMCP_TOOLS_BY_ROUTE).sort()).toEqual(
       [

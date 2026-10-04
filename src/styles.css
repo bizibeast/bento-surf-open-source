@@ -279,40 +279,236 @@ textarea {
   --tint-neutral-fg: oklch(0.3 0.01 260);
 }
 
-.dark {
-  --background: oklch(0.13 0.01 270);
-  --foreground: oklch(0.97 0.003 260);
-  --card: oklch(0.18 0.01 270);
-  --card-foreground: oklch(0.18 0.01 270); /* locked: same as light mode */
-  --popover: oklch(0.18 0.01 270);
-  --popover-foreground: oklch(0.97 0.003 260);
-  --primary: oklch(0.97 0.003 260);
-  --primary-foreground: oklch(0.18 0.01 270);
-  --secondary: oklch(0.23 0.01 270);
-  --secondary-foreground: oklch(0.97 0.003 260);
-  --muted: oklch(0.23 0.01 270);
-  --muted-foreground: oklch(0.68 0.01 260);
-  --accent: oklch(0.27 0.02 270);
-  --accent-foreground: oklch(0.97 0.003 260);
+.dark,
+.auth-dark {
+  color-scheme: dark;
+  --background: oklch(0.23 0.01 270);
+  --foreground: oklch(0.95 0.003 260);
+  --card: oklch(0.28 0.01 270);
+  --card-foreground: oklch(0.95 0.003 260);
+  --popover: oklch(0.29 0.01 270);
+  --popover-foreground: oklch(0.95 0.003 260);
+  --primary: oklch(0.94 0.003 260);
+  --primary-foreground: oklch(0.23 0.01 270);
+  --secondary: oklch(0.33 0.01 270);
+  --secondary-foreground: oklch(0.95 0.003 260);
+  --muted: oklch(0.32 0.01 270);
+  --muted-foreground: oklch(0.72 0.01 260);
+  --accent: oklch(0.36 0.02 270);
+  --accent-foreground: oklch(0.96 0.003 260);
   --destructive: oklch(0.55 0.2 25);
   --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(1 0 0 / 8%);
-  --input: oklch(1 0 0 / 10%);
-  --ring: oklch(0.55 0.03 260);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.7 0.04 250);
+  --shadow-subtle: 0 1px 2px rgb(0 0 0 / 0.22), 0 18px 44px -30px rgb(0 0 0 / 0.7);
+  --shadow-float: 0 28px 72px -42px rgb(0 0 0 / 0.82);
 
-  /* Tint foregrounds locked to light-mode values so card text stays consistent across themes */
-  --tint-sky: oklch(0.28 0.06 235);
-  --tint-sky-fg: oklch(0.4 0.13 240);
-  --tint-rose: oklch(0.28 0.07 20);
-  --tint-rose-fg: oklch(0.45 0.18 20);
-  --tint-mint: oklch(0.27 0.06 160);
-  --tint-mint-fg: oklch(0.38 0.12 160);
-  --tint-lavender: oklch(0.28 0.07 295);
-  --tint-lavender-fg: oklch(0.4 0.15 295);
-  --tint-amber: oklch(0.3 0.07 75);
-  --tint-amber-fg: oklch(0.48 0.13 70);
-  --tint-neutral: oklch(0.22 0.005 270);
-  --tint-neutral-fg: oklch(0.3 0.01 260);
+  --tint-sky: oklch(0.31 0.06 235);
+  --tint-sky-fg: oklch(0.82 0.09 235);
+  --tint-rose: oklch(0.31 0.07 20);
+  --tint-rose-fg: oklch(0.82 0.1 20);
+  --tint-mint: oklch(0.3 0.06 160);
+  --tint-mint-fg: oklch(0.82 0.09 160);
+  --tint-lavender: oklch(0.31 0.07 295);
+  --tint-lavender-fg: oklch(0.83 0.09 295);
+  --tint-amber: oklch(0.33 0.07 75);
+  --tint-amber-fg: oklch(0.86 0.1 75);
+  --tint-neutral: oklch(0.28 0.005 270);
+  --tint-neutral-fg: oklch(0.82 0.01 260);
+}
+
+/* Older authenticated screens still contain light-only utility colours.
+   Keep the compatibility layer at the shell so menus and portaled dialogs
+   darken too, without leaking into public or authentication pages. */
+.auth-dark
+  :where(
+    .bg-white,
+    .bg-white\/95,
+    .bg-white\/92,
+    .bg-white\/90,
+    .bg-white\/88,
+    .bg-white\/80,
+    .bg-white\/75,
+    .bg-white\/72,
+    .bg-white\/70,
+    .bg-white\/68,
+    .bg-white\/65,
+    .bg-white\/62,
+    .bg-white\/60,
+    .bg-white\/55,
+    .bg-white\/50,
+    .bg-white\/38,
+    .bg-white\/25,
+    .bg-white\/20,
+    .bg-white\/15,
+    .bg-white\/10,
+    .bg-white\/5,
+    .bg-white\/\[0\.075\],
+    .bg-white\/\[0\.07\],
+    .bg-white\/\[0\.065\]
+  ):not(:where(.auth-light, .auth-light *, [data-bento-public-page], [data-bento-public-page] *)) {
+  background-color: color-mix(in oklab, var(--card) 94%, transparent) !important;
+}
+
+.auth-dark
+  :where(
+    .bg-\[\#eef0f3\],
+    .bg-\[\#eef0f4\],
+    .bg-\[\#eef0f5\],
+    .bg-\[\#eef1f7\],
+    .bg-\[\#eef1f8\],
+    .bg-\[\#eef2f8\],
+    .bg-\[\#eef4ff\],
+    .bg-\[\#eef5ff\],
+    .bg-\[\#eef5ff\]\/90,
+    .bg-\[\#eef5ff\]\/50,
+    .bg-\[\#f0f2f5\],
+    .bg-\[\#f0f3fa\],
+    .bg-\[\#f1f2f5\],
+    .bg-\[\#f1f4fa\],
+    .bg-\[\#f2f3f5\],
+    .bg-\[\#f2f4f8\],
+    .bg-\[\#f2f5fb\],
+    .bg-\[\#f2f5fb\]\/70,
+    .bg-\[\#f3f5f9\],
+    .bg-\[\#f4f6fb\],
+    .bg-\[\#f5f7fb\],
+    .bg-\[\#f6f7fa\],
+    .bg-\[\#f6f8fc\],
+    .bg-\[\#f7f8fb\],
+    .bg-\[\#f7f8fc\],
+    .bg-\[\#f7f8fc\]\/95,
+    .bg-\[\#f7f8fc\]\/80,
+    .bg-\[\#f7f9fc\],
+    .bg-\[\#f7f9fd\],
+    .bg-\[\#f7faff\],
+    .bg-\[\#f8f9fc\],
+    .bg-\[\#f8faff\],
+    .bg-\[\#fafbfe\],
+    .bg-\[\#fafbfc\],
+    .bg-\[\#fbfcff\],
+    .bg-\[\#edf3ff\],
+    .bg-\[\#dfeaff\],
+    .bg-\[\#dfeaff\]\/55,
+    .bg-\[\#dfeaff\]\/48,
+    .bg-\[\#dfe9ff\],
+    .bg-\[\#e8f0ff\],
+    .bg-\[\#e8f2ff\],
+    .bg-\[\#e8f2ff\]\/65,
+    .bg-\[\#e9f1ff\],
+    .bg-\[\#e3f8ea\]\/70,
+    .bg-\[\#e8f8ef\],
+    .bg-\[\#e9f8ef\],
+    .bg-\[\#ffd6e6\]\/70,
+    .bg-\[\#ffd6e6\]\/65,
+    .bg-\[\#ffe8e8\],
+    .bg-\[\#fff0ea\],
+    .bg-\[\#fff0ea\]\/90,
+    .bg-\[\#fff1e7\],
+    .bg-\[\#fff2bd\],
+    .bg-\[\#fff3c5\],
+    .bg-\[\#fff6f6\],
+    .bg-\[\#fff7f2\],
+    .bg-\[\#d7e6fe\],
+    .bg-\[\#d9deea\],
+    .bg-\[\#d9f2e5\],
+    .bg-\[\#dceaff\],
+    .bg-\[\#dff7e8\],
+    .bg-\[\#e5e7eb\],
+    .bg-\[\#e7f7ee\],
+    .bg-\[\#e8eef9\],
+    .bg-\[\#e9e1ff\],
+    .bg-\[\#e9ebf0\],
+    .bg-\[\#eaf8f1\],
+    .bg-\[\#ece7ff\],
+    .bg-\[\#eef1f6\],
+    .bg-\[\#eef2ff\],
+    .bg-\[\#f1edff\],
+    .bg-\[\#f2f3f6\],
+    .bg-\[\#f3f3f1\],
+    .bg-\[\#f3f4f6\],
+    .bg-\[\#f4f5f7\],
+    .bg-\[\#f4f8ff\],
+    .bg-\[\#f5f5f3\],
+    .bg-\[\#f6f7f9\],
+    .bg-\[\#f7f7f5\],
+    .bg-\[\#f8f9fa\],
+    .bg-\[\#faf9f7\],
+    .bg-\[\#fafafa\],
+    .bg-\[\#ffe0e1\],
+    .bg-\[\#fff0b8\],
+    .bg-\[\#fff0bd\],
+    .bg-\[\#fff1d6\],
+    .bg-\[\#fff3c6\],
+    .bg-\[\#fff3df\],
+    .bg-\[\#fff6f7\],
+    .bg-\[\#fff8e8\],
+    .bg-\[\#fff9e8\],
+    .bg-neutral-50,
+    .bg-neutral-100,
+    .bg-neutral-100\/70,
+    .bg-neutral-200
+  ):not(:where(.auth-light, .auth-light *, [data-bento-public-page], [data-bento-public-page] *)) {
+  background-color: var(--muted) !important;
+}
+
+.auth-dark
+  :where(
+    .text-\[\#17213a\],
+    .text-\[\#111111\],
+    .text-\[\#171717\],
+    .text-\[\#1b1b1b\],
+    .text-neutral-900,
+    .text-black
+  ):not(:where(.auth-light, .auth-light *, [data-bento-public-page], [data-bento-public-page] *)) {
+  color: var(--foreground) !important;
+}
+
+.auth-dark
+  :where([class*="text-[#17213a]/"], [class*="text-black/"]):not(
+    :where(.auth-light, .auth-light *, [data-bento-public-page], [data-bento-public-page] *)
+  ) {
+  color: var(--muted-foreground) !important;
+}
+
+.auth-dark
+  :where(.text-\[\#31577f\], [class*="text-[#31577f]/"]):not(
+    :where(.auth-light, .auth-light *, [data-bento-public-page], [data-bento-public-page] *)
+  ) {
+  color: var(--tint-sky-fg) !important;
+}
+
+.auth-dark
+  :where(.text-neutral-700, .text-neutral-500, .text-neutral-400):not(
+    :where(.auth-light, .auth-light *, [data-bento-public-page], [data-bento-public-page] *)
+  ) {
+  color: var(--muted-foreground) !important;
+}
+
+.auth-dark
+  :where([class*="border-[#17213a]/"], [class*="border-black/"]):not(
+    :where(.auth-light, .auth-light *, [data-bento-public-page], [data-bento-public-page] *)
+  ) {
+  border-color: var(--border) !important;
+}
+
+.auth-dark
+  [class*="border-[#31577f]/"]:not(
+    :where(.auth-light, .auth-light *, [data-bento-public-page], [data-bento-public-page] *)
+  ) {
+  border-color: color-mix(in oklab, var(--tint-sky-fg) 32%, transparent) !important;
+}
+
+.auth-dark
+  :where(
+    .border-neutral-900,
+    .border-neutral-500,
+    .border-neutral-400,
+    .border-neutral-300,
+    .border-neutral-200
+  ):not(:where(.auth-light, .auth-light *, [data-bento-public-page], [data-bento-public-page] *)) {
+  border-color: var(--border) !important;
 }
 
 /* Marketing, auth, and first-run screens stay on the light design system,

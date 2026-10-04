@@ -4,7 +4,6 @@ import { SiFacebook } from "react-icons/si";
 import { toast } from "sonner";
 import { beginSocialConnection, disconnectSocialConnection } from "@/lib/social-oauth.functions";
 import { FACEBOOK_CONNECTION_RETURN_TO } from "@/lib/settings-integrations";
-import { MAX_SOCIAL_PROFILES_PER_PROVIDER } from "@/lib/social-scheduler";
 import { micro } from "@/lib/micro-app-ui";
 
 export type FacebookAutoDmAccount = {
@@ -24,7 +23,6 @@ export function FacebookAutoDmConnect({
 }) {
   const queryClient = useQueryClient();
   const needsReconnect = connections.some((connection) => !connection.canAutomate);
-  const atProfileLimit = connections.length >= MAX_SOCIAL_PROFILES_PER_PROVIDER;
   const connect = useMutation({
     mutationFn: () => beginSocialConnection({ data: { provider: "facebook" } }),
     onSuccess: ({ url }) => {
@@ -67,7 +65,7 @@ export function FacebookAutoDmConnect({
           <div className="min-w-0 flex-1 font-semibold text-[#17213a]">Facebook</div>
           <button
             type="button"
-            disabled={!ready || connect.isPending || (atProfileLimit && !needsReconnect)}
+            disabled={!ready || connect.isPending}
             onClick={() => connect.mutate()}
             className={`${micro.btnPrimaryCompact} shrink-0 disabled:bg-[#f2f5fb] disabled:text-[#17213a]/45 disabled:shadow-none disabled:hover:translate-y-0`}
           >
@@ -76,11 +74,9 @@ export function FacebookAutoDmConnect({
               : ready
                 ? needsReconnect
                   ? "Reconnect"
-                  : atProfileLimit
-                    ? "2 / 2"
-                    : connections.length
-                      ? "Connect another"
-                      : "Connect"
+                  : connections.length
+                    ? "Replace account"
+                    : "Connect"
                 : "Setup pending"}
           </button>
         </div>

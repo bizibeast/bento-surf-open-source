@@ -13,6 +13,7 @@
   },
   "browser": { "binding": "BROWSER" },
   "ai": { "binding": "AI" },
+  "images": { "binding": "IMAGES" },
   "no_bundle": true,
   "rules": [{ "type": "ESModule", "globs": ["**/*.mjs", "**/*.js"] }],
   "vars": {
@@ -67,6 +68,7 @@
   ],
   "queues": {
     "producers": [
+      { "binding": "TELEGRAM_QUEUE", "queue": "bento-telegram" },
       { "binding": "ANALYTICS_QUEUE", "queue": "bento-analytics" },
       { "binding": "ANALYTICS_QUEUE_1", "queue": "bento-analytics-1" },
       { "binding": "ANALYTICS_QUEUE_2", "queue": "bento-analytics-2" },
@@ -81,6 +83,14 @@
       { "binding": "FACEBOOK_DM_QUEUE", "queue": "bento-facebook-dm" },
     ],
     "consumers": [
+      {
+        "queue": "bento-telegram",
+        "max_batch_size": 10,
+        "max_batch_timeout": 2,
+        "max_retries": 8,
+        "max_concurrency": 4,
+        "dead_letter_queue": "bento-telegram-dlq",
+      },
       {
         "queue": "bento-analytics",
         "max_batch_size": 100,

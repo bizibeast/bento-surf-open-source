@@ -302,6 +302,95 @@ describe("self-service storage management", () => {
     ).toMatchObject({ prefix: `private/users/${userId}/`, cursor: "private-next" });
   });
 
+  it("sorts the complete owned object set by date or size with stable key ties", async () => {
+    const { bucket } = mockBucket();
+    const publicOlder = Object.assign(storedObject(`${publicKey}-older`, 12), {
+      uploaded: new Date("2026-07-15T00:00:00Z"),
+    });
+    const publicNewer = Object.assign(storedObject(`${publicKey}-newer`, 12), {
+      uploaded: new Date("2026-07-16T00:00:00Z"),
+    });
+    const privateLargest = Object.assign(storedObject(privateKey, 20), {
+      uploaded: new Date("2026-07-17T00:00:00Z"),
+    });
+    bucket.list = vi.fn(async (options = {}): Promise<R2Objects> => {
+      if (!options.include) return { objects: [], truncated: false, delimitedPrefixes: [] };
+      if (options.prefix === `users/${userId}/` && !options.cursor) {
+        return {
+          objects: [publicNewer],
+          truncated: true,
+          cursor: "public-next",
+          delimitedPrefixes: [],
+        };
+      }
+      if (options.prefix === `users/${userId}/`) {
+        return { objects: [publicOlder], truncated: false, delimitedPrefixes: [] };
+      }
+      return { objects: [privateLargest], truncated: false, delimitedPrefixes: [] };
+    });
+    const keys = async (sort: "uploaded" | "size", direction: "asc" | "desc") => {
+      const response = await handleR2StorageRequest(
+        new Request(`https://example.com/api/storage/manage?sort=${sort}&direction=${direction}`, {
+          headers: { authorization: "Bearer test" },
+        }),
+        { MEDIA_BUCKET: bucket },
+        { waitUntil: vi.fn() },
+        { authenticate: async () => userId, getStorageAllowanceMb: async () => 5 },
+      );
+      const payload = (await response?.json()) as { objects: Array<{ key: string }> };
+      return payload.objects.map((object) => object.key);
+    };
+
+    expect(await keys("uploaded", "asc")).toEqual([
+      publicOlder.key,
+      publicNewer.key,
+      privateLargest.key,
+    ]);
+    expect(await keys("uploaded", "desc")).toEqual([
+      privateLargest.key,
+      publicNewer.key,
+      publicOlder.key,
+    ]);
+    expect(await keys("size", "asc")).toEqual([
+      publicNewer.key,
+      publicOlder.key,
+      privateLargest.key,
+    ]);
+    expect(await keys("size", "desc")).toEqual([
+      privateLargest.key,
+      publicNewer.key,
+      publicOlder.key,
+    ]);
+  });
+
+  it("rejects invalid storage sorts and refuses falsely partial results", async () => {
+    const request = async (bucket: R2Bucket, query: string) =>
+      handleR2StorageRequest(
+        new Request(`https://example.com/api/storage/manage?${query}`, {
+          headers: { authorization: "Bearer test" },
+        }),
+        { MEDIA_BUCKET: bucket },
+        { waitUntil: vi.fn() },
+        { authenticate: async () => userId, getStorageAllowanceMb: async () => 5 },
+      );
+    const invalid = mockBucket().bucket;
+    expect((await request(invalid, "sort=name&direction=asc"))?.status).toBe(400);
+
+    const overflow = mockBucket().bucket;
+    overflow.list = vi.fn(async (options = {}): Promise<R2Objects> => ({
+      objects: options.include
+        ? Array.from({ length: 10_001 }, (_, index) =>
+            storedObject(`${publicKey}-${index}`, index + 1),
+          )
+        : [],
+      truncated: false,
+      delimitedPrefixes: [],
+    }));
+    const response = await request(overflow, "sort=size&direction=asc");
+    expect(response?.status).toBe(413);
+    await expect(response?.json()).resolves.toMatchObject({ error: "Too many files to sort" });
+  });
+
   it("rejects invalid delete payloads before touching R2", async () => {
     const { bucket } = mockBucket();
     const request = (keys: unknown) =>

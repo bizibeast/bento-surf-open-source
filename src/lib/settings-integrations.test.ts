@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   FACEBOOK_CONNECTION_RETURN_TO,
   INSTAGRAM_CONNECTION_RETURN_TO,
+  SETTINGS_INTEGRATION_TARGETS,
   TWITTER_CONNECTION_RETURN_TO,
   resolveFacebookConnectionReturn,
   resolveInstagramConnectionReturn,
@@ -11,6 +12,13 @@ import {
 } from "./settings-integrations";
 
 describe("settings integrations deep links", () => {
+  it("supports direct links to Content knowledge connections", () => {
+    expect(SETTINGS_INTEGRATION_TARGETS).toContain("knowledge");
+    expect(settingsIntegrationsPath("knowledge")).toBe(
+      "/settings?section=integrations&integration=knowledge",
+    );
+  });
+
   it("builds Settings Integrations search and path for each tab", () => {
     expect(settingsIntegrationsSearch("bookings")).toEqual({
       section: "integrations",
@@ -18,6 +26,9 @@ describe("settings integrations deep links", () => {
     });
     expect(settingsIntegrationsPath("automation")).toBe(
       "/settings?section=integrations&integration=automation",
+    );
+    expect(settingsIntegrationsPath("channels")).toBe(
+      "/settings?section=integrations&integration=channels",
     );
   });
 

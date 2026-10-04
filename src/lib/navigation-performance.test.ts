@@ -100,7 +100,7 @@ describe("authenticated navigation performance", () => {
     expect(sidebar).toContain("onMouseLeave={() => onCollapsedChange(true)}");
     expect(sidebar).toContain('collapsed ? "w-16" : "w-[13.5rem]"');
     expect(sidebar).toContain('to: "/link"');
-    expect(sidebar).toContain("<ProfileCard");
+    expect(sidebar).toContain("<WorkspaceMenu");
     expect(dashboard).not.toContain("CreatorToolLink");
   });
 

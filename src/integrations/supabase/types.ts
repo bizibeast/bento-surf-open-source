@@ -33,6 +33,561 @@ export type Database = {
   };
   public: {
     Tables: {
+      content_agent_messages: {
+        Row: {
+          content: string;
+          created_at: string;
+          expires_at: string;
+          id: string;
+          payload: Json;
+          role: string;
+          thread_id: string;
+          user_id: string;
+        };
+        Insert: {
+          content?: string;
+          created_at?: string;
+          expires_at?: string;
+          id?: string;
+          payload?: Json;
+          role: string;
+          thread_id: string;
+          user_id: string;
+        };
+        Update: {
+          content?: string;
+          created_at?: string;
+          expires_at?: string;
+          id?: string;
+          payload?: Json;
+          role?: string;
+          thread_id?: string;
+          user_id?: string;
+        };
+        Relationships: [];
+      };
+      content_agent_threads: {
+        Row: {
+          created_at: string;
+          id: string;
+          last_message_at: string;
+          title: string;
+          updated_at: string;
+          user_id: string;
+        };
+        Insert: {
+          created_at?: string;
+          id?: string;
+          last_message_at?: string;
+          title?: string;
+          updated_at?: string;
+          user_id: string;
+        };
+        Update: {
+          created_at?: string;
+          id?: string;
+          last_message_at?: string;
+          title?: string;
+          updated_at?: string;
+          user_id?: string;
+        };
+        Relationships: [];
+      };
+      content_routine_runs: {
+        Row: {
+          attempts: number;
+          completed_at: string | null;
+          created_at: string;
+          error_message: string | null;
+          id: string;
+          lease_expires_at: string | null;
+          result_count: number;
+          routine_id: string;
+          scheduled_for: string;
+          started_at: string | null;
+          status: string;
+          user_id: string;
+        };
+        Insert: {
+          attempts?: number;
+          completed_at?: string | null;
+          created_at?: string;
+          error_message?: string | null;
+          id?: string;
+          lease_expires_at?: string | null;
+          result_count?: number;
+          routine_id: string;
+          scheduled_for: string;
+          started_at?: string | null;
+          status?: string;
+          user_id: string;
+        };
+        Update: {
+          attempts?: number;
+          completed_at?: string | null;
+          created_at?: string;
+          error_message?: string | null;
+          id?: string;
+          lease_expires_at?: string | null;
+          result_count?: number;
+          routine_id?: string;
+          scheduled_for?: string;
+          started_at?: string | null;
+          status?: string;
+          user_id?: string;
+        };
+        Relationships: [];
+      };
+      content_routines: {
+        Row: {
+          created_at: string;
+          enabled: boolean;
+          id: string;
+          last_run_at: string | null;
+          next_run_at: string | null;
+          platforms: string[];
+          schedule: Json;
+          template: string;
+          timezone: string;
+          updated_at: string;
+          user_id: string;
+        };
+        Insert: {
+          created_at?: string;
+          enabled?: boolean;
+          id?: string;
+          last_run_at?: string | null;
+          next_run_at?: string | null;
+          platforms?: string[];
+          schedule?: Json;
+          template: string;
+          timezone?: string;
+          updated_at?: string;
+          user_id: string;
+        };
+        Update: {
+          created_at?: string;
+          enabled?: boolean;
+          id?: string;
+          last_run_at?: string | null;
+          next_run_at?: string | null;
+          platforms?: string[];
+          schedule?: Json;
+          template?: string;
+          timezone?: string;
+          updated_at?: string;
+          user_id?: string;
+        };
+        Relationships: [];
+      };
+      content_trend_briefs: {
+        Row: {
+          brief_date: string;
+          created_at: string;
+          expires_at: string;
+          fetched_at: string;
+          id: string;
+          items: Json;
+          language: string;
+          niche_key: string;
+          region: string;
+          updated_at: string;
+          warnings: string[];
+        };
+        Insert: {
+          brief_date: string;
+          created_at?: string;
+          expires_at?: string;
+          fetched_at?: string;
+          id?: string;
+          items?: Json;
+          language: string;
+          niche_key: string;
+          region: string;
+          updated_at?: string;
+          warnings?: string[];
+        };
+        Update: {
+          brief_date?: string;
+          created_at?: string;
+          expires_at?: string;
+          fetched_at?: string;
+          id?: string;
+          items?: Json;
+          language?: string;
+          niche_key?: string;
+          region?: string;
+          updated_at?: string;
+          warnings?: string[];
+        };
+        Relationships: [];
+      };
+      content_connection_states: {
+        Row: {
+          created_at: string;
+          expires_at: string;
+          metadata: Json;
+          provider: string;
+          state: string;
+          user_id: string;
+        };
+        Insert: {
+          created_at?: string;
+          expires_at?: string;
+          metadata?: Json;
+          provider: string;
+          state?: string;
+          user_id: string;
+        };
+        Update: {
+          created_at?: string;
+          expires_at?: string;
+          metadata?: Json;
+          provider?: string;
+          state?: string;
+          user_id?: string;
+        };
+        Relationships: [];
+      };
+      content_connections: {
+        Row: {
+          access_token_ciphertext: string | null;
+          created_at: string;
+          display_name: string | null;
+          external_account_id: string;
+          id: string;
+          last_attempt_at: string | null;
+          last_error: string | null;
+          last_success_at: string | null;
+          metadata: Json;
+          provider: string;
+          refresh_token_ciphertext: string | null;
+          scopes: string[];
+          selected_resources: Json;
+          status: string;
+          sync_cursor: string | null;
+          token_expires_at: string | null;
+          updated_at: string;
+          user_id: string;
+        };
+        Insert: {
+          access_token_ciphertext?: string | null;
+          created_at?: string;
+          display_name?: string | null;
+          external_account_id: string;
+          id?: string;
+          last_attempt_at?: string | null;
+          last_error?: string | null;
+          last_success_at?: string | null;
+          metadata?: Json;
+          provider: string;
+          refresh_token_ciphertext?: string | null;
+          scopes?: string[];
+          selected_resources?: Json;
+          status?: string;
+          sync_cursor?: string | null;
+          token_expires_at?: string | null;
+          updated_at?: string;
+          user_id: string;
+        };
+        Update: {
+          access_token_ciphertext?: string | null;
+          created_at?: string;
+          display_name?: string | null;
+          external_account_id?: string;
+          id?: string;
+          last_attempt_at?: string | null;
+          last_error?: string | null;
+          last_success_at?: string | null;
+          metadata?: Json;
+          provider?: string;
+          refresh_token_ciphertext?: string | null;
+          scopes?: string[];
+          selected_resources?: Json;
+          status?: string;
+          sync_cursor?: string | null;
+          token_expires_at?: string | null;
+          updated_at?: string;
+          user_id?: string;
+        };
+        Relationships: [];
+      };
+      content_source_records: {
+        Row: {
+          body: string;
+          canonical_source_url: string | null;
+          connection_id: string;
+          content_hash: string;
+          created_at: string;
+          deleted_at: string | null;
+          external_item_id: string;
+          id: string;
+          metadata: Json;
+          occurred_at: string | null;
+          provider: string;
+          record_type: string;
+          retrieved_at: string;
+          title: string;
+          updated_at: string;
+          user_id: string;
+        };
+        Insert: {
+          body?: string;
+          canonical_source_url?: string | null;
+          connection_id: string;
+          content_hash: string;
+          created_at?: string;
+          deleted_at?: string | null;
+          external_item_id: string;
+          id?: string;
+          metadata?: Json;
+          occurred_at?: string | null;
+          provider: string;
+          record_type: string;
+          retrieved_at?: string;
+          title: string;
+          updated_at?: string;
+          user_id: string;
+        };
+        Update: {
+          body?: string;
+          canonical_source_url?: string | null;
+          connection_id?: string;
+          content_hash?: string;
+          created_at?: string;
+          deleted_at?: string | null;
+          external_item_id?: string;
+          id?: string;
+          metadata?: Json;
+          occurred_at?: string | null;
+          provider?: string;
+          record_type?: string;
+          retrieved_at?: string;
+          title?: string;
+          updated_at?: string;
+          user_id?: string;
+        };
+        Relationships: [];
+      };
+      telegram_actions: {
+        Row: {
+          action_type: string;
+          connection_id: string;
+          consumed_at: string | null;
+          created_at: string;
+          expires_at: string;
+          id: string;
+          payload: Json;
+          user_id: string;
+        };
+        Insert: {
+          action_type: string;
+          connection_id: string;
+          consumed_at?: string | null;
+          created_at?: string;
+          expires_at?: string;
+          id?: string;
+          payload: Json;
+          user_id: string;
+        };
+        Update: {
+          action_type?: string;
+          connection_id?: string;
+          consumed_at?: string | null;
+          created_at?: string;
+          expires_at?: string;
+          id?: string;
+          payload?: Json;
+          user_id?: string;
+        };
+        Relationships: [];
+      };
+      telegram_update_receipts: {
+        Row: {
+          attempts: number;
+          created_at: string;
+          error_message: string | null;
+          expires_at: string;
+          lease_expires_at: string | null;
+          payload: Json;
+          status: string;
+          update_id: number;
+          updated_at: string;
+        };
+        Insert: {
+          attempts?: number;
+          created_at?: string;
+          error_message?: string | null;
+          expires_at?: string;
+          lease_expires_at?: string | null;
+          payload: Json;
+          status?: string;
+          update_id: number;
+          updated_at?: string;
+        };
+        Update: {
+          attempts?: number;
+          created_at?: string;
+          error_message?: string | null;
+          expires_at?: string;
+          lease_expires_at?: string | null;
+          payload?: Json;
+          status?: string;
+          update_id?: number;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      creator_brain_items: {
+        Row: {
+          content: string;
+          created_at: string;
+          id: string;
+          kind: string;
+          locked: boolean;
+          provenance: string;
+          source_ref: string | null;
+          source_url: string | null;
+          status: string;
+          title: string;
+          updated_at: string;
+          user_id: string;
+        };
+        Insert: {
+          content: string;
+          created_at?: string;
+          id?: string;
+          kind: string;
+          locked?: boolean;
+          provenance: string;
+          source_ref?: string | null;
+          source_url?: string | null;
+          status?: string;
+          title: string;
+          updated_at?: string;
+          user_id: string;
+        };
+        Update: {
+          content?: string;
+          created_at?: string;
+          id?: string;
+          kind?: string;
+          locked?: boolean;
+          provenance?: string;
+          source_ref?: string | null;
+          source_url?: string | null;
+          status?: string;
+          title?: string;
+          updated_at?: string;
+          user_id?: string;
+        };
+        Relationships: [];
+      };
+      creator_content_profiles: {
+        Row: {
+          created_at: string;
+          goal: string;
+          language: string;
+          niche_keywords: string[];
+          platform_frequencies: Json;
+          region: string;
+          timezone: string;
+          updated_at: string;
+          user_id: string;
+        };
+        Insert: {
+          created_at?: string;
+          goal?: string;
+          language?: string;
+          niche_keywords?: string[];
+          platform_frequencies?: Json;
+          region?: string;
+          timezone?: string;
+          updated_at?: string;
+          user_id: string;
+        };
+        Update: {
+          created_at?: string;
+          goal?: string;
+          language?: string;
+          niche_keywords?: string[];
+          platform_frequencies?: Json;
+          region?: string;
+          timezone?: string;
+          updated_at?: string;
+          user_id?: string;
+        };
+        Relationships: [];
+      };
+      creator_content_recommendations: {
+        Row: {
+          angles: Json;
+          content_insight_id: string | null;
+          created_at: string;
+          feedback: string;
+          fingerprint: string;
+          id: string;
+          kind: string;
+          metric_name: string | null;
+          metric_value: number | null;
+          outlier_score: number | null;
+          reason: string;
+          source_name: string | null;
+          source_published_at: string | null;
+          source_retrieved_at: string | null;
+          source_url: string | null;
+          summary: string;
+          title: string;
+          trend_brief_id: string | null;
+          updated_at: string;
+          user_id: string;
+        };
+        Insert: {
+          angles?: Json;
+          content_insight_id?: string | null;
+          created_at?: string;
+          feedback?: string;
+          fingerprint: string;
+          id?: string;
+          kind: string;
+          metric_name?: string | null;
+          metric_value?: number | null;
+          outlier_score?: number | null;
+          reason?: string;
+          source_name?: string | null;
+          source_published_at?: string | null;
+          source_retrieved_at?: string | null;
+          source_url?: string | null;
+          summary?: string;
+          title: string;
+          trend_brief_id?: string | null;
+          updated_at?: string;
+          user_id: string;
+        };
+        Update: {
+          angles?: Json;
+          content_insight_id?: string | null;
+          created_at?: string;
+          feedback?: string;
+          fingerprint?: string;
+          id?: string;
+          kind?: string;
+          metric_name?: string | null;
+          metric_value?: number | null;
+          outlier_score?: number | null;
+          reason?: string;
+          source_name?: string | null;
+          source_published_at?: string | null;
+          source_retrieved_at?: string | null;
+          source_url?: string | null;
+          summary?: string;
+          title?: string;
+          trend_brief_id?: string | null;
+          updated_at?: string;
+          user_id?: string;
+        };
+        Relationships: [];
+      };
       audience_campaigns: {
         Row: {
           body_markdown: string;
@@ -1901,6 +2456,37 @@ export type Database = {
       };
     };
     Functions: {
+      claim_telegram_action: {
+        Args: { p_action_id: string; p_chat_id: string; p_now?: string };
+        Returns: Database["public"]["Tables"]["telegram_actions"]["Row"][];
+      };
+      claim_telegram_update: {
+        Args: { p_now?: string; p_update_id: number };
+        Returns: Database["public"]["Tables"]["telegram_update_receipts"]["Row"][];
+      };
+      finish_telegram_update: {
+        Args: {
+          p_error_message?: string | null;
+          p_now?: string;
+          p_status: string;
+          p_update_id: number;
+        };
+        Returns: boolean;
+      };
+      claim_due_content_routines: {
+        Args: { p_limit?: number; p_now?: string };
+        Returns: Database["public"]["Tables"]["content_routine_runs"]["Row"][];
+      };
+      finish_content_routine_run: {
+        Args: {
+          p_error_message?: string | null;
+          p_next_run_at?: string | null;
+          p_result_count?: number;
+          p_run_id: string;
+          p_status: string;
+        };
+        Returns: boolean;
+      };
       archive_newsletter_publication: {
         Args: {
           p_confirmation: string;

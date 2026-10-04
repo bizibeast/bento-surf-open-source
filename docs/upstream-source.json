@@ -1,6 +1,19 @@
 {
   "repository": "bento-surf",
-  "commit": "f256d7d0b8d6b8c04d028b1f12b16ac34c9eee2f",
+  "commit": "6fa5fb04b300fd306880e637bc182cadbce8fb21",
   "includesReviewedWorkingTree": true,
-  "syncedAt": "2026-09-18T08:26:25Z"
+  "syncedAt": "2026-10-04T09:23:55.198763Z",
+  "reviewedSourceFiles": [
+    "src/components/content/ContentDocument.test.tsx",
+    "src/components/content/ContentDocument.tsx",
+    "src/components/content/content-workspace.css",
+    "src/lib/content-index.server.test.ts",
+    "src/lib/content-index.server.ts",
+    "src/lib/content-media.server.ts",
+    "src/lib/content-media.test.ts",
+    "src/lib/content-media.ts",
+    "supabase/migrations/20261001004837_content_workspace_custom_routines.sql",
+    "supabase/migrations/20261001010729_content_workspace_story_tags.sql",
+    "supabase/migrations/20261001025503_content_social_ingestion_index.sql"
+  ]
 }

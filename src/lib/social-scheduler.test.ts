@@ -65,15 +65,13 @@ describe("social scheduler validation", () => {
     expect(isPublicSocialProvider("youtube")).toBe(true);
   });
 
-  it("keeps reconnects while limiting each provider to two distinct profiles", () => {
+  it("selects one account and allows a new OAuth account to replace the current one", () => {
     const accounts = [{ id: "one" }, { id: "two" }, { id: "three" }, { id: "three" }];
-    expect(socialAccountsWithinLimit([], accounts).map((account) => account.id)).toEqual([
-      "one",
-      "two",
-    ]);
+    expect(socialAccountsWithinLimit([], accounts).map((account) => account.id)).toEqual(["one"]);
     expect(
       socialAccountsWithinLimit(["one", "two"], accounts).map((account) => account.id),
-    ).toEqual(["one", "two"]);
+    ).toEqual(["one"]);
+    expect(socialAccountsWithinLimit(["old"], [{ id: "new" }])).toEqual([{ id: "new" }]);
   });
 
   it("builds Monday-first week and six-row month calendar ranges", () => {
@@ -207,6 +205,48 @@ describe("social scheduler validation", () => {
     expect(
       providerSettingsMedia({ youtube: { thumbnail }, instagram: { cover: thumbnail } }),
     ).toEqual([thumbnail, thumbnail]);
+  });
+
+  it("allows Trial Reels only for one Instagram video", () => {
+    expect(
+      validatePostForProviders("A caption", [video], ["instagram"], "", {
+        instagram: { trialReel: true, graduationStrategy: "MANUAL" },
+      }),
+    ).toEqual({});
+    expect(
+      validatePostForProviders("A caption", [image], ["instagram"], "", {
+        instagram: { trialReel: true, graduationStrategy: "MANUAL" },
+      }).instagram,
+    ).toContain("single video");
+    expect(
+      validatePostForProviders("A caption", [video, image], ["instagram"], "", {
+        instagram: { trialReel: true, graduationStrategy: "MANUAL" },
+      }).instagram,
+    ).toContain("single video");
+    expect(
+      socialPostInputSchema.safeParse({
+        body: "A caption",
+        scheduledAt: null,
+        timezone: "UTC",
+        connectionIds: ["11111111-1111-4111-8111-111111111111"],
+        media: [video],
+        providerSettings: {
+          instagram: { trialReel: true, graduationStrategy: "SOMETHING_ELSE" },
+        },
+        publishNow: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      socialPostInputSchema.safeParse({
+        body: "A caption",
+        scheduledAt: null,
+        timezone: "UTC",
+        connectionIds: ["11111111-1111-4111-8111-111111111111"],
+        media: [video],
+        providerSettings: { instagram: { trialReel: "yes" } },
+        publishNow: true,
+      }).success,
+    ).toBe(false);
   });
 
   it("defaults TikTok cover frames to one second and clamps them inside the video", () => {

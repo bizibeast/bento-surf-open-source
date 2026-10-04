@@ -11,6 +11,7 @@ import { normalizeEmailRecipient } from "./email-recipient";
 import { newsletterContentSchema, type NewsletterContentBlock } from "./newsletter";
 import { recordPriorityDmOrder } from "./priority-dm.server";
 import { captureServerEvent } from "./posthog.server";
+import { recordContentEvent } from "./content-workspace-analytics.server";
 
 export { normalizeEmailRecipient } from "./email-recipient";
 
@@ -1290,8 +1291,16 @@ export async function failAudienceCampaignDelivery(campaignId: string, error: un
 }
 async function creatorIdentity(userId: string) {
   const db = supabaseAdmin as any;
+  const { data: membership, error: membershipError } = await db
+    .from("workspace_memberships")
+    .select("auth_user_id")
+    .eq("workspace_id", userId)
+    .eq("role", "owner")
+    .maybeSingle();
+  if (membershipError) throw new Error(membershipError.message);
+  const authUserId = membership?.auth_user_id || userId;
   const [{ data: auth }, { data: profile, error }] = await Promise.all([
-    supabaseAdmin.auth.admin.getUserById(userId),
+    supabaseAdmin.auth.admin.getUserById(authUserId),
     db.from("profiles").select("username, display_name").eq("id", userId).maybeSingle(),
   ]);
   if (error) throw new Error(error.message);
@@ -1300,6 +1309,42 @@ async function creatorIdentity(userId: string) {
     name: profile?.display_name || profile?.username || null,
     username: profile?.username || "",
   };
+}
+
+export async function enqueueContentDraftsReadyEmail(
+  input: {
+    userId: string;
+    runId: string;
+    draftCount: number;
+    platforms: string[];
+  },
+  enqueue: typeof enqueueEmail = enqueueEmail,
+) {
+  const draftCount = Math.max(0, Math.trunc(input.draftCount));
+  if (!draftCount) return null;
+  const creator = await creatorIdentity(input.userId);
+  if (!creator.email) return null;
+  const result = await enqueue({
+    eventKey: `content-drafts-ready:${input.runId}`,
+    eventType: "content_drafts_ready",
+    recipientEmail: creator.email,
+    recipientName: creator.name,
+    userId: input.userId,
+    payload: {
+      draftCount,
+      platforms: [...new Set(input.platforms.map((value) => value.trim()).filter(Boolean))].slice(
+        0,
+        8,
+      ),
+      reviewUrl: "/content?tab=agent",
+    },
+    immediate: true,
+  });
+  void recordContentEvent(input.userId, "content_drafts_ready_email", {
+    draftCount,
+    platformCount: input.platforms.length,
+  });
+  return result;
 }
 
 export async function enqueueCreatorLeadEmail(input: {

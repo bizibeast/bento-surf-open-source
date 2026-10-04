@@ -3,6 +3,7 @@
 // Runtime types generated with workerd@1.20260710.1 2026-07-15 nodejs_compat
 interface __BaseEnv_Env {
 	MEDIA_BUCKET: R2Bucket;
+	IMAGES?: ImagesBinding;
 	ANALYTICS_QUEUE: Queue;
 	ANALYTICS_QUEUE_1: Queue;
 	ANALYTICS_QUEUE_2: Queue;
@@ -15,6 +16,8 @@ interface __BaseEnv_Env {
 	INSTAGRAM_DM_QUEUE: Queue;
 	TWITTER_DM_QUEUE: Queue;
 	FACEBOOK_DM_QUEUE: Queue;
+	TELEGRAM_QUEUE: Queue;
+	WORKSPACE_COOKIE_SIGNING_KEY: string;
 	ANALYTICS_RATE_LIMITER: RateLimit;
 	UPLOAD_RATE_LIMITER: RateLimit;
 	PUBLIC_API_RATE_LIMITER: RateLimit;

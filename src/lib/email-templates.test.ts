@@ -29,12 +29,29 @@ describe("Bento email templates", () => {
     });
 
     expect(email.html).toContain("https://self.example/branding/bento-logo.png");
-    expect(email.html).not.toContain("https://bento.surf");
+    expect(email.html).not.toContain("https://example.com");
   });
 
+  it("renders a concise content-drafts-ready email without private Brain content", () => {
+    const rendered = renderBentoEmail({
+      eventType: "content_drafts_ready",
+      category: "transactional",
+      payload: {
+        draftCount: 5,
+        platforms: ["LinkedIn", "Instagram"],
+        reviewUrl: "/content?tab=agent",
+        brainItems: "must not appear",
+      },
+      appUrl: "https://app.example.com",
+    });
+    expect(rendered.subject).toContain("5 posts are ready");
+    expect(rendered.html).toContain("/content?tab=agent");
+    expect(rendered.html).toContain("LinkedIn and Instagram");
+    expect(rendered.html).not.toContain("must not appear");
+  });
   it("renders all seven newsletter blocks while omitting unresolved products and unsafe HTML", () => {
     const document = renderNewsletterEmailDocument({
-      appUrl: "https://app.bento.surf",
+      appUrl: "https://app.example.com",
       content: [
         { id: "1", type: "heading", text: "<Launch>" },
         { id: "2", type: "paragraph", text: "News <script>alert(1)</script>" },
@@ -50,7 +67,7 @@ describe("Bento email templates", () => {
           id: "11111111-1111-4111-8111-111111111111",
           title: "Creator Kit",
           description: "Published product",
-          url: "https://bento.surf/@ari/products/creator-kit",
+          url: "https://example.com/@ari/products/creator-kit",
         },
       ],
     });
@@ -58,7 +75,7 @@ describe("Bento email templates", () => {
     expect(document.html).toContain("&lt;Launch&gt;");
     expect(document.html).not.toContain("<script>");
     expect(document.html).toContain("https://cdn.example.com/cover.png");
-    expect(document.html).toContain("https://app.bento.surf/newsletter/launch");
+    expect(document.html).toContain("https://app.example.com/newsletter/launch");
     expect(document.html).toContain("<hr");
     expect(document.html).toContain("Creator Kit");
     expect(document.html).not.toContain("22222222-2222-4222-8222-222222222222");
@@ -91,7 +108,7 @@ describe("Bento email templates", () => {
     expect(email.html).toContain("Launch notes");
     expect(email.html).toContain("https://cdn.example.com/studio-notes.png");
     expect(email.html).toContain("A week inside the studio");
-    expect(email.html).not.toContain("https://bento.surf/branding/bento-logo.png");
+    expect(email.html).not.toContain("https://example.com/branding/bento-logo.png");
     expect(email.html).toContain("The full structured issue.");
     expect(email.text).toContain("Launch notes\n\nThe full structured issue.");
     expect(email.html).toContain("Unsubscribe");
@@ -126,16 +143,16 @@ describe("Bento email templates", () => {
         publicationTitle: '<img src=x onerror="alert(1)">',
         confirmationUrl: `https://evil.example/confirm?token=${token}`,
       },
-      appUrl: "https://app.bento.surf",
+      appUrl: "https://app.example.com",
     });
-    expect(email.html).toContain("https://app.bento.surf/");
+    expect(email.html).toContain("https://app.example.com/");
     expect(email.html).not.toContain("evil.example");
     expect(email.html).not.toContain("<img src=x");
     expect(email.html).not.toContain('onerror="');
   });
   it("signs newsletter confirmation URLs only when the durable email is delivered", async () => {
     process.env.EMAIL_SIGNING_SECRET = "test-email-signing-secret-with-more-than-32-characters";
-    process.env.VITE_APP_URL = "https://app.test.bento.surf";
+    process.env.VITE_APP_URL = "https://app.test.example.com";
     const payload = await prepareEmailPayloadForDelivery({
       eventType: "newsletter_subscription_confirmation",
       recipientEmail: "reader@example.com",
@@ -149,7 +166,7 @@ describe("Bento email templates", () => {
       },
     });
     const url = new URL(String(payload.confirmationUrl));
-    expect(url.origin).toBe("https://app.test.bento.surf");
+    expect(url.origin).toBe("https://app.test.example.com");
     const token = url.searchParams.get("confirm") || "";
     await expect(verifyNewsletterConfirmationToken(token)).resolves.toMatchObject({
       confirmationNonce: "33333333-3333-4333-8333-333333333333",
@@ -171,25 +188,25 @@ describe("Bento email templates", () => {
         creatorName: "Ari",
         amount: 2900,
         currency: "usd",
-        accessUrl: "https://bento.surf/access/private-token",
+        accessUrl: "https://example.com/access/private-token",
       },
-      appUrl: "https://bento.surf",
+      appUrl: "https://example.com",
     });
 
     expect(email.subject).toContain("Creator OS");
-    expect(email.html).toContain("bento.surf");
-    expect(email.html).toContain("https://bento.surf/branding/bento-logo.png");
+    expect(email.html).toContain("example.com");
+    expect(email.html).toContain("https://example.com/branding/bento-logo.png");
     expect(email.html).toContain("Instrument Serif");
     expect(email.html).toContain("font-family:Inter");
     expect(email.html).toContain("$29.00");
-    expect(email.html).toContain("https://bento.surf/access/private-token");
+    expect(email.html).toContain("https://example.com/access/private-token");
     expect(email.text).toContain("Open my purchase");
     expect(email.html).not.toContain("Unsubscribe");
   });
 
   it("links buyer messages to the creator conversation", () => {
     const accessUrl =
-      "https://app.bento.surf/priority-dm?thread=11111111-1111-4111-8111-111111111111";
+      "https://app.example.com/priority-dm?thread=11111111-1111-4111-8111-111111111111";
     const received = renderBentoEmail({
       eventType: "priority_dm_received",
       category: "transactional",
@@ -202,7 +219,7 @@ describe("Bento email templates", () => {
         message: "Can you review my launch page?",
         accessUrl,
       },
-      appUrl: "https://app.bento.surf",
+      appUrl: "https://app.example.com",
     });
     expect(received.subject).toContain("priority message");
     expect(received.text).toContain("Can you review my launch page?");
@@ -212,7 +229,7 @@ describe("Bento email templates", () => {
 
   it("links creator messages through a customer magic link with a safe return path", () => {
     const accessUrl =
-      "https://app.bento.surf/library/verify?token=single-use-token&returnTo=%2Flibrary%2Fpriority-dm%2F11111111-1111-4111-8111-111111111111";
+      "https://app.example.com/library/verify?token=single-use-token&returnTo=%2Flibrary%2Fpriority-dm%2F11111111-1111-4111-8111-111111111111";
     const reply = renderBentoEmail({
       eventType: "priority_dm_reply",
       category: "transactional",
@@ -223,7 +240,7 @@ describe("Bento email templates", () => {
         reply: "Yes, send me the draft.",
         accessUrl,
       },
-      appUrl: "https://app.bento.surf",
+      appUrl: "https://app.example.com",
     });
     expect(reply.subject).toContain("Ari replied");
     expect(reply.text).toContain("Yes, send me the draft.");
@@ -242,7 +259,7 @@ describe("Bento email templates", () => {
         bookingDate: "Thursday, July 30 at 4:00 PM",
         meetingUrl: "https://meet.google.com/abc-defg-hij",
       },
-      appUrl: "https://app.bento.surf",
+      appUrl: "https://app.example.com",
     });
     expect(email.subject).toContain("Starts in 1 hour");
     expect(email.html).toContain("Thursday, July 30 at 4:00 PM");
@@ -253,11 +270,11 @@ describe("Bento email templates", () => {
     const delivery = resolveEmailDeliveryEnvelope({
       mode: "sandbox",
       originalRecipient: "creator@example.com",
-      testRecipient: "qa@bento.surf",
+      testRecipient: "qa@example.com",
       subject: "Your Bento is ready",
     });
 
-    expect(delivery.recipient).toBe("qa@bento.surf");
+    expect(delivery.recipient).toBe("qa@example.com");
     expect(delivery.subject).toBe("Your Bento is ready");
     expect(delivery.subject).not.toContain("STAGING");
     expect(delivery.diagnosticHeaders).toEqual({
@@ -275,7 +292,7 @@ describe("Bento email templates", () => {
         productTitle: "<script>alert(1)</script>",
         accessUrl: "https://evil.example/steal",
       },
-      appUrl: "https://bento.surf",
+      appUrl: "https://example.com",
     });
 
     expect(email.html).not.toContain("<script>");
@@ -288,8 +305,8 @@ describe("Bento email templates", () => {
       eventType: "weekly_digest",
       category: "marketing",
       payload: { views: 120, clicks: 18, sales: 2 },
-      appUrl: "https://bento.surf",
-      unsubscribeUrl: "https://bento.surf/api/email/unsubscribe?token=signed",
+      appUrl: "https://example.com",
+      unsubscribeUrl: "https://example.com/api/email/unsubscribe?token=signed",
     });
 
     expect(email.subject).toContain("120 visits");
@@ -320,7 +337,7 @@ describe("Bento email templates", () => {
   });
 
   it("renders a private community invitation without exposing its access token elsewhere", () => {
-    const accessUrl = "https://bento.surf/access/private-community-token";
+    const accessUrl = "https://example.com/access/private-community-token";
     const email = renderBentoEmail({
       eventType: "community_invite",
       category: "transactional",
@@ -330,7 +347,7 @@ describe("Bento email templates", () => {
         creatorName: "Ari",
         accessUrl,
       },
-      appUrl: "https://bento.surf",
+      appUrl: "https://example.com",
     });
 
     expect(email.subject).toContain("Creator Circle");
@@ -349,9 +366,9 @@ describe("Bento email templates", () => {
         productTitle: "Creator Circle",
         creatorName: "Ari",
         preview: "The July resources are ready.",
-        accessUrl: "https://app.bento.surf/library",
+        accessUrl: "https://app.example.com/library",
       },
-      appUrl: "https://app.bento.surf",
+      appUrl: "https://app.example.com",
     });
 
     expect(email.subject).toContain("Creator Circle");
@@ -360,13 +377,13 @@ describe("Bento email templates", () => {
   });
 
   it("renders the passwordless customer-library link as a transactional email", () => {
-    const accessUrl = "https://app.bento.surf/library/verify?token=single-use-token";
+    const accessUrl = "https://app.example.com/library/verify?token=single-use-token";
     const email = renderBentoEmail({
       eventType: "customer_library_login",
       category: "transactional",
       recipientName: "Maya",
       payload: { accessUrl, expiresInMinutes: 15 },
-      appUrl: "https://app.bento.surf",
+      appUrl: "https://app.example.com",
     });
 
     expect(email.subject).toBe("Sign in to your Bento library");
@@ -376,7 +393,7 @@ describe("Bento email templates", () => {
   });
 
   it("renders a safe booking cancellation and rebooking link", () => {
-    const accessUrl = "https://app.bento.surf/access/private-booking-token";
+    const accessUrl = "https://app.example.com/access/private-booking-token";
     const email = renderBentoEmail({
       eventType: "booking_canceled",
       category: "transactional",
@@ -388,7 +405,7 @@ describe("Bento email templates", () => {
         bookingDate: "Thursday, 30 July at 10:00 am",
         accessUrl,
       },
-      appUrl: "https://app.bento.surf",
+      appUrl: "https://app.example.com",
     });
 
     expect(email.subject).toContain("Creator coaching");
@@ -461,7 +478,7 @@ describe("email preference tokens", () => {
       email: "creator@example.com",
     });
     const response = await handleEmailUnsubscribeRequest(
-      new Request(`https://bento.surf/api/email/unsubscribe?token=${encodeURIComponent(token)}`),
+      new Request(`https://example.com/api/email/unsubscribe?token=${encodeURIComponent(token)}`),
     );
 
     expect(response.status).toBe(200);

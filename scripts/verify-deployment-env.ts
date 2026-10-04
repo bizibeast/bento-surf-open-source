@@ -39,6 +39,10 @@ function verify(target: Target) {
   const polarEnvironment = required("POLAR_ENVIRONMENT");
   const paypalEnvironment = required("PAYPAL_ENVIRONMENT");
   required("VITE_SUPABASE_PUBLISHABLE_KEY");
+  const workspaceCookieSigningKey = required("WORKSPACE_COOKIE_SIGNING_KEY");
+  if (new TextEncoder().encode(workspaceCookieSigningKey).byteLength < 32) {
+    throw new Error("WORKSPACE_COOKIE_SIGNING_KEY must be at least 32 bytes.");
+  }
   DODO_ADDON_ENV_NAMES.forEach(required);
   if (!isDodoAddonConfigurationReady(process.env)) {
     throw new Error("Dodo add-on IDs must be unique.");

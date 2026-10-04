@@ -61,10 +61,32 @@ function firstProductId(data: JsonRecord): string | null {
 }
 
 function resolveUserId(data: JsonRecord): string | null {
+  const metadata = asRecord(data.metadata);
   return (
-    asString(asRecord(data.metadata).user_id) ??
+    asString(metadata.workspace_id) ??
+    asString(metadata.user_id) ??
     asString(asRecord(asRecord(data.customer).metadata).user_id)
   );
+}
+
+async function validateWorkspaceMetadata(data: JsonRecord, workspaceId: string | null) {
+  const metadata = asRecord(data.metadata);
+  const explicitWorkspaceId = asString(metadata.workspace_id);
+  if (!explicitWorkspaceId) return false;
+  const authUserId = asString(metadata.auth_user_id);
+  if (!workspaceId || explicitWorkspaceId !== workspaceId || !authUserId) {
+    throw new Error("Dodo workspace metadata is incomplete.");
+  }
+  const { data: membership, error } = await supabaseAdmin
+    .from("workspace_memberships" as never)
+    .select("workspace_id")
+    .eq("auth_user_id", authUserId)
+    .eq("workspace_id", workspaceId)
+    .eq("role", "owner")
+    .eq("status", "active")
+    .maybeSingle();
+  if (error || !membership) throw new Error("Dodo workspace ownership could not be verified.");
+  return true;
 }
 
 function planFromEvent(data: JsonRecord): PaidPlanId | null {
@@ -164,10 +186,18 @@ async function applyPlan(
   }
   const grantedPlan = normalizePlan(complimentaryGrant?.plan_id);
   const effectiveProfilePlan = highestPlan(grantedPlan, plan);
+  const workspaceStatus =
+    isPaidPlan(grantedPlan) || ["active", "trialing"].includes(subscription.status)
+      ? "active"
+      : "locked";
 
   const { error: profileError } = await supabaseAdmin
     .from("profiles")
-    .update({ is_pro: isPaidPlan(effectiveProfilePlan), plan_id: effectiveProfilePlan })
+    .update({
+      is_pro: isPaidPlan(effectiveProfilePlan),
+      plan_id: effectiveProfilePlan,
+      workspace_status: workspaceStatus,
+    } as never)
     .eq("id", userId);
   if (profileError) throw new Error(`profiles update failed: ${profileError.message}`);
 
@@ -294,7 +324,11 @@ function subscriptionState(event: DodoEvent): { active: boolean; status: SubStat
   return { active: false, status: "incomplete" };
 }
 
-async function syncSubscription(event: DodoEvent, userId: string) {
+async function syncSubscription(
+  event: DodoEvent,
+  userId: string,
+  requireExactSubscription = false,
+) {
   const data = event.data;
   const state = subscriptionState(event);
   const plan = state.active ? requiredPlanFromEvent(data) : "free";
@@ -315,15 +349,18 @@ async function syncSubscription(event: DodoEvent, userId: string) {
       .eq("user_id", userId)
       .maybeSingle();
     if (error) throw new Error(`subscription lookup failed: ${error.message}`);
+    const mismatchedCurrent = current?.dodo_subscription_id !== dodoId;
     if (
-      current?.dodo_subscription_id &&
-      current.dodo_subscription_id !== dodoId &&
-      (current.status === "active" || current.status === "trialing")
+      (requireExactSubscription && mismatchedCurrent) ||
+      (!requireExactSubscription &&
+        current?.dodo_subscription_id &&
+        mismatchedCurrent &&
+        (current.status === "active" || current.status === "trialing"))
     ) {
       console.warn("[dodo] ignoring inactive event for a non-current subscription", {
         eventType: event.type,
         eventSubscription: dodoId,
-        currentSubscription: current.dodo_subscription_id,
+        currentSubscription: current?.dodo_subscription_id ?? null,
       });
       return;
     }
@@ -353,6 +390,7 @@ async function syncSubscription(event: DodoEvent, userId: string) {
 
 async function processEvent(event: DodoEvent): Promise<string | null> {
   const userId = resolveUserId(event.data);
+  const explicitWorkspace = await validateWorkspaceMetadata(event.data, userId);
 
   if (event.type.startsWith("payment.")) {
     await recordPayment(event, userId);
@@ -395,7 +433,7 @@ async function processEvent(event: DodoEvent): Promise<string | null> {
 
   if (event.type.startsWith("subscription.")) {
     if (!userId) throw new Error(`${event.type} has no metadata.user_id`);
-    await syncSubscription(event, userId);
+    await syncSubscription(event, userId, explicitWorkspace);
     return userId;
   }
 

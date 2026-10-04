@@ -8,6 +8,7 @@ import { enforceRequestRateLimit, readResponseText } from "./request-security.se
 import { socialApiErrorMessage, socialApiPayloadHasError } from "./social-provider-response";
 import { requirePlanEntitlement } from "./plan.server";
 import { durableSocialAvatarUrl } from "./social-avatar.server";
+import { queueInitialSocialInsightsImport } from "./social-analytics.functions";
 import {
   SOCIAL_PROVIDERS,
   isPublicSocialProvider,
@@ -45,14 +46,7 @@ const SOCIAL_PROVIDER_SCOPES: Record<GenericProvider, readonly string[]> = {
   ],
   threads: ["threads_basic", "threads_content_publish", "threads_manage_insights"],
   tiktok: ["user.info.basic", "user.info.stats", "video.list", "video.publish"],
-  linkedin: [
-    "openid",
-    "profile",
-    "w_member_social",
-    "r_member_social",
-    "r_member_profileAnalytics",
-    "r_member_postAnalytics",
-  ],
+  linkedin: ["openid", "profile", "w_member_social"],
   twitter: [
     "tweet.read",
     "tweet.write",
@@ -548,54 +542,63 @@ export const completeSocialConnection = createServerFn({ method: "POST" })
       (existingConnections || []).map((connection: any) => String(connection.provider_user_id)),
       discoveredAccounts,
     );
-    if (!accounts.length) {
-      throw new Error("You can connect up to 2 profiles per social platform.");
-    }
+    if (!accounts.length) throw new Error("No publishable account was found.");
     const expiresIn = Number(tokens.expires_in || tokens.data?.expires_in || 0);
     const refreshToken = tokens.refresh_token || tokens.data?.refresh_token || null;
     const scopes = normalizedSocialConnectionScopes(data.provider, tokens.scope);
-    const { error } = await db.from("social_connections").upsert(
-      await Promise.all(
-        accounts.map(async (account: any) => {
-          const providerUserId = String(account.id);
-          return {
-            user_id: context.userId,
-            provider: data.provider,
-            provider_user_id: providerUserId,
-            provider_handle: String(account.handle || account.id)
-              .toLowerCase()
-              .slice(0, 100),
-            provider_display_name: String(account.name || account.handle || account.id).slice(
-              0,
-              200,
-            ),
-            provider_avatar_url: await durableSocialAvatarUrl({
-              userId: context.userId,
+    const { data: savedConnections, error } = await db
+      .from("social_connections")
+      .upsert(
+        await Promise.all(
+          accounts.map(async (account: any) => {
+            const providerUserId = String(account.id);
+            return {
+              user_id: context.userId,
               provider: data.provider,
-              providerUserId,
-              value: account.avatar,
-            }),
-            access_token: await encryptServerSecret(account.token, "social"),
-            refresh_token: refreshToken ? await encryptServerSecret(refreshToken, "social") : null,
-            token_expires_at:
-              data.provider === "facebook"
-                ? null
-                : expiresIn
-                  ? new Date(Date.now() + expiresIn * 1_000).toISOString()
-                  : null,
-            scopes,
-            status: "active",
-            last_error: null,
-          };
-        }),
-      ),
-      { onConflict: "user_id,provider,provider_user_id" },
-    );
+              provider_user_id: providerUserId,
+              provider_handle: String(account.handle || account.id)
+                .toLowerCase()
+                .slice(0, 100),
+              provider_display_name: String(account.name || account.handle || account.id).slice(
+                0,
+                200,
+              ),
+              provider_avatar_url: await durableSocialAvatarUrl({
+                userId: context.userId,
+                provider: data.provider,
+                providerUserId,
+                value: account.avatar,
+              }),
+              access_token: await encryptServerSecret(account.token, "social"),
+              refresh_token: refreshToken
+                ? await encryptServerSecret(refreshToken, "social")
+                : null,
+              token_expires_at:
+                data.provider === "facebook"
+                  ? null
+                  : expiresIn
+                    ? new Date(Date.now() + expiresIn * 1_000).toISOString()
+                    : null,
+              scopes,
+              status: "active",
+              last_error: null,
+            };
+          }),
+        ),
+        { onConflict: "user_id,provider,provider_user_id" },
+      )
+      .select("id");
     if (error) {
-      if (String(error.message || "").includes("up to 2 profiles")) {
-        throw new Error("You can connect up to 2 profiles per social platform.");
-      }
       throw new Error("The connected account could not be saved.");
+    }
+    for (const connection of savedConnections || []) {
+      await queueInitialSocialInsightsImport(context.userId, String(connection.id)).catch(
+        (importError) =>
+          console.warn("Social account connected, but its initial Insights import was deferred.", {
+            connectionId: connection.id,
+            error: importError instanceof Error ? importError.message : "Initial import failed",
+          }),
+      );
     }
     return { connected: accounts.length, skipped: discoveredAccounts.length - accounts.length };
   });

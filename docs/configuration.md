@@ -37,3 +37,13 @@ Copy `.env.example` to `.env` and keep real values out of version control. Empty
 ## Cloudflare
 
 `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ZONE_ID`, `CLOUDFLARE_SAAS_TARGET`, `CUSTOM_DOMAINS_ENABLED`, and `GOOGLE_MAPS_BROWSER_KEY` configure Cloudflare-adjacent instance services. See `docs/cloudflare.md` and `skills/deploy-bento/SKILL.md`; the committed config is generic and a dry run is not live deployment proof.
+
+## Workspaces and Content
+
+Set `WORKSPACE_COOKIE_SIGNING_KEY` to an independent random value of at least 32 bytes. It signs the active workspace cookie and is required by deployment validation. Existing accounts retain their primary workspace; apply the supplied workspace and Content migrations before using additional workspaces.
+
+Content includes the Agent, Brain, source discovery, media ingestion, and scheduled routines. AI can use `OPENROUTER_API_KEY`, the Worker `AI` binding, or `GROQ_API_KEY`, in that order, with configured fallbacks. OpenRouter requests use the instance app URL and name for attribution. The Worker cron handles due indexing and routines.
+
+Knowledge connections require `CONTENT_CONNECTION_ENCRYPTION_KEY`. Notion uses `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`, and optionally `NOTION_REDIRECT_URI`; Slack uses `SLACK_CONTENT_CLIENT_ID`, `SLACK_CONTENT_CLIENT_SECRET`, and optionally `SLACK_CONTENT_REDIRECT_URI`. GitHub uses `GITHUB_CONTENT_APP_ID`, `GITHUB_CONTENT_APP_SLUG`, and `GITHUB_CONTENT_APP_PRIVATE_KEY`. Granola performs MCP OAuth discovery and optionally uses `GRANOLA_REDIRECT_URI`. Callback URLs default to the configured `VITE_APP_URL`; register that instance's `/integrations/<provider>/callback` with each provider.
+
+Telegram requires `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, and `TELEGRAM_WEBHOOK_SECRET`. Register the instance's `/api/webhooks/telegram` with the same webhook secret and provision the `TELEGRAM_QUEUE` producer, consumer, and dead-letter queue from the neutral Cloudflare template. Optional integrations require the instance operator's own credentials and approvals.

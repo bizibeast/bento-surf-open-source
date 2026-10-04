@@ -21,6 +21,9 @@ import {
   socialInsightsBackfillTargets,
   socialInsightsBackfillMessages,
   socialInsightsCheckpointMatches,
+  enqueueDueSocialInsightsRefreshes,
+  queueInitialSocialInsightsImport,
+  snapshotRow,
   socialInsightsDeliveryDisposition,
   socialInsightsLeaseIsActive,
   socialAnalyticsAccountsForPeriod,
@@ -77,6 +80,132 @@ const content = (
 });
 
 describe("social analytics", () => {
+  it("keeps the authenticated GET loader read-only", () => {
+    const source = readFileSync(
+      join(process.cwd(), "src/lib/social-analytics.functions.ts"),
+      "utf8",
+    );
+    const handler = source.slice(
+      source.indexOf("export const getSocialAnalytics"),
+      source.indexOf("export const refreshSocialAnalytics"),
+    );
+    expect(handler).not.toContain("queueSocialInsightsBackfill");
+  });
+
+  it("queues every claimed daily refresh and releases a failed send", async () => {
+    const claims = [
+      {
+        connection_id: "connection-1",
+        user_id: "user-1",
+        job_id: "job-1",
+        stage: "account" as const,
+        cursor: null,
+        started_at: "2026-09-20T00:00:00.000Z",
+      },
+      {
+        connection_id: "connection-2",
+        user_id: "user-2",
+        job_id: "job-2",
+        stage: "account" as const,
+        cursor: null,
+        started_at: "2026-09-20T00:00:00.000Z",
+      },
+    ];
+    const send = vi.fn().mockResolvedValue(undefined);
+    const release = vi.fn();
+
+    await expect(
+      enqueueDueSocialInsightsRefreshes({ send }, new Date("2026-09-20T00:00:00.000Z"), {
+        claim: async () => claims,
+        release,
+      }),
+    ).resolves.toEqual({ queued: 2 });
+    expect(send).toHaveBeenCalledTimes(2);
+
+    send
+      .mockReset()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("queue down"));
+    await expect(
+      enqueueDueSocialInsightsRefreshes({ send }, new Date("2026-09-20T00:00:00.000Z"), {
+        claim: async () => claims,
+        release,
+      }),
+    ).rejects.toThrow("queue down");
+    expect(release).toHaveBeenCalledWith(claims[1]);
+  });
+
+  it("queues the initial import once and ignores an active lease", async () => {
+    const message = {
+      kind: "social_insights_backfill" as const,
+      userId: "user",
+      connectionId: "connection",
+      jobId: "job",
+      stage: "account" as const,
+      cursor: null,
+      startedAt: new Date().toISOString(),
+    };
+    const dispatch = vi.fn();
+    const release = vi.fn();
+    const markDue = vi.fn();
+
+    await expect(
+      queueInitialSocialInsightsImport("user", "connection", {
+        load: async () => ({ connection: { id: "connection", user_id: "user" }, snapshot: null }),
+        claim: async () => [message],
+        dispatch,
+        release,
+        markDue,
+      }),
+    ).resolves.toBe(true);
+    expect(dispatch).toHaveBeenCalledOnce();
+
+    await expect(
+      queueInitialSocialInsightsImport("user", "connection", {
+        load: async () => ({
+          connection: { id: "connection", user_id: "user" },
+          snapshot: {
+            connection_id: "connection",
+            refresh_started_at: new Date().toISOString(),
+            history_imported_at: null,
+          },
+        }),
+        claim: async () => [message],
+        dispatch,
+        release,
+        markDue,
+      }),
+    ).resolves.toBe(false);
+    expect(dispatch).toHaveBeenCalledOnce();
+  });
+
+  it("exposes truthful initial-import and daily freshness state", () => {
+    expect(
+      snapshotRow({
+        connection_id: "connection",
+        provider: "instagram",
+        provider_handle: "bizibeast",
+        provider_display_name: "Bizibeast",
+        provider_avatar_url: null,
+        followers: 10,
+        following: 5,
+        posts: 2,
+        views: 100,
+        reach: 80,
+        engagements: 9,
+        status: "available",
+        note: null,
+        fetched_at: "2026-09-20T00:00:00.000Z",
+        next_refresh_at: "2026-09-21T20:30:00.000Z",
+        refresh_started_at: new Date().toISOString(),
+        history_imported_at: null,
+      }),
+    ).toMatchObject({
+      lastUpdatedAt: "2026-09-20T00:00:00.000Z",
+      nextRefreshAt: "2026-09-21T20:30:00.000Z",
+      initialImportActive: true,
+    });
+  });
   it("prefers the live connection avatar and retains the snapshot fallback", () => {
     expect(
       socialAnalyticsAvatarUrl("https://old.example/avatar.jpg", "https://new.example/avatar.jpg"),

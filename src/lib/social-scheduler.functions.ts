@@ -13,6 +13,7 @@ import {
   type SchedulerConnection,
   type SchedulerMedia,
   type SchedulerPost,
+  type SocialPostInput,
   type SocialProvider,
   socialConnectionCanPublish,
   providerSettingsMedia,
@@ -331,151 +332,153 @@ export const getTikTokCreatorInfo = createServerFn({ method: "GET" })
 export const saveSocialPost = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) => socialPostInputSchema.parse(input))
-  .handler(async ({ context, data }) => {
-    await requireScheduler(context.userId);
-    await enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "social-post-save", context.userId);
-    const db = supabaseAdmin as any;
-    const { data: connections, error: connectionError } = await db
-      .from("social_connections")
-      .select("id, provider, status, scopes, reauth_required")
-      .eq("user_id", context.userId)
-      .in("id", data.connectionIds);
-    if (connectionError) throw new Error("Connected accounts could not be verified.");
-    if ((connections || []).length !== new Set(data.connectionIds).size) {
-      throw new Error("One or more selected accounts are unavailable.");
-    }
-    if (
-      connections.some(
-        (connection: any) => connection.status !== "active" || connection.reauth_required,
-      )
-    ) {
-      throw new Error("Reconnect expired accounts before scheduling.");
-    }
-    if (connections.some((connection: any) => !isPublicSocialProvider(connection.provider))) {
-      throw new Error("One or more selected accounts are no longer supported.");
-    }
-    if (
-      connections.some(
-        (connection: any) =>
-          !socialConnectionCanPublish(
-            connection.provider,
-            connection.scopes,
-            connection.status,
-            Boolean(connection.reauth_required),
-          ),
-      )
-    ) {
-      throw new Error(
-        "Reconnect Instagram from the scheduler and approve publishing access before posting.",
-      );
-    }
-    if (
-      [...data.media, ...providerSettingsMedia(data.providerSettings)].some(
-        (item) => !mediaBelongsToCreator(item, context.userId),
-      )
-    ) {
-      throw new Error("Upload media through Bento before scheduling it.");
-    }
-    const providers = connections.map((connection: any) => connection.provider) as SocialProvider[];
-    const providerErrors = validatePostForProviders(
-      data.body,
-      data.media as SchedulerMedia[],
-      providers,
-      data.title,
-      data.providerSettings,
+  .handler(({ context, data }) => saveSocialPostForUser(context.userId, data));
+
+export async function saveSocialPostForUser(userId: string, input: SocialPostInput) {
+  const data = socialPostInputSchema.parse(input);
+  await requireScheduler(userId);
+  await enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "social-post-save", userId);
+  const db = supabaseAdmin as any;
+  const { data: connections, error: connectionError } = await db
+    .from("social_connections")
+    .select("id, provider, status, scopes, reauth_required")
+    .eq("user_id", userId)
+    .in("id", data.connectionIds);
+  if (connectionError) throw new Error("Connected accounts could not be verified.");
+  if ((connections || []).length !== new Set(data.connectionIds).size) {
+    throw new Error("One or more selected accounts are unavailable.");
+  }
+  if (
+    connections.some(
+      (connection: any) => connection.status !== "active" || connection.reauth_required,
+    )
+  ) {
+    throw new Error("Reconnect expired accounts before scheduling.");
+  }
+  if (connections.some((connection: any) => !isPublicSocialProvider(connection.provider))) {
+    throw new Error("One or more selected accounts are no longer supported.");
+  }
+  if (
+    connections.some(
+      (connection: any) =>
+        !socialConnectionCanPublish(
+          connection.provider,
+          connection.scopes,
+          connection.status,
+          Boolean(connection.reauth_required),
+        ),
+    )
+  ) {
+    throw new Error(
+      "Reconnect Instagram from the scheduler and approve publishing access before posting.",
     );
-    if (Object.keys(providerErrors).length) throw new Error(Object.values(providerErrors)[0]);
+  }
+  if (
+    [...data.media, ...providerSettingsMedia(data.providerSettings)].some(
+      (item) => !mediaBelongsToCreator(item, userId),
+    )
+  ) {
+    throw new Error("Upload media through Bento before scheduling it.");
+  }
 
-    const redditSettings = data.providerSettings.reddit || {};
-    const redditConnections = connections.filter(
-      (connection: any) => connection.provider === "reddit",
+  const providers = connections.map((connection: any) => connection.provider) as SocialProvider[];
+  const providerErrors = validatePostForProviders(
+    data.body,
+    data.media as SchedulerMedia[],
+    providers,
+    data.title,
+    data.providerSettings,
+  );
+  if (Object.keys(providerErrors).length) throw new Error(Object.values(providerErrors)[0]);
+
+  const redditSettings = data.providerSettings.reddit || {};
+  const redditConnections = connections.filter(
+    (connection: any) => connection.provider === "reddit",
+  );
+  if (redditConnections.length) {
+    const community = String(redditSettings.community || "");
+    const kind = redditSettings.kind === "link" ? "link" : "self";
+    await Promise.all(
+      redditConnections.map(async (summaryConnection: any) => {
+        const { data: fullConnection, error } = await db
+          .from("social_connections")
+          .select("*")
+          .eq("id", summaryConnection.id)
+          .eq("user_id", userId)
+          .maybeSingle();
+        if (error || !fullConnection) throw new Error("Reconnect Reddit before posting.");
+        await preflightRedditCommunity(fullConnection, community, kind);
+      }),
     );
-    if (redditConnections.length) {
-      const community = String(redditSettings.community || "");
-      const kind = redditSettings.kind === "link" ? "link" : "self";
-      await Promise.all(
-        redditConnections.map(async (summaryConnection: any) => {
-          const { data: fullConnection, error } = await db
-            .from("social_connections")
-            .select("*")
-            .eq("id", summaryConnection.id)
-            .eq("user_id", context.userId)
-            .maybeSingle();
-          if (error || !fullConnection) throw new Error("Reconnect Reddit before posting.");
-          await preflightRedditCommunity(fullConnection, community, kind);
-        }),
-      );
-    }
+  }
 
-    const scheduledAt = data.asDraft
-      ? null
-      : data.publishNow
-        ? new Date().toISOString()
-        : data.scheduledAt;
-    const { data: savedTargets, error: saveError } = await db.rpc("save_social_post_atomic", {
-      p_user_id: context.userId,
-      p_post_id: data.id || null,
-      p_body: data.body,
-      p_title: data.title || null,
-      p_media: data.media,
-      p_scheduled_at: scheduledAt,
-      p_timezone: data.timezone,
-      p_targets: connections.map((connection: any) => ({
-        connectionId: connection.id,
-        provider: connection.provider,
-        providerSettings: data.providerSettings[connection.provider] || {},
-      })),
-      p_as_draft: Boolean(data.asDraft),
-    });
-    if (saveError || !savedTargets?.length) {
-      throw new Error(saveError?.message || "The post could not be saved.");
-    }
+  const scheduledAt = data.asDraft
+    ? null
+    : data.publishNow
+      ? new Date().toISOString()
+      : data.scheduledAt;
+  const { data: savedTargets, error: saveError } = await db.rpc("save_social_post_atomic", {
+    p_user_id: userId,
+    p_post_id: data.id || null,
+    p_body: data.body,
+    p_title: data.title || null,
+    p_media: data.media,
+    p_scheduled_at: scheduledAt,
+    p_timezone: data.timezone,
+    p_targets: connections.map((connection: any) => ({
+      connectionId: connection.id,
+      provider: connection.provider,
+      providerSettings: data.providerSettings[connection.provider] || {},
+    })),
+    p_as_draft: Boolean(data.asDraft),
+  });
+  if (saveError || !savedTargets?.length) {
+    throw new Error(saveError?.message || "The post could not be saved.");
+  }
 
-    if (data.publishNow && !data.asDraft) {
-      const postId = savedTargets[0].saved_post_id as string;
-      const { error: publishingStateError } = await db
-        .from("social_posts")
-        .update({ status: deriveSocialPostStatus(["pending"]) })
-        .eq("id", postId)
-        .eq("user_id", context.userId);
-      if (publishingStateError) throw new Error("The publishing queue could not be updated.");
-
-      const queue = globalThis.__env__?.SOCIAL_PUBLISH_QUEUE as
-        Queue<SocialPublishMessage> | undefined;
-      if (queue) {
-        const targetIds = savedTargets.map((target: any) => target.target_id as string);
-        const { error: queueStateError } = await db
-          .from("social_post_targets")
-          .update({
-            status: "queued",
-            lease_expires_at: new Date(Date.now() + 300_000).toISOString(),
-          })
-          .in("id", targetIds)
-          .eq("status", "pending");
-        if (!queueStateError) {
-          try {
-            await queue.sendBatch(
-              savedTargets.map((target: any) => ({
-                body: {
-                  kind: "social_publish",
-                  targetId: target.target_id,
-                  idempotencyKey: target.idempotency_key,
-                },
-              })),
-            );
-          } catch {
-            // The database remains the source of truth. Releasing the claim lets
-            // the minute scheduler retry without waiting for the lease to expire.
-            await db.rpc("release_social_target_claims", { p_target_ids: targetIds });
-          }
+  if (data.publishNow && !data.asDraft) {
+    const postId = savedTargets[0].saved_post_id as string;
+    const { error: publishingStateError } = await db
+      .from("social_posts")
+      .update({ status: deriveSocialPostStatus(["pending"]) })
+      .eq("id", postId)
+      .eq("user_id", userId);
+    if (publishingStateError) throw new Error("The publishing queue could not be updated.");
+    const queue = globalThis.__env__?.SOCIAL_PUBLISH_QUEUE as
+      Queue<SocialPublishMessage> | undefined;
+    if (queue) {
+      const targetIds = savedTargets.map((target: any) => target.target_id as string);
+      const { error: queueStateError } = await db
+        .from("social_post_targets")
+        .update({
+          status: "queued",
+          lease_expires_at: new Date(Date.now() + 300_000).toISOString(),
+        })
+        .in("id", targetIds)
+        .eq("status", "pending");
+      if (!queueStateError) {
+        try {
+          await queue.sendBatch(
+            savedTargets.map((target: any) => ({
+              body: {
+                kind: "social_publish",
+                targetId: target.target_id,
+                idempotencyKey: target.idempotency_key,
+              },
+            })),
+          );
+        } catch {
+          await db.rpc("release_social_target_claims", { p_target_ids: targetIds });
         }
       }
     }
-    return {
-      ...(await schedulerData(context.userId)),
-      queuedPostId: data.publishNow && !data.asDraft ? String(savedTargets[0].saved_post_id) : null,
-    };
-  });
+  }
+
+  return {
+    ...(await schedulerData(userId)),
+    queuedPostId: data.publishNow && !data.asDraft ? String(savedTargets[0].saved_post_id) : null,
+  };
+}
 
 export const rescheduleSocialPost = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])

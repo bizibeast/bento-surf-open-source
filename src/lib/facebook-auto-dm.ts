@@ -299,7 +299,7 @@ export const facebookDmAutomationInputSchema = z
       ? [...new Set(value.publicReplyMessages.map((item) => item.trim()).filter(Boolean))]
       : [],
     emailPromptMessage: value.emailCaptureEnabled ? value.emailPromptMessage : null,
-    emailMarketingConsentEnabled: value.emailCaptureEnabled && value.emailMarketingConsentEnabled,
+    emailMarketingConsentEnabled: value.emailCaptureEnabled,
   }));
 
 export type FacebookWebhookEvent = {

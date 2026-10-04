@@ -21,6 +21,7 @@ import {
 } from "./social-content-insights.server";
 import { accessTokenForConnection, ProviderError } from "./social-publisher.server";
 import type { SocialProvider } from "./social-scheduler";
+import { nextLocalRefreshAt } from "./timezones";
 
 export const SOCIAL_INSIGHTS_LEASE_MS = 15 * 60_000;
 export const SOCIAL_INSIGHTS_REFRESH_INTERVAL_MS = 24 * 60 * 60_000;
@@ -55,6 +56,9 @@ export type SocialAnalyticsAccount = {
   status: "available" | "partial" | "unavailable" | "error";
   note: string | null;
   fetchedAt: string;
+  lastUpdatedAt?: string;
+  nextRefreshAt?: string | null;
+  initialImportActive?: boolean;
   refreshing: boolean;
   refreshStartedAt: string | null;
 };
@@ -840,7 +844,7 @@ export function socialAnalyticsAvatarUrl(
   return connectionAvatarUrl || snapshotAvatarUrl || null;
 }
 
-function snapshotRow(row: any, connectionAvatarUrl?: string | null): SocialAnalyticsAccount {
+export function snapshotRow(row: any, connectionAvatarUrl?: string | null): SocialAnalyticsAccount {
   const refreshing = socialInsightsLeaseIsActive(row);
   return {
     connectionId: row.connection_id,
@@ -857,6 +861,9 @@ function snapshotRow(row: any, connectionAvatarUrl?: string | null): SocialAnaly
     status: row.status,
     note: row.note || null,
     fetchedAt: row.fetched_at,
+    lastUpdatedAt: row.fetched_at,
+    nextRefreshAt: row.next_refresh_at || null,
+    initialImportActive: refreshing && !row.history_imported_at,
     refreshing,
     refreshStartedAt: refreshing ? row.refresh_started_at : null,
   };
@@ -1216,6 +1223,7 @@ async function persistSocialInsightsContentPage(connection: any, content: Social
       content_type: item.contentType,
       caption: item.caption,
       thumbnail_url: item.thumbnailUrl,
+      media_sources: item.mediaSources || [],
       published_at: item.publishedAt,
       views: item.views,
       impressions: item.impressions,
@@ -1339,6 +1347,13 @@ async function processSocialInsightsContentStage(
     await dispatchSocialInsightsSuccessor(successor, queue);
     return;
   }
+  const completedAt = new Date();
+  const { data: profile, error: profileError } = await db
+    .from("profiles")
+    .select("account_timezone")
+    .eq("id", message.userId)
+    .maybeSingle();
+  if (profileError) throw new Error("Social analytics refresh timezone could not be loaded.");
   let completionQuery = db
     .from("social_analytics_snapshots")
     .update({
@@ -1347,7 +1362,8 @@ async function processSocialInsightsContentStage(
       refresh_cursor: null,
       refresh_processing_at: null,
       refresh_started_at: null,
-      history_imported_at: new Date().toISOString(),
+      history_imported_at: completedAt.toISOString(),
+      next_refresh_at: nextLocalRefreshAt(profile?.account_timezone || "UTC", completedAt),
     })
     .eq("connection_id", connection.id)
     .eq("user_id", message.userId)
@@ -1391,6 +1407,97 @@ async function queueSocialInsightsBackfill(userId: string, force: boolean) {
       await dispatchSocialInsightsMessage(message, queue);
     } catch (error) {
       await releaseUnqueuedSocialInsightsJob(message);
+      throw error;
+    }
+  }
+  return true;
+}
+
+type InitialSocialInsightsDependencies = {
+  load: () => Promise<{ connection: any | null; snapshot: SocialInsightsSnapshotLease | null }>;
+  claim: (
+    connection: any,
+    snapshot: SocialInsightsSnapshotLease | null,
+  ) => Promise<NormalizedSocialInsightsBackfillMessage[]>;
+  dispatch: (message: NormalizedSocialInsightsBackfillMessage) => Promise<unknown>;
+  release: (message: NormalizedSocialInsightsBackfillMessage) => Promise<unknown>;
+  markDue: () => Promise<unknown>;
+};
+
+export async function queueInitialSocialInsightsImport(
+  userId: string,
+  connectionId: string,
+  dependencies?: InitialSocialInsightsDependencies,
+) {
+  const db = supabaseAdmin as any;
+  const defaults: InitialSocialInsightsDependencies = {
+    load: async () => {
+      const [{ data: connection, error }, { data: snapshot, error: snapshotError }] =
+        await Promise.all([
+          db
+            .from("social_connections")
+            .select("*")
+            .eq("id", connectionId)
+            .eq("user_id", userId)
+            .eq("status", "active")
+            .maybeSingle(),
+          db
+            .from("social_analytics_snapshots")
+            .select(
+              "connection_id,fetched_at,refresh_job_id,refresh_stage,refresh_cursor,refresh_processing_at,refresh_started_at,history_imported_at",
+            )
+            .eq("connection_id", connectionId)
+            .eq("user_id", userId)
+            .maybeSingle(),
+        ]);
+      if (error || snapshotError)
+        throw new Error("Initial social analytics import could not load.");
+      return { connection, snapshot };
+    },
+    claim: (connection, snapshot) =>
+      claimSocialInsightsJobs([connection], snapshot ? [snapshot] : [], new Date()),
+    dispatch: async (message) => {
+      const queue = (
+        globalThis.__env__ as
+          (Env & { SOCIAL_INSIGHTS_QUEUE?: Queue<SocialInsightsBackfillMessage> }) | undefined
+      )?.SOCIAL_INSIGHTS_QUEUE;
+      await dispatchSocialInsightsMessage(message, queue);
+    },
+    release: releaseUnqueuedSocialInsightsJob,
+    markDue: async () => {
+      const { error } = await db
+        .from("social_analytics_snapshots")
+        .update({
+          refresh_job_id: null,
+          refresh_stage: null,
+          refresh_cursor: null,
+          refresh_processing_at: null,
+          refresh_started_at: null,
+          next_refresh_at: new Date().toISOString(),
+        })
+        .eq("connection_id", connectionId)
+        .eq("user_id", userId);
+      if (error) throw new Error("Initial social analytics retry could not be scheduled.");
+    },
+  };
+  const deps = dependencies || defaults;
+  const { connection, snapshot } = await deps.load();
+  if (
+    !connection ||
+    snapshot?.history_imported_at ||
+    snapshot?.refresh_job_id ||
+    socialInsightsLeaseIsActive(snapshot)
+  ) {
+    return false;
+  }
+  const messages = await deps.claim(connection, snapshot);
+  if (!messages.length) return false;
+  for (const message of messages) {
+    try {
+      await deps.dispatch(message);
+    } catch (error) {
+      await deps.release(message);
+      await deps.markDue();
       throw error;
     }
   }
@@ -1570,6 +1677,83 @@ export async function requeueStaleSocialInsightsBackfills(queue?: SocialInsights
   return { queued: messages.length };
 }
 
+type DueSocialInsightsRefresh = {
+  connection_id: string;
+  user_id: string;
+  job_id: string;
+  stage: "account";
+  cursor: null;
+  started_at: string;
+};
+
+type DueSocialInsightsDependencies = {
+  claim: () => Promise<DueSocialInsightsRefresh[]>;
+  release: (claim: DueSocialInsightsRefresh) => Promise<unknown>;
+};
+
+const dueSocialInsightsDependencies: DueSocialInsightsDependencies = {
+  claim: async () => {
+    const { data, error } = await (supabaseAdmin as any).rpc(
+      "claim_due_social_insights_refreshes",
+      { p_limit: 25 },
+    );
+    if (error) throw new Error("Due social analytics refreshes could not be claimed.");
+    return (data || []) as DueSocialInsightsRefresh[];
+  },
+  release: async (claim) => {
+    const { error } = await (supabaseAdmin as any)
+      .from("social_analytics_snapshots")
+      .update({
+        refresh_job_id: null,
+        refresh_stage: null,
+        refresh_cursor: null,
+        refresh_processing_at: null,
+        refresh_started_at: null,
+        next_refresh_at: new Date().toISOString(),
+      })
+      .eq("connection_id", claim.connection_id)
+      .eq("user_id", claim.user_id)
+      .eq("refresh_job_id", claim.job_id);
+    if (error) throw new Error("Due social analytics refresh could not be released.");
+  },
+};
+
+export async function enqueueDueSocialInsightsRefreshes(
+  queue:
+    | {
+        send: (
+          message: SocialInsightsBackfillMessage,
+          options?: { contentType: "json" },
+        ) => Promise<unknown>;
+      }
+    | undefined,
+  _now = new Date(),
+  dependencies: DueSocialInsightsDependencies = dueSocialInsightsDependencies,
+) {
+  if (!queue) return { queued: 0 };
+  const claims = await dependencies.claim();
+  let queued = 0;
+  for (const claim of claims) {
+    const message: NormalizedSocialInsightsBackfillMessage = {
+      kind: "social_insights_backfill",
+      userId: claim.user_id,
+      connectionId: claim.connection_id,
+      jobId: claim.job_id,
+      stage: claim.stage,
+      cursor: claim.cursor,
+      startedAt: claim.started_at,
+    };
+    try {
+      await queue.send(message, { contentType: "json" });
+      queued += 1;
+    } catch (error) {
+      await dependencies.release(claim);
+      throw error;
+    }
+  }
+  return { queued };
+}
+
 export async function loadSocialAnalyticsPages(
   fetchPage: (from: number, to: number) => PromiseLike<{ data: any[] | null; error: unknown }>,
 ) {
@@ -1683,7 +1867,6 @@ export const getSocialAnalytics = createServerFn({ method: "GET" })
       return { locked: true as const, ...(await loadSocialAnalytics(context.userId)) };
     }
     await enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "social-analytics", context.userId);
-    await queueSocialInsightsBackfill(context.userId, false);
     return { locked: false as const, ...(await loadSocialAnalytics(context.userId)) };
   });
 

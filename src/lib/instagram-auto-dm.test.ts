@@ -1,11 +1,45 @@
 import { describe, expect, it } from "vitest";
 import {
   getInstagramConnectionReadiness,
+  instagramDmAutomationInputSchema,
   instagramConnectionReadinessMessage,
   matchInstagramAutomation,
   parseInstagramWebhook,
   testInstagramAutomation,
 } from "./instagram-auto-dm";
+
+it("always records marketing consent when Instagram email collection is enabled", () => {
+  const input = {
+    connectionId: "11111111-1111-4111-8111-111111111111",
+    name: "Send guide",
+    triggerType: "comment_keyword" as const,
+    keywords: ["guide"],
+    excludedKeywords: [],
+    matchType: "contains" as const,
+    mediaScope: "any" as const,
+    mediaIds: [],
+    replyMessage: "Here is the guide",
+    publicReplyEnabled: false,
+    publicReplyMessages: [],
+    openingMessage: "I have it ready",
+    confirmationButtonLabel: "Send it",
+    emailCaptureEnabled: true,
+    emailPromptMessage: "What email should I use?",
+    emailMarketingConsentEnabled: false,
+    followGateEnabled: false,
+    replyButtonLabel: null,
+    replyButtonUrl: null,
+    enabled: true,
+  };
+
+  expect(instagramDmAutomationInputSchema.parse(input)).toMatchObject({
+    emailCaptureEnabled: true,
+    emailMarketingConsentEnabled: true,
+  });
+  expect(
+    instagramDmAutomationInputSchema.parse({ ...input, emailCaptureEnabled: false }),
+  ).toMatchObject({ emailMarketingConsentEnabled: false });
+});
 
 describe("Instagram connection readiness", () => {
   const now = new Date("2026-08-01T08:00:00.000Z");

@@ -339,7 +339,7 @@ export const instagramDmAutomationInputSchema = z
       ? [...new Set(value.publicReplyMessages.map((item) => item.trim()).filter(Boolean))]
       : [],
     emailPromptMessage: value.emailCaptureEnabled ? value.emailPromptMessage : null,
-    emailMarketingConsentEnabled: value.emailCaptureEnabled && value.emailMarketingConsentEnabled,
+    emailMarketingConsentEnabled: value.emailCaptureEnabled,
     followGateEnabled:
       ["comment_keyword", "any_comment"].includes(value.triggerType) && value.followGateEnabled,
   }));

@@ -10,6 +10,52 @@ import {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("LinkedIn content insights", () => {
+  it("keeps all carousel attachments with their actual media type instead of one thumbnail", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) =>
+        new URL(String(input)).pathname.endsWith("/media")
+          ? new Response(
+              JSON.stringify({
+                data: [
+                  {
+                    id: "parent",
+                    caption: "A real product launch.",
+                    media_type: "CAROUSEL_ALBUM",
+                    timestamp: "2026-10-01T00:00:00Z",
+                    children: {
+                      data: [
+                        {
+                          id: "photo",
+                          media_type: "IMAGE",
+                          media_url: "https://scontent.cdninstagram.com/photo.jpg",
+                        },
+                        {
+                          id: "clip",
+                          media_type: "VIDEO",
+                          media_url: "https://scontent.cdninstagram.com/clip.mp4",
+                        },
+                      ],
+                    },
+                  },
+                ],
+              }),
+            )
+          : new Response(JSON.stringify({ error: { code: 10, message: "Metric unavailable" } }), {
+              status: 403,
+            }),
+      ),
+    );
+    const result = await fetchSocialContentInsightsPage(
+      { id: "connection", provider: "instagram", provider_user_id: "account", scopes: [] },
+      "token",
+      null,
+    );
+    expect(result.content[0].mediaSources).toEqual([
+      { id: "photo", type: "image", url: "https://scontent.cdninstagram.com/photo.jpg" },
+      { id: "clip", type: "video", url: "https://scontent.cdninstagram.com/clip.mp4" },
+    ]);
+  });
   it("builds the official member posts finder URL", () => {
     const url = buildLinkedInPostsUrl("urn:li:person:abc/123");
 

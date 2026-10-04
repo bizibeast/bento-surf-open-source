@@ -1,13 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ sync: vi.fn(), single: vi.fn(), getPlan: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  sync: vi.fn(),
+  single: vi.fn(),
+  getPlan: vi.fn(),
+  eq: vi.fn(),
+}));
 vi.mock("@tanstack/react-start", () => ({
   createServerOnlyFn: (fn: any) => fn,
   createServerFn: () => {
     let validate = (data: any) => data;
     const query: any = {
       update: () => query,
-      eq: () => query,
+      eq: (...args: unknown[]) => {
+        mocks.eq(...args);
+        return query;
+      },
       select: () => query,
       single: mocks.single,
     };
@@ -20,7 +28,11 @@ vi.mock("@tanstack/react-start", () => ({
       handler: (handler: any) => (input: any) =>
         handler({
           data: validate(input?.data),
-          context: { userId: "owner", supabase: { from: () => query } },
+          context: {
+            userId: "owner",
+            authUserId: "login-owner",
+            supabase: { from: () => query },
+          },
         }),
     };
     return fn;
@@ -49,6 +61,13 @@ it.each([true, false])("syncs store page visibility %s", async (enabled) => {
 it("leaves the store page alone for unrelated profile changes", async () => {
   await updateProfile({ data: { bio: "Hello" } });
   expect(mocks.sync).not.toHaveBeenCalled();
+});
+
+it("updates the selected workspace rather than the login identity", async () => {
+  await updateProfile({ data: { bio: "Workspace A" } });
+
+  expect(mocks.eq).toHaveBeenCalledWith("id", "owner");
+  expect(mocks.eq).not.toHaveBeenCalledWith("id", "login-owner");
 });
 
 it("retains the store plan gate", async () => {

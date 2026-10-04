@@ -1,3 +1,5 @@
+import { guardCreatorDocument } from "./lib/creator-document-auth.server";
+import { handleFaviconRequest } from "./lib/favicon.server";
 import "./lib/error-capture";
 import llmsTxt from "../public/llms.txt?raw";
 import robotsTxt from "../public/robots.txt?raw";
@@ -57,6 +59,7 @@ import {
   enqueueDueAudienceCampaigns,
   enqueueLifecycleEmails,
   getEmailDeliveryReadiness,
+  hasDeliverableEmailOutbox,
   handleEmailUnsubscribeRequest,
   processAudienceCampaignQueueMessage,
   processEmailOutbox,
@@ -72,6 +75,7 @@ import {
 } from "./lib/social-publisher.server";
 import {
   failSocialInsightsBackfillMessage,
+  enqueueDueSocialInsightsRefreshes,
   normalizeSocialInsightsBackfillMessage,
   processSocialInsightsBackfillMessage,
   releaseSocialInsightsBackfillMessage,
@@ -104,7 +108,15 @@ import {
   processFacebookDmQueueMessage,
   type FacebookDmQueueMessage,
 } from "./lib/facebook-auto-dm.server";
+import {
+  cleanupTelegramReceipts,
+  handleTelegramWebhook,
+  processTelegramQueueMessage,
+  type TelegramQueueMessage,
+} from "./lib/telegram.server";
 import { processBookingFollowups } from "./lib/booking-followups.server";
+import { processDueContentIndexes } from "./lib/content-index.server";
+import { processDueContentRoutines } from "./lib/content-routines.server";
 import { routeCanonicalHostname } from "./lib/hostname-routing.server";
 import { configuredPublicOrigin } from "./lib/application-urls";
 import { redactSensitivePathname } from "./lib/safe-url";
@@ -145,6 +157,7 @@ type RuntimeEnv = Env & {
   INSTAGRAM_DM_QUEUE?: Queue<InstagramDmQueueMessage>;
   TWITTER_DM_QUEUE?: Queue<TwitterDmQueueMessage>;
   FACEBOOK_DM_QUEUE?: Queue<FacebookDmQueueMessage>;
+  TELEGRAM_QUEUE?: Queue<TelegramQueueMessage>;
 };
 type CloudflareRequest = Request & {
   runtime?: {
@@ -172,6 +185,8 @@ const RUNTIME_STRING_BINDING_PREFIXES = [
   "CLOUDFLARE_",
   "GOOGLE_",
   "GROQ_",
+  "OPENROUTER_",
+  "WORKSPACE_",
   "COBALT_",
   "FATHOM_",
   "BOOKING_",
@@ -186,6 +201,12 @@ const RUNTIME_STRING_BINDING_PREFIXES = [
   "TIKTOK_",
   "LINKEDIN_",
   "X_",
+  "TELEGRAM_",
+  "CONTENT_",
+  "NOTION_",
+  "GRANOLA_",
+  "GITHUB_CONTENT_",
+  "SLACK_CONTENT_",
 ] as const;
 const RUNTIME_STRING_BINDING_NAMES = new Set([
   "APP_ENV",
@@ -202,15 +223,22 @@ const RUNTIME_STRING_BINDING_NAMES = new Set([
 // bindings before any SSR or server-function module executes. Webhooks already
 // did this locally; the founder analytics path needs the same request-time
 // guarantee for POSTHOG_QUERY_API_KEY and the rest of the dashboard secrets.
-function hydrateRuntimeEnv(env: unknown) {
-  if (!env || typeof env !== "object") return;
-  globalThis.__env__ = env as Env;
-  for (const [key, value] of Object.entries(env as Record<string, unknown>)) {
+function hydrateRuntimeEnv(env: unknown): Env | undefined {
+  if (!env || typeof env !== "object") return undefined;
+  const bindings = env as Record<string, unknown>;
+  const compactConfig = bindings.RUNTIME_CONFIG;
+  const runtimeEnv = {
+    ...(compactConfig && typeof compactConfig === "object" ? compactConfig : {}),
+    ...bindings,
+  } as Record<string, unknown>;
+  globalThis.__env__ = runtimeEnv as unknown as Env;
+  for (const [key, value] of Object.entries(runtimeEnv)) {
     const allowed =
       RUNTIME_STRING_BINDING_NAMES.has(key) ||
       RUNTIME_STRING_BINDING_PREFIXES.some((prefix) => key.startsWith(prefix));
     if (allowed && typeof value === "string") process.env[key] = value;
   }
+  return runtimeEnv as unknown as Env;
 }
 
 function isPrivateApplicationPath(pathname: string) {
@@ -802,9 +830,8 @@ async function normalizeCatastrophicSsrResponse(
 
 export default {
   async fetch(request: CloudflareRequest) {
-    const env = request.runtime?.cloudflare?.env ?? globalThis.__env__;
+    const env = hydrateRuntimeEnv(request.runtime?.cloudflare?.env ?? globalThis.__env__);
     const ctx = request.runtime?.cloudflare?.context;
-    hydrateRuntimeEnv(env);
 
     const canonicalRedirect = routeCanonicalHostname(
       request,
@@ -839,6 +866,9 @@ export default {
       );
     }
 
+    if (path === "/api/favicon")
+      return withDeploymentHeaders(await handleFaviconRequest(request), env, request);
+
     if (path === "/api/health") {
       return withDeploymentHeaders(await handleDeploymentHealthRequest(request, env), env, request);
     }
@@ -857,6 +887,9 @@ export default {
 
     const mcpResponse = await handleBentoMcpRequest(request, env?.VITE_APP_URL);
     if (mcpResponse) return withDeploymentHeaders(mcpResponse, env, request);
+
+    const creatorRedirect = await guardCreatorDocument(request);
+    if (creatorRedirect) return withDeploymentHeaders(creatorRedirect, env, request);
 
     trackAiCrawler(request, env, ctx);
 
@@ -993,6 +1026,13 @@ export default {
     if (request.method === "POST" && path === "/api/webhooks/resend") {
       return withDeploymentHeaders(await handleResendWebhook(request), env, request);
     }
+    if (request.method === "POST" && path === "/api/webhooks/telegram") {
+      return withDeploymentHeaders(
+        await handleTelegramWebhook(request, (env as RuntimeEnv | undefined)?.TELEGRAM_QUEUE),
+        env,
+        request,
+      );
+    }
     if (request.method === "POST" && path === "/api/webhooks/instagram") {
       return withDeploymentHeaders(
         await handleInstagramWebhook(request, (env as RuntimeEnv | undefined)?.INSTAGRAM_DM_QUEUE),
@@ -1072,10 +1112,11 @@ export default {
       | InstagramDmQueueMessage
       | TwitterDmQueueMessage
       | FacebookDmQueueMessage
+      | TelegramQueueMessage
     >,
     env: RuntimeEnv,
   ) {
-    hydrateRuntimeEnv(env);
+    env = hydrateRuntimeEnv(env) as RuntimeEnv;
     const billingMessages = batch.messages
       .map((message) => message.body)
       .filter((body): body is DodoQueueMessage => body.kind === "dodo_webhook");
@@ -1115,6 +1156,10 @@ export default {
       (message): message is Message<FacebookDmQueueMessage> =>
         "kind" in message.body && message.body.kind === "facebook_dm_event",
     );
+    const telegramMessages = batch.messages.filter(
+      (message): message is Message<TelegramQueueMessage> =>
+        "kind" in message.body && message.body.kind === "telegram_update",
+    );
     const analyticsMessages = batch.messages
       .map((message) => message.body)
       .filter(
@@ -1130,7 +1175,8 @@ export default {
             body.kind !== "instagram_comment_reconcile" &&
             body.kind !== "twitter_dm_event" &&
             body.kind !== "twitter_dm_reconcile" &&
-            body.kind !== "facebook_dm_event"),
+            body.kind !== "facebook_dm_event" &&
+            body.kind !== "telegram_update"),
       );
     for (const message of billingMessages) {
       await processVerifiedDodoEvent(message.event, message.webhookId);
@@ -1142,7 +1188,9 @@ export default {
       const limit = Math.min(100, Math.max(25, emailMessages.length * 25));
       const result = await processEmailOutbox(limit);
       if (result.claimed === limit) {
-        await env.EMAIL_QUEUE?.send({ kind: "email_outbox_kick" });
+        if (env.EMAIL_QUEUE && (await hasDeliverableEmailOutbox())) {
+          await env.EMAIL_QUEUE.send({ kind: "email_outbox_kick" });
+        }
       }
     }
     for (const message of socialMessages) await processSocialPublishMessage(message);
@@ -1230,6 +1278,19 @@ export default {
         message.retry({ delaySeconds });
       }
     }
+    for (const message of telegramMessages) {
+      try {
+        await processTelegramQueueMessage(message.body);
+        message.ack();
+      } catch (error) {
+        console.error("[telegram] queue delivery failed", {
+          messageId: message.id,
+          attempt: message.attempts,
+          error: error instanceof Error ? error.message : "Unknown queue error",
+        });
+        message.retry({ delaySeconds: Math.min(900, 30 * 2 ** Math.max(0, message.attempts - 1)) });
+      }
+    }
     if (
       audienceCampaignMessages.length +
         emailMessages.length +
@@ -1237,7 +1298,8 @@ export default {
         referralMessages.length +
         instagramDmMessages.length +
         twitterDmMessages.length +
-        facebookDmMessages.length ===
+        facebookDmMessages.length +
+        telegramMessages.length ===
       batch.messages.length
     )
       return;
@@ -1247,15 +1309,18 @@ export default {
     batch.ackAll();
   },
   async scheduled(controller: ScheduledController, env: RuntimeEnv) {
-    hydrateRuntimeEnv(env);
+    env = hydrateRuntimeEnv(env) as RuntimeEnv;
     try {
       if (controller.cron === "0 9 * * *") {
         await enqueueLifecycleEmails();
         await reconcileReferralLedger();
       }
       const audienceCampaignResult = await enqueueDueAudienceCampaigns(env.EMAIL_QUEUE);
-      await env.EMAIL_QUEUE?.send({ kind: "email_outbox_kick" });
+      if (env.EMAIL_QUEUE && (await hasDeliverableEmailOutbox())) {
+        await env.EMAIL_QUEUE.send({ kind: "email_outbox_kick" });
+      }
       const socialResult = await enqueueDueSocialPosts(env.SOCIAL_PUBLISH_QUEUE, env);
+      const socialInsightsDue = await enqueueDueSocialInsightsRefreshes(env.SOCIAL_INSIGHTS_QUEUE);
       const socialInsightsRecovery = await requeueStaleSocialInsightsBackfills(
         env.SOCIAL_INSIGHTS_QUEUE,
       );
@@ -1268,6 +1333,25 @@ export default {
       const twitterReconciliation = await enqueueTwitterDmReconciliations(env.TWITTER_DM_QUEUE);
       const facebookHealth = await auditFacebookConnections();
       const bookingResult = await processBookingFollowups();
+      await cleanupTelegramReceipts();
+      let contentIndexResult = null;
+      try {
+        contentIndexResult = await processDueContentIndexes();
+      } catch (error) {
+        console.error("[content-index] scheduled processing failed", error);
+        await captureServerException(error, "content-index-scheduled", {
+          surface: "content_brain",
+        });
+      }
+      let contentRoutineResult = null;
+      try {
+        contentRoutineResult = await processDueContentRoutines();
+      } catch (error) {
+        console.error("[content-routines] scheduled processing failed", error);
+        await captureServerException(error, "content-routines-scheduled", {
+          surface: "content_routines",
+        });
+      }
       const fulfillmentResult = await reconcileCommerceFulfillment();
       const priorityDmNotificationResult = await reconcilePriorityDmNotifications();
       const expiredSubscriptions = await expireCommerceSubscriptionAccess();
@@ -1299,8 +1383,13 @@ export default {
         console.log("[email] repaired Priority DM notifications", priorityDmNotificationResult);
       }
       if (socialResult.queued > 0) console.log("[social] queued scheduled posts", socialResult);
+      if (socialInsightsDue.queued > 0)
+        console.log("[social-insights] daily refreshes queued", socialInsightsDue);
       if (socialInsightsRecovery.queued > 0)
         console.log("[social-insights] stale imports requeued", socialInsightsRecovery);
+      if (contentIndexResult?.claimed) console.log("[content-index] processed", contentIndexResult);
+      if (contentRoutineResult?.claimed)
+        console.log("[content-routines] processed", contentRoutineResult);
       if (referralResult.queued > 0)
         console.log("[referral] queued reach verification", referralResult);
       if (socialHealth.checked > 0) console.log("[social] connection health audit", socialHealth);

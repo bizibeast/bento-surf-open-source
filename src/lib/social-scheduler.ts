@@ -116,23 +116,19 @@ export type SchedulerTarget = {
   providerSettings?: Record<string, unknown>;
 };
 
-export const MAX_SOCIAL_PROFILES_PER_PROVIDER = 2;
+export const MAX_SOCIAL_PROFILES_PER_PROVIDER = 1;
 
 export function socialAccountsWithinLimit<T extends { id: string }>(
   existingProviderUserIds: readonly string[],
   accounts: readonly T[],
 ) {
-  const existing = new Set(existingProviderUserIds);
   const selected: T[] = [];
-  let remaining = Math.max(0, MAX_SOCIAL_PROFILES_PER_PROVIDER - existing.size);
+  void existingProviderUserIds;
 
   for (const account of accounts) {
     if (selected.some((candidate) => candidate.id === account.id)) continue;
-    if (existing.has(account.id)) selected.push(account);
-    else if (remaining > 0) {
-      selected.push(account);
-      remaining -= 1;
-    }
+    selected.push(account);
+    if (selected.length === MAX_SOCIAL_PROFILES_PER_PROVIDER) break;
   }
   return selected;
 }
@@ -565,6 +561,10 @@ export function isSocialCalendarPost(
 
 export type SocialProviderSettings = Record<string, Record<string, unknown>>;
 
+export const INSTAGRAM_TRIAL_GRADUATION_STRATEGIES = ["MANUAL", "SS_PERFORMANCE"] as const;
+export type InstagramTrialGraduationStrategy =
+  (typeof INSTAGRAM_TRIAL_GRADUATION_STRATEGIES)[number];
+
 export type VideoCoverKind = "image" | "timestamp";
 
 type SocialProviderDefinition = {
@@ -901,6 +901,26 @@ export const socialPostInputSchema = z
   })
   .superRefine((value, context) => {
     const reddit = value.providerSettings.reddit || {};
+    const instagram = value.providerSettings.instagram || {};
+    if (instagram.trialReel != null && typeof instagram.trialReel !== "boolean") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Instagram Trial Reel must be true or false.",
+        path: ["providerSettings", "instagram", "trialReel"],
+      });
+    }
+    if (
+      instagram.graduationStrategy != null &&
+      !INSTAGRAM_TRIAL_GRADUATION_STRATEGIES.includes(
+        instagram.graduationStrategy as InstagramTrialGraduationStrategy,
+      )
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Choose a valid Instagram Trial Reel graduation strategy.",
+        path: ["providerSettings", "instagram", "graduationStrategy"],
+      });
+    }
     if (
       !value.body &&
       value.media.length === 0 &&
@@ -933,6 +953,8 @@ export const socialPostInputSchema = z
       context.addIssue({ code: z.ZodIssueCode.custom, message: "Choose a future publish time." });
     }
   });
+
+export type SocialPostInput = z.infer<typeof socialPostInputSchema>;
 
 export function validatePostForProviders(
   body: string,
@@ -1071,6 +1093,14 @@ export function validatePostForProviders(
     if (definition.maxTitle && title.trim().length > definition.maxTitle) {
       errors[provider] =
         `${definition.name} allows ${definition.maxTitle.toLocaleString()} title characters.`;
+      continue;
+    }
+    if (
+      provider === "instagram" &&
+      settings.trialReel === true &&
+      (media.length !== 1 || !media[0]?.mimeType.startsWith("video/"))
+    ) {
+      errors.instagram = "Instagram Trial Reels need a single video.";
       continue;
     }
     const coverError = invalidVideoCover(provider, definition.name, settings, media);

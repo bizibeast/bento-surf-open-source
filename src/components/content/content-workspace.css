@@ -1,0 +1,185 @@
+.content-workspace {
+  color: var(--foreground);
+  background: var(--card);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+.content-workspace h1,
+.content-workspace h2,
+.content-workspace h3,
+.content-workspace h4 {
+  font-family: inherit;
+}
+.content-workspace button:focus-visible,
+.content-workspace a:focus-visible,
+.content-workspace textarea:focus-visible,
+.content-workspace input:focus-visible {
+  outline: 2px solid #737373;
+  outline-offset: 3px;
+}
+.content-rail {
+  border-right: 1px solid var(--border);
+  background: color-mix(in oklab, var(--card), var(--muted) 20%);
+  overflow-y: auto;
+  padding: 16px 8px;
+}
+.content-rail button {
+  text-align: left;
+}
+.content-rail .content-nav {
+  width: 100%;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #525252;
+}
+.content-rail .content-nav:hover,
+.content-rail .content-nav[aria-current="page"] {
+  background: var(--muted);
+  color: var(--foreground);
+}
+.content-document-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  margin-bottom: 20px;
+  color: #737373;
+  font-size: 12px;
+}
+.content-document-toolbar button {
+  padding: 5px 9px;
+  border-radius: 6px;
+}
+.content-document-toolbar button:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+.content-document-toolbar button:disabled {
+  opacity: 0.4;
+}
+.content-document-input {
+  width: 100%;
+  min-height: 220px;
+  resize: vertical;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.85;
+  outline: none;
+}
+.content-document-input::placeholder {
+  color: #8a8a8a;
+}
+.content-prose {
+  font-size: 15px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.content-prose > div,
+.content-prose > p,
+.content-prose > ul,
+.content-prose > ol {
+  margin-bottom: 20px;
+}
+.content-prose p {
+  white-space: pre-wrap;
+}
+.content-prose h2 {
+  font-size: 22px;
+  font-weight: 650;
+  margin: 20px 0 12px;
+}
+.content-prose h3 {
+  font-size: 18px;
+  font-weight: 650;
+  margin: 24px 0 12px;
+}
+.content-prose h4 {
+  font-size: 16px;
+  font-weight: 650;
+  margin: 16px 0 8px;
+}
+.content-prose ul,
+.content-prose ol {
+  padding-left: 24px;
+}
+.content-prose ul {
+  list-style: disc;
+}
+.content-prose ol {
+  list-style: decimal;
+}
+.content-prose li {
+  padding-left: 3px;
+  margin: 6px 0;
+}
+.content-prose a {
+  color: #2768b4;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.content-prose pre {
+  background: var(--muted);
+  border-radius: 8px;
+  overflow-x: auto;
+  padding: 16px;
+  margin: 16px 0;
+}
+.content-prose code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.9em;
+  background: var(--muted);
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.content-prose pre code {
+  padding: 0;
+}
+.content-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  background: var(--muted);
+}
+.content-action:hover {
+  background: var(--accent);
+}
+.content-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.content-action-primary {
+  color: var(--background);
+  background: var(--foreground);
+}
+.content-action-primary:hover {
+  background: #363739;
+}
+.content-field {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  font-size: 14px;
+}
+@media (max-width: 767px) {
+  .content-rail {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    padding: 8px;
+  }
+}
+
+.content-prose > p {
+  margin-bottom: 20px;
+}
+
+.content-workspace textarea[aria-label="Message Agent"] { field-sizing: content; }

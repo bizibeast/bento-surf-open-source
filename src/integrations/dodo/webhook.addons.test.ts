@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   from: vi.fn(),
   rpc: vi.fn(),
   subscriptionUpsert: vi.fn(),
+  profileUpdates: [] as Array<{ id: string; value: Record<string, unknown> }>,
+  currentSubscription: null as null | { dodo_subscription_id: string; status: string },
 }));
 
 vi.mock("@/integrations/supabase/client.server", () => ({
@@ -60,12 +62,30 @@ function subscriptionEvent(
   };
 }
 
+function workspaceSubscriptionEvent(
+  workspaceId: string,
+  authUserId: string,
+  type: "subscription.active" | "subscription.cancelled",
+  subscriptionId = "sub_workspace",
+): DodoEvent {
+  const event = subscriptionEvent("creator", type);
+  event.data.subscription_id = subscriptionId;
+  event.data.metadata = {
+    user_id: workspaceId,
+    workspace_id: workspaceId,
+    auth_user_id: authUserId,
+  };
+  return event;
+}
+
 beforeEach(() => {
   mocks.captureServerEvent.mockResolvedValue(undefined);
   mocks.captureServerException.mockResolvedValue(undefined);
   mocks.enqueueBentoBillingEmail.mockResolvedValue(undefined);
   mocks.rpc.mockResolvedValue({ data: true, error: null });
   mocks.subscriptionUpsert.mockResolvedValue({ error: null });
+  mocks.profileUpdates.length = 0;
+  mocks.currentSubscription = null;
   mocks.from.mockImplementation((table: string) => {
     if (table === "complimentary_plan_grants") {
       const query = {
@@ -75,10 +95,30 @@ beforeEach(() => {
       };
       return { select: () => query };
     }
-    if (table === "profiles") return { update: () => ({ eq: async () => ({ error: null }) }) };
+    if (table === "workspace_memberships") {
+      const query = {
+        eq: () => query,
+        maybeSingle: async () => ({ data: { workspace_id: "owned" }, error: null }),
+      };
+      return { select: () => query };
+    }
+    if (table === "profiles") {
+      return {
+        update: (value: Record<string, unknown>) => ({
+          eq: async (_column: string, id: string) => {
+            mocks.profileUpdates.push({ id, value });
+            return { error: null };
+          },
+        }),
+      };
+    }
     if (table === "subscriptions") {
       return {
-        select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }),
+        select: () => ({
+          eq: () => ({
+            maybeSingle: async () => ({ data: mocks.currentSubscription, error: null }),
+          }),
+        }),
         upsert: mocks.subscriptionUpsert,
       };
     }
@@ -98,6 +138,62 @@ afterEach(() => {
 });
 
 describe("verified Dodo add-on state", () => {
+  it("activates only the workspace named by purchaser-verified metadata", async () => {
+    const workspaceId = "33333333-3333-4333-8333-333333333333";
+    const authUserId = "11111111-1111-4111-8111-111111111111";
+
+    await processVerifiedDodoEvent(
+      workspaceSubscriptionEvent(workspaceId, authUserId, "subscription.active"),
+      "webhook-workspace-active",
+    );
+
+    expect(mocks.subscriptionUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ user_id: workspaceId, dodo_subscription_id: "sub_workspace" }),
+      { onConflict: "user_id" },
+    );
+    expect(mocks.profileUpdates).toContainEqual({
+      id: workspaceId,
+      value: expect.objectContaining({ workspace_status: "active" }),
+    });
+    expect(mocks.profileUpdates.some((update) => update.id === authUserId)).toBe(false);
+  });
+
+  it("locks only the workspace whose current subscription was cancelled", async () => {
+    const workspaceId = "33333333-3333-4333-8333-333333333333";
+    mocks.currentSubscription = { dodo_subscription_id: "sub_workspace", status: "active" };
+
+    await processVerifiedDodoEvent(
+      workspaceSubscriptionEvent(
+        workspaceId,
+        "11111111-1111-4111-8111-111111111111",
+        "subscription.cancelled",
+      ),
+      "webhook-workspace-cancelled",
+    );
+
+    expect(mocks.profileUpdates).toContainEqual({
+      id: workspaceId,
+      value: expect.objectContaining({ workspace_status: "locked" }),
+    });
+  });
+
+  it("ignores a stale cancellation for a replaced workspace subscription", async () => {
+    mocks.currentSubscription = { dodo_subscription_id: "sub_new", status: "active" };
+
+    await processVerifiedDodoEvent(
+      workspaceSubscriptionEvent(
+        "33333333-3333-4333-8333-333333333333",
+        "11111111-1111-4111-8111-111111111111",
+        "subscription.cancelled",
+        "sub_old",
+      ),
+      "webhook-workspace-stale",
+    );
+
+    expect(mocks.subscriptionUpsert).not.toHaveBeenCalled();
+    expect(mocks.profileUpdates).toEqual([]);
+  });
+
   it("maps only configured IDs from an explicit webhook cart", () => {
     const explicitKnownCart = [
       { addon_id: "contact-10000-monthly", quantity: 1 },

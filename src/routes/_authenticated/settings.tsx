@@ -162,7 +162,9 @@ export const Route = createFileRoute("/_authenticated/settings")({
     polar: z.enum(["connected", "error"]).optional(),
     stripe: z.enum(["connected", "error"]).optional(),
     paypal: z.enum(["connected", "error"]).optional(),
-    integration: z.enum(["social", "bookings", "automation", "payments"]).optional(),
+    integration: z
+      .enum(["social", "bookings", "automation", "knowledge", "channels", "payments"])
+      .optional(),
   }),
   loader: ({ context }) => {
     context.queryClient.prefetchQuery({ queryKey: ["my-profile"], queryFn: () => getMyProfile() });
@@ -898,27 +900,6 @@ function SettingsPage() {
                 }
               >
                 <IntegrationsOverview target={integrationTarget} query={integrationQuery} />
-                <BentoCard className="mt-5">
-                  <div className="flex items-start gap-3">
-                    <span className={`${micro.iconWell} size-11 shrink-0`}>
-                      <Bot className="size-5" aria-hidden="true" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <CardLabel>AI agents · MCP</CardLabel>
-                      <h3 className="mt-2 font-ui-display text-xl">Let your agent operate Bento</h3>
-                      <p className="mt-1 text-sm leading-6 text-[#17213a]/52">
-                        Add this secure MCP URL to ChatGPT, Claude, Cursor, Codex, or any compatible
-                        agent. Bento will ask you to approve access in the browser.
-                      </p>
-                      <div className="mt-4 flex items-center gap-2 rounded-xl border border-dashed border-[#3478f6]/30 bg-[#f8faff] p-3">
-                        <code className="min-w-0 flex-1 truncate text-xs text-[#17213a]/60">
-                          {mcpUrl}
-                        </code>
-                        <CopyButton value={mcpUrl} />
-                      </div>
-                    </div>
-                  </div>
-                </BentoCard>
                 <div className="mt-5">
                   <PaymentGatewayPicker
                     settings={paymentSettings}
@@ -1293,6 +1274,27 @@ function SettingsPage() {
                     </IntegrationPanel>
                   </div>
                 )}
+                <BentoCard className="mt-5">
+                  <div className="flex items-start gap-3">
+                    <span className={`${micro.iconWell} size-11 shrink-0`}>
+                      <Bot className="size-5" aria-hidden="true" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <CardLabel>AI agents · MCP</CardLabel>
+                      <h3 className="mt-2 font-ui-display text-xl">Let your agent operate Bento</h3>
+                      <p className="mt-1 text-sm leading-6 text-[#17213a]/52">
+                        Add this secure MCP URL to ChatGPT, Claude, Cursor, Codex, or any compatible
+                        agent. Bento will ask you to approve access in the browser.
+                      </p>
+                      <div className="mt-4 flex items-center gap-2 rounded-xl border border-dashed border-[#3478f6]/30 bg-[#f8faff] p-3">
+                        <code className="min-w-0 flex-1 truncate text-xs text-[#17213a]/60">
+                          {mcpUrl}
+                        </code>
+                        <CopyButton value={mcpUrl} />
+                      </div>
+                    </div>
+                  </div>
+                </BentoCard>
               </SettingsSection>
             )}
 

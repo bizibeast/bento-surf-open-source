@@ -132,6 +132,39 @@ describe("EmailAudiencePanel", () => {
     });
   });
 
+  it("shows AutoDM source and account marketing consent status", async () => {
+    mocks.getPublicationAudience.mockResolvedValue(
+      page({
+        subscribers: [
+          {
+            ...contact,
+            email: "instagram@example.com",
+            source: "instagram_auto_dm",
+            marketing_status: "subscribed",
+            subscription_id: null,
+            subscription_status: "not_subscribed",
+          },
+          {
+            ...contact,
+            id: "66666666-6666-4666-8666-666666666666",
+            email: "facebook@example.com",
+            source: "facebook_auto_dm",
+            marketing_status: "transactional",
+            subscription_id: null,
+            subscription_status: "not_subscribed",
+          },
+        ],
+      }),
+    );
+    renderPanel();
+
+    expect(await screen.findByText("instagram@example.com")).toBeVisible();
+    expect(screen.getByText("Instagram AutoDM")).toBeVisible();
+    expect(screen.getByText("Facebook AutoDM")).toBeVisible();
+    expect(screen.getByText("Marketing subscribed")).toBeVisible();
+    expect(screen.getAllByText("Not subscribed")[0]).toBeVisible();
+  });
+
   it("keeps publication filters available and resets pagination when they change", async () => {
     const user = userEvent.setup();
     mocks.getPublicationAudience

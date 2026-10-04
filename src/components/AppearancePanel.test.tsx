@@ -29,6 +29,19 @@ afterEach(() => {
 });
 
 describe("AppearancePanel pattern controls", () => {
+  it("does not expose dashboard light or dark mode controls", async () => {
+    vi.mocked(getMyProfile).mockResolvedValue(profile as never);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(["my-profile"], profile);
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AppearancePanel />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.queryByRole("button", { name: "Theme" })).not.toBeInTheDocument();
+  });
+
   it("persists no_banner when choosing Without photo", async () => {
     vi.mocked(getMyProfile).mockResolvedValue(profile as never);
     vi.mocked(updateProfile).mockResolvedValue(profile as never);

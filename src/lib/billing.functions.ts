@@ -20,6 +20,7 @@ import {
 import { desiredDodoAddonCart } from "./billing-addons";
 import { enforceRequestRateLimit } from "./request-security.server";
 import { parsePublicHttpUrl } from "./safe-url";
+import { usernameSchema } from "./username";
 
 const paidPlanSchema = z.enum(["store", "creator"]);
 const checkoutPeriodSchema = z.enum(["monthly", "yearly"]);
@@ -64,6 +65,8 @@ function dodoErrorStatus(error: unknown): number | null {
 
 async function createHostedCheckoutSession(input: {
   userId: string;
+  authUserId?: string;
+  workspaceId?: string;
   email?: string;
   plan: PaidPlanId;
   period: BillingPeriod;
@@ -86,7 +89,13 @@ async function createHostedCheckoutSession(input: {
       product_cart: [{ product_id: productId, quantity: 1, ...(addons.length ? { addons } : {}) }],
       subscription_data: { trial_period_days: TRIAL_DAYS },
       ...(input.email ? { customer: { email: input.email, name: input.email.split("@")[0] } } : {}),
-      metadata: { user_id: input.userId, plan: input.plan, period: input.period },
+      metadata: {
+        user_id: input.workspaceId ?? input.userId,
+        workspace_id: input.workspaceId ?? input.userId,
+        auth_user_id: input.authUserId ?? input.userId,
+        plan: input.plan,
+        period: input.period,
+      },
       return_url:
         input.returnTo === "onboarding"
           ? `${appUrl}/onboarding?checkout=success`
@@ -131,11 +140,13 @@ export const createCheckout = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ data, context }) => {
-    const { userId, claims } = context;
+    const { authUserId, userId, claims } = context;
     await enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "billing-checkout", userId);
     const email = typeof claims.email === "string" ? claims.email : undefined;
     const url = await createHostedCheckoutSession({
       userId,
+      authUserId,
+      workspaceId: userId,
       email,
       plan: data.plan,
       period: data.period,
@@ -143,6 +154,67 @@ export const createCheckout = createServerFn({ method: "POST" })
       addons: data,
     });
     return { url };
+  });
+
+const additionalWorkspaceSchema = z.object({
+  displayName: z.string().trim().min(1).max(60),
+  username: usernameSchema,
+});
+
+export const beginAdditionalWorkspaceCheckout = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input) => additionalWorkspaceSchema.parse(input))
+  .handler(async ({ data, context }) => {
+    await enforceRequestRateLimit(
+      "EXPENSIVE_API_RATE_LIMITER",
+      "additional-workspace-checkout",
+      context.authUserId,
+    );
+    const subscription = await mySubscription(context.supabase, context.userId);
+    const plan = normalizePlan(subscription?.plan_id);
+    const period = normalizeBillingPeriod(subscription?.billing_interval);
+    if (
+      !isPaidPlan(plan) ||
+      !period ||
+      !subscription?.dodo_subscription_id ||
+      !subscription.status ||
+      !["active", "trialing"].includes(subscription.status)
+    ) {
+      throw new Error("Choose a paid plan first.");
+    }
+
+    const { data: workspaceId, error } = await supabaseAdmin.rpc(
+      "create_pending_workspace" as never,
+      {
+        p_auth_user_id: context.authUserId,
+        p_display_name: data.displayName,
+        p_username: data.username,
+      } as never,
+    );
+    if (error?.code === "23505") throw new Error("Username already taken");
+    if (error || typeof workspaceId !== "string") {
+      throw new Error("The new workspace could not be created.");
+    }
+
+    try {
+      const checkoutUrl = await createHostedCheckoutSession({
+        userId: workspaceId,
+        authUserId: context.authUserId,
+        workspaceId,
+        email: typeof context.claims.email === "string" ? context.claims.email : undefined,
+        plan,
+        period,
+        returnTo: "dashboard",
+      });
+      return { checkoutUrl, workspaceId };
+    } catch (checkoutError) {
+      await supabaseAdmin
+        .from("profiles")
+        .delete()
+        .eq("id", workspaceId)
+        .eq("workspace_status" as never, "pending");
+      throw checkoutError;
+    }
   });
 
 export type MyBillingOverview = {

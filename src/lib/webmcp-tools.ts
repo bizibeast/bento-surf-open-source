@@ -466,6 +466,19 @@ export function createAuthenticatedWebMcpTools(refresh: () => Promise<void>): We
         providerSettings: {
           type: "object",
           description: "Per-provider post settings.",
+          properties: {
+            instagram: objectSchema(
+              {
+                trialReel: boolean("Publish one Instagram video as a Trial Reel."),
+                graduationStrategy: string("Trial Reel graduation strategy.", {
+                  enum: ["MANUAL", "SS_PERFORMANCE"],
+                  default: "MANUAL",
+                }),
+              },
+              [],
+              true,
+            ),
+          },
           additionalProperties: { type: "object", additionalProperties: true },
         },
         mode: string("Save mode.", { enum: ["draft", "schedule", "publish_now"] }),

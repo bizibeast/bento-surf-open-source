@@ -5,7 +5,10 @@ import { useEffect, type ReactNode } from "react";
 import { SiFacebook, SiInstagram, SiX } from "react-icons/si";
 import { BookingAccountsConnect, type BookingConnectAccount } from "./BookingAccountsConnect";
 import { SocialAccountsConnect, type SocialConnectAccount } from "./SocialAccountsConnect";
+import { TelegramIntegrationCard, type TelegramConnectionView } from "./TelegramIntegrationCard";
+import { KnowledgeIntegrationCard, type KnowledgeConnectionView } from "./KnowledgeIntegrationCard";
 import { getIntegrationOverview } from "@/lib/integrations.functions";
+import type { ContentProvider } from "@/lib/content-connections";
 import { micro } from "@/lib/micro-app-ui";
 import {
   PUBLIC_SOCIAL_PROVIDERS,
@@ -13,12 +16,15 @@ import {
   type SocialProvider,
 } from "@/lib/social-scheduler";
 
-type IntegrationTarget = "social" | "bookings" | "automation" | "payments";
+type IntegrationTarget =
+  "social" | "bookings" | "automation" | "knowledge" | "channels" | "payments";
 
 const INTEGRATION_TARGET_IDS: Record<IntegrationTarget, string> = {
   social: "integration-social",
   bookings: "integration-bookings",
   automation: "integration-automation",
+  knowledge: "integration-knowledge",
+  channels: "integration-channels",
   payments: "integration-payments",
 };
 
@@ -98,6 +104,20 @@ export function IntegrationsOverview({
     google?: boolean;
     fathom?: boolean;
   };
+  const contentReadiness = (data?.contentReadiness || {}) as Record<
+    ContentProvider | "telegram",
+    boolean
+  >;
+  const contentProviderMetadata = (data?.contentProviderMetadata || {}) as {
+    telegramUsername?: string | null;
+  };
+  const telegramConnection = (
+    (data?.contentConnections || []) as Array<TelegramConnectionView & { provider: string }>
+  ).find((connection) => connection.provider === "telegram");
+  const knowledgeProviders: ContentProvider[] = ["notion", "granola", "github", "slack"];
+  const contentConnections = (data?.contentConnections || []) as Array<
+    KnowledgeConnectionView & { provider: string }
+  >;
   const refreshOverview = () =>
     void queryClient.invalidateQueries({ queryKey: ["integration-overview"] });
   const normalizedQuery = query.trim().toLowerCase();
@@ -107,6 +127,10 @@ export function IntegrationsOverview({
     matches(provider, SOCIAL_PROVIDER_DEFINITIONS[provider].name),
   );
   const showMeetings = matches("meetings", "google calendar", "google meet", "fathom");
+  const showKnowledge = knowledgeProviders.some((provider) =>
+    matches("knowledge", provider, provider === "github" ? "git hub" : provider),
+  );
+  const showChannels = matches("agent channels", "agent", "telegram");
   const shownAutomations = AUTOMATIONS.filter((automation) =>
     matches("automations", automation.label),
   );
@@ -141,6 +165,54 @@ export function IntegrationsOverview({
               onChanged={refreshOverview}
               query={query}
             />
+          )}
+        </IntegrationPanel>
+      )}
+
+      {showKnowledge && (
+        <IntegrationPanel
+          id="integration-knowledge"
+          title="Knowledge"
+          description="Ground your Brain and Agent in the work, meetings, and conversations you choose."
+        >
+          {isLoading ? (
+            <TileSkeleton count={4} />
+          ) : (
+            <div className="grid grid-cols-3 gap-x-4 gap-y-6 sm:grid-cols-5 lg:grid-cols-8">
+              {knowledgeProviders.map((provider) => (
+                <KnowledgeIntegrationCard
+                  key={provider}
+                  provider={provider}
+                  connection={
+                    contentConnections.find((connection) => connection.provider === provider) ||
+                    null
+                  }
+                  ready={Boolean(contentReadiness[provider])}
+                  onChanged={refreshOverview}
+                />
+              ))}
+            </div>
+          )}
+        </IntegrationPanel>
+      )}
+
+      {showChannels && (
+        <IntegrationPanel
+          id="integration-channels"
+          title="Agent channels"
+          description="Talk to your Bento Agent and receive content-ready notifications."
+        >
+          {isLoading ? (
+            <TileSkeleton count={1} />
+          ) : (
+            <div className="grid grid-cols-3 gap-x-4 gap-y-6 sm:grid-cols-5 lg:grid-cols-8">
+              <TelegramIntegrationCard
+                connection={telegramConnection || null}
+                ready={Boolean(contentReadiness.telegram)}
+                botUsername={contentProviderMetadata.telegramUsername || null}
+                onChanged={refreshOverview}
+              />
+            </div>
           )}
         </IntegrationPanel>
       )}
@@ -184,12 +256,16 @@ export function IntegrationsOverview({
         </IntegrationPanel>
       )}
 
-      {!showSocial && !showMeetings && !shownAutomations.length && (
-        <div className="border-b border-black/[0.08] py-12 text-center">
-          <p className="text-sm font-semibold text-[#17213a]">No integrations found</p>
-          <p className="mt-1 text-xs text-[#17213a]/48">Try another app or platform name.</p>
-        </div>
-      )}
+      {!showSocial &&
+        !showMeetings &&
+        !showKnowledge &&
+        !showChannels &&
+        !shownAutomations.length && (
+          <div className="border-b border-black/[0.08] py-12 text-center">
+            <p className="text-sm font-semibold text-[#17213a]">No integrations found</p>
+            <p className="mt-1 text-xs text-[#17213a]/48">Try another app or platform name.</p>
+          </div>
+        )}
     </div>
   );
 }

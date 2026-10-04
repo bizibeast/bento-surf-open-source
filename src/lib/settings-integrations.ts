@@ -2,6 +2,8 @@ export const SETTINGS_INTEGRATION_TARGETS = [
   "social",
   "bookings",
   "automation",
+  "knowledge",
+  "channels",
   "payments",
 ] as const;
 

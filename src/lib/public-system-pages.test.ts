@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- Supabase query-chain test doubles accept generated row shapes. */
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({

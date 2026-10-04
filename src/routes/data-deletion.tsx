@@ -89,6 +89,15 @@ function DataDeletion() {
               </p>
             </section>
             <section className="rounded-[30px] border border-white/80 bg-white/85 p-7">
+              <h2 className="mt-0 font-display text-2xl">Remove Telegram data</h2>
+              <p className="mt-3 text-sm leading-6 text-[#17213a]/65">
+                Open Settings → Integrations → Agent channels and disconnect Telegram. This removes
+                the private-chat binding and pending approval actions, and stops replies and
+                notifications. Content Agent conversations keep their 180-day retention period;
+                deleting your account removes those conversations and the Telegram connection.
+              </p>
+            </section>
+            <section className="rounded-[30px] border border-white/80 bg-white/85 p-7">
               <Trash2 className="size-7 text-rose-500" />
               <h2 className="mt-4 font-display text-2xl">Delete your account</h2>
               <p className="mt-3 text-sm leading-6 text-[#17213a]/65">

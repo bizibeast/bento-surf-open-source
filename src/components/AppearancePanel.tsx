@@ -1,11 +1,9 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useTheme } from "next-themes";
 import {
   Image as ImageIcon,
   Lock,
   Palette,
-  Sparkles,
   Type,
   User,
   Upload,
@@ -30,7 +28,7 @@ import {
 import type { Database, Json } from "@/integrations/supabase/types";
 import { errorMessage } from "@/lib/errors";
 
-type SectionId = "header" | "theme" | "colors" | "patterns" | "fonts";
+type SectionId = "header" | "colors" | "patterns" | "fonts";
 type ProfileUpdate = Database["public"]["Tables"]["profiles"]["Update"];
 type MyProfile = Awaited<ReturnType<typeof getMyProfile>>;
 const PROFILE_QUERY_KEY = ["my-profile"] as const;
@@ -43,7 +41,6 @@ function patternSettings(value: Json): Partial<PatternSettings> {
 
 export function AppearancePanel() {
   const qc = useQueryClient();
-  const { setTheme, theme: appTheme } = useTheme();
   const { data: profile } = useQuery({
     queryKey: PROFILE_QUERY_KEY,
     queryFn: () => getMyProfile(),
@@ -83,7 +80,6 @@ export function AppearancePanel() {
   const hasCustomFonts = planHasEntitlement(plan, "customFonts");
 
   const headerMode = (profile?.header_mode as "with_photo" | "no_banner") ?? "with_photo";
-  const theme = (profile?.theme as "light" | "dark") ?? (appTheme === "dark" ? "dark" : "light");
   const accent = profile?.accent_color ?? "indigo";
   const accentHex = ACCENT_PALETTE.find((a) => a.id === accent)?.hex ?? accent;
   const pattern = (profile?.pattern as PatternId) ?? "none";
@@ -166,27 +162,6 @@ export function AppearancePanel() {
                 </div>
                 <div className="text-xs font-medium text-neutral-900">{opt.label}</div>
                 <div className="text-[10px] text-neutral-500">{opt.desc}</div>
-              </button>
-            ))}
-          </div>
-        </Section>
-
-        <Section id="theme" icon={Sparkles} label="Theme" open={open} onOpen={setOpen}>
-          <div className="flex gap-1 rounded-xl bg-neutral-100 p-1">
-            {(["light", "dark"] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => {
-                  setTheme(t);
-                  save.mutate({ theme: t });
-                }}
-                className={`flex-1 rounded-lg px-3 py-1.5 text-xs capitalize transition ${
-                  theme === t
-                    ? "bg-white text-neutral-900 shadow-sm"
-                    : "text-neutral-500 hover:text-neutral-900"
-                }`}
-              >
-                {t}
               </button>
             ))}
           </div>

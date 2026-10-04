@@ -39,6 +39,7 @@ import { Route as AuthenticatedHomeRouteImport } from './routes/_authenticated/h
 import { Route as AuthenticatedEmailMarketingRouteImport } from './routes/_authenticated/email-marketing'
 import { Route as AuthenticatedEarnRouteImport } from './routes/_authenticated/earn'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
+import { Route as AuthenticatedContentRouteImport } from './routes/_authenticated/content'
 import { Route as AuthenticatedCommunityRouteImport } from './routes/_authenticated/community'
 import { Route as AuthenticatedCalendarRouteImport } from './routes/_authenticated/calendar'
 import { Route as AuthenticatedBookingsRouteImport } from './routes/_authenticated/bookings'
@@ -57,10 +58,14 @@ import { Route as PProductSlugSuccessRouteImport } from './routes/p.$productSlug
 import { Route as LibraryReceiptsOrderIdRouteImport } from './routes/library.receipts.$orderId'
 import { Route as LibraryPriorityDmRequestIdRouteImport } from './routes/library.priority-dm.$requestId'
 import { Route as IntegrationsStripeCallbackRouteImport } from './routes/integrations.stripe.callback'
+import { Route as IntegrationsSlackCallbackRouteImport } from './routes/integrations.slack.callback'
 import { Route as IntegrationsPolarCallbackRouteImport } from './routes/integrations.polar.callback'
 import { Route as IntegrationsPaypalCallbackRouteImport } from './routes/integrations.paypal.callback'
+import { Route as IntegrationsNotionCallbackRouteImport } from './routes/integrations.notion.callback'
 import { Route as IntegrationsInstagramDataDeletionRouteImport } from './routes/integrations.instagram.data-deletion'
 import { Route as IntegrationsInstagramCallbackRouteImport } from './routes/integrations.instagram.callback'
+import { Route as IntegrationsGranolaCallbackRouteImport } from './routes/integrations.granola.callback'
+import { Route as IntegrationsGithubCallbackRouteImport } from './routes/integrations.github.callback'
 import { Route as IntegrationsFathomCallbackRouteImport } from './routes/integrations.fathom.callback'
 import { Route as AuthenticatedMcpSetupRouteImport } from './routes/_authenticated/mcp.setup'
 import { Route as AuthenticatedAutomationsTwitterRouteImport } from './routes/_authenticated/automations.twitter'
@@ -229,6 +234,11 @@ const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
   path: '/dashboard',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const AuthenticatedContentRoute = AuthenticatedContentRouteImport.update({
+  id: '/content',
+  path: '/content',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
 const AuthenticatedCommunityRoute = AuthenticatedCommunityRouteImport.update({
   id: '/community',
   path: '/community',
@@ -325,6 +335,12 @@ const IntegrationsStripeCallbackRoute =
     path: '/integrations/stripe/callback',
     getParentRoute: () => rootRouteImport,
   } as any)
+const IntegrationsSlackCallbackRoute =
+  IntegrationsSlackCallbackRouteImport.update({
+    id: '/integrations/slack/callback',
+    path: '/integrations/slack/callback',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const IntegrationsPolarCallbackRoute =
   IntegrationsPolarCallbackRouteImport.update({
     id: '/integrations/polar/callback',
@@ -337,6 +353,12 @@ const IntegrationsPaypalCallbackRoute =
     path: '/integrations/paypal/callback',
     getParentRoute: () => rootRouteImport,
   } as any)
+const IntegrationsNotionCallbackRoute =
+  IntegrationsNotionCallbackRouteImport.update({
+    id: '/integrations/notion/callback',
+    path: '/integrations/notion/callback',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const IntegrationsInstagramDataDeletionRoute =
   IntegrationsInstagramDataDeletionRouteImport.update({
     id: '/integrations/instagram/data-deletion',
@@ -347,6 +369,18 @@ const IntegrationsInstagramCallbackRoute =
   IntegrationsInstagramCallbackRouteImport.update({
     id: '/integrations/instagram/callback',
     path: '/integrations/instagram/callback',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const IntegrationsGranolaCallbackRoute =
+  IntegrationsGranolaCallbackRouteImport.update({
+    id: '/integrations/granola/callback',
+    path: '/integrations/granola/callback',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const IntegrationsGithubCallbackRoute =
+  IntegrationsGithubCallbackRouteImport.update({
+    id: '/integrations/github/callback',
+    path: '/integrations/github/callback',
     getParentRoute: () => rootRouteImport,
   } as any)
 const IntegrationsFathomCallbackRoute =
@@ -458,6 +492,7 @@ export interface FileRoutesByFullPath {
   '/bookings': typeof AuthenticatedBookingsRoute
   '/calendar': typeof AuthenticatedCalendarRoute
   '/community': typeof AuthenticatedCommunityRoute
+  '/content': typeof AuthenticatedContentRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/earn': typeof AuthenticatedEarnRoute
   '/email-marketing': typeof AuthenticatedEmailMarketingRoute
@@ -489,10 +524,14 @@ export interface FileRoutesByFullPath {
   '/automations/twitter': typeof AuthenticatedAutomationsTwitterRoute
   '/mcp/setup': typeof AuthenticatedMcpSetupRoute
   '/integrations/fathom/callback': typeof IntegrationsFathomCallbackRoute
+  '/integrations/github/callback': typeof IntegrationsGithubCallbackRoute
+  '/integrations/granola/callback': typeof IntegrationsGranolaCallbackRoute
   '/integrations/instagram/callback': typeof IntegrationsInstagramCallbackRoute
   '/integrations/instagram/data-deletion': typeof IntegrationsInstagramDataDeletionRoute
+  '/integrations/notion/callback': typeof IntegrationsNotionCallbackRoute
   '/integrations/paypal/callback': typeof IntegrationsPaypalCallbackRoute
   '/integrations/polar/callback': typeof IntegrationsPolarCallbackRoute
+  '/integrations/slack/callback': typeof IntegrationsSlackCallbackRoute
   '/integrations/stripe/callback': typeof IntegrationsStripeCallbackRoute
   '/library/priority-dm/$requestId': typeof LibraryPriorityDmRequestIdRoute
   '/library/receipts/$orderId': typeof LibraryReceiptsOrderIdRoute
@@ -526,6 +565,7 @@ export interface FileRoutesByTo {
   '/bookings': typeof AuthenticatedBookingsRoute
   '/calendar': typeof AuthenticatedCalendarRoute
   '/community': typeof AuthenticatedCommunityRoute
+  '/content': typeof AuthenticatedContentRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/earn': typeof AuthenticatedEarnRoute
   '/email-marketing': typeof AuthenticatedEmailMarketingRoute
@@ -557,10 +597,14 @@ export interface FileRoutesByTo {
   '/automations/twitter': typeof AuthenticatedAutomationsTwitterRoute
   '/mcp/setup': typeof AuthenticatedMcpSetupRoute
   '/integrations/fathom/callback': typeof IntegrationsFathomCallbackRoute
+  '/integrations/github/callback': typeof IntegrationsGithubCallbackRoute
+  '/integrations/granola/callback': typeof IntegrationsGranolaCallbackRoute
   '/integrations/instagram/callback': typeof IntegrationsInstagramCallbackRoute
   '/integrations/instagram/data-deletion': typeof IntegrationsInstagramDataDeletionRoute
+  '/integrations/notion/callback': typeof IntegrationsNotionCallbackRoute
   '/integrations/paypal/callback': typeof IntegrationsPaypalCallbackRoute
   '/integrations/polar/callback': typeof IntegrationsPolarCallbackRoute
+  '/integrations/slack/callback': typeof IntegrationsSlackCallbackRoute
   '/integrations/stripe/callback': typeof IntegrationsStripeCallbackRoute
   '/library/priority-dm/$requestId': typeof LibraryPriorityDmRequestIdRoute
   '/library/receipts/$orderId': typeof LibraryReceiptsOrderIdRoute
@@ -596,6 +640,7 @@ export interface FileRoutesById {
   '/_authenticated/bookings': typeof AuthenticatedBookingsRoute
   '/_authenticated/calendar': typeof AuthenticatedCalendarRoute
   '/_authenticated/community': typeof AuthenticatedCommunityRoute
+  '/_authenticated/content': typeof AuthenticatedContentRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/earn': typeof AuthenticatedEarnRoute
   '/_authenticated/email-marketing': typeof AuthenticatedEmailMarketingRoute
@@ -627,10 +672,14 @@ export interface FileRoutesById {
   '/_authenticated/automations/twitter': typeof AuthenticatedAutomationsTwitterRoute
   '/_authenticated/mcp/setup': typeof AuthenticatedMcpSetupRoute
   '/integrations/fathom/callback': typeof IntegrationsFathomCallbackRoute
+  '/integrations/github/callback': typeof IntegrationsGithubCallbackRoute
+  '/integrations/granola/callback': typeof IntegrationsGranolaCallbackRoute
   '/integrations/instagram/callback': typeof IntegrationsInstagramCallbackRoute
   '/integrations/instagram/data-deletion': typeof IntegrationsInstagramDataDeletionRoute
+  '/integrations/notion/callback': typeof IntegrationsNotionCallbackRoute
   '/integrations/paypal/callback': typeof IntegrationsPaypalCallbackRoute
   '/integrations/polar/callback': typeof IntegrationsPolarCallbackRoute
+  '/integrations/slack/callback': typeof IntegrationsSlackCallbackRoute
   '/integrations/stripe/callback': typeof IntegrationsStripeCallbackRoute
   '/library/priority-dm/$requestId': typeof LibraryPriorityDmRequestIdRoute
   '/library/receipts/$orderId': typeof LibraryReceiptsOrderIdRoute
@@ -666,6 +715,7 @@ export interface FileRouteTypes {
     | '/bookings'
     | '/calendar'
     | '/community'
+    | '/content'
     | '/dashboard'
     | '/earn'
     | '/email-marketing'
@@ -697,10 +747,14 @@ export interface FileRouteTypes {
     | '/automations/twitter'
     | '/mcp/setup'
     | '/integrations/fathom/callback'
+    | '/integrations/github/callback'
+    | '/integrations/granola/callback'
     | '/integrations/instagram/callback'
     | '/integrations/instagram/data-deletion'
+    | '/integrations/notion/callback'
     | '/integrations/paypal/callback'
     | '/integrations/polar/callback'
+    | '/integrations/slack/callback'
     | '/integrations/stripe/callback'
     | '/library/priority-dm/$requestId'
     | '/library/receipts/$orderId'
@@ -734,6 +788,7 @@ export interface FileRouteTypes {
     | '/bookings'
     | '/calendar'
     | '/community'
+    | '/content'
     | '/dashboard'
     | '/earn'
     | '/email-marketing'
@@ -765,10 +820,14 @@ export interface FileRouteTypes {
     | '/automations/twitter'
     | '/mcp/setup'
     | '/integrations/fathom/callback'
+    | '/integrations/github/callback'
+    | '/integrations/granola/callback'
     | '/integrations/instagram/callback'
     | '/integrations/instagram/data-deletion'
+    | '/integrations/notion/callback'
     | '/integrations/paypal/callback'
     | '/integrations/polar/callback'
+    | '/integrations/slack/callback'
     | '/integrations/stripe/callback'
     | '/library/priority-dm/$requestId'
     | '/library/receipts/$orderId'
@@ -803,6 +862,7 @@ export interface FileRouteTypes {
     | '/_authenticated/bookings'
     | '/_authenticated/calendar'
     | '/_authenticated/community'
+    | '/_authenticated/content'
     | '/_authenticated/dashboard'
     | '/_authenticated/earn'
     | '/_authenticated/email-marketing'
@@ -834,10 +894,14 @@ export interface FileRouteTypes {
     | '/_authenticated/automations/twitter'
     | '/_authenticated/mcp/setup'
     | '/integrations/fathom/callback'
+    | '/integrations/github/callback'
+    | '/integrations/granola/callback'
     | '/integrations/instagram/callback'
     | '/integrations/instagram/data-deletion'
+    | '/integrations/notion/callback'
     | '/integrations/paypal/callback'
     | '/integrations/polar/callback'
+    | '/integrations/slack/callback'
     | '/integrations/stripe/callback'
     | '/library/priority-dm/$requestId'
     | '/library/receipts/$orderId'
@@ -878,10 +942,14 @@ export interface RootRouteChildren {
   UsernameNewslettersPublicationSlugRoute: typeof UsernameNewslettersPublicationSlugRoute
   UsernameProductsProductSlugRoute: typeof UsernameProductsProductSlugRoute
   IntegrationsFathomCallbackRoute: typeof IntegrationsFathomCallbackRoute
+  IntegrationsGithubCallbackRoute: typeof IntegrationsGithubCallbackRoute
+  IntegrationsGranolaCallbackRoute: typeof IntegrationsGranolaCallbackRoute
   IntegrationsInstagramCallbackRoute: typeof IntegrationsInstagramCallbackRoute
   IntegrationsInstagramDataDeletionRoute: typeof IntegrationsInstagramDataDeletionRoute
+  IntegrationsNotionCallbackRoute: typeof IntegrationsNotionCallbackRoute
   IntegrationsPaypalCallbackRoute: typeof IntegrationsPaypalCallbackRoute
   IntegrationsPolarCallbackRoute: typeof IntegrationsPolarCallbackRoute
+  IntegrationsSlackCallbackRoute: typeof IntegrationsSlackCallbackRoute
   IntegrationsStripeCallbackRoute: typeof IntegrationsStripeCallbackRoute
   LibraryPriorityDmRequestIdRoute: typeof LibraryPriorityDmRequestIdRoute
   LibraryReceiptsOrderIdRoute: typeof LibraryReceiptsOrderIdRoute
@@ -1107,6 +1175,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedDashboardRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/content': {
+      id: '/_authenticated/content'
+      path: '/content'
+      fullPath: '/content'
+      preLoaderRoute: typeof AuthenticatedContentRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/community': {
       id: '/_authenticated/community'
       path: '/community'
@@ -1233,6 +1308,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IntegrationsStripeCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/integrations/slack/callback': {
+      id: '/integrations/slack/callback'
+      path: '/integrations/slack/callback'
+      fullPath: '/integrations/slack/callback'
+      preLoaderRoute: typeof IntegrationsSlackCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/integrations/polar/callback': {
       id: '/integrations/polar/callback'
       path: '/integrations/polar/callback'
@@ -1247,6 +1329,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IntegrationsPaypalCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/integrations/notion/callback': {
+      id: '/integrations/notion/callback'
+      path: '/integrations/notion/callback'
+      fullPath: '/integrations/notion/callback'
+      preLoaderRoute: typeof IntegrationsNotionCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/integrations/instagram/data-deletion': {
       id: '/integrations/instagram/data-deletion'
       path: '/integrations/instagram/data-deletion'
@@ -1259,6 +1348,20 @@ declare module '@tanstack/react-router' {
       path: '/integrations/instagram/callback'
       fullPath: '/integrations/instagram/callback'
       preLoaderRoute: typeof IntegrationsInstagramCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/integrations/granola/callback': {
+      id: '/integrations/granola/callback'
+      path: '/integrations/granola/callback'
+      fullPath: '/integrations/granola/callback'
+      preLoaderRoute: typeof IntegrationsGranolaCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/integrations/github/callback': {
+      id: '/integrations/github/callback'
+      path: '/integrations/github/callback'
+      fullPath: '/integrations/github/callback'
+      preLoaderRoute: typeof IntegrationsGithubCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/integrations/fathom/callback': {
@@ -1386,6 +1489,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedBookingsRoute: typeof AuthenticatedBookingsRoute
   AuthenticatedCalendarRoute: typeof AuthenticatedCalendarRoute
   AuthenticatedCommunityRoute: typeof AuthenticatedCommunityRoute
+  AuthenticatedContentRoute: typeof AuthenticatedContentRoute
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
   AuthenticatedEarnRoute: typeof AuthenticatedEarnRoute
   AuthenticatedEmailMarketingRoute: typeof AuthenticatedEmailMarketingRoute
@@ -1416,6 +1520,7 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedBookingsRoute: AuthenticatedBookingsRoute,
   AuthenticatedCalendarRoute: AuthenticatedCalendarRoute,
   AuthenticatedCommunityRoute: AuthenticatedCommunityRoute,
+  AuthenticatedContentRoute: AuthenticatedContentRoute,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
   AuthenticatedEarnRoute: AuthenticatedEarnRoute,
   AuthenticatedEmailMarketingRoute: AuthenticatedEmailMarketingRoute,
@@ -1471,11 +1576,15 @@ const rootRouteChildren: RootRouteChildren = {
     UsernameNewslettersPublicationSlugRoute,
   UsernameProductsProductSlugRoute: UsernameProductsProductSlugRoute,
   IntegrationsFathomCallbackRoute: IntegrationsFathomCallbackRoute,
+  IntegrationsGithubCallbackRoute: IntegrationsGithubCallbackRoute,
+  IntegrationsGranolaCallbackRoute: IntegrationsGranolaCallbackRoute,
   IntegrationsInstagramCallbackRoute: IntegrationsInstagramCallbackRoute,
   IntegrationsInstagramDataDeletionRoute:
     IntegrationsInstagramDataDeletionRoute,
+  IntegrationsNotionCallbackRoute: IntegrationsNotionCallbackRoute,
   IntegrationsPaypalCallbackRoute: IntegrationsPaypalCallbackRoute,
   IntegrationsPolarCallbackRoute: IntegrationsPolarCallbackRoute,
+  IntegrationsSlackCallbackRoute: IntegrationsSlackCallbackRoute,
   IntegrationsStripeCallbackRoute: IntegrationsStripeCallbackRoute,
   LibraryPriorityDmRequestIdRoute: LibraryPriorityDmRequestIdRoute,
   LibraryReceiptsOrderIdRoute: LibraryReceiptsOrderIdRoute,

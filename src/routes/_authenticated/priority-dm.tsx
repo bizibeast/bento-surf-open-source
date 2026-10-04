@@ -286,7 +286,7 @@ function ConversationList({
             onClick={() => onFilter(value)}
             className={`min-h-9 flex-1 rounded-xl px-3 text-xs font-semibold capitalize outline-none transition focus-visible:ring-2 focus-visible:ring-ring ${
               filter === value
-                ? "bg-foreground text-background"
+                ? "bg-[#17213a] text-white"
                 : "text-muted-foreground hover:bg-accent hover:text-foreground"
             }`}
           >

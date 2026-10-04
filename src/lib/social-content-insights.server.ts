@@ -2,6 +2,7 @@
 import { readResponseText } from "./request-security.server";
 import { socialApiErrorMessage, socialApiPayloadHasError } from "./social-provider-response";
 import { ProviderError } from "./social-publisher.server";
+import { contentMediaSources, type ContentMediaSource } from "./content-media";
 import type { SocialProvider } from "./social-scheduler";
 
 export type SocialContentInsight = {
@@ -22,7 +23,49 @@ export type SocialContentInsight = {
   shares: number | null;
   saves: number | null;
   fetchedAt: string;
+  mediaSources?: ContentMediaSource[];
 };
+
+function graphPostMedia(item: any): ContentMediaSource[] {
+  const entries =
+    Array.isArray(item.children?.data) && item.children.data.length ? item.children.data : [item];
+  return contentMediaSources(
+    entries
+      .map((asset: any, index: number) => ({
+        id: String(asset.id || `${item.id}:${index}`),
+        type: String(asset.media_type).toUpperCase() === "VIDEO" ? "video" : "image",
+        url: asset.media_url || null,
+      }))
+      .filter((asset: ContentMediaSource) => asset.url),
+  );
+}
+
+function facebookPostMedia(item: any): ContentMediaSource[] {
+  const attachments = Array.isArray(item.attachments?.data) ? item.attachments.data : [];
+  const entries = attachments.flatMap(
+    (attachment: any) => attachment.subattachments?.data || [attachment],
+  );
+  const media = entries
+    .map((asset: any, index: number) => ({
+      id: String(asset.target?.id || `${item.id}:${index}`),
+      type: String(asset.media_type || asset.type)
+        .toLowerCase()
+        .includes("video")
+        ? "video"
+        : "image",
+      url: asset.media?.source || asset.media?.image?.src || null,
+    }))
+    .filter((asset: any) => asset.url);
+  if (!media.length && item.full_picture)
+    media.push({
+      id: `${item.id}:preview`,
+      type: entries.some((asset: any) => String(asset.media_type).includes("video"))
+        ? "thumbnail"
+        : "image",
+      url: item.full_picture,
+    });
+  return contentMediaSources(media);
+}
 
 type ProviderContentInsight = Omit<SocialContentInsight, "connectionId" | "provider" | "fetchedAt">;
 
@@ -250,7 +293,7 @@ async function fetchInstagram(
   );
   url.searchParams.set(
     "fields",
-    "id,caption,media_type,thumbnail_url,media_url,permalink,timestamp,like_count,comments_count",
+    "id,caption,media_type,thumbnail_url,media_url,permalink,timestamp,like_count,comments_count,children{id,media_type,media_url,thumbnail_url}",
   );
   url.searchParams.set("limit", String(INSTAGRAM_PAGE_SIZE));
   let page = await graphPage(url, token, typeof state.after === "string" ? state.after : undefined);
@@ -291,6 +334,7 @@ async function fetchInstagram(
               : "other",
       caption: item.caption || null,
       thumbnailUrl: item.thumbnail_url || item.media_url || null,
+      mediaSources: graphPostMedia(item),
       publishedAt: item.timestamp,
       views: metrics.get("views") ?? null,
       impressions: null,
@@ -322,7 +366,7 @@ async function fetchFacebook(
   url.searchParams.set(
     "fields",
     [
-      "id,message,created_time,permalink_url,full_picture,attachments{media_type},shares,comments.limit(0).summary(true),reactions.limit(0).summary(true)",
+      "id,message,created_time,permalink_url,full_picture,attachments{media_type,type,target,media,subattachments{media_type,type,target,media}},shares,comments.limit(0).summary(true),reactions.limit(0).summary(true)",
       scopes.has("read_insights")
         ? "insights.metric(post_media_view,post_total_media_view_unique)"
         : null,
@@ -361,6 +405,7 @@ async function fetchFacebook(
             : "other",
       caption: item.message || null,
       thumbnailUrl: item.full_picture || null,
+      mediaSources: facebookPostMedia(item),
       publishedAt: item.created_time,
       views: metrics.get("post_media_view") ?? null,
       impressions: null,
@@ -386,7 +431,10 @@ async function fetchThreads(
       ? "https://graph.threads.net/v1.0/me/threads"
       : `https://graph.threads.net/v1.0/${encodeURIComponent(connection.provider_user_id)}/threads`,
   );
-  url.searchParams.set("fields", "id,media_type,text,timestamp,permalink,thumbnail_url,media_url");
+  url.searchParams.set(
+    "fields",
+    "id,media_type,text,timestamp,permalink,thumbnail_url,media_url,children{id,media_type,media_url,thumbnail_url}",
+  );
   url.searchParams.set("limit", "6");
   let page = await graphPage(url, token, typeof state.after === "string" ? state.after : undefined);
   let source = owner ? "me" : "account";
@@ -421,9 +469,17 @@ async function fetchThreads(
       return {
         remotePostId: String(item.id),
         remotePostUrl: item.permalink || null,
-        contentType: kind === "VIDEO" ? "video" : kind === "IMAGE" ? "image" : "text",
+        contentType:
+          kind === "VIDEO"
+            ? "video"
+            : kind === "IMAGE"
+              ? "image"
+              : ["CAROUSEL_ALBUM", "CAROUSEL"].includes(kind)
+                ? "carousel"
+                : "text",
         caption: item.text || null,
         thumbnailUrl: item.thumbnail_url || item.media_url || null,
+        mediaSources: graphPostMedia(item),
         publishedAt: item.timestamp,
         views: metrics.get("views") ?? null,
         impressions: null,
@@ -464,6 +520,11 @@ async function fetchTikTok(
         contentType: "video",
         caption: item.video_description || item.title || null,
         thumbnailUrl: item.cover_image_url || null,
+        mediaSources: contentMediaSources(
+          item.cover_image_url
+            ? [{ id: `${item.id}:cover`, type: "thumbnail", url: item.cover_image_url }]
+            : [],
+        ),
         publishedAt: publishedAt.toISOString(),
         views: count(item.view_count),
         impressions: null,
@@ -495,7 +556,7 @@ async function fetchTwitter(
   url.searchParams.set("exclude", "retweets,replies");
   url.searchParams.set("tweet.fields", "created_at,public_metrics,attachments");
   url.searchParams.set("expansions", "attachments.media_keys");
-  url.searchParams.set("media.fields", "media_key,type,url,preview_image_url");
+  url.searchParams.set("media.fields", "media_key,type,url,preview_image_url,variants");
   if (typeof state.paginationToken === "string")
     url.searchParams.set("pagination_token", state.paginationToken);
   const payload = await providerJson(url, token);
@@ -523,7 +584,25 @@ async function fetchTwitter(
     const likes = count(metrics.like_count);
     const comments = count(metrics.reply_count);
     const shares = sum(count(metrics.retweet_count), count(metrics.quote_count));
-    const attachment = media.get(item.attachments?.media_keys?.[0]);
+    const attachments = (item.attachments?.media_keys || [])
+      .map((key: string) => media.get(key))
+      .filter(Boolean);
+    const attachment = attachments[0];
+    const mediaSources = contentMediaSources(
+      attachments.map((asset: any) => {
+        const video = (asset.variants || [])
+          .filter((variant: any) => variant.content_type === "video/mp4")
+          .sort(
+            (a: any, b: any) =>
+              Number(b.bit_rate || b.bitrate || 0) - Number(a.bit_rate || a.bitrate || 0),
+          )[0];
+        return {
+          id: asset.media_key,
+          type: asset.type === "photo" ? "image" : video ? "video" : "thumbnail",
+          url: asset.type === "photo" ? asset.url : video?.url || asset.preview_image_url,
+        };
+      }),
+    );
     return [
       {
         remotePostId: String(item.id),
@@ -536,6 +615,7 @@ async function fetchTwitter(
               : "text",
         caption: item.text || null,
         thumbnailUrl: attachment?.preview_image_url || attachment?.url || null,
+        mediaSources,
         publishedAt: item.created_at,
         views: null,
         impressions: count(metrics.impression_count),
@@ -603,6 +683,14 @@ async function fetchLinkedIn(
           const content = post.content || {};
           const mediaId = String(content.media?.id || "");
           const publishedAt = Number(post.publishedAt || post.createdAt);
+          const assets = content.multiImage?.images || (mediaId ? [{ id: mediaId }] : []);
+          const mediaSources = contentMediaSources(
+            assets.map((asset: any) => ({
+              id: String(asset.id || ""),
+              type: String(asset.id).includes(":video:") ? "video" : "image",
+              url: null,
+            })),
+          );
           return {
             remotePostId: String(post.id),
             remotePostUrl: post.id ? `https://www.linkedin.com/feed/update/${post.id}/` : null,
@@ -618,6 +706,7 @@ async function fetchLinkedIn(
                     ? "text"
                     : "other",
             caption: post.commentary || content.article?.title || null,
+            mediaSources,
             thumbnailUrl:
               typeof content.article?.thumbnail === "string" ? content.article.thumbnail : null,
             publishedAt: new Date(publishedAt).toISOString(),
@@ -702,6 +791,11 @@ async function fetchYouTube(
         caption: item.snippet?.title || item.snippet?.description || null,
         thumbnailUrl:
           item.snippet?.thumbnails?.high?.url || item.snippet?.thumbnails?.medium?.url || null,
+        mediaSources: contentMediaSources(
+          item.snippet?.thumbnails?.high?.url
+            ? [{ id: `${item.id}:cover`, type: "thumbnail", url: item.snippet.thumbnails.high.url }]
+            : [],
+        ),
         publishedAt: item.snippet?.publishedAt,
         views: report?.views ?? count(item.statistics?.viewCount),
         impressions: null,

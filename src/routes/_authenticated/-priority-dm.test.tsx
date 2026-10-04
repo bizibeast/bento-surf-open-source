@@ -168,6 +168,10 @@ describe("Priority DM inbox", () => {
   it("shows only conversations matching the open or closed filter", async () => {
     const { unmount } = renderPage();
     expect(await screen.findByRole("button", { name: /Open Buyer/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /^open$/i })).toHaveClass(
+      "bg-[#17213a]",
+      "text-white",
+    );
     expect(screen.queryByRole("button", { name: /Closed Buyer/ })).not.toBeInTheDocument();
     unmount();
 

@@ -1,12 +1,45 @@
 import { describe, expect, it } from "vitest";
 import {
   extractFacebookEmailAddress,
+  facebookDmAutomationInputSchema,
   getFacebookConnectionReadiness,
   facebookConnectionReadinessMessage,
   matchFacebookAutomation,
   parseFacebookWebhook,
   testFacebookAutomation,
 } from "./facebook-auto-dm";
+
+it("always records marketing consent when Facebook email collection is enabled", () => {
+  const input = {
+    connectionId: "11111111-1111-4111-8111-111111111111",
+    name: "Send guide",
+    triggerType: "comment_keyword" as const,
+    keywords: ["guide"],
+    excludedKeywords: [],
+    matchType: "contains" as const,
+    mediaScope: "any" as const,
+    mediaIds: [],
+    replyMessage: "Here is the guide",
+    publicReplyEnabled: false,
+    publicReplyMessages: [],
+    openingMessage: "I have it ready",
+    confirmationButtonLabel: "Send it",
+    emailCaptureEnabled: true,
+    emailPromptMessage: "What email should I use?",
+    emailMarketingConsentEnabled: false,
+    replyButtonLabel: null,
+    replyButtonUrl: null,
+    enabled: true,
+  };
+
+  expect(facebookDmAutomationInputSchema.parse(input)).toMatchObject({
+    emailCaptureEnabled: true,
+    emailMarketingConsentEnabled: true,
+  });
+  expect(
+    facebookDmAutomationInputSchema.parse({ ...input, emailCaptureEnabled: false }),
+  ).toMatchObject({ emailMarketingConsentEnabled: false });
+});
 
 describe("Facebook Auto-DM email capture", () => {
   it("accepts only a complete normalized email reply", () => {

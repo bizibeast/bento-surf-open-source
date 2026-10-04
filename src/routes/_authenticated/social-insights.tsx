@@ -20,7 +20,6 @@ import {
   LoaderCircle,
   MessageCircle,
   Plus,
-  RefreshCw,
   Send,
   TrendingUp,
   Trophy,
@@ -53,7 +52,6 @@ import { micro } from "@/lib/micro-app-ui";
 import { safeMediaUrl } from "@/lib/safe-url";
 import {
   getSocialAnalytics,
-  refreshSocialAnalytics,
   setPublicSocialInsightsPeriod,
   SOCIAL_INSIGHTS_DISPLAY_PERIODS,
   socialInsightsDisplayPeriodLabel,
@@ -121,15 +119,11 @@ function SocialInsightsPage() {
     staleTime: 5 * 60_000,
     retry: 1,
     refetchInterval: (query) =>
-      query.state.data?.accounts?.some((account: SocialAnalyticsAccount) => account.refreshing)
+      query.state.data?.accounts?.some(
+        (account: SocialAnalyticsAccount) => account.initialImportActive,
+      )
         ? 5_000
         : false,
-  });
-  const refresh = useMutation({
-    mutationFn: () => refreshSocialAnalytics(),
-    onSuccess: (result) => queryClient.setQueryData(["social-analytics"], result),
-    onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Social insights could not refresh"),
   });
   const displayPeriod = useMutation({
     mutationFn: (days: SocialInsightsDisplayPeriodDays) =>
@@ -196,11 +190,6 @@ function SocialInsightsPage() {
             content={analytics.data.content || []}
             selectedId={selectedId}
             onSelect={setSelectedId}
-            refreshing={
-              refresh.isPending ||
-              analytics.data.accounts.some((account: SocialAnalyticsAccount) => account.refreshing)
-            }
-            onRefresh={() => refresh.mutate()}
             displayPeriodDays={analytics.data.displayPeriodDays}
             savingDisplayPeriod={displayPeriod.isPending}
             onDisplayPeriodChange={(days) => displayPeriod.mutate(days)}
@@ -236,8 +225,6 @@ export function InsightsDashboard({
   content,
   selectedId,
   onSelect,
-  refreshing,
-  onRefresh,
   displayPeriodDays,
   savingDisplayPeriod,
   onDisplayPeriodChange,
@@ -247,8 +234,8 @@ export function InsightsDashboard({
   content: SocialContentInsight[];
   selectedId: string | null;
   onSelect: (id: string) => void;
-  refreshing: boolean;
-  onRefresh: () => void;
+  refreshing?: boolean;
+  onRefresh?: () => void;
   displayPeriodDays: SocialInsightsDisplayPeriodDays;
   savingDisplayPeriod: boolean;
   onDisplayPeriodChange: (days: SocialInsightsDisplayPeriodDays) => void;
@@ -341,9 +328,7 @@ export function InsightsDashboard({
             <p className={micro.eyebrowMuted}>Connected accounts</p>
             <h2 className="mt-1 font-ui-display text-2xl">Choose an audience</h2>
           </div>
-          <button type="button" onClick={onRefresh} disabled={refreshing} className={micro.btnSoft}>
-            <RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} /> Refresh
-          </button>
+          <InsightsFreshness accounts={all ? accounts : [selected]} />
         </div>
         <MicroAppTabs
           ariaLabel="Social media view"
@@ -386,7 +371,9 @@ export function InsightsDashboard({
         </div>
       </section>
 
-      {all ? (
+      {!all && selected.provider === "linkedin" ? (
+        <LinkedInAnalyticsComingSoon account={selected} />
+      ) : all ? (
         <>
           <ActivityHeatmap content={content} />
           <div className="grid gap-4 lg:grid-cols-2">
@@ -401,15 +388,15 @@ export function InsightsDashboard({
         <>
           <AccountOverview account={selected} />
 
-          {selected.refreshing && <HistoricalImporting account={selected} />}
-          {(!selected.refreshing || selectedContent.length > 0) && (
+          {selected.initialImportActive && <HistoricalImporting account={selected} />}
+          {(!selected.initialImportActive || selectedContent.length > 0) && (
             <ActivityHeatmap account={selected} content={selectedContent} />
           )}
-          {(!selected.refreshing || selectedHistory.length > 0) && (
+          {(!selected.initialImportActive || selectedHistory.length > 0) && (
             <GrowthPanel account={selected} history={history} content={selectedContent} />
           )}
           <MilestonesPanel account={selected} content={selectedContent} />
-          {(!selected.refreshing || selectedContent.length > 0) && (
+          {(!selected.initialImportActive || selectedContent.length > 0) && (
             <>
               <ContentPerformancePanel content={selectedContent} provider={selected.provider} />
               <BestContentPanel content={selectedContent} provider={selected.provider} />
@@ -417,6 +404,39 @@ export function InsightsDashboard({
           )}
         </>
       )}
+    </div>
+  );
+}
+
+function LinkedInAnalyticsComingSoon({ account }: { account: SocialAnalyticsAccount }) {
+  return (
+    <MicroAppPanel className="flex min-h-72 flex-col items-center justify-center text-center">
+      <span className="flex size-14 items-center justify-center rounded-xl bg-[#eef5ff] text-[#0a66c2]">
+        <FaLinkedinIn className="size-7" />
+      </span>
+      <h2 className="mt-5 font-ui-display text-2xl">LinkedIn analytics coming soon</h2>
+      <p className="mt-2 max-w-lg text-sm leading-6 text-muted-foreground">
+        @{account.handle} stays connected for publishing. Analytics will appear here after LinkedIn
+        approves Bento’s member analytics access.
+      </p>
+    </MicroAppPanel>
+  );
+}
+
+function InsightsFreshness({ accounts }: { accounts: SocialAnalyticsAccount[] }) {
+  const lastUpdated = accounts
+    .map((account) => account.lastUpdatedAt || account.fetchedAt)
+    .filter((value) => Number.isFinite(Date.parse(value)))
+    .sort((left, right) => Date.parse(right) - Date.parse(left))[0];
+  const nextRefresh = accounts
+    .flatMap((account) => (account.nextRefreshAt ? [account.nextRefreshAt] : []))
+    .filter((value) => Number.isFinite(Date.parse(value)))
+    .sort((left, right) => Date.parse(left) - Date.parse(right))[0];
+  return (
+    <div className="text-right text-xs text-muted-foreground">
+      <p className="font-semibold text-foreground">Updated every 24 hours</p>
+      {lastUpdated && <p className="mt-0.5">Last updated {formatDateTime(lastUpdated)}</p>}
+      {nextRefresh && <p className="mt-0.5">Next refresh {formatDateTime(nextRefresh)}</p>}
     </div>
   );
 }
@@ -456,9 +476,17 @@ function AccountSelector({
           <span className="block truncate text-xs text-muted-foreground">@{account.handle}</span>
         </span>
       </div>
-      <p className="mt-5 text-2xl font-semibold tabular-nums">{compactMetric(account.followers)}</p>
-      <p className="mt-0.5 text-xs text-muted-foreground">followers</p>
-      {account.refreshing && (
+      {account.provider === "linkedin" ? (
+        <p className="mt-5 text-sm font-semibold text-[#0a66c2]">Analytics coming soon</p>
+      ) : (
+        <>
+          <p className="mt-5 text-2xl font-semibold tabular-nums">
+            {compactMetric(account.followers)}
+          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">followers</p>
+        </>
+      )}
+      {account.initialImportActive && (
         <span className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-primary">
           <LoaderCircle className="size-3.5 animate-spin" /> Importing history
         </span>
@@ -503,6 +531,11 @@ function AccountOverview({ account }: { account: SocialAnalyticsAccount }) {
           </div>
         ))}
       </div>
+      {account.status === "error" && account.note && (
+        <p className="mt-4 rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-700" role="alert">
+          {account.note}
+        </p>
+      )}
       {account.note && (
         <p className="mt-4 text-xs leading-5 text-muted-foreground">{account.note}</p>
       )}

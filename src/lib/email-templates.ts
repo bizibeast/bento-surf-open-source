@@ -44,7 +44,8 @@ export type BentoEmailEvent =
   | "subscription_cancelled"
   | "refund_processed"
   | "social_publish_failed"
-  | "social_connection_expired";
+  | "social_connection_expired"
+  | "content_drafts_ready";
 
 export type EmailTemplateInput = {
   eventType: BentoEmailEvent;
@@ -581,6 +582,27 @@ function templateCopy(input: EmailTemplateInput) {
         cta: "Reconnect account",
         href: absoluteUrl(input.appUrl, payload.schedulerUrl, "/post-scheduler"),
       };
+    case "content_drafts_ready": {
+      const draftCount = Math.max(0, asNumber(payload.draftCount));
+      const platforms = Array.isArray(payload.platforms)
+        ? payload.platforms
+            .map((value) => asText(value))
+            .filter(Boolean)
+            .slice(0, 8)
+        : [];
+      const platformText =
+        platforms.length > 1
+          ? `${platforms.slice(0, -1).join(", ")} and ${platforms.at(-1)}`
+          : platforms[0] || "your platforms";
+      return {
+        subject: `${draftCount} ${draftCount === 1 ? "post is" : "posts are"} ready`,
+        eyebrow: "Content Agent",
+        title: "Your posts are ready to review.",
+        body: `Bento prepared ${draftCount} ${draftCount === 1 ? "draft" : "drafts"} for ${platformText}. Review, edit, and approve them before anything enters your schedule.`,
+        cta: "Review drafts",
+        href: absoluteUrl(input.appUrl, payload.reviewUrl, "/content?tab=agent"),
+      };
+    }
   }
 }
 

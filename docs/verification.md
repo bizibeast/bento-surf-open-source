@@ -1,17 +1,22 @@
 # Verification status
 
-## Verified locally
+## October 4, 2026 local parity update
 
-- Repository boundary, TypeScript, lint, unit/integration tests, and production build.
-- Complete reachable Git history is scanned for credential-shaped values and operated identities without printing matched values.
-- Private-to-public parity reports zero missing, stale, removed, or unclassified self-hostable source paths; mixed files remain explicit transformation boundaries.
-- Representative Link, Store, newsletter, scheduler, booking, community, payment, MCP, and WebMCP test matrix.
-- Cloudflare Worker dry run with the committed R2, Queue, Browser, AI, rate-limit, asset, cron, and environment bindings.
+The source snapshot in `upstream-source.json` includes reviewed working-tree changes. Content Agent, Brain, discovery, media indexing, custom routines and document editing; workspace ownership/isolation and signed workspace selection; Notion, Granola, GitHub, Slack and Telegram integrations; daily Social Insights refresh; Instagram Trial Reels; integration reconnect/storage fixes; and authenticated appearance changes are included.
 
-## Requires deployer infrastructure
+Locally verified:
 
-- Fresh Supabase migration, security-advisor, and real two-tenant isolation checks require a new Supabase project or a local Supabase stack.
-- Email, AI/media, social networks, payment gateways, calendars, analytics, Featurebase, Browser Rendering, and custom domains require the deployer's own sandbox or live credentials and provider approvals.
-- Deployed MCP initialization and browser WebMCP discovery require the final application origin; Origin Trial tokens are domain-bound when the browser requires one.
+- Source parity: zero missing, stale, removed or unclassified files under the sync manifest, including the explicit reviewed source files recorded in `upstream-source.json`.
+- Public working-tree boundary and complete reachable public Git-history scans pass. Private source history is not imported.
+- TypeScript passes; ESLint passes with nine Fast Refresh warnings.
+- All 367 test files pass: 2,399 tests. The final Worker packaging/configuration, runtime hydration and Telegram disclosure checks also pass independently (45 tests).
+- Production build passes. Cloudflare Worker dry run includes Telegram queues, image normalization, queue consumers and scheduled processing. No deployment occurred.
+- Source sync/parity regressions pass (20 tests); diff whitespace checks pass.
 
-Local mocks, successful builds, health responses, and tool listings are not recorded as live-provider proof.
+Public-only instance configuration, legal pages, provider defaults, license and packaging are preserved. OAuth callback defaults use the configured instance origin. OpenRouter attribution uses the configured instance name/origin. Workspace signing and optional integration secrets must be provisioned by the operator; `.env.example` contains empty slots.
+
+## Requires deployer-owned infrastructure
+
+Fresh Supabase migrations, two-tenant runtime isolation, provider delivery and OAuth approvals still require a fresh database and the deployer's credentials. The local suite exercises migration contracts, workspace isolation and mocked provider behavior; it does not prove a deployed database or real integrations.
+
+MCP initialization and browser WebMCP discovery require the final application origin; Origin Trial tokens are domain-bound. Successful builds, dry runs and unit tests are not recorded as live-provider verification. No GitHub push, database migration or public deployment is included in this local update.

@@ -20,6 +20,15 @@ vi.mock("@/lib/integrations.functions", () => ({
       reddit: false,
     },
     bookingReadiness: { google: true, fathom: true },
+    contentReadiness: {
+      telegram: true,
+      notion: true,
+      granola: true,
+      github: true,
+      slack: true,
+    },
+    contentProviderMetadata: { telegramUsername: "BentoAgentBot" },
+    contentConnections: [],
     socialConnections: [],
     calendarConnections: [],
     fathomConnections: [],
@@ -31,7 +40,7 @@ describe("IntegrationsOverview", () => {
     Element.prototype.scrollIntoView = vi.fn();
   });
 
-  it.each(["social", "bookings", "automation", "payments"] as const)(
+  it.each(["social", "bookings", "automation", "knowledge", "channels", "payments"] as const)(
     "scrolls to the %s integration when deep linked",
     async (target) => {
       render(
@@ -57,7 +66,9 @@ describe("IntegrationsOverview", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Social" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Meetings" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Knowledge" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Automations" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Agent channels" })).toBeInTheDocument();
   });
 
   it("filters provider tiles without adding category controls", async () => {
@@ -101,5 +112,19 @@ describe("IntegrationsOverview", () => {
     expect(screen.queryByText(/One Instagram login powers/i)).not.toBeInTheDocument();
     expect(screen.queryByText("Manage bookings")).not.toBeInTheDocument();
     expect(document.querySelector('img[src="/brands/fathom.png"]')).toBeInTheDocument();
+  });
+
+  it("describes each provider as a single workspace account", async () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <IntegrationsOverview target="social" />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /Manage Instagram integration/ }),
+      ).toHaveAccessibleDescription("One account per Bento profile"),
+    );
   });
 });

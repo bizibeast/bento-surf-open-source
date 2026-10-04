@@ -19,6 +19,7 @@ import {
 import { instagramOAuthFailureMessage } from "@/lib/instagram-oauth-errors";
 import { requirePlanEntitlement } from "@/lib/plan.server";
 import { durableSocialAvatarUrl } from "@/lib/social-avatar.server";
+import { queueInitialSocialInsightsImport } from "@/lib/social-analytics.functions";
 import {
   getInstagramConnectionReadiness,
   INSTAGRAM_AUTO_DM_REQUIRED_SCOPES,
@@ -359,21 +360,6 @@ export const completeInstagramConnection = createServerFn({ method: "POST" })
         );
       }
 
-      const { data: creatorInstagramAccounts, error: limitError } = await supabaseAdmin
-        .from("social_connections")
-        .select("provider_user_id")
-        .eq("user_id", context.userId)
-        .eq("provider", "instagram");
-      if (limitError) throw new Error("Unable to verify the Instagram profile limit.");
-      if (
-        (creatorInstagramAccounts || []).length >= 2 &&
-        !(creatorInstagramAccounts || []).some(
-          (connection) => connection.provider_user_id === accountId,
-        )
-      ) {
-        throw new Error("You can connect up to 2 Instagram profiles.");
-      }
-
       completionStage = "token_encryption";
       const encryptedAccessToken = await encryptServerSecret(longToken.access_token, "social");
       const providerAvatarUrl = await durableSocialAvatarUrl({
@@ -383,38 +369,43 @@ export const completeInstagramConnection = createServerFn({ method: "POST" })
         value: account.profilePictureUrl,
       });
       completionStage = "connection_storage";
-      const { error } = await supabaseAdmin.from("social_connections" as never).upsert(
-        {
-          user_id: context.userId,
-          provider: "instagram",
-          provider_user_id: accountId,
-          provider_handle: handle,
-          access_token: encryptedAccessToken,
-          token_expires_at: longToken.expires_in
-            ? new Date(Date.now() + longToken.expires_in * 1_000).toISOString()
-            : null,
-          scopes: grantedScopes,
-          status: "active",
-          connection_health: missingScopes.length > 0 ? "action_required" : "verifying",
-          webhook_fields: [],
-          last_verified_at: null,
-          last_health_check_at: missingScopes.length > 0 ? nowIso : null,
-          reauth_required: missingScopes.length > 0,
-          provider_error_code: null,
-          provider_display_name: handle,
-          provider_avatar_url: providerAvatarUrl,
-          last_error:
-            missingScopes.length > 0
-              ? "Instagram did not grant every permission this feature needs."
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Connection health fields are ahead of generated database types.
+      const { data: savedConnection, error } = await (supabaseAdmin as any)
+        .from("social_connections")
+        .upsert(
+          {
+            user_id: context.userId,
+            provider: "instagram",
+            provider_user_id: accountId,
+            provider_handle: handle,
+            access_token: encryptedAccessToken,
+            token_expires_at: longToken.expires_in
+              ? new Date(Date.now() + longToken.expires_in * 1_000).toISOString()
               : null,
-          metadata: {
-            connection_intent:
-              typeof oauthMetadata.intent === "string" ? oauthMetadata.intent : "auto_dm",
-            requested_scopes: requestedScopes,
-          },
-        } as never,
-        { onConflict: "user_id,provider,provider_user_id" } as never,
-      );
+            scopes: grantedScopes,
+            status: "active",
+            connection_health: missingScopes.length > 0 ? "action_required" : "verifying",
+            webhook_fields: [],
+            last_verified_at: null,
+            last_health_check_at: missingScopes.length > 0 ? nowIso : null,
+            reauth_required: missingScopes.length > 0,
+            provider_error_code: null,
+            provider_display_name: handle,
+            provider_avatar_url: providerAvatarUrl,
+            last_error:
+              missingScopes.length > 0
+                ? "Instagram did not grant every permission this feature needs."
+                : null,
+            metadata: {
+              connection_intent:
+                typeof oauthMetadata.intent === "string" ? oauthMetadata.intent : "auto_dm",
+              requested_scopes: requestedScopes,
+            },
+          } as never,
+          { onConflict: "user_id,provider,provider_user_id" },
+        )
+        .select("id")
+        .maybeSingle();
       if (error) {
         console.warn("Instagram connection storage failed", {
           code: error.code,
@@ -428,9 +419,6 @@ export const completeInstagramConnection = createServerFn({ method: "POST" })
           throw new Error(
             "This Instagram account is already connected to another Bento workspace. Disconnect it there first.",
           );
-        }
-        if (String(error.message || "").includes("up to 2 profiles")) {
-          throw new Error("You can connect up to 2 Instagram profiles.");
         }
         throw new Error("Unable to save the Instagram connection.");
       }
@@ -498,6 +486,15 @@ export const completeInstagramConnection = createServerFn({ method: "POST" })
         );
       }
       completionStage = "connection_list";
+      if (savedConnection?.id) {
+        await queueInitialSocialInsightsImport(context.userId, String(savedConnection.id)).catch(
+          (importError) =>
+            console.warn("Instagram connected, but its initial Insights import was deferred.", {
+              connectionId: savedConnection.id,
+              error: importError instanceof Error ? importError.message : "Initial import failed",
+            }),
+        );
+      }
       return { ok: true as const, connections: await listConnections(context.userId) };
     })().catch((error: unknown) => {
       console.warn("Instagram OAuth completion failed", {

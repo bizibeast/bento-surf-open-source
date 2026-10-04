@@ -68,13 +68,74 @@ describe("deployment security headers", () => {
     const robots = await (await server.fetch(request("/robots.txt"))).text();
 
     expect(xml).toContain('xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"');
-    expect(xml).not.toContain("<loc>https://bento.surf/");
+    expect(xml).not.toContain("<loc>https://example.com/");
     expect(robots).toContain("Sitemap: https://staging.example/sitemap.xml");
+  });
+
+  it("hydrates workspace and AI secrets from compact Worker configuration", async () => {
+    const signingKey = "s".repeat(32);
+    const savedSigningKey = process.env.WORKSPACE_COOKIE_SIGNING_KEY;
+    const savedAiKey = process.env.OPENROUTER_API_KEY;
+    try {
+      delete process.env.WORKSPACE_COOKIE_SIGNING_KEY;
+      delete process.env.OPENROUTER_API_KEY;
+      const request = Object.assign(new Request("https://public.self.invalid/robots.txt"), {
+        runtime: {
+          cloudflare: {
+            env: {
+              APP_ENV: "staging",
+              VITE_PUBLIC_URL: "https://public.self.invalid",
+              RUNTIME_CONFIG: {
+                WORKSPACE_COOKIE_SIGNING_KEY: signingKey,
+                OPENROUTER_API_KEY: "configured-ai-key",
+              },
+            },
+          },
+        },
+      }) as unknown as Parameters<typeof server.fetch>[0];
+      await server.fetch(request);
+      expect(process.env.WORKSPACE_COOKIE_SIGNING_KEY).toBe(signingKey);
+      expect(process.env.OPENROUTER_API_KEY).toBe("configured-ai-key");
+    } finally {
+      if (savedSigningKey === undefined) delete process.env.WORKSPACE_COOKIE_SIGNING_KEY;
+      else process.env.WORKSPACE_COOKIE_SIGNING_KEY = savedSigningKey;
+      if (savedAiKey === undefined) delete process.env.OPENROUTER_API_KEY;
+      else process.env.OPENROUTER_API_KEY = savedAiKey;
+    }
+  });
+
+  it("hydrates Content knowledge provider secrets from Worker bindings", async () => {
+    for (const key of [
+      "CONTENT_CONNECTION_ENCRYPTION_KEY",
+      "NOTION_CLIENT_ID",
+      "GRANOLA_REDIRECT_URI",
+      "GITHUB_CONTENT_APP_ID",
+      "SLACK_CONTENT_CLIENT_ID",
+    ])
+      delete process.env[key];
+    const env = {
+      APP_ENV: "staging",
+      VITE_PUBLIC_URL: "https://test.example.com",
+      CONTENT_CONNECTION_ENCRYPTION_KEY: "content-key",
+      NOTION_CLIENT_ID: "notion-client",
+      GRANOLA_REDIRECT_URI: "https://app.test.example.com/integrations/granola/callback",
+      GITHUB_CONTENT_APP_ID: "12345",
+      SLACK_CONTENT_CLIENT_ID: "slack-client",
+    };
+    const request = Object.assign(new Request("https://test.example.com/robots.txt"), {
+      runtime: { cloudflare: { env } },
+    }) as unknown as Parameters<typeof server.fetch>[0];
+
+    await server.fetch(request);
+
+    for (const [key, value] of Object.entries(env)) {
+      if (key !== "APP_ENV" && key !== "VITE_PUBLIC_URL") expect(process.env[key]).toBe(value);
+    }
   });
 
   it("stores and reuses generated sitemaps through the edge cache", async () => {
     const cachedXml =
-      '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://bento.surf/cached</loc></url></urlset>';
+      '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://example.com/cached</loc></url></urlset>';
     const match = vi
       .fn()
       .mockResolvedValueOnce(undefined)
@@ -82,10 +143,10 @@ describe("deployment security headers", () => {
     const put = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("caches", { default: { match, put } });
     const request = () =>
-      Object.assign(new Request("https://bento.surf/sitemap.xml"), {
+      Object.assign(new Request("https://example.com/sitemap.xml"), {
         runtime: {
           cloudflare: {
-            env: { APP_ENV: "production", VITE_PUBLIC_URL: "https://bento.surf" },
+            env: { APP_ENV: "production", VITE_PUBLIC_URL: "https://example.com" },
             context: { waitUntil: vi.fn() },
           },
         },
@@ -96,17 +157,17 @@ describe("deployment security headers", () => {
 
     expect(put).toHaveBeenCalledTimes(1);
     expect(match).toHaveBeenCalledTimes(2);
-    expect(await cached.text()).toContain("https://bento.surf/cached");
+    expect(await cached.text()).toContain("https://example.com/cached");
   });
 
   it.each([
     {
-      env: { APP_ENV: "staging", VITE_PUBLIC_URL: "https://test.bento.surf" },
+      env: { APP_ENV: "staging", VITE_PUBLIC_URL: "https://test.example.com" },
       authorization: undefined,
       expectedCacheControl: "no-store",
     },
     {
-      env: { APP_ENV: "production", VITE_PUBLIC_URL: "https://bento.surf" },
+      env: { APP_ENV: "production", VITE_PUBLIC_URL: "https://example.com" },
       authorization: "Bearer crawler",
       expectedCacheControl: "private, no-store",
     },
@@ -135,7 +196,7 @@ describe("deployment security headers", () => {
     const response = withDeploymentHeaders(
       new Response("ok"),
       {},
-      new Request("https://app.bento.surf/link"),
+      new Request("https://app.example.com/link"),
     );
     const csp = response.headers.get("content-security-policy") ?? "";
 
@@ -163,7 +224,7 @@ describe("deployment security headers", () => {
     const response = withDeploymentHeaders(
       new Response("ok"),
       {},
-      new Request("https://bento.surf/explore"),
+      new Request("https://example.com/explore"),
     );
 
     expect(response.headers.has("x-robots-tag")).toBe(false);
@@ -297,7 +358,7 @@ describe("deployment security headers", () => {
     const response = withDeploymentHeaders(
       new Response("ok"),
       {},
-      new Request(`https://app.bento.surf${path}`),
+      new Request(`https://app.example.com${path}`),
     );
 
     expect(response.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
@@ -309,7 +370,7 @@ describe("deployment security headers", () => {
 describe("deployment health boundary", () => {
   it.each(["POST", "PUT", "PATCH", "DELETE"])("rejects %s requests", async (method) => {
     const response = await handleDeploymentHealthRequest(
-      new Request("https://app.bento.surf/api/health", { method }),
+      new Request("https://app.example.com/api/health", { method }),
       {},
     );
 
@@ -320,7 +381,7 @@ describe("deployment health boundary", () => {
 
   it("allows bodyless health probes", async () => {
     const response = await handleDeploymentHealthRequest(
-      new Request("https://app.bento.surf/api/health", { method: "HEAD" }),
+      new Request("https://app.example.com/api/health", { method: "HEAD" }),
       {},
     );
 
@@ -331,7 +392,7 @@ describe("deployment health boundary", () => {
   it("keeps provider readiness private unless the operational token matches", async () => {
     const token = "a-secure-health-token-that-is-long-enough";
     const request = (authorization?: string) =>
-      new Request("https://app.bento.surf/api/health", {
+      new Request("https://app.example.com/api/health", {
         headers: authorization ? { authorization } : undefined,
       });
     const env = { HEALTH_CHECK_TOKEN: token };
@@ -368,7 +429,7 @@ describe("deployment health boundary", () => {
       ...Object.fromEntries(addonKeys.map((key) => [key, `configured-${key}`])),
     };
     const request = () =>
-      new Request("https://app.bento.surf/api/health", {
+      new Request("https://app.example.com/api/health", {
         headers: { authorization: `Bearer ${token}` },
       });
 

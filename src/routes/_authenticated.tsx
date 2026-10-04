@@ -11,6 +11,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { getFeaturebaseIdentity } from "@/lib/featurebase.functions";
 import { requireAuthenticatedCreator } from "@/lib/auth-entry";
 import { getMyProfile } from "@/lib/profile.functions";
+import { getWorkspaceSession } from "@/lib/workspace.functions";
 import { FeaturebaseHub } from "@/components/FeaturebaseHub";
 import { getFeaturebasePublicConfig } from "@/lib/instance-public-config";
 import { FeaturebaseIdentitySync } from "@/components/FeaturebaseIdentitySync";
@@ -147,6 +148,14 @@ const FEATUREBASE_CONFIG = getFeaturebasePublicConfig(import.meta.env);
 const FEATUREBASE_AUTH_IDENTITY_ENABLED =
   Boolean(FEATUREBASE_CONFIG) && import.meta.env.VITE_FEATUREBASE_IDENTIFY_ENABLED === "true";
 
+export function authenticatedQueryKeys(workspaceId: string | null | undefined) {
+  const scope = workspaceId ?? "unresolved";
+  return {
+    profile: ["my-profile", scope] as const,
+    featurebaseIdentity: ["featurebase-identity", scope] as const,
+  };
+}
+
 export const Route = createFileRoute("/_authenticated")({
   ssr: false,
   // Match the SSR pending shell immediately. defaultPendingMs: 1000 would hide
@@ -164,28 +173,44 @@ function AuthLayout() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const { resolvedTheme, setTheme } = useTheme();
-  const { data: profile } = useQuery({
-    queryKey: ["my-profile"],
-    queryFn: () => getMyProfile(),
+  const { data: workspaceSession } = useQuery({
+    queryKey: ["workspace-session"],
+    queryFn: () => getWorkspaceSession(),
     staleTime: 60_000,
   });
+  const queryKeys = authenticatedQueryKeys(workspaceSession?.workspaceId);
+  const { data: profile } = useQuery({
+    queryKey: queryKeys.profile,
+    queryFn: () => getMyProfile(),
+    staleTime: 60_000,
+    enabled: Boolean(workspaceSession?.workspaceId),
+  });
   const { data: featurebaseIdentity } = useQuery({
-    queryKey: ["featurebase-identity"],
+    queryKey: queryKeys.featurebaseIdentity,
     queryFn: () => getFeaturebaseIdentity(),
     staleTime: 45 * 60 * 1_000,
     refetchInterval: 45 * 60 * 1_000,
-    enabled: FEATUREBASE_AUTH_IDENTITY_ENABLED,
+    enabled: FEATUREBASE_AUTH_IDENTITY_ENABLED && Boolean(workspaceSession?.workspaceId),
   });
-  const savedTheme = profile?.theme === "dark" ? "dark" : "light";
-  const theme = profile ? savedTheme : resolvedTheme === "dark" ? "dark" : "light";
+  const savedTheme = workspaceSession?.appTheme;
+  const theme = savedTheme ?? (resolvedTheme === "dark" ? "dark" : "light");
   const showSidebar = pathname !== "/onboarding";
   const compactAppUi = pathname !== "/link";
 
   useEffect(() => {
-    if (!profile) return;
+    if (!savedTheme) return;
     setTheme(savedTheme);
+  }, [savedTheme, setTheme]);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("auth-dark", theme === "dark");
+    return () => document.documentElement.classList.remove("auth-dark");
+  }, [theme]);
+
+  useEffect(() => {
+    if (!profile) return;
     setBrowserTimeZoneOverride(profile.account_timezone);
-  }, [profile, savedTheme, setTheme]);
+  }, [profile]);
 
   const webMcpTools = useMemo(() => {
     const refresh = async () => {
@@ -270,6 +295,7 @@ function AuthLayout() {
           >
             <AppSidebar
               profile={profile}
+              workspaceSession={workspaceSession}
               collapsed={sidebarCollapsed}
               onCollapsedChange={setSidebarCollapsed}
             />

@@ -46,7 +46,7 @@ describe("SocialAccountsConnect", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(screen.getByRole("dialog")).toHaveClass("overflow-x-hidden", "overflow-y-auto");
     expect(screen.getByRole("dialog")).not.toHaveClass("overflow-hidden");
-    expect(screen.getByText("1 of 2 accounts connected")).toBeInTheDocument();
+    expect(screen.getByText("1 of 1 accounts connected")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reconnect" })).toBeEnabled();
     expect(screen.getByText("Reconnect for analytics access")).toBeInTheDocument();
     expect(
@@ -54,7 +54,7 @@ describe("SocialAccountsConnect", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps two connected accounts behind one compact provider tile", () => {
+  it("offers to replace the one connected provider account", () => {
     render(
       <QueryClientProvider client={new QueryClient()}>
         <SocialAccountsConnect
@@ -66,13 +66,6 @@ describe("SocialAccountsConnect", () => {
               canPublish: true,
               scopes: ["threads_basic", "threads_content_publish", "threads_manage_insights"],
             },
-            {
-              id: "two",
-              provider: "threads",
-              displayName: "Second profile",
-              canPublish: true,
-              scopes: ["threads_basic", "threads_content_publish", "threads_manage_insights"],
-            },
           ]}
           readiness={{ threads: true }}
           onChanged={vi.fn()}
@@ -80,9 +73,9 @@ describe("SocialAccountsConnect", () => {
       </QueryClientProvider>,
     );
 
-    expect(screen.getByText("2 connected")).toBeInTheDocument();
+    expect(screen.getByText("1 connected")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Manage Threads integration/i }));
-    expect(screen.getByText("2 of 2 accounts connected")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "2 / 2" })).toBeDisabled();
+    expect(screen.getByText("1 of 1 accounts connected")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Replace account" })).toBeEnabled();
   });
 });

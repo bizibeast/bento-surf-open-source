@@ -335,6 +335,16 @@ describe("authenticated WebMCP tools", () => {
       "failed",
       "cancelled",
     ]);
+    expect(
+      (
+        tools.create_social_post.properties.providerSettings as {
+          properties: { instagram: { properties: Record<string, unknown> } };
+        }
+      ).properties.instagram.properties,
+    ).toMatchObject({
+      trialReel: { type: "boolean" },
+      graduationStrategy: { enum: ["MANUAL", "SS_PERFORMANCE"], default: "MANUAL" },
+    });
     expect(tools.update_profile.properties.username).toMatchObject({
       minLength: 3,
       maxLength: 24,

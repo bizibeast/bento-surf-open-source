@@ -12,6 +12,7 @@ import {
   youtubeDescriptionForUpload,
   youtubePublishedUrl,
   YOUTUBE_THUMBNAIL_MAX_BYTES,
+  type InstagramTrialGraduationStrategy,
   type SchedulerMedia,
   type SocialProvider,
   type YouTubePostFormat,
@@ -189,6 +190,28 @@ async function finishThreads(userId: string, containerId: string, token: string)
   return { id: String(published.data.id || "") };
 }
 
+export function buildInstagramMediaParams(
+  body: string,
+  media: Pick<SchedulerMedia, "url" | "mimeType">,
+  settings: Record<string, unknown> = {},
+) {
+  const params = new URLSearchParams({ caption: body });
+  if (media.mimeType.startsWith("video/")) {
+    params.set("media_type", "REELS");
+    params.set("video_url", media.url);
+    const cover = parseSchedulerMediaSetting(settings.cover);
+    if (cover?.url) params.set("cover_url", cover.url);
+    if (settings.trialReel === true) {
+      const graduationStrategy: InstagramTrialGraduationStrategy =
+        settings.graduationStrategy === "SS_PERFORMANCE" ? "SS_PERFORMANCE" : "MANUAL";
+      params.set("trial_params", JSON.stringify({ graduation_strategy: graduationStrategy }));
+    }
+  } else {
+    params.set("image_url", media.url);
+  }
+  return params;
+}
+
 async function publishInstagram(
   userId: string,
   token: string,
@@ -225,15 +248,8 @@ async function publishInstagram(
 
   if (media.length === 1) {
     const first = media[0];
-    const params = new URLSearchParams({ access_token: token, caption: body });
-    if (first.mimeType.startsWith("video/")) {
-      params.set("media_type", "REELS");
-      params.set("video_url", first.url);
-      const cover = parseSchedulerMediaSetting(settings.cover);
-      if (cover?.url) params.set("cover_url", cover.url);
-    } else {
-      params.set("image_url", first.url);
-    }
+    const params = buildInstagramMediaParams(body, first, settings);
+    params.set("access_token", token);
     const created = await providerJson(
       `https://graph.instagram.com/v25.0/${userId}/media`,
       {

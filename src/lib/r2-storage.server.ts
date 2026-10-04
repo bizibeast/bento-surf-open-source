@@ -1014,6 +1014,10 @@ async function serveMedia(request: Request, env: StorageEnv, context: StorageCon
 
 const STORAGE_PREFIXES = ["public", "private"] as const;
 type StoragePrefix = (typeof STORAGE_PREFIXES)[number];
+type StorageSort = { key: "uploaded" | "size"; direction: "asc" | "desc" };
+const MAX_STORAGE_SORT_OBJECTS = 10_000;
+
+class StorageSortLimitError extends Error {}
 
 function storagePrefix(userId: string, scope: StoragePrefix) {
   return scope === "public" ? `users/${userId}/` : `private/users/${userId}/`;
@@ -1029,7 +1033,95 @@ function parseStorageCursor(value: string | null) {
   return { scope, cursor };
 }
 
+function storageObjectRow(object: R2Object, scope: StoragePrefix, origin: string) {
+  return {
+    key: object.key,
+    name: object.customMetadata?.originalFilename || object.key.split("/").at(-1) || "File",
+    type:
+      object.customMetadata?.kind || object.httpMetadata?.contentType || "application/octet-stream",
+    size: object.size,
+    uploaded: object.uploaded.toISOString(),
+    publicUrl: scope === "private" ? null : mediaObjectUrl(object.key, origin),
+  };
+}
+
+function parseStorageSort(url: URL): StorageSort | null | undefined {
+  const key = url.searchParams.get("sort");
+  const direction = url.searchParams.get("direction");
+  if (!key && !direction) return undefined;
+  if ((key !== "uploaded" && key !== "size") || (direction !== "asc" && direction !== "desc")) {
+    return null;
+  }
+  return { key, direction };
+}
+
+function encodeSortedStorageCursor(sort: StorageSort, offset: number) {
+  return btoa(JSON.stringify({ ...sort, offset }));
+}
+
+function parseSortedStorageCursor(value: string | null, sort: StorageSort) {
+  if (!value) return 0;
+  try {
+    const parsed = JSON.parse(atob(value)) as Partial<StorageSort> & { offset?: unknown };
+    return parsed.key === sort.key &&
+      parsed.direction === sort.direction &&
+      Number.isInteger(parsed.offset) &&
+      Number(parsed.offset) >= 0
+      ? Number(parsed.offset)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function listSortedManagedObjects(
+  request: Request,
+  bucket: R2Bucket,
+  userId: string,
+  sort: StorageSort,
+) {
+  const url = new URL(request.url);
+  const offset = parseSortedStorageCursor(url.searchParams.get("cursor"), sort);
+  if (offset === null) return null;
+  const objects: ReturnType<typeof storageObjectRow>[] = [];
+
+  // ponytail: bounded full scan; add a durable metadata index if workspaces exceed 10,000 objects.
+  for (const scope of STORAGE_PREFIXES) {
+    let cursor: string | undefined;
+    do {
+      const page = await bucket.list({
+        prefix: storagePrefix(userId, scope),
+        limit: 1_000,
+        cursor,
+        include: ["httpMetadata", "customMetadata"],
+      });
+      objects.push(...page.objects.map((object) => storageObjectRow(object, scope, url.origin)));
+      if (objects.length > MAX_STORAGE_SORT_OBJECTS) {
+        throw new StorageSortLimitError("Too many files to sort");
+      }
+      cursor = page.truncated ? page.cursor : undefined;
+      if (page.truncated && !cursor) throw new Error("R2 returned an invalid storage cursor");
+    } while (cursor);
+  }
+
+  const direction = sort.direction === "asc" ? 1 : -1;
+  objects.sort((left, right) => {
+    const leftValue = sort.key === "size" ? left.size : Date.parse(left.uploaded);
+    const rightValue = sort.key === "size" ? right.size : Date.parse(right.uploaded);
+    return direction * (leftValue - rightValue) || left.key.localeCompare(right.key);
+  });
+  const page = objects.slice(offset, offset + MAX_STORAGE_PAGE_OBJECTS);
+  const nextOffset = offset + page.length;
+  return {
+    objects: page,
+    cursor: nextOffset < objects.length ? encodeSortedStorageCursor(sort, nextOffset) : null,
+  };
+}
+
 async function listManagedObjects(request: Request, bucket: R2Bucket, userId: string) {
+  const sort = parseStorageSort(new URL(request.url));
+  if (sort === null) return null;
+  if (sort) return listSortedManagedObjects(request, bucket, userId, sort);
   const parsedCursor = parseStorageCursor(new URL(request.url).searchParams.get("cursor"));
   if (!parsedCursor) return null;
   const objects: Array<{
@@ -1053,18 +1145,7 @@ async function listManagedObjects(request: Request, bucket: R2Bucket, userId: st
       include: ["httpMetadata", "customMetadata"],
     });
     objects.push(
-      ...page.objects.map((object) => ({
-        key: object.key,
-        name: object.customMetadata?.originalFilename || object.key.split("/").at(-1) || "File",
-        type:
-          object.customMetadata?.kind ||
-          object.httpMetadata?.contentType ||
-          "application/octet-stream",
-        size: object.size,
-        uploaded: object.uploaded.toISOString(),
-        publicUrl:
-          scope === "private" ? null : mediaObjectUrl(object.key, new URL(request.url).origin),
-      })),
+      ...page.objects.map((object) => storageObjectRow(object, scope, new URL(request.url).origin)),
     );
     if (page.truncated) {
       nextCursor = `${scope}:${page.cursor}`;
@@ -1107,7 +1188,8 @@ async function manageStorage(
         usedBytes,
         allowedBytes: allowanceMb * 1024 * 1024,
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof StorageSortLimitError) return jsonError(error.message, 413);
       return jsonError("Storage could not be loaded. Please try again.", 500);
     }
   }

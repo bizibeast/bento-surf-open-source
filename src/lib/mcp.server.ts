@@ -6,6 +6,7 @@ import type { Database } from "@/integrations/supabase/types";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import {
   deriveSocialPostStatus,
+  INSTAGRAM_TRIAL_GRADUATION_STRATEGIES,
   isPublicSocialProvider,
   providerSettingsMedia,
   postingScheduleSchema,
@@ -888,6 +889,18 @@ const mediaSchema = z.object({
   mimeType: z.string(),
   size: z.number().int().positive(),
 });
+const socialProviderSettingsSchema = z
+  .object({
+    instagram: z
+      .object({
+        trialReel: z.boolean().optional(),
+        graduationStrategy: z.enum(INSTAGRAM_TRIAL_GRADUATION_STRATEGIES).default("MANUAL"),
+      })
+      .passthrough()
+      .optional(),
+  })
+  .passthrough()
+  .default({});
 const autoDmInputSchema = z.object({
   platform: platformSchema,
   id: z.uuid().optional(),
@@ -1356,7 +1369,7 @@ export function createBentoMcpServer(
         title: z.string().max(300).default(""),
         connectionIds: z.array(z.uuid()).min(1).max(20),
         media: z.array(mediaSchema).max(10).default([]),
-        providerSettings: z.record(z.string(), z.record(z.string(), z.unknown())).default({}),
+        providerSettings: socialProviderSettingsSchema,
         mode: z.enum(["draft", "schedule", "publish_now"]),
         scheduledAt: z.iso.datetime({ offset: true }).optional(),
         timezone: z.string().min(1).max(100).default("UTC"),

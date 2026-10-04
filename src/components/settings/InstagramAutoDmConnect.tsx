@@ -4,7 +4,6 @@ import { SiInstagram } from "react-icons/si";
 import { toast } from "sonner";
 import { beginInstagramConnection, disconnectInstagram } from "@/lib/social-connections.functions";
 import { INSTAGRAM_CONNECTION_RETURN_TO } from "@/lib/settings-integrations";
-import { MAX_SOCIAL_PROFILES_PER_PROVIDER } from "@/lib/social-scheduler";
 import { micro } from "@/lib/micro-app-ui";
 
 export type InstagramAutoDmAccount = {
@@ -24,7 +23,6 @@ export function InstagramAutoDmConnect({
 }) {
   const queryClient = useQueryClient();
   const needsReconnect = connections.some((connection) => !connection.canPublish);
-  const atProfileLimit = connections.length >= MAX_SOCIAL_PROFILES_PER_PROVIDER;
   const connect = useMutation({
     // Same full Instagram permission set as Social Media. One connect unlocks
     // Auto-DM and the Social scheduler together.
@@ -69,7 +67,7 @@ export function InstagramAutoDmConnect({
           <div className="min-w-0 flex-1 font-semibold text-[#17213a]">Instagram</div>
           <button
             type="button"
-            disabled={!ready || connect.isPending || (atProfileLimit && !needsReconnect)}
+            disabled={!ready || connect.isPending}
             onClick={() => connect.mutate()}
             className={`${micro.btnPrimaryCompact} shrink-0 disabled:bg-[#f2f5fb] disabled:text-[#17213a]/45 disabled:shadow-none disabled:hover:translate-y-0`}
           >
@@ -78,11 +76,9 @@ export function InstagramAutoDmConnect({
               : ready
                 ? needsReconnect
                   ? "Reconnect"
-                  : atProfileLimit
-                    ? "2 / 2"
-                    : connections.length
-                      ? "Connect another"
-                      : "Connect"
+                  : connections.length
+                    ? "Replace account"
+                    : "Connect"
                 : "Setup pending"}
           </button>
         </div>

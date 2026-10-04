@@ -1,4 +1,5 @@
-import { AutoDmMetrics, AutoDmFlow, AutoDmActivityRow } from "@/components/AutoDmDetails";
+import { AutoDmActivityRow } from "@/components/AutoDmDetails";
+import { AutoDmDetailActions } from "@/components/AutoDmDetailDialog";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode } from "react";
@@ -947,7 +948,6 @@ function AutomationRow({
   onToggle: (enabled: boolean) => void;
   onDelete: () => void;
 }) {
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const [testOpen, setTestOpen] = useState(false);
   const [testText, setTestText] = useState(automation.keywords[0] || "link");
   const testResult = testTwitterAutomation(automation, testText);
@@ -970,16 +970,7 @@ function AutomationRow({
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="truncate font-sans font-semibold">
-              <button
-                type="button"
-                aria-expanded={detailsOpen}
-                onClick={() => setDetailsOpen(!detailsOpen)}
-                className="text-left hover:underline focus-visible:outline focus-visible:outline-primary"
-              >
-                {automation.name}
-              </button>
-            </h3>
+            <h3 className="truncate font-sans font-semibold">{automation.name}</h3>
             <span
               className={`${micro.soft} rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground`}
             >
@@ -1032,16 +1023,7 @@ function AutomationRow({
           <Trash2 className="size-4" />
         </button>
       </div>
-      <AutoDmMetrics automation={automation} />
-      <button
-        type="button"
-        className={`${micro.btnOutline} mt-3`}
-        aria-expanded={detailsOpen}
-        onClick={() => setDetailsOpen(!detailsOpen)}
-      >
-        {detailsOpen ? "Hide flow" : "View automation flow"}
-      </button>
-      {detailsOpen && <AutoDmFlow automation={automation} />}
+      <AutoDmDetailActions automation={automation} />
       {testOpen && (
         <div className="mt-4 rounded-2xl bg-[#f2f5fb] p-4">
           {isEngagement ? (

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   assertSocialOAuthRedirectMatchesEnvironment,
@@ -36,6 +38,14 @@ afterEach(() => {
 });
 
 describe("social provider credential readiness", () => {
+  it("queues the initial Insights import after generic and Instagram connections persist", () => {
+    expect(
+      readFileSync(join(process.cwd(), "src/lib/social-oauth.functions.ts"), "utf8"),
+    ).toContain("queueInitialSocialInsightsImport");
+    expect(
+      readFileSync(join(process.cwd(), "src/lib/social-connections.functions.ts"), "utf8"),
+    ).toContain("queueInitialSocialInsightsImport");
+  });
   it("reuses the published Meta app for Facebook Pages", () => {
     setEnvironment("META_INSTAGRAM_APP_ID", "meta-app");
     setEnvironment("META_INSTAGRAM_APP_SECRET", "meta-secret");
@@ -91,14 +101,11 @@ describe("social provider credential readiness", () => {
     expect(socialProviderRequestedScopes("reddit")).toContain("submit");
   });
 
-  it("requests the exact LinkedIn member-posting scopes", () => {
+  it("requests only LinkedIn sign-in and publishing scopes", () => {
     expect(socialProviderRequestedScopes("linkedin")).toEqual([
       "openid",
       "profile",
       "w_member_social",
-      "r_member_social",
-      "r_member_profileAnalytics",
-      "r_member_postAnalytics",
     ]);
   });
 
@@ -144,28 +151,28 @@ describe("social provider credential readiness", () => {
   });
 
   it("builds the exact production LinkedIn callback URL", () => {
-    setEnvironment("VITE_APP_URL", "https://app.bento.surf/");
+    setEnvironment("VITE_APP_URL", "https://app.example.com/");
 
     expect(socialProviderRedirectUri("linkedin")).toBe(
-      "https://app.bento.surf/integrations/social/linkedin/callback",
+      "https://app.example.com/integrations/social/linkedin/callback",
     );
   });
 
   it("builds the exact staging LinkedIn callback URL", () => {
-    setEnvironment("VITE_APP_URL", "https://app.test.bento.surf");
+    setEnvironment("VITE_APP_URL", "https://app.test.example.com");
 
     expect(socialProviderRedirectUri("linkedin")).toBe(
-      "https://app.test.bento.surf/integrations/social/linkedin/callback",
+      "https://app.test.example.com/integrations/social/linkedin/callback",
     );
   });
 
   it("rejects an OAuth callback started in a different Bento environment", () => {
-    setEnvironment("VITE_APP_URL", "https://app.test.bento.surf");
+    setEnvironment("VITE_APP_URL", "https://app.test.example.com");
 
     expect(() =>
       assertSocialOAuthRedirectMatchesEnvironment(
         "linkedin",
-        "https://app.bento.surf/integrations/social/linkedin/callback",
+        "https://app.example.com/integrations/social/linkedin/callback",
       ),
     ).toThrow("different Bento environment");
   });

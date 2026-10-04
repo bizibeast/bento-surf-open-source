@@ -414,11 +414,18 @@ export function EmailAudiencePanel({
                         {subscriber.name || "No name"}
                       </td>
                       <td className="px-4 py-3">
-                        <span
-                          className={`rounded-full px-2.5 py-1 text-xs font-medium capitalize ${statusClass(subscriber.subscription_status)}`}
-                        >
-                          {subscriber.subscription_status.replaceAll("_", " ")}
-                        </span>
+                        <div className="flex flex-col items-start gap-1.5">
+                          <span
+                            className={`rounded-full px-2.5 py-1 text-xs font-medium capitalize ${statusClass(subscriber.subscription_status)}`}
+                          >
+                            {subscriber.subscription_status.replaceAll("_", " ")}
+                          </span>
+                          <span className="text-[11px] text-[#17213a]/55">
+                            {subscriber.marketing_status === "subscribed"
+                              ? "Marketing subscribed"
+                              : "Not subscribed"}
+                          </span>
+                        </div>
                       </td>
                       <td className="max-w-64 px-4 py-3">
                         <AudienceListPicker
@@ -645,5 +652,7 @@ function statusClass(status: PublicationSubscriber["subscription_status"]) {
 }
 
 function sourceLabel(source: string) {
+  if (source === "instagram_auto_dm") return "Instagram AutoDM";
+  if (source === "facebook_auto_dm") return "Facebook AutoDM";
   return source.replaceAll("_", " ");
 }

@@ -47,7 +47,17 @@ import { PreviewAvatar, ProviderPostPreview } from "@/components/scheduler/Provi
 import { PostingTimesDialog } from "@/components/scheduler/PostingTimesDialog";
 import { AppHeader } from "@/components/AppHeader";
 import { MicroAppPanel, MicroAppTabMotion } from "@/components/MicroAppPanel";
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -93,6 +103,7 @@ import {
   youtubeDetectedFormat,
   clampTikTokCoverTimestampMs,
   YOUTUBE_THUMBNAIL_MAX_BYTES,
+  type InstagramTrialGraduationStrategy,
   type SchedulerConnection,
   type SchedulerMedia,
   type SchedulerPost,
@@ -387,6 +398,59 @@ const ENGAGEMENT_NUMBER_FORMATTER = new Intl.NumberFormat(undefined, {
   maximumFractionDigits: 1,
 });
 
+type SchedulerComposeFingerprintInput = {
+  body: string;
+  title: string;
+  scheduledAt: string;
+  selected: string[];
+  media: SchedulerMedia[];
+  providerSettings: SocialProviderSettings;
+};
+
+type PendingThumbnail = {
+  previewUrl: string;
+  file: File | null;
+  uploaded: SchedulerMedia | null;
+};
+
+function pendingThumbnailMedia(value: PendingThumbnail | null): SchedulerMedia | null {
+  if (!value) return null;
+  if (value.uploaded) return value.uploaded;
+  return {
+    key: `local:${value.file?.name || "thumbnail.jpg"}`,
+    url: value.previewUrl,
+    name: value.file?.name || "thumbnail.jpg",
+    mimeType: value.file?.type || "image/jpeg",
+    size: value.file?.size || 0,
+  };
+}
+
+function revokePendingThumbnail(value: PendingThumbnail | null) {
+  if (value?.file && value.previewUrl.startsWith("blob:")) URL.revokeObjectURL(value.previewUrl);
+}
+
+export function schedulerComposeFingerprint(input: SchedulerComposeFingerprintInput) {
+  return JSON.stringify({
+    body: input.body,
+    title: input.title,
+    scheduledAt: input.scheduledAt,
+    selected: [...input.selected].sort(),
+    media: input.media.map(({ key, url, name, mimeType, size }) => ({
+      key,
+      url,
+      name,
+      mimeType,
+      size,
+    })),
+    providerSettings: input.providerSettings,
+  });
+}
+
+export function fitPreviewScale(availableHeight: number, renderedHeight: number) {
+  if (availableHeight <= 0 || renderedHeight <= 0) return 1;
+  return Math.min(1, availableHeight / renderedHeight);
+}
+
 export function createAvatarRepairHandler(input: {
   refresh: (id: string) => Promise<{ id: string; avatarUrl: string }>;
   onSuccess: (result: { id: string; avatarUrl: string }) => void;
@@ -488,15 +552,21 @@ function SchedulerPage() {
   const [tiktokAiGenerated, setTiktokAiGenerated] = useState(false);
   const [youtubePrivacy, setYoutubePrivacy] = useState("private");
   const [youtubeDescription, setYoutubeDescription] = useState("");
-  const [youtubeThumbnail, setYoutubeThumbnail] = useState<SchedulerMedia | null>(null);
+  const [youtubeThumbnail, setYoutubeThumbnail] = useState<PendingThumbnail | null>(null);
+  const [youtubeFrameMs, setYoutubeFrameMs] = useState(1_000);
   const [videoMeta, setVideoMeta] = useState<YouTubeVideoMeta | null>(null);
-  const [instagramCover, setInstagramCover] = useState<SchedulerMedia | null>(null);
+  const [instagramCover, setInstagramCover] = useState<PendingThumbnail | null>(null);
+  const [instagramFrameMs, setInstagramFrameMs] = useState(1_000);
+  const [instagramTrialReel, setInstagramTrialReel] = useState(false);
+  const [instagramGraduationStrategy, setInstagramGraduationStrategy] =
+    useState<InstagramTrialGraduationStrategy>("MANUAL");
   const [tiktokCoverMs, setTiktokCoverMs] = useState(1_000);
   const [redditCommunity, setRedditCommunity] = useState("");
   const [redditKind, setRedditKind] = useState<"self" | "link">("self");
   const [redditUrl, setRedditUrl] = useState("");
   const [previewConnectionId, setPreviewConnectionId] = useState("");
   const [composeOpen, setComposeOpen] = useState(false);
+  const [discardPromptOpen, setDiscardPromptOpen] = useState(false);
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
   const [savedProviderSettings, setSavedProviderSettings] = useState<SocialProviderSettings>({});
   const [postingSettingsOpen, setPostingSettingsOpen] = useState(false);
@@ -504,9 +574,38 @@ function SchedulerPage() {
   const mediaInputRef = useRef<HTMLInputElement>(null);
   const youtubeThumbInputRef = useRef<HTMLInputElement>(null);
   const instagramCoverInputRef = useRef<HTMLInputElement>(null);
+  const initialComposeFingerprintRef = useRef<string | null>(null);
+  const youtubeThumbnailRef = useRef<PendingThumbnail | null>(null);
+  const instagramCoverRef = useRef<PendingThumbnail | null>(null);
   const schedulerTimeZone = data?.postingSchedule.timezone || browserTimeZone();
 
+  const replacePendingThumbnail = (
+    target: "youtube" | "instagram",
+    next: PendingThumbnail | null,
+  ) => {
+    const setter = target === "youtube" ? setYoutubeThumbnail : setInstagramCover;
+    setter((current) => {
+      if (current?.previewUrl !== next?.previewUrl) revokePendingThumbnail(current);
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    youtubeThumbnailRef.current = youtubeThumbnail;
+  }, [youtubeThumbnail]);
+  useEffect(() => {
+    instagramCoverRef.current = instagramCover;
+  }, [instagramCover]);
+  useEffect(
+    () => () => {
+      revokePendingThumbnail(youtubeThumbnailRef.current);
+      revokePendingThumbnail(instagramCoverRef.current);
+    },
+    [],
+  );
+
   const resetComposeForm = () => {
+    initialComposeFingerprintRef.current = null;
     setBody("");
     setTitle("");
     setMedia([]);
@@ -522,9 +621,13 @@ function SchedulerPage() {
     setTiktokAiGenerated(false);
     setYoutubePrivacy("private");
     setYoutubeDescription("");
-    setYoutubeThumbnail(null);
+    replacePendingThumbnail("youtube", null);
+    setYoutubeFrameMs(1_000);
     setVideoMeta(null);
-    setInstagramCover(null);
+    replacePendingThumbnail("instagram", null);
+    setInstagramFrameMs(1_000);
+    setInstagramTrialReel(false);
+    setInstagramGraduationStrategy("MANUAL");
     setTiktokCoverMs(1_000);
     setRedditCommunity("");
     setRedditKind("self");
@@ -533,6 +636,13 @@ function SchedulerPage() {
     setPreviewConnectionId("");
     setEditingPostId(null);
     setSavedProviderSettings({});
+  };
+
+  const closeCompose = () => {
+    setDiscardPromptOpen(false);
+    setUploadError(null);
+    resetComposeForm();
+    setComposeOpen(false);
   };
 
   const openComposeForDate = (date: Date, slotTime?: string) => {
@@ -563,6 +673,7 @@ function SchedulerPage() {
     ) as SocialProviderSettings;
     const tiktok = settings.tiktok || {};
     const youtube = settings.youtube || {};
+    const instagram = settings.instagram || {};
     const reddit = settings.reddit || {};
     setEditingPostId(post.id);
     setSavedProviderSettings(settings);
@@ -588,6 +699,13 @@ function SchedulerPage() {
       setTiktokCoverMs(tiktok.videoCoverTimestampMs);
     if (typeof youtube.youtubePrivacy === "string") setYoutubePrivacy(youtube.youtubePrivacy);
     if (typeof youtube.description === "string") setYoutubeDescription(youtube.description);
+    setInstagramTrialReel(instagram.trialReel === true);
+    if (
+      instagram.graduationStrategy === "MANUAL" ||
+      instagram.graduationStrategy === "SS_PERFORMANCE"
+    ) {
+      setInstagramGraduationStrategy(instagram.graduationStrategy);
+    }
     if (typeof reddit.community === "string") setRedditCommunity(reddit.community);
     if (reddit.kind === "link" || reddit.kind === "self") setRedditKind(reddit.kind);
     if (typeof reddit.url === "string") setRedditUrl(reddit.url);
@@ -742,11 +860,17 @@ function SchedulerPage() {
         youtubePrivacy,
         ...(youtubeFormat ? { youtubeFormat } : {}),
         ...(usesCaption && youtubeDescription.trim() ? { description: youtubeDescription } : {}),
-        ...(hasVideo && youtubeThumbnail ? { thumbnail: youtubeThumbnail } : {}),
+        ...(hasVideo && youtubeThumbnail
+          ? { thumbnail: pendingThumbnailMedia(youtubeThumbnail) }
+          : {}),
       },
       instagram: {
         ...savedProviderSettings.instagram,
-        ...(instagramReelCover && instagramCover ? { cover: instagramCover } : {}),
+        trialReel: instagramReelCover && instagramTrialReel,
+        graduationStrategy: instagramGraduationStrategy,
+        ...(instagramReelCover && instagramCover
+          ? { cover: pendingThumbnailMedia(instagramCover) }
+          : {}),
       },
       reddit: {
         ...savedProviderSettings.reddit,
@@ -758,7 +882,9 @@ function SchedulerPage() {
     [
       hasVideo,
       instagramCover,
+      instagramGraduationStrategy,
       instagramReelCover,
+      instagramTrialReel,
       redditCommunity,
       redditKind,
       redditUrl,
@@ -782,6 +908,33 @@ function SchedulerPage() {
       videoMeta?.durationSeconds,
     ],
   );
+  const youtubeThumbnailMedia = pendingThumbnailMedia(youtubeThumbnail);
+  const instagramCoverMedia = pendingThumbnailMedia(instagramCover);
+  const composeFingerprint = schedulerComposeFingerprint({
+    body,
+    title,
+    scheduledAt,
+    selected,
+    media,
+    providerSettings,
+  });
+  useEffect(() => {
+    if (!composeOpen) {
+      initialComposeFingerprintRef.current = null;
+      return;
+    }
+    initialComposeFingerprintRef.current ??= composeFingerprint;
+  }, [composeFingerprint, composeOpen]);
+  const composeDirty =
+    initialComposeFingerprintRef.current !== null &&
+    initialComposeFingerprintRef.current !== composeFingerprint;
+  const requestComposeClose = () => {
+    if (composeDirty) {
+      setDiscardPromptOpen(true);
+      return;
+    }
+    closeCompose();
+  };
   const providerErrors = validatePostForProviders(
     body,
     media,
@@ -810,25 +963,39 @@ function SchedulerPage() {
       const scheduledIso =
         scheduledAtOverride || zonedDateTimeInputToIso(scheduledAt, schedulerTimeZone);
       if (!publishNow && !asDraft && !scheduledIso) throw new Error("Choose a valid publish time.");
-      return saveSocialPost({
-        data: {
-          id: editingPostId || undefined,
-          body,
-          title,
-          scheduledAt: publishNow || asDraft ? null : scheduledIso,
-          timezone: schedulerTimeZone,
-          connectionIds: selected,
-          media,
-          providerSettings,
-          publishNow,
-          asDraft,
-        },
-      });
+      return Promise.all([
+        materializeThumbnail(youtubeThumbnail, "youtube"),
+        materializeThumbnail(instagramCover, "instagram"),
+      ]).then(([uploadedYoutubeThumbnail, uploadedInstagramCover]) =>
+        saveSocialPost({
+          data: {
+            id: editingPostId || undefined,
+            body,
+            title,
+            scheduledAt: publishNow || asDraft ? null : scheduledIso,
+            timezone: schedulerTimeZone,
+            connectionIds: selected,
+            media,
+            providerSettings: {
+              ...providerSettings,
+              youtube: {
+                ...providerSettings.youtube,
+                ...(uploadedYoutubeThumbnail ? { thumbnail: uploadedYoutubeThumbnail } : {}),
+              },
+              instagram: {
+                ...providerSettings.instagram,
+                ...(uploadedInstagramCover ? { cover: uploadedInstagramCover } : {}),
+              },
+            },
+            publishNow,
+            asDraft,
+          },
+        }),
+      );
     },
     onSuccess: (next, { asDraft, publishNow }) => {
       queryClient.setQueryData(["social-scheduler"], next);
-      resetComposeForm();
-      setComposeOpen(false);
+      closeCompose();
       if (publishNow && next.queuedPostId) {
         setPublishingPostId(next.queuedPostId);
         toast.success("Added to publishing queue", {
@@ -1065,7 +1232,7 @@ function SchedulerPage() {
     mediaInputRef.current?.click();
   }
 
-  async function uploadCoverImage(file: File | undefined, target: "youtube" | "instagram") {
+  async function prepareCoverImage(file: File | undefined, target: "youtube" | "instagram") {
     if (!file) return;
     if (schedulerMediaKindForFile(file) !== "image") {
       const message = "Choose a JPEG, PNG, or WebP image for the cover.";
@@ -1085,14 +1252,53 @@ function SchedulerPage() {
         toast.error("YouTube thumbnails must be 2 MB or smaller.");
         return;
       }
-      const uploaded = await uploadFileResult(prepared, "image", { optimize: false });
+      replacePendingThumbnail(target, {
+        previewUrl: URL.createObjectURL(prepared),
+        file: prepared,
+        uploaded: null,
+      });
+      toast.success("Thumbnail ready");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not prepare the cover");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function selectVideoFrame(
+    video: HTMLVideoElement,
+    timestampMs: number,
+    target: "youtube" | "instagram",
+  ) {
+    setUploading(true);
+    try {
+      const file = await captureVideoFrame(video, timestampMs);
+      replacePendingThumbnail(target, {
+        previewUrl: URL.createObjectURL(file),
+        file,
+        uploaded: null,
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not capture this video frame");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function materializeThumbnail(
+    value: PendingThumbnail | null,
+    target: "youtube" | "instagram",
+  ) {
+    if (!value) return null;
+    if (value.uploaded) return value.uploaded;
+    if (!value.file) return null;
+    setUploading(true);
+    try {
+      const uploaded = await uploadFileResult(value.file, "image", { optimize: false });
       if (!uploaded.publicUrl) throw new Error("Upload failed");
       const item = { ...uploaded, url: uploaded.publicUrl };
-      if (target === "youtube") setYoutubeThumbnail(item);
-      else setInstagramCover(item);
-      toast.success(target === "youtube" ? "YouTube thumbnail added" : "Instagram thumbnail added");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not upload the cover");
+      replacePendingThumbnail(target, { ...value, uploaded: item });
+      return item;
     } finally {
       setUploading(false);
     }
@@ -1270,11 +1476,8 @@ function SchedulerPage() {
               <Dialog
                 open={composeOpen}
                 onOpenChange={(open) => {
-                  setComposeOpen(open);
-                  if (!open) {
-                    setUploadError(null);
-                    resetComposeForm();
-                  }
+                  if (open) setComposeOpen(true);
+                  else requestComposeClose();
                 }}
               >
                 <DialogContent
@@ -1282,26 +1485,18 @@ function SchedulerPage() {
                   className="h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-6xl gap-0 overflow-hidden rounded-[24px] border-white/80 bg-[#f7f8fc] p-0 shadow-[0_42px_130px_-45px_rgba(23,33,58,.7)] data-[state=closed]:slide-out-to-bottom-2 data-[state=open]:slide-in-from-bottom-2 sm:h-[min(92dvh,860px)] sm:rounded-[32px] [&>button]:z-40"
                 >
                   <div className="flex h-full min-h-0 flex-col overflow-x-hidden overflow-y-auto sm:overflow-hidden">
-                    <div className="shrink-0 border-b border-border/70 px-5 py-4 pr-14 sm:px-7 sm:py-5">
+                    <div className="shrink-0 border-b border-border/70 px-5 py-3 pr-14 sm:px-7">
                       <DialogTitle className="font-ui-display text-2xl sm:text-3xl">
                         {editingPostId ? "Edit post" : "Create a post"}
                       </DialogTitle>
-                      <DialogDescription className="mt-1 text-sm text-muted-foreground">
-                        Write once, preview every channel, and schedule it for{" "}
-                        {new Intl.DateTimeFormat(undefined, {
-                          weekday: "short",
-                          month: "short",
-                          day: "numeric",
-                          hour: "numeric",
-                          minute: "2-digit",
-                        }).format(new Date(scheduledAt))}
-                        .
-                      </DialogDescription>
                     </div>
 
-                    <div className="min-h-0 flex-none overflow-visible px-5 py-5 sm:flex-1 sm:overflow-y-auto sm:px-7 sm:py-6">
-                      <div className="grid gap-6 lg:grid-cols-2 lg:items-start lg:gap-0">
-                        <div className="min-w-0 lg:pr-8">
+                    <div className="min-h-0 flex-none overflow-visible px-5 py-5 sm:flex-1 sm:overflow-y-auto sm:px-7 sm:py-6 lg:overflow-hidden">
+                      <div className="grid gap-6 lg:h-full lg:min-h-0 lg:grid-cols-2 lg:items-stretch lg:gap-0">
+                        <div
+                          data-testid="scheduler-compose-scroll"
+                          className="min-w-0 lg:min-h-0 lg:overflow-y-auto lg:pr-8"
+                        >
                           <div className="flex min-h-10 flex-wrap items-center gap-2">
                             {(data?.connections || []).map((connection: SchedulerConnection) => (
                               <AccountChip
@@ -1560,10 +1755,10 @@ function SchedulerPage() {
                                           : "16:9 JPEG, up to 2 MB. Channels must be allowed to upload custom thumbnails."
                                       }
                                       aspect={youtubeFormat === "short" ? "portrait" : "video"}
-                                      image={youtubeThumbnail}
+                                      image={youtubeThumbnailMedia}
                                       uploading={uploading}
                                       onPick={() => youtubeThumbInputRef.current?.click()}
-                                      onRemove={() => setYoutubeThumbnail(null)}
+                                      onRemove={() => replacePendingThumbnail("youtube", null)}
                                     />
                                     <input
                                       ref={youtubeThumbInputRef}
@@ -1573,9 +1768,19 @@ function SchedulerPage() {
                                       onChange={(event) => {
                                         const file = event.currentTarget.files?.[0];
                                         event.currentTarget.value = "";
-                                        void uploadCoverImage(file, "youtube");
+                                        void prepareCoverImage(file, "youtube");
                                       }}
                                     />
+                                    {primaryVideo && (
+                                      <VideoCoverFramePicker
+                                        video={primaryVideo}
+                                        timestampMs={youtubeFrameMs}
+                                        onChange={setYoutubeFrameMs}
+                                        onSelectFrame={(video, timestampMs) =>
+                                          void selectVideoFrame(video, timestampMs, "youtube")
+                                        }
+                                      />
+                                    )}
                                     <label className="block max-w-sm">
                                       <span className="text-xs font-semibold text-muted-foreground">
                                         Visibility
@@ -1597,16 +1802,49 @@ function SchedulerPage() {
                                   <ProviderComposeCard
                                     provider="instagram"
                                     title="Instagram"
-                                    hint="Upload a custom thumbnail for this Reel"
+                                    hint="Choose Trial Reel delivery and a custom thumbnail"
                                   >
+                                    <label className="flex items-center gap-2 text-sm font-medium">
+                                      <input
+                                        type="checkbox"
+                                        checked={instagramTrialReel}
+                                        onChange={(event) =>
+                                          setInstagramTrialReel(event.target.checked)
+                                        }
+                                      />
+                                      Publish as a Trial Reel
+                                    </label>
+                                    {instagramTrialReel && (
+                                      <label className="block max-w-sm">
+                                        <span className="text-xs font-semibold text-muted-foreground">
+                                          Graduation strategy
+                                        </span>
+                                        <select
+                                          aria-label="Graduation strategy"
+                                          value={instagramGraduationStrategy}
+                                          onChange={(event) =>
+                                            setInstagramGraduationStrategy(
+                                              event.target
+                                                .value as InstagramTrialGraduationStrategy,
+                                            )
+                                          }
+                                          className={`mt-2 ${micro.input}`}
+                                        >
+                                          <option value="MANUAL">Manual</option>
+                                          <option value="SS_PERFORMANCE">
+                                            Automatic if it performs well
+                                          </option>
+                                        </select>
+                                      </label>
+                                    )}
                                     <CoverImagePicker
                                       label="Thumbnail"
                                       hint="Portrait JPEG works best. This image is sent as the Reel cover."
                                       aspect="portrait"
-                                      image={instagramCover}
+                                      image={instagramCoverMedia}
                                       uploading={uploading}
                                       onPick={() => instagramCoverInputRef.current?.click()}
-                                      onRemove={() => setInstagramCover(null)}
+                                      onRemove={() => replacePendingThumbnail("instagram", null)}
                                     />
                                     <input
                                       ref={instagramCoverInputRef}
@@ -1616,9 +1854,19 @@ function SchedulerPage() {
                                       onChange={(event) => {
                                         const file = event.currentTarget.files?.[0];
                                         event.currentTarget.value = "";
-                                        void uploadCoverImage(file, "instagram");
+                                        void prepareCoverImage(file, "instagram");
                                       }}
                                     />
+                                    {primaryVideo && (
+                                      <VideoCoverFramePicker
+                                        video={primaryVideo}
+                                        timestampMs={instagramFrameMs}
+                                        onChange={setInstagramFrameMs}
+                                        onSelectFrame={(video, timestampMs) =>
+                                          void selectVideoFrame(video, timestampMs, "instagram")
+                                        }
+                                      />
+                                    )}
                                   </ProviderComposeCard>
                                 )}
 
@@ -1827,9 +2075,9 @@ function SchedulerPage() {
                           }
                           title={title}
                           media={media}
-                          youtubeThumbnail={youtubeThumbnail}
+                          youtubeThumbnail={youtubeThumbnailMedia}
                           youtubeFormat={youtubeFormat}
-                          instagramCover={instagramReelCover ? instagramCover : null}
+                          instagramCover={instagramReelCover ? instagramCoverMedia : null}
                           tiktokPrivacy={tiktokPrivacy}
                           youtubePrivacy={youtubePrivacy}
                           redditCommunity={redditCommunity}
@@ -1974,6 +2222,42 @@ function SchedulerPage() {
                 </DialogContent>
               </Dialog>
 
+              <AlertDialog open={discardPromptOpen} onOpenChange={setDiscardPromptOpen}>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Save this post?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      You have changes that have not been saved. Save them as a draft or discard
+                      them before closing.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  {!canSubmit && (
+                    <p className="text-sm text-muted-foreground">
+                      {selected.length
+                        ? "Complete the required post fields before saving this draft."
+                        : "Select an account before saving this draft."}
+                    </p>
+                  )}
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Keep editing</AlertDialogCancel>
+                    <button
+                      type="button"
+                      disabled={!canSubmit || save.isPending}
+                      onClick={() => save.mutate({ publishNow: false, asDraft: true })}
+                      className={`${micro.btnSoft} disabled:cursor-not-allowed disabled:opacity-45`}
+                    >
+                      Save draft
+                    </button>
+                    <AlertDialogAction
+                      onClick={closeCompose}
+                      className="bg-rose-600 text-white hover:bg-rose-700"
+                    >
+                      Discard
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+
               <PostingTimesDialog
                 open={postingSettingsOpen}
                 schedule={data?.postingSchedule}
@@ -2024,7 +2308,8 @@ function PlatformPostPreview({
 }) {
   return (
     <section
-      className="min-w-0 border-t border-border/70 pt-6 lg:sticky lg:top-6 lg:border-l lg:border-t-0 lg:py-0 lg:pl-8"
+      data-testid="scheduler-preview-pane"
+      className="min-w-0 overflow-hidden border-t border-border/70 pt-6 lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:border-l lg:border-t-0 lg:py-0 lg:pl-8"
       aria-label="Live preview"
     >
       {connections.length > 0 && (
@@ -2054,40 +2339,70 @@ function PlatformPostPreview({
         </div>
       )}
 
-      <p className={`${micro.eyebrowMuted} mt-5`}>Live preview</p>
-
-      <div className={`${micro.soft} mt-2 p-3 sm:p-5`}>
-        {activeConnection ? (
-          <ProviderPostPreview
-            connection={activeConnection}
-            body={body}
-            title={title}
-            media={media}
-            youtubeThumbnail={youtubeThumbnail}
-            youtubeFormat={youtubeFormat}
-            instagramCover={instagramCover}
-            tiktokPrivacy={tiktokPrivacy}
-            youtubePrivacy={youtubePrivacy}
-            redditCommunity={redditCommunity}
-            redditKind={redditKind}
-            redditUrl={redditUrl}
-            onAvatarError={() => onAvatarError?.(activeConnection.id)}
-          />
-        ) : (
-          <div
-            className={`${micro.empty} flex min-h-48 items-center justify-center px-6 text-sm text-muted-foreground`}
-          >
-            Select a connected account above to see its platform preview.
-          </div>
-        )}
-      </div>
-      {activeConnection && (
-        <p className="mt-3 text-xs leading-5 text-muted-foreground">
-          Content, media, account, and visibility reflect this post. Platform chrome and truncation
-          can vary by app version, device, and later platform redesigns.
-        </p>
-      )}
+      <FittedPreview>
+        <div className={`${micro.soft} mt-2 p-3 sm:p-5`}>
+          {activeConnection ? (
+            <ProviderPostPreview
+              connection={activeConnection}
+              body={body}
+              title={title}
+              media={media}
+              youtubeThumbnail={youtubeThumbnail}
+              youtubeFormat={youtubeFormat}
+              instagramCover={instagramCover}
+              tiktokPrivacy={tiktokPrivacy}
+              youtubePrivacy={youtubePrivacy}
+              redditCommunity={redditCommunity}
+              redditKind={redditKind}
+              redditUrl={redditUrl}
+              onAvatarError={() => onAvatarError?.(activeConnection.id)}
+            />
+          ) : (
+            <div
+              className={`${micro.empty} flex min-h-48 items-center justify-center px-6 text-sm text-muted-foreground`}
+            >
+              Select a connected account above to see its platform preview.
+            </div>
+          )}
+        </div>
+      </FittedPreview>
     </section>
+  );
+}
+
+function FittedPreview({ children }: { children: ReactNode }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [measurement, setMeasurement] = useState({ scale: 1, height: 0 });
+
+  useEffect(() => {
+    const container = containerRef.current;
+    const content = contentRef.current;
+    if (!container || !content || typeof ResizeObserver === "undefined") return;
+    const measure = () => {
+      const renderedHeight = content.scrollHeight;
+      const scale = fitPreviewScale(container.clientHeight, renderedHeight);
+      setMeasurement({ scale, height: renderedHeight * scale });
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(container);
+    observer.observe(content);
+    measure();
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div ref={containerRef} className="min-h-0 flex-1 overflow-hidden">
+      <div style={measurement.height ? { height: measurement.height } : undefined}>
+        <div
+          ref={contentRef}
+          className="w-full origin-top"
+          style={{ transform: `scale(${measurement.scale})` }}
+        >
+          {children}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -2680,54 +2995,138 @@ function CoverImagePicker({
   return (
     <div>
       <span className="text-xs font-semibold text-muted-foreground">{label}</span>
-      {image ? (
-        <div
-          className={`relative mt-2 overflow-hidden ${micro.soft} ${
-            aspect === "video" ? "aspect-video" : "mx-auto aspect-[9/16] max-w-[180px]"
-          }`}
-        >
-          <DecodedImage src={image.url} alt="" className="size-full object-cover" />
-          <button
-            type="button"
-            aria-label={`Remove ${label.toLowerCase()}`}
-            onClick={onRemove}
-            className="absolute right-2 top-2 inline-flex size-8 items-center justify-center rounded-full bg-black/65 text-white backdrop-blur"
-          >
-            <X className="size-4" />
-          </button>
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={onPick}
-          disabled={uploading}
-          className={`mt-2 flex w-full flex-col items-center justify-center gap-2 border border-dashed border-[#3478f6]/30 bg-white text-sm text-muted-foreground transition hover:bg-[#f8faff] disabled:opacity-50 ${micro.soft} ${
-            aspect === "video" ? "aspect-video" : "mx-auto aspect-[9/16] max-w-[180px]"
-          }`}
-        >
-          {uploading ? (
-            <LoaderCircle className="size-5 animate-spin" />
-          ) : (
+      <div
+        className={`relative mt-2 overflow-hidden ${micro.soft} ${
+          aspect === "video" ? "aspect-video" : "mx-auto aspect-[9/16] max-w-[180px]"
+        }`}
+      >
+        {image ? (
+          <>
+            <DecodedImage src={image.url} alt="" className="size-full object-cover" />
+            <button
+              type="button"
+              aria-label={`Remove ${label.toLowerCase()}`}
+              onClick={onRemove}
+              className="absolute right-2 top-2 inline-flex size-8 items-center justify-center rounded-full bg-black/65 text-white backdrop-blur"
+            >
+              <X className="size-4" />
+            </button>
+          </>
+        ) : (
+          <div className="flex size-full flex-col items-center justify-center gap-2 border border-dashed border-[#3478f6]/30 bg-white px-4 text-center text-xs text-muted-foreground">
             <ImagePlus className="size-5 text-[#3478f6]" />
-          )}
-          <span className="px-3 text-center text-xs font-medium">
-            {uploading ? "Uploading…" : `Add ${label.toLowerCase()}`}
-          </span>
-        </button>
-      )}
+            Choose a video frame or camera roll image
+          </div>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={onPick}
+        disabled={uploading}
+        className={`${micro.btnSoft} mt-2 w-full disabled:opacity-50`}
+      >
+        {uploading ? (
+          <LoaderCircle className="size-4 animate-spin" />
+        ) : (
+          <ImagePlus className="size-4" />
+        )}
+        {uploading ? "Preparing…" : "Add from camera roll"}
+      </button>
       <p className="mt-2 text-[11px] leading-4 text-muted-foreground">{hint}</p>
     </div>
   );
 }
 
-function VideoCoverFramePicker({
+function timelineFrameTimestamps(durationMs: number, count = 8) {
+  if (durationMs <= 0 || count <= 1) return [];
+  const maxMs = durationMs - 1;
+  return Array.from({ length: count }, (_, index) => Math.round((maxMs * index) / (count - 1)));
+}
+
+// eslint-disable-next-line react-refresh/only-export-components -- browser-frame capture is tested with this route UI
+export async function captureVideoFrame(video: HTMLVideoElement, timestampMs: number) {
+  if (!video.videoWidth || !video.videoHeight || !Number.isFinite(video.duration)) {
+    throw new Error("This video frame is not ready yet.");
+  }
+  const targetSeconds = Math.min(video.duration, Math.max(0, timestampMs / 1_000));
+  if (Math.abs(video.currentTime - targetSeconds) > 0.05) {
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(() => {
+        cleanup();
+        reject(new Error("This video frame took too long to load."));
+      }, 5_000);
+      const cleanup = () => {
+        window.clearTimeout(timeout);
+        video.removeEventListener("seeked", onSeeked);
+        video.removeEventListener("error", onError);
+      };
+      const onSeeked = () => {
+        cleanup();
+        resolve();
+      };
+      const onError = () => {
+        cleanup();
+        reject(new Error("This video frame could not be loaded."));
+      };
+      video.addEventListener("seeked", onSeeked, { once: true });
+      video.addEventListener("error", onError, { once: true });
+      video.currentTime = targetSeconds;
+    });
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("This browser could not capture the video frame.");
+  context.drawImage(video, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob(
+      (value) => (value ? resolve(value) : reject(new Error("Could not create the thumbnail."))),
+      "image/jpeg",
+      0.9,
+    ),
+  );
+  return new File([blob], `video-thumbnail-${Math.round(timestampMs)}.jpg`, {
+    type: "image/jpeg",
+  });
+}
+
+function TimelineVideoFrame({
+  video,
+  timestampMs,
+}: {
+  video: SchedulerMedia;
+  timestampMs: number;
+}) {
+  return (
+    <video
+      src={video.url}
+      muted
+      playsInline
+      preload="metadata"
+      aria-hidden="true"
+      className="pointer-events-none size-full object-cover"
+      onLoadedMetadata={(event) => {
+        event.currentTarget.currentTime = Math.min(
+          event.currentTarget.duration,
+          timestampMs / 1_000,
+        );
+      }}
+    />
+  );
+}
+
+export function VideoCoverFramePicker({
   video,
   timestampMs,
   onChange,
+  onSelectFrame,
 }: {
   video: SchedulerMedia;
   timestampMs: number;
   onChange: (ms: number) => void;
+  onSelectFrame?: (video: HTMLVideoElement, timestampMs: number) => void;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [durationMs, setDurationMs] = useState(0);
@@ -2744,6 +3143,7 @@ function VideoCoverFramePicker({
 
   const maxMs = Math.max(0, durationMs - 1);
   const valueMs = durationMs ? clampTikTokCoverTimestampMs(timestampMs, durationMs) : 0;
+  const frameTimestamps = timelineFrameTimestamps(durationMs);
 
   return (
     <div>
@@ -2755,6 +3155,7 @@ function VideoCoverFramePicker({
         <video
           ref={ref}
           src={video.url}
+          aria-label="Selected thumbnail frame"
           muted
           playsInline
           preload="metadata"
@@ -2770,20 +3171,31 @@ function VideoCoverFramePicker({
           }}
         />
       </div>
-      <input
-        type="range"
-        min={0}
-        max={maxMs}
-        step={100}
-        value={valueMs}
-        disabled={!durationMs}
-        onChange={(event) => {
-          const next = clampTikTokCoverTimestampMs(Number(event.target.value), durationMs);
-          onChange(next);
-          syncFrame(next);
-        }}
-        className="mt-3 w-full accent-[#111111]"
-      />
+      {frameTimestamps.length > 0 && (
+        <div className="mt-3 flex gap-1.5 overflow-x-auto rounded-xl bg-black p-1.5">
+          {frameTimestamps.map((frameMs) => {
+            const selected = Math.abs(frameMs - valueMs) <= Math.max(100, maxMs / 16);
+            return (
+              <button
+                key={frameMs}
+                type="button"
+                aria-label={`Choose frame at ${(frameMs / 1_000).toFixed(1)} seconds`}
+                aria-pressed={selected}
+                onClick={() => {
+                  onChange(frameMs);
+                  syncFrame(frameMs);
+                  if (ref.current) onSelectFrame?.(ref.current, frameMs);
+                }}
+                className={`aspect-[4/5] min-w-12 flex-1 overflow-hidden rounded-lg border-2 transition sm:min-w-14 ${
+                  selected ? "border-[#3478f6]" : "border-transparent opacity-65 hover:opacity-100"
+                }`}
+              >
+                <TimelineVideoFrame video={video} timestampMs={frameMs} />
+              </button>
+            );
+          })}
+        </div>
+      )}
       <p className="mt-1 text-[11px] text-muted-foreground">
         Frame at {(valueMs / 1_000).toFixed(1)}s
       </p>

@@ -10,6 +10,7 @@ const addonEnv = Object.fromEntries(
 );
 const validEnv = {
   ...addonEnv,
+  WORKSPACE_COOKIE_SIGNING_KEY: "s".repeat(32),
   VITE_APP_URL: "https://app.self.invalid",
   VITE_PUBLIC_URL: "https://public.self.invalid",
   VITE_SUPABASE_PROJECT_ID: projectRef,
@@ -30,6 +31,11 @@ function runVerifier(target: "staging" | "production", overrides: Record<string,
 }
 
 describe("self-host deployment environment", () => {
+  it.each(["", "short"])("rejects a missing or short workspace cookie signing key", (key) => {
+    const result = runVerifier("staging", { WORKSPACE_COOKIE_SIGNING_KEY: key });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("WORKSPACE_COOKIE_SIGNING_KEY");
+  });
   it("accepts core staging configuration without optional providers", () => {
     const result = runVerifier("staging");
 

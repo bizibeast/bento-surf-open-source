@@ -78,7 +78,7 @@ describe("StorageManager", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
     expect(await screen.findByText("Guide.pdf")).toBeVisible();
     expect(fetchMock).toHaveBeenLastCalledWith(
-      "/api/storage/manage?cursor=private%3Anext",
+      "/api/storage/manage?sort=uploaded&direction=desc&cursor=private%3Anext",
       expect.objectContaining({ headers: { Authorization: "Bearer token" } }),
     );
     expect(screen.getByRole("button", { name: "Previous page" })).toBeEnabled();
@@ -118,5 +118,45 @@ describe("StorageManager", () => {
     expect(JSON.parse(String(deleteCall?.[1]?.body))).toEqual({
       keys: firstPage.objects.map((object) => object.key),
     });
+  });
+
+  it("toggles complete-list sorting and resets pagination and selection", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL) => Response.json(firstPage));
+    vi.stubGlobal("fetch", fetchMock);
+    renderManager();
+
+    const date = await screen.findByRole("button", { name: /Sort by date/i });
+    expect(date.closest("th")).toHaveAttribute("aria-sort", "descending");
+    fireEvent.click(date);
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenLastCalledWith(
+        "/api/storage/manage?sort=uploaded&direction=asc",
+        expect.any(Object),
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("columnheader", { name: /Date/i })).toHaveAttribute(
+        "aria-sort",
+        "ascending",
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select Campaign image.jpg" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)?.[0])).toContain("cursor="));
+
+    fireEvent.click(screen.getByRole("button", { name: /Sort by size/i }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenLastCalledWith(
+        "/api/storage/manage?sort=size&direction=asc",
+        expect.any(Object),
+      ),
+    );
+    expect(screen.getByRole("columnheader", { name: /Size/i })).toHaveAttribute(
+      "aria-sort",
+      "ascending",
+    );
+    expect(screen.getByRole("checkbox", { name: "Select Campaign image.jpg" })).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Previous page" })).toBeDisabled();
   });
 });

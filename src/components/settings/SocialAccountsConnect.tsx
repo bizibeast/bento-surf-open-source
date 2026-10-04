@@ -174,7 +174,6 @@ export function SocialAccountsConnect({
           !accountHasCurrentScopes(selectedProvider, connection),
       )
     : false;
-  const selectedAtLimit = selectedConnections.length >= MAX_SOCIAL_PROFILES_PER_PROVIDER;
 
   return (
     <>
@@ -193,6 +192,7 @@ export function SocialAccountsConnect({
                 type="button"
                 onClick={() => setSelectedProvider(provider)}
                 aria-label={`Manage ${definition.name} integration, ${count} ${count === 1 ? "account" : "accounts"} connected`}
+                aria-description="One account per Bento profile"
                 className="group flex min-h-28 min-w-0 flex-col items-center rounded-xl px-1 py-2 text-center outline-none transition-[background-color,transform] duration-150 ease-out hover:bg-[#f7f9fd] active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-[#3478f6]/35"
               >
                 <span
@@ -297,18 +297,14 @@ export function SocialAccountsConnect({
                 <div className="rounded-xl border border-dashed border-black/[0.1] bg-[#fafbfe] px-4 py-7 text-center">
                   <p className="text-sm font-semibold text-[#17213a]">No account connected yet</p>
                   <p className="mt-1 text-xs leading-5 text-[#17213a]/50">
-                    Connect one now. You can add a second profile later.
+                    Connect one account to this Bento profile.
                   </p>
                 </div>
               )}
 
               <button
                 type="button"
-                disabled={
-                  !selectedReady ||
-                  connect.isPending ||
-                  (selectedAtLimit && !selectedNeedsReconnect)
-                }
+                disabled={!selectedReady || connect.isPending}
                 onClick={() => connect.mutate(selectedProvider)}
                 className={`${micro.btnPrimary} w-full justify-center disabled:bg-[#f2f5fb] disabled:text-[#17213a]/45 disabled:shadow-none disabled:hover:translate-y-0`}
               >
@@ -317,11 +313,9 @@ export function SocialAccountsConnect({
                   : selectedReady
                     ? selectedNeedsReconnect
                       ? "Reconnect"
-                      : selectedAtLimit
-                        ? "2 / 2"
-                        : selectedConnections.length
-                          ? "Connect another"
-                          : "Connect"
+                      : selectedConnections.length
+                        ? "Replace account"
+                        : "Connect"
                     : "Setup pending"}
               </button>
             </div>

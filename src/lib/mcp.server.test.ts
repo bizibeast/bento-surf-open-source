@@ -252,8 +252,17 @@ describe("Bento MCP tools", () => {
     const audienceTool = toolsPayload.result.tools.find(
       (tool: { name: string }) => tool.name === "manage_audience",
     );
+    const socialPostTool = toolsPayload.result.tools.find(
+      (tool: { name: string }) => tool.name === "create_social_post",
+    );
     expect(storeTool.inputSchema.properties.publicationId).toMatchObject({ format: "uuid" });
     expect(JSON.stringify(audienceTool.inputSchema)).toContain("publicationId");
+    expect(
+      socialPostTool.inputSchema.properties.providerSettings.properties.instagram.properties,
+    ).toMatchObject({
+      trialReel: { type: "boolean" },
+      graduationStrategy: { enum: ["MANUAL", "SS_PERFORMANCE"], default: "MANUAL" },
+    });
 
     const skillsResponse = await handler.fetch(
       request({ jsonrpc: "2.0", id: 2, method: "skills/list", params: {} }),
@@ -298,6 +307,9 @@ describe("Bento MCP tools", () => {
           arguments: {
             body: "Launch day",
             connectionIds: ["00000000-0000-4000-8000-000000000010"],
+            providerSettings: {
+              instagram: { trialReel: true, graduationStrategy: "MANUAL" },
+            },
             mode: "publish_now",
           },
         },
@@ -308,7 +320,13 @@ describe("Bento MCP tools", () => {
     expect((await payload(postResponse)).result.isError).not.toBe(true);
     expect(saveSocialPostForUser).toHaveBeenCalledWith(
       authInfo.extra?.userId,
-      expect.objectContaining({ asDraft: false, publishNow: true }),
+      expect.objectContaining({
+        asDraft: false,
+        publishNow: true,
+        providerSettings: {
+          instagram: { trialReel: true, graduationStrategy: "MANUAL" },
+        },
+      }),
     );
 
     const automationResponse = await handler.fetch(

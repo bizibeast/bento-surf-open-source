@@ -68,6 +68,7 @@ const safeDeploymentKeys = [
   "ai",
   "assets",
   "browser",
+  "images",
   "compatibility_date",
   "compatibility_flags",
   "no_bundle",

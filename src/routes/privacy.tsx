@@ -42,6 +42,14 @@ function PrivacyNotice() {
           </header>
 
           <div className="mt-5 grid gap-5 md:grid-cols-2">
+            <NoticeSection title="Content Agent and Telegram data">
+              Content Agent conversations are retained for up to 180 days. Confirmed Brain changes
+              and scheduled posts remain until edited or deleted. Connecting Telegram stores the
+              chat and account identifiers required for Agent replies and draft-ready notifications.
+              Messages use the same conversation and approval controls as the web app. Actions are
+              accepted only from the connected private chat. Disconnecting Telegram removes that
+              binding and pending approval actions. Telegram's terms and privacy policy also apply.
+            </NoticeSection>
             <NoticeSection title="Operator responsibility">
               The instance operator must publish a privacy policy appropriate for its deployment,
               enabled features, providers, users, and applicable law.

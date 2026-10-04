@@ -25,7 +25,7 @@ function hexDecode(value: string) {
   );
 }
 
-export type SecretPurpose = "payment" | "social" | "booking";
+export type SecretPurpose = "payment" | "social" | "booking" | "content";
 
 function configuredKeyBytes(configured: string) {
   const explicitlyHex = configured.startsWith("hex:");
@@ -63,7 +63,9 @@ function encryptionKeyBytes(purpose: SecretPurpose = "payment") {
       ? "SOCIAL_CONNECTION_ENCRYPTION_KEY"
       : purpose === "booking"
         ? "BOOKING_CONNECTION_ENCRYPTION_KEY"
-        : "PAYMENT_CONNECTION_ENCRYPTION_KEY";
+        : purpose === "content"
+          ? "CONTENT_CONNECTION_ENCRYPTION_KEY"
+          : "PAYMENT_CONNECTION_ENCRYPTION_KEY";
   const configured = process.env[environmentName]?.trim();
   if (!configured) {
     throw new Error(`${environmentName} is not configured.`);

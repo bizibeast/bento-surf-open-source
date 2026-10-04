@@ -15,7 +15,7 @@ const AVATAR_HOSTS: Record<SocialProvider, readonly string[]> = {
   reddit: ["redditstatic.com", "redditmedia.com", "redd.it"],
 };
 
-function allowedAvatarUrl(provider: SocialProvider, value: string) {
+export function allowedSocialAssetUrl(provider: SocialProvider, value: string) {
   try {
     const url = new URL(value);
     if (url.protocol !== "https:") return null;
@@ -67,7 +67,7 @@ function avatarContentType(contentType: string, bytes: Uint8Array) {
 }
 
 async function downloadAvatar(provider: SocialProvider, value: string) {
-  let url = allowedAvatarUrl(provider, value);
+  let url = allowedSocialAssetUrl(provider, value);
   for (let redirects = 0; url && redirects <= 2; redirects += 1) {
     const response = await fetch(url.toString(), {
       redirect: "manual",
@@ -76,7 +76,7 @@ async function downloadAvatar(provider: SocialProvider, value: string) {
     });
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
-      url = location ? allowedAvatarUrl(provider, new URL(location, url).toString()) : null;
+      url = location ? allowedSocialAssetUrl(provider, new URL(location, url).toString()) : null;
       continue;
     }
     if (!response.ok) return null;

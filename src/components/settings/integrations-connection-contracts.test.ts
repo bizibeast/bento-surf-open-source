@@ -30,6 +30,10 @@ const bookingPage = readFileSync(
   resolve(process.cwd(), "src/routes/_authenticated/calendar.tsx"),
   "utf8",
 );
+const settingsPage = readFileSync(
+  resolve(process.cwd(), "src/routes/_authenticated/settings.tsx"),
+  "utf8",
+);
 
 describe("Settings Integrations connection contracts", () => {
   it("starts Instagram OAuth with the same full-scope intent from Social and Auto-DM", () => {
@@ -76,5 +80,11 @@ describe("Settings Integrations connection contracts", () => {
     expect(bookingPage).toContain("BookingProviderMark");
     expect(bookingPage).toContain("<Switch");
     expect(bookingPage).toContain('integration="bookings"');
+  });
+
+  it("keeps the MCP connection card at the end of Integrations", () => {
+    expect(settingsPage.indexOf("<PaymentGatewayPicker")).toBeLessThan(
+      settingsPage.indexOf("AI agents · MCP"),
+    );
   });
 });

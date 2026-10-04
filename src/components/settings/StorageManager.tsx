@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, HardDrive, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, HardDrive, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { micro } from "@/lib/micro-app-ui";
@@ -27,6 +27,7 @@ type StoragePage = {
   allowedBytes: number;
   cursor: string | null;
 };
+type StorageSort = { key: "uploaded" | "size"; direction: "asc" | "desc" };
 
 async function storageToken() {
   const { data, error } = await supabase.auth.getSession();
@@ -35,11 +36,11 @@ async function storageToken() {
   return data.session.access_token;
 }
 
-async function getStoragePage(cursor: string | null, signal?: AbortSignal) {
+async function getStoragePage(cursor: string | null, sort: StorageSort, signal?: AbortSignal) {
   const token = await storageToken();
-  const url = cursor
-    ? `/api/storage/manage?cursor=${encodeURIComponent(cursor)}`
-    : "/api/storage/manage";
+  const params = new URLSearchParams({ sort: sort.key, direction: sort.direction });
+  if (cursor) params.set("cursor", cursor);
+  const url = `/api/storage/manage?${params}`;
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
     signal,
@@ -89,13 +90,14 @@ function fileCount(count: number) {
 
 export function StorageManager() {
   const [cursor, setCursor] = useState<string | null>(null);
+  const [sort, setSort] = useState<StorageSort>({ key: "uploaded", direction: "desc" });
   const [history, setHistory] = useState<Array<string | null>>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [failureCount, setFailureCount] = useState(0);
   const storage = useQuery({
-    queryKey: ["storage-manager", cursor],
-    queryFn: ({ signal }) => getStoragePage(cursor, signal),
+    queryKey: ["storage-manager", sort.key, sort.direction, cursor],
+    queryFn: ({ signal }) => getStoragePage(cursor, sort, signal),
   });
   const deletion = useMutation({
     mutationFn: deleteStorageObjects,
@@ -109,6 +111,15 @@ export function StorageManager() {
   const data = storage.data;
   const remaining = Math.max(0, (data?.allowedBytes ?? 0) - (data?.usedBytes ?? 0));
   const selectedCount = selected.length;
+  const changeSort = (key: StorageSort["key"]) => {
+    setSort((current) => ({
+      key,
+      direction: current.key === key && current.direction === "asc" ? "desc" : "asc",
+    }));
+    setCursor(null);
+    setHistory([]);
+    setSelected([]);
+  };
 
   if (storage.isLoading) {
     return <div className={`${micro.card} p-8 text-sm text-[#17213a]/55`}>Loading storage…</div>;
@@ -198,8 +209,56 @@ export function StorageManager() {
                   </th>
                   <th className="px-4 py-3 font-semibold">Name</th>
                   <th className="px-4 py-3 font-semibold">Type</th>
-                  <th className="px-4 py-3 font-semibold">Date</th>
-                  <th className="px-4 py-3 text-right font-semibold">Size</th>
+                  <th
+                    className="px-4 py-3 font-semibold"
+                    aria-sort={
+                      sort.key === "uploaded"
+                        ? sort.direction === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                  >
+                    <button
+                      type="button"
+                      onClick={() => changeSort("uploaded")}
+                      aria-label="Sort by date"
+                      className="inline-flex items-center gap-1.5"
+                    >
+                      Date
+                      {sort.key === "uploaded" &&
+                        (sort.direction === "asc" ? (
+                          <ArrowUp className="size-3.5" aria-hidden="true" />
+                        ) : (
+                          <ArrowDown className="size-3.5" aria-hidden="true" />
+                        ))}
+                    </button>
+                  </th>
+                  <th
+                    className="px-4 py-3 text-right font-semibold"
+                    aria-sort={
+                      sort.key === "size"
+                        ? sort.direction === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                  >
+                    <button
+                      type="button"
+                      onClick={() => changeSort("size")}
+                      aria-label="Sort by size"
+                      className="ml-auto inline-flex items-center gap-1.5"
+                    >
+                      Size
+                      {sort.key === "size" &&
+                        (sort.direction === "asc" ? (
+                          <ArrowUp className="size-3.5" aria-hidden="true" />
+                        ) : (
+                          <ArrowDown className="size-3.5" aria-hidden="true" />
+                        ))}
+                    </button>
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-black/[0.06]">
