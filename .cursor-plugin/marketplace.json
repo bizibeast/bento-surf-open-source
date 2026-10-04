@@ -1,0 +1,16 @@
+{
+  "name": "bento",
+  "owner": {
+    "name": "bento.surf",
+    "email": "support@bento.surf"
+  },
+  "metadata": {
+    "description": "Cursor plugin for the hosted bento.surf remote MCP."
+  },
+  "plugins": [
+    {
+      "name": "bento",
+      "source": "cursor-plugin"
+    }
+  ]
+}
