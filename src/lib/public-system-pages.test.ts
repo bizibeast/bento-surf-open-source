@@ -277,4 +277,17 @@ it("serves a standalone catalog when published products have no Store page", asy
   const store = await getPublicCommerceStore({ data: { username: "bizibeast" } });
   expect(store?.isStandalone).toBe(true);
   expect(store?.products.map((product) => product.id)).toEqual(["session", "guide"]);
+  expect(store?.chrome.pages.find((page) => page.system === "store")).toMatchObject({
+    id: "store-catalog",
+    href: "/@bizibeast/store",
+  });
+  expect(store?.chrome.creator).toMatchObject({ username: "bizibeast" });
+});
+
+it("keeps the legacy Store tab visible when enabled without a dedicated page", async () => {
+  state.tables.pages = state.tables.pages.filter((page) => page.system !== "store");
+  state.tables.commerce_products = [];
+  const store = await getPublicCommerceStore({ data: { username: "bizibeast" } });
+  expect(store?.isStandalone).toBe(true);
+  expect(store?.chrome.pages.find((page) => page.system === "store")?.id).toBe("store-catalog");
 });

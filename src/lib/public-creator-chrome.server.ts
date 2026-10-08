@@ -73,11 +73,7 @@ export const loadPublicCreatorChrome = createServerOnlyFn(
         },
       ];
     });
-    if (
-      !creator.store_page_enabled &&
-      planHasEntitlement(plan, "storeCards") &&
-      !pages.some((page) => page.system === "store")
-    ) {
+    if (planHasEntitlement(plan, "storeCards") && !pages.some((page) => page.system === "store")) {
       const supportedKinds = COMMERCE_KINDS.filter((kind) =>
         planHasEntitlement(plan, commerceEntitlement(kind.kind)),
       ).map((kind) => kind.kind);
@@ -96,7 +92,7 @@ export const loadPublicCreatorChrome = createServerOnlyFn(
         .in("kind", supportedKinds)
         .limit(1);
       if (offers.error) throw new Error("Unable to load public store");
-      if (!dedicatedPage.data && offers.data?.length) {
+      if (!dedicatedPage.data && (creator.store_page_enabled || offers.data?.length)) {
         const href = customDomain ? "/store" : publicProfilePath(creator.username, "store");
         pages.push({
           id: "store-catalog",
