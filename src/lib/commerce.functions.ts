@@ -1396,9 +1396,12 @@ export const getPublicCommerceStore = createServerFn({ method: "GET" })
       )
     )
       return null;
+    const chrome = await loadPublicCreatorChrome(resolved.userId, data.username, "store");
+    if (!chrome) return null;
     return {
       isStandalone: true as const,
-      profile,
+      profile: chrome.creator,
+      chrome,
       products: ((products ?? []) as CommerceProductRow[])
         .filter(
           (product: CommerceProductRow) =>

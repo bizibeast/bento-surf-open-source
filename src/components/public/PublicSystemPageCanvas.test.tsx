@@ -274,3 +274,46 @@ it.each(["calendar", "store", "insights", "newsletter"])(
     expect(screen.getByRole("link", { name: page.name })).toHaveAttribute("aria-current", "page");
   },
 );
+
+it("keeps the profile navigation and themed product catalog together on a standalone Store", () => {
+  const storeProfile = {
+    ...profile,
+    header_mode: "with_photo",
+    avatar_url: "https://example.com/avatar.png",
+  };
+  state.data = {
+    isStandalone: true,
+    chrome: {
+      ...chrome,
+      creator: storeProfile,
+      pages: [
+        ...pages.filter((page) => page.system !== "store"),
+        { id: "store-catalog", name: "Store", system: "store", href: "/@bizibeast/store" },
+      ],
+    },
+    profile: storeProfile,
+    products: [
+      {
+        id: "guide",
+        kind: "digital_download",
+        public_slug: "guide",
+        title: "Creator guide",
+        subtitle: "A useful guide",
+        pricing_type: "free",
+        price_amount: 0,
+        currency: "usd",
+      },
+    ],
+  };
+  render(<PublicStorePage />);
+  expect(document.querySelector('[data-bento-public-page][data-theme="dark"]')).not.toBeNull();
+  expect(screen.getByRole("img", { name: "Bizibeast avatar" })).toBeVisible();
+  expect(screen.getByText("Helping you make money online")).toBeVisible();
+  expect(screen.getByRole("navigation", { name: "Creator pages" })).toBeVisible();
+  expect(screen.getByRole("link", { name: "Store", current: "page" })).toBeVisible();
+  expect(screen.getByRole("link", { name: /Creator guide/ })).toHaveAttribute(
+    "href",
+    "/@bizibeast/products/guide",
+  );
+  expect(screen.getByRole("main")).toHaveTextContent("Creator guide");
+});
