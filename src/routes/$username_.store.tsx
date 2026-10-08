@@ -1,10 +1,11 @@
 import { PublicCreatorShell } from "@/components/public/PublicCreatorShell";
 import { PublicSystemPageCanvas } from "@/components/public/PublicSystemPageCanvas";
+import { PublicStoreProductCard } from "@/components/commerce/PublicStoreProductCard";
 import { createFileRoute, notFound, redirect } from "@tanstack/react-router";
-import { ArrowUpRight, ShoppingBag } from "lucide-react";
+import { ShoppingBag } from "lucide-react";
 import { useMemo } from "react";
 import { getPublicCommerceStore } from "@/lib/commerce.functions";
-import { commerceKind, pricingLabel, type CommerceProductRecord } from "@/lib/commerce";
+import type { CommerceProductRecord } from "@/lib/commerce";
 import {
   normalizePublicUsername,
   publicProductPath,
@@ -12,7 +13,6 @@ import {
   publicStorePath,
 } from "@/lib/application-urls";
 import { creatorIndexingMeta } from "@/lib/open-graph";
-import { safeMediaUrl } from "@/lib/safe-url";
 import { useWebMcpTools, webMcpResult } from "@/lib/webmcp";
 
 export const Route = createFileRoute("/$username_/store")({
@@ -122,52 +122,13 @@ function PublicStorePage() {
 
         {products.length ? (
           <div className="mt-8 grid gap-4 sm:grid-cols-2">
-            {products.map((product: CommerceProductRecord) => {
-              const definition = commerceKind(product.kind);
-              const coverUrl = safeMediaUrl(product.cover_url);
-              return (
-                <a
-                  key={product.id}
-                  href={publicProductPath(profile.username, product.public_slug)}
-                  className="group overflow-hidden rounded-[28px] border border-border/70 bg-card shadow-sm transition hover:-translate-y-1 hover:shadow-md"
-                >
-                  {coverUrl ? (
-                    <div
-                      className="aspect-[16/10] bg-cover bg-center"
-                      style={{
-                        backgroundImage: `url("${coverUrl.replaceAll('"', "%22")}")`,
-                      }}
-                    />
-                  ) : null}
-                  <div className="p-5">
-                    <span className="inline-flex rounded-xl bg-accent px-2.5 py-1 text-[10px] font-semibold text-accent-foreground">
-                      {definition.shortLabel}
-                    </span>
-                    <div className="mt-4 flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <h2 className="font-display text-2xl leading-tight text-foreground">
-                          {product.title}
-                        </h2>
-                        {product.subtitle && (
-                          <p className="mt-2 line-clamp-2 text-sm leading-5 text-muted-foreground">
-                            {product.subtitle}
-                          </p>
-                        )}
-                      </div>
-                      <ArrowUpRight className="mt-1 size-4 shrink-0 text-muted-foreground transition group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
-                    </div>
-                    <div className="mt-5 text-sm font-semibold text-foreground">
-                      {pricingLabel(
-                        product.pricing_type,
-                        product.price_amount,
-                        product.currency,
-                        product.billing_interval,
-                      )}
-                    </div>
-                  </div>
-                </a>
-              );
-            })}
+            {products.map((product: CommerceProductRecord) => (
+              <PublicStoreProductCard
+                key={product.id}
+                product={product}
+                username={profile.username}
+              />
+            ))}
           </div>
         ) : (
           <div className="mt-8 rounded-[28px] border border-border/70 bg-card p-8 text-sm text-muted-foreground">
