@@ -66,6 +66,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { micro } from "@/lib/micro-app-ui";
+import { xArticleContentState } from "@/lib/x-account";
 import { uploadFileResult } from "@/lib/upload";
 import { prepareSchedulerImageUpload } from "@/lib/image-upload";
 import { uploadLimitMb } from "@/lib/plans";
@@ -2416,43 +2417,71 @@ function PlatformPostPreview({
         </div>
       )}
 
-      <FittedPreview>
-        <div className={`${micro.soft} mt-2 p-3 sm:p-5`}>
-          {activeConnection?.provider === "twitter" && xPostKind === "article" ? (
-            <div className="rounded-2xl border border-border bg-white p-5">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                X Article preview
-              </p>
-              <h3 className="mt-4 font-ui-display text-2xl">{title || "Article title"}</h3>
-              <p className="mt-3 whitespace-pre-wrap break-words text-sm text-foreground/80">
-                {body || "Your Article text will appear here."}
-              </p>
-            </div>
-          ) : activeConnection ? (
-            <ProviderPostPreview
-              connection={activeConnection}
-              body={body}
-              title={title}
-              media={media}
-              youtubeThumbnail={youtubeThumbnail}
-              youtubeFormat={youtubeFormat}
-              instagramCover={instagramCover}
-              tiktokPrivacy={tiktokPrivacy}
-              youtubePrivacy={youtubePrivacy}
-              redditCommunity={redditCommunity}
-              redditKind={redditKind}
-              redditUrl={redditUrl}
-              onAvatarError={() => onAvatarError?.(activeConnection.id)}
-            />
-          ) : (
-            <div
-              className={`${micro.empty} flex min-h-48 items-center justify-center px-6 text-sm text-muted-foreground`}
-            >
-              Select a connected account above to see its platform preview.
-            </div>
-          )}
+      {activeConnection?.provider === "twitter" && xPostKind === "article" ? (
+        <div
+          data-testid="x-article-preview-scroll"
+          className={`${micro.soft} mt-2 max-h-[24rem] overflow-y-auto p-3 sm:p-5 lg:min-h-0 lg:max-h-none lg:flex-1`}
+        >
+          <div className="rounded-2xl border border-border bg-white p-5">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Article content preview
+            </p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              This shows the title and text sent to X. X controls the final Article layout and feed
+              card.
+            </p>
+            <article className="mt-6">
+              <h3 className="break-words font-ui-sans text-2xl font-bold">
+                {title || "Article title"}
+              </h3>
+              <div className="mt-5 space-y-3">
+                {body ? (
+                  xArticleContentState(body).blocks.map((block, index) => (
+                    <p
+                      key={index}
+                      className="min-h-[1.25rem] whitespace-pre-wrap break-words text-sm text-foreground/80"
+                    >
+                      {block.text || "\u00a0"}
+                    </p>
+                  ))
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Your Article text will appear here.
+                  </p>
+                )}
+              </div>
+            </article>
+          </div>
         </div>
-      </FittedPreview>
+      ) : (
+        <FittedPreview>
+          <div className={`${micro.soft} mt-2 p-3 sm:p-5`}>
+            {activeConnection ? (
+              <ProviderPostPreview
+                connection={activeConnection}
+                body={body}
+                title={title}
+                media={media}
+                youtubeThumbnail={youtubeThumbnail}
+                youtubeFormat={youtubeFormat}
+                instagramCover={instagramCover}
+                tiktokPrivacy={tiktokPrivacy}
+                youtubePrivacy={youtubePrivacy}
+                redditCommunity={redditCommunity}
+                redditKind={redditKind}
+                redditUrl={redditUrl}
+                onAvatarError={() => onAvatarError?.(activeConnection.id)}
+              />
+            ) : (
+              <div
+                className={`${micro.empty} flex min-h-48 items-center justify-center px-6 text-sm text-muted-foreground`}
+              >
+                Select a connected account above to see its platform preview.
+              </div>
+            )}
+          </div>
+        </FittedPreview>
+      )}
     </section>
   );
 }

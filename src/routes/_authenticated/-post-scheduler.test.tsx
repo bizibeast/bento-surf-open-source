@@ -142,9 +142,22 @@ describe("scheduler compose close protection", () => {
     fireEvent.click(within(compose).getByRole("button", { name: /Bizibeast/i }));
     expect(within(compose).getByText(/25,000 characters/)).toBeVisible();
     fireEvent.click(within(compose).getByRole("button", { name: "Article" }));
-    expect(within(compose).getByRole("textbox", { name: /Article title/i })).toBeVisible();
+    fireEvent.change(within(compose).getByRole("textbox", { name: /Article title/i }), {
+      target: { value: "A closer look" },
+    });
+    fireEvent.change(within(compose).getByRole("textbox", { name: /Article body/i }), {
+      target: { value: "First paragraph\n\nSecond paragraph" },
+    });
     expect(within(compose).getByRole("button", { name: "Add media" })).toBeDisabled();
-    expect(within(compose).getByText("X Article preview")).toBeVisible();
+    const preview = within(compose).getByTestId("x-article-preview-scroll");
+    expect(preview).toHaveClass("overflow-y-auto");
+    expect(within(preview).getByText("Article content preview")).toBeVisible();
+    expect(within(preview).getByText("A closer look")).toBeVisible();
+    expect(within(preview).getByText("First paragraph")).toBeVisible();
+    expect(within(preview).getByText("Second paragraph")).toBeVisible();
+    expect(
+      within(preview).getByText(/X controls the final Article layout and feed card/),
+    ).toBeVisible();
   });
 
   it("keeps desktop scrolling on the compose pane and removes preview filler copy", async () => {
