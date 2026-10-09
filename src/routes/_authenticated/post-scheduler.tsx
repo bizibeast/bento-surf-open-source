@@ -94,6 +94,7 @@ import {
   schedulerMediaCompatibility,
   schedulerMediaKindForFile,
   schedulerPostEngagement,
+  scheduledInstagramAutoDmSchema,
   schedulerUsesCaption,
   socialCalendarDateKey,
   socialCalendarDates,
@@ -562,6 +563,13 @@ function SchedulerPage() {
   const [instagramCover, setInstagramCover] = useState<PendingThumbnail | null>(null);
   const [instagramFrameMs, setInstagramFrameMs] = useState(1_000);
   const [instagramTrialReel, setInstagramTrialReel] = useState(false);
+  const [autoDmEnabled, setAutoDmEnabled] = useState(false);
+  const [autoDmTrigger, setAutoDmTrigger] = useState<"comment_keyword" | "any_comment">(
+    "comment_keyword",
+  );
+  const [autoDmKeyword, setAutoDmKeyword] = useState("");
+  const [autoDmOpening, setAutoDmOpening] = useState("");
+  const [autoDmReply, setAutoDmReply] = useState("");
   const [instagramGraduationStrategy, setInstagramGraduationStrategy] =
     useState<InstagramTrialGraduationStrategy>("MANUAL");
   const [tiktokCoverMs, setTiktokCoverMs] = useState(1_000);
@@ -636,6 +644,11 @@ function SchedulerPage() {
     replacePendingThumbnail("instagram", null);
     setInstagramFrameMs(1_000);
     setInstagramTrialReel(false);
+    setAutoDmEnabled(false);
+    setAutoDmTrigger("comment_keyword");
+    setAutoDmKeyword("");
+    setAutoDmOpening("");
+    setAutoDmReply("");
     setInstagramGraduationStrategy("MANUAL");
     setTiktokCoverMs(1_000);
     setRedditCommunity("");
@@ -716,6 +729,14 @@ function SchedulerPage() {
     if (typeof youtube.youtubePrivacy === "string") setYoutubePrivacy(youtube.youtubePrivacy);
     if (typeof youtube.description === "string") setYoutubeDescription(youtube.description);
     setInstagramTrialReel(instagram.trialReel === true);
+    const scheduledAutoDm = scheduledInstagramAutoDmSchema.safeParse(instagram.scheduledAutoDm);
+    if (scheduledAutoDm.success) {
+      setAutoDmEnabled(true);
+      setAutoDmTrigger(scheduledAutoDm.data.triggerType);
+      setAutoDmKeyword(scheduledAutoDm.data.keyword);
+      setAutoDmOpening(scheduledAutoDm.data.openingMessage);
+      setAutoDmReply(scheduledAutoDm.data.replyMessage);
+    }
     if (
       instagram.graduationStrategy === "MANUAL" ||
       instagram.graduationStrategy === "SS_PERFORMANCE"
@@ -750,6 +771,7 @@ function SchedulerPage() {
     (connection) => connection.provider === "twitter",
   );
   const isXArticle = Boolean(selectedXConnection && xPostKind === "article");
+  const instagramSelected = connectedProviders.includes("instagram");
   const usesCaption = schedulerUsesCaption(connectedProviders);
   const captionLimit = schedulerCaptionLimit(
     connectedProviders,
@@ -901,6 +923,15 @@ function SchedulerPage() {
         ...savedProviderSettings.instagram,
         trialReel: instagramReelCover && instagramTrialReel,
         graduationStrategy: instagramGraduationStrategy,
+        scheduledAutoDm:
+          autoDmEnabled && hasVideo && instagramSelected
+            ? {
+                triggerType: autoDmTrigger,
+                keyword: autoDmKeyword.trim(),
+                openingMessage: autoDmOpening.trim(),
+                replyMessage: autoDmReply.trim(),
+              }
+            : null,
         ...(instagramReelCover && instagramCover
           ? { cover: pendingThumbnailMedia(instagramCover) }
           : {}),
@@ -918,7 +949,13 @@ function SchedulerPage() {
       },
     }),
     [
+      autoDmEnabled,
+      autoDmTrigger,
+      autoDmKeyword,
+      autoDmOpening,
+      autoDmReply,
       hasVideo,
+      instagramSelected,
       instagramCover,
       instagramGraduationStrategy,
       instagramReelCover,
@@ -1399,6 +1436,10 @@ function SchedulerPage() {
     (body.trim().length > 0 || media.length > 0 || (redditKind === "link" && redditUrl.trim())) &&
     (!needsPostTitle || title.trim().length > 0) &&
     Object.keys(providerErrors).length === 0 &&
+    (!autoDmEnabled ||
+      !hasVideo ||
+      scheduledInstagramAutoDmSchema.safeParse(providerSettings.instagram.scheduledAutoDm)
+        .success) &&
     !save.isPending &&
     !(primaryVideo && !videoMeta && (needsYouTubeTitle || tiktokSelected)) &&
     (!tiktokSelected || (tiktokCreatorInfo.isSuccess && tiktokPrivacyOptions.length > 0));
@@ -2227,6 +2268,76 @@ function SchedulerPage() {
                                 <option value="public">Public</option>
                               </select>
                             </label>
+                          )}
+
+                          {instagramSelected && hasVideo && (
+                            <div className="mt-5 rounded-2xl border border-border/70 bg-white/70 p-4">
+                              <label className="flex items-center gap-3 text-sm font-semibold">
+                                <input
+                                  type="checkbox"
+                                  checked={autoDmEnabled}
+                                  onChange={(event) => setAutoDmEnabled(event.target.checked)}
+                                />
+                                Auto DM after this Instagram video goes live
+                              </label>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                The automation starts only when Instagram confirms the video is
+                                published.
+                              </p>
+                              {autoDmEnabled && (
+                                <div className="mt-4 space-y-3">
+                                  <label className="block text-xs font-semibold text-muted-foreground">
+                                    Trigger
+                                    <select
+                                      value={autoDmTrigger}
+                                      onChange={(event) =>
+                                        setAutoDmTrigger(event.target.value as typeof autoDmTrigger)
+                                      }
+                                      className={`mt-1 ${micro.input}`}
+                                    >
+                                      <option value="comment_keyword">
+                                        Comment with a keyword
+                                      </option>
+                                      <option value="any_comment">Any comment</option>
+                                    </select>
+                                  </label>
+                                  {autoDmTrigger === "comment_keyword" && (
+                                    <label className="block text-xs font-semibold text-muted-foreground">
+                                      Keyword
+                                      <input
+                                        value={autoDmKeyword}
+                                        onChange={(event) => setAutoDmKeyword(event.target.value)}
+                                        maxLength={80}
+                                        placeholder="e.g. GUIDE"
+                                        className={`mt-1 ${micro.input}`}
+                                      />
+                                    </label>
+                                  )}
+                                  <label className="block text-xs font-semibold text-muted-foreground">
+                                    Opening message
+                                    <textarea
+                                      value={autoDmOpening}
+                                      onChange={(event) => setAutoDmOpening(event.target.value)}
+                                      maxLength={1000}
+                                      rows={2}
+                                      placeholder="Thanks for commenting! Tap Send it to get the details."
+                                      className={`mt-1 ${micro.input}`}
+                                    />
+                                  </label>
+                                  <label className="block text-xs font-semibold text-muted-foreground">
+                                    DM after they tap Send it
+                                    <textarea
+                                      value={autoDmReply}
+                                      onChange={(event) => setAutoDmReply(event.target.value)}
+                                      maxLength={1000}
+                                      rows={3}
+                                      placeholder="Here are the details..."
+                                      className={`mt-1 ${micro.input}`}
+                                    />
+                                  </label>
+                                </div>
+                              )}
+                            </div>
                           )}
 
                           {Object.entries(providerErrors).length > 0 && (

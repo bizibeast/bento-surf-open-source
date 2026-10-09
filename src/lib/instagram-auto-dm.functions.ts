@@ -341,13 +341,10 @@ export const deleteInstagramAutoDmAutomation = createServerFn({ method: "POST" }
   .middleware([requireSupabaseAuth])
   .validator((input) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
-    const { data: deletedAutomation, error } = await (supabaseAdmin as any)
-      .from("instagram_dm_automations")
-      .delete()
-      .eq("id", data.id)
-      .eq("user_id", context.userId)
-      .select("id")
-      .maybeSingle();
+    const { data: deletedAutomation, error } = await (supabaseAdmin as any).rpc(
+      "delete_instagram_dm_automation_owned",
+      { p_user_id: context.userId, p_automation_id: data.id },
+    );
     if (error || !deletedAutomation) throw new Error("Automation not found.");
     return dashboard(context.userId);
   });

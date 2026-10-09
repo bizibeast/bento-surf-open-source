@@ -520,6 +520,56 @@ describe("scheduler compose close protection", () => {
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:local-thumbnail");
   });
 
+  it("saves an Instagram video's auto DM with the scheduled post", async () => {
+    vi.mocked(uploadFileResult).mockResolvedValueOnce({
+      key: "users/creator/video/post.mp4",
+      publicUrl: "https://example.com/cdn/users/creator/video/post.mp4",
+      size: 2_000,
+      name: "post.mp4",
+      mimeType: "video/mp4",
+    });
+    renderScheduler();
+    fireEvent.click((await screen.findAllByRole("button", { name: /Create post on/i }))[0]);
+    const compose = await screen.findByRole("dialog", { name: "Create a post" });
+    fireEvent.click(within(compose).getByRole("button", { name: /Bizibeast/i }));
+    fireEvent.change(within(compose).getByRole("textbox"), { target: { value: "Video caption" } });
+    fireEvent.change(document.querySelector('input[type="file"][accept*="video"]')!, {
+      target: { files: [new File(["video"], "post.mp4", { type: "video/mp4" })] },
+    });
+    await screen.findByRole("checkbox", { name: /Auto DM after this Instagram video goes live/i });
+    fireEvent.click(
+      within(compose).getByRole("checkbox", {
+        name: /Auto DM after this Instagram video goes live/i,
+      }),
+    );
+    fireEvent.change(within(compose).getByRole("textbox", { name: "Keyword" }), {
+      target: { value: "GUIDE" },
+    });
+    fireEvent.change(within(compose).getByRole("textbox", { name: "Opening message" }), {
+      target: { value: "Tap Send it" },
+    });
+    fireEvent.change(within(compose).getByRole("textbox", { name: "DM after they tap Send it" }), {
+      target: { value: "Here is the guide" },
+    });
+    fireEvent.click(within(compose).getByRole("button", { name: "Save draft" }));
+
+    await waitFor(() => expect(saveSocialPost).toHaveBeenCalledOnce());
+    expect(saveSocialPost).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        providerSettings: expect.objectContaining({
+          instagram: expect.objectContaining({
+            scheduledAutoDm: {
+              triggerType: "comment_keyword",
+              keyword: "GUIDE",
+              openingMessage: "Tap Send it",
+              replyMessage: "Here is the guide",
+            },
+          }),
+        }),
+      }),
+    });
+  });
+
   it("saves an Instagram Trial Reel with manual graduation by default", async () => {
     vi.mocked(uploadFileResult).mockResolvedValue({
       key: "users/creator/video/trial.mp4",

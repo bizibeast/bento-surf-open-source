@@ -40,6 +40,10 @@ import {
   xArticleDocumentError,
 } from "./x-account";
 import { fetchXAccountCapabilities } from "./x-account.server";
+import {
+  activateScheduledInstagramAutoDm,
+  reconcileScheduledInstagramAutoDms,
+} from "./scheduled-instagram-auto-dm.server";
 
 export type SocialPublishMessage = {
   kind: "social_publish";
@@ -1845,19 +1849,31 @@ export async function processSocialPublishMessage(message: SocialPublishMessage)
       });
       return;
     }
+    const publishedAt = new Date().toISOString();
     await db
       .from("social_post_targets")
       .update({
         status: "published",
         remote_post_id: result.id,
         remote_post_url: result.url || null,
-        published_at: new Date().toISOString(),
+        published_at: publishedAt,
         next_attempt_at: null,
         lease_expires_at: null,
         last_error_code: null,
         last_error_message: null,
       })
       .eq("id", target.id);
+    try {
+      await activateScheduledInstagramAutoDm({
+        ...target,
+        status: "published",
+        remote_post_id: result.id,
+        published_at: publishedAt,
+      });
+    } catch (activationError) {
+      // The periodic reconciliation retries activation without republishing the video.
+      console.error("[scheduled-auto-dm] activation failed", activationError);
+    }
     await db.from("social_publish_attempts").insert({
       target_id: target.id,
       attempt,
@@ -2156,6 +2172,11 @@ export async function auditSocialConnections(now = new Date()) {
 
 export async function enqueueDueSocialPosts(queue?: Queue<SocialPublishMessage>, env?: unknown) {
   const runtimeEnv = env ?? globalThis.__env__;
+  try {
+    await reconcileScheduledInstagramAutoDms();
+  } catch (error) {
+    console.error("[scheduled-auto-dm] reconciliation failed", error);
+  }
   const outbox = await relaySocialOutbox(runtimeEnv);
   const bindings = (runtimeEnv || {}) as Record<string, Queue<SocialPublishMessage> | undefined>;
   if (!queue && !bindings.SOCIAL_PUBLISH_QUEUE) {

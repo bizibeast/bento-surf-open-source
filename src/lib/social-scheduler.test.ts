@@ -48,6 +48,37 @@ const image: SchedulerMedia = {
 const video = { ...image, key: "video.mp4", name: "video.mp4", mimeType: "video/mp4" };
 
 describe("social scheduler validation", () => {
+  it("requires an Instagram video and a complete scheduled auto DM", () => {
+    const input = {
+      body: "Watch this",
+      scheduledAt: new Date(Date.now() + 3_600_000).toISOString(),
+      connectionIds: ["00000000-0000-4000-8000-000000000001"],
+      media: [video],
+      providerSettings: {
+        instagram: {
+          scheduledAutoDm: {
+            triggerType: "comment_keyword",
+            keyword: "GUIDE",
+            openingMessage: "Tap Send it",
+            replyMessage: "Here is your guide",
+          },
+        },
+      },
+    };
+    expect(socialPostInputSchema.safeParse(input).success).toBe(true);
+    expect(socialPostInputSchema.safeParse({ ...input, media: [image] }).success).toBe(false);
+    expect(
+      socialPostInputSchema.safeParse({
+        ...input,
+        providerSettings: {
+          instagram: {
+            scheduledAutoDm: { ...input.providerSettings.instagram.scheduledAutoDm, keyword: "" },
+          },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
   it("only shows engagement after analytics have been fetched", () => {
     expect(schedulerPostEngagement([{ likes: null, comments: null }])).toEqual({
       likes: null,
