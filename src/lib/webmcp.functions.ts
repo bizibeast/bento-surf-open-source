@@ -792,7 +792,7 @@ export const runBentoWebMcpWrite = createServerFn({ method: "POST" })
         operation: z.enum(BENTO_WEBMCP_WRITE_OPERATIONS),
         input: inputSchema,
         confirmed: z.literal(true, {
-          errorMap: () => ({ message: "Review and confirm this change before applying it." }),
+          error: "Review and confirm this change before applying it.",
         }),
       })
       .parse(input),

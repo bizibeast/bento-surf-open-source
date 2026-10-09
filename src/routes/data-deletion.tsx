@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Instagram, ShieldCheck, Trash2 } from "lucide-react";
+import { ShieldCheck, Trash2 } from "lucide-react";
+import { SiInstagram as Instagram } from "react-icons/si";
 import { BentoFullLogo } from "@/components/BentoBrand";
 
 export const Route = createFileRoute("/data-deletion")({

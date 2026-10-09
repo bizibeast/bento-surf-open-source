@@ -664,7 +664,7 @@ describe("social post drafts", () => {
       socialPostInputSchema.parse({
         body: "Draft caption",
         scheduledAt: null,
-        connectionIds: ["11111111-1111-1111-1111-111111111111"],
+        connectionIds: ["11111111-1111-4111-8111-111111111111"],
         asDraft: true,
       }).asDraft,
     ).toBe(true);
@@ -675,7 +675,7 @@ describe("social post drafts", () => {
       socialPostInputSchema.parse({
         body: "Nope",
         scheduledAt: null,
-        connectionIds: ["11111111-1111-1111-1111-111111111111"],
+        connectionIds: ["11111111-1111-4111-8111-111111111111"],
         asDraft: true,
         publishNow: true,
       }),

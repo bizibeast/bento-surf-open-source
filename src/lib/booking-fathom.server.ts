@@ -31,10 +31,9 @@ export function fathomReady() {
 }
 
 export function fathomAuthorizationUrl(state: string) {
-  const { clientId, clientSecret } = credentials();
+  const { clientId } = credentials();
   return Fathom.getAuthorizationUrl({
     clientId,
-    clientSecret,
     redirectUri: fathomRedirectUri(),
     scope: "public_api",
     state,

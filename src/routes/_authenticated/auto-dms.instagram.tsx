@@ -10,7 +10,6 @@ import {
   CheckCircle2,
   ChevronDown,
   History,
-  Instagram,
   ListChecks,
   LoaderCircle,
   Mail,
@@ -440,7 +439,7 @@ function InstagramAutoDmPage() {
               <StatCard icon={Bot} label="Active automations" value={activeCount} />
               <StatCard icon={Mail} label="DMs sent recently" value={sentCount} />
               <StatCard
-                icon={Instagram}
+                icon={SiInstagram}
                 label="Connected accounts"
                 value={readyConnections.length}
               />
