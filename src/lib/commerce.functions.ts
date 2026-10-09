@@ -1386,15 +1386,7 @@ export const getPublicCommerceStore = createServerFn({ method: "GET" })
       ]);
     if (profileError) throw new Error(profileError.message);
     if (productsError) throw new Error(productsError.message);
-    if (!profile || !planHasEntitlement(plan, "storeCards")) return null;
-    if (
-      !profile.store_page_enabled &&
-      !(products || []).some(
-        (product: CommerceProductRow) =>
-          planHasEntitlement(plan, commerceEntitlement(product.kind)) &&
-          !commerceProductKindPricingError(product.kind, product.pricing_type),
-      )
-    )
+    if (!profile || !profile.store_page_enabled || !planHasEntitlement(plan, "storeCards"))
       return null;
     const chrome = await loadPublicCreatorChrome(resolved.userId, data.username, "store");
     if (!chrome) return null;

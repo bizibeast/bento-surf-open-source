@@ -256,7 +256,7 @@ export function PublicSystemPageCanvas({
             }}
           >
             {b.systemItem ? (
-              <SystemPageTile item={b.systemItem} publicUsername={username} />
+              <SystemPageTile item={b.systemItem} publicUsername={username} w={l.w} h={l.h} />
             ) : (
               <BlockRenderer
                 block={

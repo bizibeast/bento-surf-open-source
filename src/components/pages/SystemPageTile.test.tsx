@@ -69,12 +69,13 @@ describe("SystemPageTile", () => {
     expect(screen.queryByRole("switch")).toBeNull();
   });
 
-  it("shows store pricing from normalized product data", () => {
-    render(
+  it("uses the commerce tile design and saved size for Store products", () => {
+    const { rerender } = render(
       <SystemPageTile
         item={{
           ...tile("product", {
-            kind: "digital_download",
+            kind: "coaching_call",
+            public_slug: "studio-call",
             pricing_type: "one_time",
             price_amount: 1900,
             currency: "usd",
@@ -82,11 +83,35 @@ describe("SystemPageTile", () => {
           }),
           system: "store",
         }}
+        w={2}
+        h={2}
       />,
     );
-    expect(screen.getByText("Field guide")).toBeVisible();
+    expect(screen.getByTestId("commerce-tile")).toHaveAttribute("data-layout", "square");
     expect(screen.getByText("$19")).toBeVisible();
     expect(screen.queryByRole("link")).toBeNull();
+    rerender(
+      <SystemPageTile
+        publicUsername="creator"
+        item={{
+          ...tile("product", {
+            kind: "coaching_call",
+            public_slug: "studio-call",
+            pricing_type: "one_time",
+            price_amount: 1900,
+            currency: "usd",
+          }),
+          system: "store",
+        }}
+        w={4}
+        h={2}
+      />,
+    );
+    expect(screen.getByTestId("commerce-tile")).toHaveAttribute("data-layout", "wide");
+    expect(screen.getByRole("link", { name: /Studio/ })).toHaveAttribute(
+      "href",
+      "/@creator/products/studio-call",
+    );
   });
 
   it("keeps missing metrics distinct from measured zero", () => {

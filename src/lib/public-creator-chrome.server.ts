@@ -3,8 +3,7 @@ import { getRequestHost } from "@tanstack/react-start/server";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { hostnameFromRequestHost } from "./custom-domain";
 import { publicProfilePath } from "./application-urls";
-import { COMMERCE_KINDS } from "./commerce";
-import { commerceEntitlement, normalizePlan, planHasEntitlement } from "./plans";
+import { normalizePlan, planHasEntitlement } from "./plans";
 import { safeNavigationHref } from "./safe-url";
 import type { PageSystem } from "./pages.functions";
 
@@ -73,10 +72,7 @@ export const loadPublicCreatorChrome = createServerOnlyFn(
         },
       ];
     });
-    if (planHasEntitlement(plan, "storeCards") && !pages.some((page) => page.system === "store")) {
-      const supportedKinds = COMMERCE_KINDS.filter((kind) =>
-        planHasEntitlement(plan, commerceEntitlement(kind.kind)),
-      ).map((kind) => kind.kind);
+    if (available.store && !pages.some((page) => page.system === "store")) {
       const dedicatedPage = await supabaseAdmin
         .from("pages")
         .select("id")
@@ -84,15 +80,7 @@ export const loadPublicCreatorChrome = createServerOnlyFn(
         .eq("system", "store")
         .maybeSingle();
       if (dedicatedPage.error) throw new Error("Unable to load public store");
-      const offers = await supabaseAdmin
-        .from("commerce_products")
-        .select("id")
-        .eq("creator_id", userId)
-        .eq("status", "published")
-        .in("kind", supportedKinds)
-        .limit(1);
-      if (offers.error) throw new Error("Unable to load public store");
-      if (!dedicatedPage.data && (creator.store_page_enabled || offers.data?.length)) {
+      if (!dedicatedPage.data) {
         const href = customDomain ? "/store" : publicProfilePath(creator.username, "store");
         pages.push({
           id: "store-catalog",

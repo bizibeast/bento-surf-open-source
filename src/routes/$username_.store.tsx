@@ -121,7 +121,7 @@ function PublicStorePage() {
         </h1>
 
         {products.length ? (
-          <div className="mt-8 grid gap-4 sm:grid-cols-2">
+          <div className="mt-8 grid grid-cols-2 gap-3 sm:gap-4">
             {products.map((product: CommerceProductRecord) => (
               <PublicStoreProductCard
                 key={product.id}

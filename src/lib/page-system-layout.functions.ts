@@ -154,10 +154,16 @@ export async function loadSystemPageItems(
               !commerceProductKindPricingError(product.kind, product.pricing_type),
           )
           .map((product: any) =>
-            tile(`product:${product.id}`, "product", product.title, {
-              ...product,
-              settings: sanitizeCommerceSettingsForPublic(product.kind, product.settings),
-            }),
+            tile(
+              `product:${product.id}`,
+              "product",
+              product.title,
+              {
+                ...product,
+                settings: sanitizeCommerceSettingsForPublic(product.kind, product.settings),
+              },
+              2,
+            ),
           ),
       );
     }
