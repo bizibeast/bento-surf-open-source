@@ -7,6 +7,7 @@ import { xAccountCapabilities } from "@/lib/x-account";
 import { uploadFileResult } from "@/lib/upload";
 import {
   cancelSocialPost,
+  getRedditCommunities,
   getSocialScheduler,
   savePostingSchedule,
   saveSocialPost,
@@ -44,7 +45,6 @@ import {
   captureVideoFrame,
   createAvatarRepairHandler,
   createSchedulerWebMcpTools,
-  fitPreviewScale,
   Route,
   SchedulerStatusLine,
   schedulerComposeFingerprint,
@@ -107,12 +107,6 @@ describe("scheduler compose close protection", () => {
     );
   });
 
-  it("fits tall previews without enlarging shorter previews", () => {
-    expect(fitPreviewScale(600, 900)).toBeCloseTo(2 / 3);
-    expect(fitPreviewScale(600, 400)).toBe(1);
-    expect(fitPreviewScale(0, 900)).toBe(1);
-  });
-
   it("opens the Create a post dialog from the header button", async () => {
     renderScheduler();
     const create = await screen.findByRole("button", { name: "Create new post" });
@@ -162,7 +156,7 @@ describe("scheduler compose close protection", () => {
     ).toBeVisible();
   });
 
-  it("keeps desktop scrolling on the compose pane and removes preview filler copy", async () => {
+  it("scrolls the composer and preview independently without scaling the post", async () => {
     renderScheduler();
     const create = await screen.findAllByRole("button", { name: /Create post on/i });
     fireEvent.click(create[0]);
@@ -175,8 +169,102 @@ describe("scheduler compose close protection", () => {
       "lg:overflow-y-auto",
     );
     expect(within(compose).getByTestId("scheduler-preview-pane")).toHaveClass("overflow-hidden");
+    const previewScroll = within(compose).getByTestId("scheduler-preview-scroll");
+    expect(previewScroll).toHaveClass("overflow-y-auto");
+    expect(previewScroll.querySelector('[style*="scale("]')).toBeNull();
     expect(within(compose).queryByText(/^Live preview$/i)).not.toBeInTheDocument();
     expect(within(compose).queryByText(/Platform chrome and truncation/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps long posts scrollable when switching between network previews", async () => {
+    const networks = [
+      ["twitter", "X"],
+      ["threads", "Threads"],
+      ["linkedin", "LinkedIn"],
+      ["facebook", "Facebook"],
+      ["instagram", "Instagram"],
+      ["reddit", "Reddit"],
+    ] as const;
+    const connections = networks.map(([provider]) => ({
+      ...missingAvatar,
+      id: provider,
+      provider,
+      displayName: `${provider} account`,
+      avatarUrl: "https://bento.surf/avatar.png",
+    }));
+    vi.mocked(getRedditCommunities).mockResolvedValue([] as never);
+    renderScheduler({ ...schedulerData, connections });
+    const create = await screen.findByRole("button", { name: "Create new post" });
+    await waitFor(() => expect(create).toBeEnabled());
+    fireEvent.click(create);
+    const compose = await screen.findByRole("dialog", { name: "Create a post" });
+    for (const connection of connections) {
+      fireEvent.click(within(compose).getByRole("button", { name: connection.displayName }));
+    }
+
+    const longPost = Array.from({ length: 30 }, (_, index) => `Paragraph ${index + 1}`).join(
+      "\n\n",
+    );
+    fireEvent.change(within(compose).getByPlaceholderText("Write a caption for these networks"), {
+      target: { value: longPost },
+    });
+    const previewScroll = within(compose).getByTestId("scheduler-preview-scroll");
+    for (const [, label] of networks) {
+      fireEvent.click(within(compose).getByRole("button", { name: label }));
+      expect(previewScroll).toHaveClass("overflow-y-auto");
+      expect(previewScroll).toHaveTextContent("Paragraph 30");
+      expect(previewScroll.querySelector('[style*="scale("]')).toBeNull();
+    }
+  });
+
+  it("adds pasted images and videos while leaving text paste alone", async () => {
+    vi.mocked(uploadFileResult)
+      .mockReset()
+      .mockImplementation(async (file) => ({
+        key: `uploads/${file.name}`,
+        publicUrl: `https://bento.surf/uploads/${file.name}`,
+        size: file.size,
+        name: file.name,
+        mimeType: file.type,
+      }));
+    renderScheduler({
+      ...schedulerData,
+      connections: [
+        {
+          ...missingAvatar,
+          id: "linkedin",
+          provider: "linkedin",
+          avatarUrl: "https://bento.surf/avatar.png",
+        },
+      ],
+    });
+    const create = await screen.findByRole("button", { name: "Create new post" });
+    await waitFor(() => expect(create).toBeEnabled());
+    fireEvent.click(create);
+    const compose = await screen.findByRole("dialog", { name: "Create a post" });
+    fireEvent.click(within(compose).getByRole("button", { name: "Bizibeast" }));
+    const editor = within(compose).getByRole("textbox");
+    const paste = (
+      items: Array<{ kind: string; getAsFile: () => File | null }>,
+      files: File[] = [],
+    ) => {
+      const event = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "clipboardData", { value: { items, files } });
+      fireEvent(editor, event);
+      return event;
+    };
+
+    expect(paste([]).defaultPrevented).toBe(false);
+    const image = new File(["image"], "screenshot.jpg", { type: "image/jpeg" });
+    expect(paste([{ kind: "file", getAsFile: () => image }]).defaultPrevented).toBe(true);
+    await within(compose).findByRole("button", { name: "Remove screenshot.jpg" });
+    expect(uploadFileResult).toHaveBeenCalledWith(image, "image", { optimize: false });
+
+    fireEvent.click(within(compose).getByRole("button", { name: "Remove screenshot.jpg" }));
+    const video = new File(["video"], "clip.mp4", { type: "video/mp4" });
+    expect(paste([], [video]).defaultPrevented).toBe(true);
+    await within(compose).findByRole("button", { name: "Remove clip.mp4" });
+    expect(uploadFileResult).toHaveBeenCalledWith(video, "video", { optimize: false });
   });
 
   it("keeps incomplete edits until the creator explicitly discards them", async () => {

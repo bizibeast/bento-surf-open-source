@@ -197,14 +197,16 @@ export function ProviderPostPreview({
         <div className="absolute left-4 top-4 rounded-full bg-black/35 px-2.5 py-1 text-[10px]">
           {privacy}
         </div>
-        <div className="absolute bottom-5 left-4 right-14">
-          <p className="text-sm font-semibold">@{handle}</p>
+        <div className="absolute bottom-5 left-4 right-14 flex max-h-[45%] flex-col">
+          <p className="shrink-0 text-sm font-semibold">@{handle}</p>
           <p
-            className={`mt-2 whitespace-pre-wrap break-words text-xs leading-5 ${body.trim() ? "" : "text-white/65"}`}
+            aria-label="Post caption"
+            tabIndex={0}
+            className={`mt-2 min-h-0 overflow-y-auto overscroll-contain whitespace-pre-wrap break-words text-xs leading-5 ${body.trim() ? "" : "text-white/65"}`}
           >
             {copy}
           </p>
-          <p className="mt-2 text-xs">♫ original sound - {handle}</p>
+          <p className="mt-2 shrink-0 text-xs">♫ original sound - {handle}</p>
         </div>
         <div className="absolute bottom-6 right-3 flex flex-col items-center gap-5 text-[10px]">
           <PreviewAvatar

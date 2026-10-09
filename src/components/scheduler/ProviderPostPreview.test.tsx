@@ -52,6 +52,19 @@ describe("ProviderPostPreview", () => {
     expect(markup("tiktok")).toContain("object-contain");
   });
 
+  it("lets long TikTok captions scroll within the video preview", () => {
+    const { getByLabelText } = render(
+      <ProviderPostPreview
+        {...props}
+        connection={connection("tiktok")}
+        body={"Long caption. ".repeat(200)}
+      />,
+    );
+
+    expect(getByLabelText("Post caption")).toHaveClass("overflow-y-auto");
+    expect(getByLabelText("Post caption")).toHaveAttribute("tabindex", "0");
+  });
+
   it("falls back to the provider mark when a remote avatar is blocked or expired", () => {
     const instagram = {
       ...connection("instagram"),

@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ClipboardEvent as ReactClipboardEvent,
   type ComponentType,
   type DragEvent,
   type ReactNode,
@@ -445,11 +446,6 @@ export function schedulerComposeFingerprint(input: SchedulerComposeFingerprintIn
     })),
     providerSettings: input.providerSettings,
   });
-}
-
-export function fitPreviewScale(availableHeight: number, renderedHeight: number) {
-  if (availableHeight <= 0 || renderedHeight <= 0) return 1;
-  return Math.min(1, availableHeight / renderedHeight);
 }
 
 export function createAvatarRepairHandler(input: {
@@ -1254,6 +1250,27 @@ function SchedulerPage() {
     mediaInputRef.current?.click();
   }
 
+  function handleComposePaste(event: ReactClipboardEvent<HTMLDivElement>) {
+    const itemFiles = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === "file")
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null);
+    const files = (itemFiles.length ? itemFiles : Array.from(event.clipboardData.files)).filter(
+      (file) => {
+        const kind = schedulerMediaKindForFile(file);
+        return kind === "image" || kind === "video";
+      },
+    );
+    if (!files.length) return;
+
+    event.preventDefault();
+    if (uploading) {
+      toast.error("Wait for the current upload to finish before pasting more media.");
+      return;
+    }
+    void uploadFiles(files);
+  }
+
   async function prepareCoverImage(file: File | undefined, target: "youtube" | "instagram") {
     if (!file) return;
     if (schedulerMediaKindForFile(file) !== "image") {
@@ -1505,7 +1522,8 @@ function SchedulerPage() {
               >
                 <DialogContent
                   overlayClassName="bg-[#17213a]/35 backdrop-blur-[6px]"
-                  className="h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-6xl gap-0 overflow-hidden rounded-[24px] border-white/80 bg-[#f7f8fc] p-0 shadow-[0_42px_130px_-45px_rgba(23,33,58,.7)] data-[state=closed]:slide-out-to-bottom-2 data-[state=open]:slide-in-from-bottom-2 sm:h-[min(92dvh,860px)] sm:rounded-[32px] [&>button]:z-40"
+                  onPaste={handleComposePaste}
+                  className="h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-4xl gap-0 overflow-hidden rounded-[24px] border-white/80 bg-[#f7f8fc] p-0 shadow-[0_42px_130px_-45px_rgba(23,33,58,.7)] data-[state=closed]:slide-out-to-bottom-2 data-[state=open]:slide-in-from-bottom-2 sm:h-[min(88dvh,720px)] sm:w-[88vw] sm:rounded-[32px] [&>button]:z-40"
                 >
                   <div className="flex h-full min-h-0 flex-col overflow-x-hidden overflow-y-auto sm:overflow-hidden">
                     <div className="shrink-0 border-b border-border/70 px-5 py-3 pr-14 sm:px-7">
@@ -2200,6 +2218,9 @@ function SchedulerPage() {
                             />
                             <span className="mt-1.5 block text-xs leading-relaxed text-muted-foreground">
                               {mediaCompatibility.summary}
+                              {!mediaCompatibility.disabled && (
+                                <> Paste supported images or videos anywhere in this box.</>
+                              )}
                             </span>
                             {uploadError && (
                               <p className="mt-2 rounded-xl bg-rose-500/10 px-3 py-2 text-xs leading-5 text-rose-700 dark:text-rose-300">
@@ -2471,7 +2492,7 @@ function PlatformPostPreview({
           </p>
         </div>
       ) : (
-        <FittedPreview>
+        <ScrollablePreview>
           <div className={`${micro.soft} mt-2 p-3 sm:p-5`}>
             {activeConnection ? (
               <ProviderPostPreview
@@ -2497,44 +2518,19 @@ function PlatformPostPreview({
               </div>
             )}
           </div>
-        </FittedPreview>
+        </ScrollablePreview>
       )}
     </section>
   );
 }
 
-function FittedPreview({ children }: { children: ReactNode }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
-  const [measurement, setMeasurement] = useState({ scale: 1, height: 0 });
-
-  useEffect(() => {
-    const container = containerRef.current;
-    const content = contentRef.current;
-    if (!container || !content || typeof ResizeObserver === "undefined") return;
-    const measure = () => {
-      const renderedHeight = content.scrollHeight;
-      const scale = fitPreviewScale(container.clientHeight, renderedHeight);
-      setMeasurement({ scale, height: renderedHeight * scale });
-    };
-    const observer = new ResizeObserver(measure);
-    observer.observe(container);
-    observer.observe(content);
-    measure();
-    return () => observer.disconnect();
-  }, []);
-
+function ScrollablePreview({ children }: { children: ReactNode }) {
   return (
-    <div ref={containerRef} className="min-h-0 flex-1 overflow-hidden">
-      <div style={measurement.height ? { height: measurement.height } : undefined}>
-        <div
-          ref={contentRef}
-          className="w-full origin-top"
-          style={{ transform: `scale(${measurement.scale})` }}
-        >
-          {children}
-        </div>
-      </div>
+    <div
+      data-testid="scheduler-preview-scroll"
+      className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+    >
+      {children}
     </div>
   );
 }
