@@ -1,10 +1,9 @@
 {
   "repository": "bento-surf",
-  "commit": "997335d88602ba34b4ba0172cbb13c3185dffbf6",
+  "commit": "f32913d485ead7e96ccaeced6597ab0c7d8f1e08",
   "includesReviewedWorkingTree": false,
-  "syncedAt": "2026-10-09T17:33:28.206435Z",
+  "syncedAt": "2026-10-09T19:36:59Z",
   "reviewedSourceFiles": [
-    "src/routes/_authenticated/-post-scheduler.test.tsx",
     "src/routes/_authenticated/post-scheduler.tsx"
   ]
 }

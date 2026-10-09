@@ -1921,7 +1921,7 @@ function SchedulerPage() {
                     <div className="shrink-0 px-4 pt-3 sm:px-5">
                       <div className="flex min-w-0 items-center gap-3 pb-3">
                         <div
-                          className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto whitespace-nowrap"
+                          className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto whitespace-nowrap p-1"
                           aria-label="Publishing platforms"
                         >
                           {(data?.connections || []).map((connection: SchedulerConnection) => (
@@ -1953,11 +1953,11 @@ function SchedulerPage() {
                             aria-checked={sync}
                             aria-label="Sync"
                             onClick={() => toggleSync(!sync)}
-                            className="ml-auto inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-border/70 bg-white px-2.5 text-xs font-semibold text-[#17213a] transition-colors hover:bg-[#f2f5fb]"
+                            className="ml-auto inline-flex h-9 shrink-0 items-center gap-2 rounded-[6px] border border-border/70 bg-white px-2.5 text-xs font-semibold text-[#17213a] transition-colors hover:bg-[#f2f5fb]"
                           >
                             Sync
                             <span
-                              className={`relative h-5 w-8 shrink-0 rounded-md transition-colors ${sync ? "bg-[#3478f6]" : "bg-[#b8c1d3]"}`}
+                              className={`relative h-5 w-8 shrink-0 rounded-[4px] transition-colors ${sync ? "bg-[#3478f6]" : "bg-[#b8c1d3]"}`}
                               aria-hidden="true"
                             >
                               <span
