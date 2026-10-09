@@ -1,7 +1,14 @@
 import { z } from "zod";
 import { zonedDateTimeInputToIso } from "./local-datetime";
 import { isValidTimeZone } from "./timezones";
-import { X_LONG_POST_LIMIT, X_STANDARD_POST_LIMIT, type XAccountCapabilities } from "./x-account";
+import {
+  X_LONG_POST_LIMIT,
+  X_STANDARD_POST_LIMIT,
+  xArticleDocument,
+  xArticleDocumentError,
+  xArticlePlainText,
+  type XAccountCapabilities,
+} from "./x-account";
 
 export const SOCIAL_PROVIDERS = [
   "instagram",
@@ -670,6 +677,13 @@ export function providerSettingsMedia(settings: SocialProviderSettings): Schedul
     const cover = parseSchedulerMediaSetting(record.cover);
     if (thumbnail) media.push(thumbnail);
     if (cover) media.push(cover);
+    if (record.kind === "article") {
+      const article = xArticleDocument(record.article);
+      if (article) {
+        if (article.cover) media.push(article.cover);
+        for (const block of article.blocks) if (block.kind === "image") media.push(block.media);
+      }
+    }
   }
   return media;
 }
@@ -921,6 +935,22 @@ export const socialPostInputSchema = z
         path: ["providerSettings", "twitter", "kind"],
       });
     }
+    if (twitter.kind === "article" && twitter.article != null) {
+      const articleError = xArticleDocumentError(twitter.article);
+      if (articleError)
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: articleError,
+          path: ["providerSettings", "twitter", "article"],
+        });
+      const article = xArticleDocument(twitter.article);
+      if (article && xArticlePlainText(article) !== value.body)
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "X Article text is out of sync.",
+          path: ["body"],
+        });
+    }
     if (instagram.trialReel != null && typeof instagram.trialReel !== "boolean") {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -1007,8 +1037,20 @@ export function validatePostForProviders(
         continue;
       }
       if (media.length) {
-        errors.twitter = "Bento currently supports text-only X Articles.";
+        errors.twitter = "Add Article images in the Article editor, not as post attachments.";
         continue;
+      }
+      if (settings.article != null) {
+        const articleError = xArticleDocumentError(settings.article);
+        if (articleError) {
+          errors.twitter = articleError;
+          continue;
+        }
+        const article = xArticleDocument(settings.article)!;
+        if (xArticlePlainText(article) !== body) {
+          errors.twitter = "X Article text is out of sync.";
+          continue;
+        }
       }
     }
     const textForLimit = provider === "youtube" ? youtubeDescriptionFrom(body, settings) : body;

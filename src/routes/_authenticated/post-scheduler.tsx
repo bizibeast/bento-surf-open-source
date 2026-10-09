@@ -44,6 +44,7 @@ import { toast } from "sonner";
 import { UpgradeDialog } from "@/components/UpgradeDialog";
 import { DecodedImage } from "@/components/DecodedImage";
 import { PreviewAvatar, ProviderPostPreview } from "@/components/scheduler/ProviderPostPreview";
+import { XArticleEditor, XArticlePreview } from "@/components/scheduler/XArticleEditor";
 import { PostingTimesDialog } from "@/components/scheduler/PostingTimesDialog";
 import { AppHeader } from "@/components/AppHeader";
 import { MicroAppPanel, MicroAppTabMotion } from "@/components/MicroAppPanel";
@@ -66,7 +67,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { micro } from "@/lib/micro-app-ui";
-import { xArticleContentState } from "@/lib/x-account";
+import { xArticleDocument, xArticlePlainText, type XArticleDocument } from "@/lib/x-account";
 import { uploadFileResult } from "@/lib/upload";
 import { prepareSchedulerImageUpload } from "@/lib/image-upload";
 import { uploadLimitMb } from "@/lib/plans";
@@ -565,6 +566,10 @@ function SchedulerPage() {
   const [redditCommunity, setRedditCommunity] = useState("");
   const [redditKind, setRedditKind] = useState<"self" | "link">("self");
   const [xPostKind, setXPostKind] = useState<"post" | "article">("post");
+  const [xArticle, setXArticle] = useState<XArticleDocument>({
+    cover: null,
+    blocks: [{ kind: "text", type: "unstyled", text: "" }],
+  });
   const [redditUrl, setRedditUrl] = useState("");
   const [previewConnectionId, setPreviewConnectionId] = useState("");
   const [composeOpen, setComposeOpen] = useState(false);
@@ -634,6 +639,7 @@ function SchedulerPage() {
     setRedditCommunity("");
     setRedditKind("self");
     setXPostKind("post");
+    setXArticle({ cover: null, blocks: [{ kind: "text", type: "unstyled", text: "" }] });
     setRedditUrl("");
     setUploadError(null);
     setPreviewConnectionId("");
@@ -717,6 +723,15 @@ function SchedulerPage() {
     if (typeof reddit.community === "string") setRedditCommunity(reddit.community);
     if (reddit.kind === "link" || reddit.kind === "self") setRedditKind(reddit.kind);
     if (settings.twitter?.kind === "article") setXPostKind("article");
+    if (settings.twitter?.kind === "article")
+      setXArticle(
+        xArticleDocument(settings.twitter.article) || {
+          cover: null,
+          blocks: post.body
+            .split(/\r?\n/)
+            .map((text) => ({ kind: "text", type: "unstyled", text })),
+        },
+      );
     if (typeof reddit.url === "string") setRedditUrl(reddit.url);
     setComposeOpen(true);
   };
@@ -732,7 +747,7 @@ function SchedulerPage() {
   const selectedXConnection = selectedConnections.find(
     (connection) => connection.provider === "twitter",
   );
-  const xArticle = Boolean(selectedXConnection && xPostKind === "article");
+  const isXArticle = Boolean(selectedXConnection && xPostKind === "article");
   const usesCaption = schedulerUsesCaption(connectedProviders);
   const captionLimit = schedulerCaptionLimit(
     connectedProviders,
@@ -897,6 +912,7 @@ function SchedulerPage() {
       twitter: {
         ...savedProviderSettings.twitter,
         kind: xPostKind,
+        article: xPostKind === "article" ? xArticle : undefined,
       },
     }),
     [
@@ -909,6 +925,7 @@ function SchedulerPage() {
       redditKind,
       redditUrl,
       xPostKind,
+      xArticle,
       savedProviderSettings,
       tiktokAiGenerated,
       tiktokAllowComment,
@@ -966,7 +983,7 @@ function SchedulerPage() {
   );
   const mediaCompatibility = schedulerMediaCompatibility(connectedProviders);
   const needsRedditFields = connectedProviders.includes("reddit");
-  const needsPostTitle = needsYouTubeTitle || needsRedditFields || xArticle;
+  const needsPostTitle = needsYouTubeTitle || needsRedditFields || isXArticle;
   const previewConnection =
     selectedConnections.find((connection) => connection.id === previewConnectionId) ||
     selectedConnections[0] ||
@@ -1239,6 +1256,34 @@ function SchedulerPage() {
     } finally {
       setUploading(false);
     }
+  }
+
+  async function uploadArticleImage(file: File): Promise<SchedulerMedia | null> {
+    if (
+      !["image/jpeg", "image/png", "image/webp"].includes(file.type) ||
+      file.size <= 0 ||
+      file.size > 5 * 1024 * 1024
+    ) {
+      toast.error("Choose a JPEG, PNG, or WebP image up to 5 MB.");
+      return null;
+    }
+    setUploading(true);
+    try {
+      const prepared = await prepareSchedulerImageUpload(file);
+      const uploaded = await uploadFileResult(prepared, "image", { optimize: false });
+      if (!uploaded.publicUrl) throw new Error("Image upload failed.");
+      return { ...uploaded, url: uploaded.publicUrl };
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Image upload failed.");
+      return null;
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function updateArticle(value: XArticleDocument) {
+    setXArticle(value);
+    setBody(xArticlePlainText(value));
   }
 
   function openMediaPicker() {
@@ -1559,7 +1604,18 @@ function SchedulerPage() {
                                 <button
                                   type="button"
                                   aria-pressed={xPostKind === "article"}
-                                  onClick={() => setXPostKind("article")}
+                                  onClick={() => {
+                                    setXPostKind("article");
+                                    if (!xArticlePlainText(xArticle).trim() && body.trim())
+                                      setXArticle({
+                                        cover: null,
+                                        blocks: body.split(/\r?\n/).map((text) => ({
+                                          kind: "text",
+                                          type: "unstyled",
+                                          text,
+                                        })),
+                                      });
+                                  }}
                                   disabled={
                                     selectedConnections.length !== 1 ||
                                     !selectedXConnection.xCapabilities?.canPublishArticles
@@ -1574,7 +1630,7 @@ function SchedulerPage() {
                                   ? "This X account can publish posts up to 25,000 characters."
                                   : "X Premium status is unavailable or this account has a 280-character limit."}
                                 {selectedXConnection.xCapabilities?.canPublishArticles
-                                  ? " Text-only Articles are available when X is the only destination."
+                                  ? " Articles can include a cover, formatted text, inline images, and embedded X posts when X is the only destination."
                                   : " Articles require X Premium, Premium+, or an eligible organization account."}
                               </p>
                             </div>
@@ -1584,7 +1640,7 @@ function SchedulerPage() {
                             <label className="mt-6 block">
                               <span className="flex items-end justify-between gap-3">
                                 <span className="text-xs font-semibold text-muted-foreground">
-                                  {xArticle
+                                  {isXArticle
                                     ? "Article title"
                                     : needsYouTubeTitle && needsRedditFields
                                       ? "Post title"
@@ -1594,7 +1650,7 @@ function SchedulerPage() {
                                 </span>
                                 <span className="text-[11px] tabular-nums text-muted-foreground">
                                   {title.length}/
-                                  {xArticle || (needsRedditFields && !needsYouTubeTitle)
+                                  {isXArticle || (needsRedditFields && !needsYouTubeTitle)
                                     ? 300
                                     : 100}
                                 </span>
@@ -1603,10 +1659,12 @@ function SchedulerPage() {
                                 value={title}
                                 onChange={(event) => setTitle(event.target.value)}
                                 maxLength={
-                                  xArticle || (needsRedditFields && !needsYouTubeTitle) ? 300 : 100
+                                  isXArticle || (needsRedditFields && !needsYouTubeTitle)
+                                    ? 300
+                                    : 100
                                 }
                                 placeholder={
-                                  xArticle
+                                  isXArticle
                                     ? "Give your Article a title"
                                     : youtubeFormat === "short"
                                       ? "A short title for the Shorts feed"
@@ -1624,42 +1682,51 @@ function SchedulerPage() {
                             </label>
                           )}
 
-                          <label className="mt-6 block">
-                            <span className="flex items-end justify-between gap-3">
-                              <span
-                                className={
-                                  connectedProviders.length
-                                    ? "text-xs font-semibold text-muted-foreground"
-                                    : "sr-only"
-                                }
-                              >
-                                {xArticle
-                                  ? "Article body"
-                                  : usesCaption
-                                    ? schedulerCaptionLabel(connectedProviders)
-                                    : needsYouTubeTitle
-                                      ? "Description"
-                                      : "Post text"}
-                              </span>
-                              {connectedProviders.length > 0 && (
-                                <span className="text-[11px] tabular-nums text-muted-foreground">
-                                  {body.length.toLocaleString()}/
-                                  {(usesCaption ? captionLimit : 5_000).toLocaleString()}
-                                </span>
-                              )}
-                            </span>
-                            <textarea
-                              value={body}
-                              onChange={(event) => setBody(event.target.value)}
-                              rows={7}
-                              placeholder={
-                                xArticle
-                                  ? "Write your X Article"
-                                  : schedulerCaptionPlaceholder(connectedProviders)
-                              }
-                              className="mt-2 w-full resize-none bg-transparent font-ui-sans text-[26px] leading-relaxed outline-none placeholder:text-muted-foreground/45 sm:text-[32px]"
+                          {isXArticle ? (
+                            <XArticleEditor
+                              article={xArticle}
+                              onChange={updateArticle}
+                              uploadImage={uploadArticleImage}
+                              uploading={uploading}
                             />
-                          </label>
+                          ) : (
+                            <label className="mt-6 block">
+                              <span className="flex items-end justify-between gap-3">
+                                <span
+                                  className={
+                                    connectedProviders.length
+                                      ? "text-xs font-semibold text-muted-foreground"
+                                      : "sr-only"
+                                  }
+                                >
+                                  {isXArticle
+                                    ? "Article body"
+                                    : usesCaption
+                                      ? schedulerCaptionLabel(connectedProviders)
+                                      : needsYouTubeTitle
+                                        ? "Description"
+                                        : "Post text"}
+                                </span>
+                                {connectedProviders.length > 0 && (
+                                  <span className="text-[11px] tabular-nums text-muted-foreground">
+                                    {body.length.toLocaleString()}/
+                                    {(usesCaption ? captionLimit : 5_000).toLocaleString()}
+                                  </span>
+                                )}
+                              </span>
+                              <textarea
+                                value={body}
+                                onChange={(event) => setBody(event.target.value)}
+                                rows={7}
+                                placeholder={
+                                  isXArticle
+                                    ? "Write your X Article"
+                                    : schedulerCaptionPlaceholder(connectedProviders)
+                                }
+                                className="mt-2 w-full resize-none bg-transparent font-ui-sans text-[26px] leading-relaxed outline-none placeholder:text-muted-foreground/45 sm:text-[32px]"
+                              />
+                            </label>
+                          )}
 
                           {needsYouTubeTitle && usesCaption && (
                             <label className="mt-5 block">
@@ -2150,6 +2217,7 @@ function SchedulerPage() {
                           }
                           title={title}
                           xPostKind={xPostKind}
+                          xArticle={xArticle}
                           media={media}
                           youtubeThumbnail={youtubeThumbnailMedia}
                           youtubeFormat={youtubeFormat}
@@ -2171,7 +2239,7 @@ function SchedulerPage() {
                             <button
                               type="button"
                               onClick={openMediaPicker}
-                              disabled={uploading || xArticle}
+                              disabled={uploading || isXArticle}
                               className={`${micro.btnSoft} w-full sm:w-auto ${
                                 mediaCompatibility.disabled ||
                                 media.length >= mediaCompatibility.maxMedia
@@ -2356,6 +2424,7 @@ function PlatformPostPreview({
   body,
   title,
   xPostKind,
+  xArticle,
   media,
   youtubeThumbnail,
   youtubeFormat,
@@ -2373,6 +2442,7 @@ function PlatformPostPreview({
   body: string;
   title: string;
   xPostKind: "post" | "article";
+  xArticle: XArticleDocument;
   media: SchedulerMedia[];
   youtubeThumbnail: SchedulerMedia | null;
   youtubeFormat: YouTubePostFormat | null;
@@ -2422,49 +2492,12 @@ function PlatformPostPreview({
           data-testid="x-article-preview-scroll"
           className={`${micro.soft} mt-2 max-h-[24rem] overflow-y-auto p-3 sm:p-5 lg:min-h-0 lg:max-h-none lg:flex-1`}
         >
-          <div
-            aria-label="X Article reader preview"
-            className="mx-auto max-w-[600px] overflow-hidden rounded-2xl border border-[#eff3f4] bg-white text-[#0f1419] shadow-sm"
-          >
-            <div className="flex items-center gap-5 border-b border-[#eff3f4] px-5 py-3.5">
-              <ChevronLeft className="size-5 shrink-0" aria-hidden="true" />
-              <span className="text-lg font-bold">Article</span>
-              <SiXLogo className="ml-auto size-5 shrink-0" aria-hidden="true" />
-            </div>
-            <article className="px-5 py-7 sm:px-8">
-              <h3 className="break-words text-[28px] font-extrabold leading-tight sm:text-[32px]">
-                {title.trim() || "Article title"}
-              </h3>
-              <div className="mt-5 flex items-center gap-3">
-                <PreviewAvatar
-                  connection={activeConnection}
-                  onError={() => onAvatarError?.(activeConnection.id)}
-                />
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-bold">{activeConnection.displayName}</p>
-                  <p className="truncate text-sm text-[#536471]">
-                    @{activeConnection.handle.replace(/^@/, "")}
-                  </p>
-                </div>
-              </div>
-              <div className="mt-7 space-y-3">
-                {body.trim() ? (
-                  xArticleContentState(body.trim()).blocks.map((block, index) => (
-                    <p
-                      key={index}
-                      className="min-h-[1.5rem] whitespace-pre-wrap break-words text-[15px] leading-6"
-                    >
-                      {block.text || "\u00a0"}
-                    </p>
-                  ))
-                ) : (
-                  <p className="text-[15px] leading-6 text-[#536471]">
-                    Your Article text will appear here.
-                  </p>
-                )}
-              </div>
-            </article>
-          </div>
+          <XArticlePreview
+            connection={activeConnection}
+            title={title}
+            article={xArticle}
+            onAvatarError={() => onAvatarError?.(activeConnection.id)}
+          />
           <p className="mx-auto mt-3 max-w-[600px] text-xs text-muted-foreground">
             X-style reader preview. X may render the published Article differently across devices
             and feeds.

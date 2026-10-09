@@ -676,7 +676,7 @@ describe("X Premium publishing limits", () => {
     ).toContain("25,000");
   });
 
-  it("requires an eligible X account, title, and text-only destination for Articles", () => {
+  it("requires an eligible X account, title, and X-only destination for Articles", () => {
     const settings = { twitter: { kind: "article" } };
     expect(validatePostForProviders("Body", [], ["twitter"], "Title", settings, premium)).toEqual(
       {},
@@ -689,11 +689,39 @@ describe("X Premium publishing limits", () => {
     ).toContain("title");
     expect(
       validatePostForProviders("Body", [image], ["twitter"], "Title", settings, premium).twitter,
-    ).toContain("text-only");
+    ).toContain("Article editor");
     expect(
       validatePostForProviders("Body", [], ["twitter", "linkedin"], "Title", settings, premium)
         .twitter,
     ).toContain("X only");
+  });
+
+  it("validates embedded X posts and tracks Article images as owned media", () => {
+    const article = {
+      cover: image,
+      blocks: [
+        { kind: "text", type: "unstyled", text: "Body" },
+        { kind: "image", media: image },
+        { kind: "post", url: "https://x.com/creator/status/123" },
+      ],
+    };
+    const settings = { twitter: { kind: "article", article } };
+    expect(validatePostForProviders("Body", [], ["twitter"], "Title", settings, premium)).toEqual(
+      {},
+    );
+    expect(providerSettingsMedia(settings)).toEqual([image, image]);
+    const invalid = {
+      twitter: {
+        kind: "article",
+        article: {
+          ...article,
+          blocks: [{ kind: "post", url: "https://other.example/status/123" }],
+        },
+      },
+    };
+    expect(
+      validatePostForProviders("Body", [], ["twitter"], "Title", invalid, premium).twitter,
+    ).toContain("X post URL");
   });
 });
 

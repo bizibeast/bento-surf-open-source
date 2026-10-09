@@ -32,7 +32,13 @@ import {
 } from "./social-provider-media";
 import { socialProviderUsesMock } from "./social-provider-mode";
 import { enqueueEmail } from "./email.server";
-import { X_LONG_POST_LIMIT, X_STANDARD_POST_LIMIT, xArticleContentState } from "./x-account";
+import {
+  X_LONG_POST_LIMIT,
+  X_STANDARD_POST_LIMIT,
+  xArticleContentState,
+  xArticleDocument,
+  xArticleDocumentError,
+} from "./x-account";
 import { fetchXAccountCapabilities } from "./x-account.server";
 
 export type SocialPublishMessage = {
@@ -877,9 +883,29 @@ async function uploadXMediaChunked(
   return mediaId;
 }
 
-async function publishXArticle(token: string, title: string, body: string, target: any) {
+async function publishXArticle(
+  token: string,
+  title: string,
+  body: string,
+  settings: Record<string, unknown>,
+  target: any,
+) {
   let articleId = String(target.remote_post_id || "").replace(/^article-draft:/, "");
   if (!/^\d{1,19}$/.test(articleId)) {
+    const article = settings.article == null ? null : xArticleDocument(settings.article);
+    if (settings.article != null && !article)
+      throw new ProviderError("The X Article content is invalid.", "article_invalid", false);
+    const uploadedMedia: Record<string, string> = {};
+    const images = article
+      ? [
+          article.cover,
+          ...article.blocks.filter((block) => block.kind === "image").map((block) => block.media),
+        ].filter((item): item is NonNullable<typeof item> => Boolean(item))
+      : [];
+    for (const item of images) {
+      if (!uploadedMedia[item.key])
+        uploadedMedia[item.key] = await uploadXMediaSimple(token, item, "tweet_image");
+    }
     const draft = await providerJson(
       "https://api.x.com/2/articles/draft",
       {
@@ -887,7 +913,15 @@ async function publishXArticle(token: string, title: string, body: string, targe
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           title,
-          content_state: xArticleContentState(body),
+          content_state: xArticleContentState(body, article, uploadedMedia),
+          ...(article?.cover
+            ? {
+                cover_media: {
+                  media_category: "tweet_image",
+                  media_id: uploadedMedia[article.cover.key],
+                },
+              }
+            : {}),
         }),
       },
       "twitter",
@@ -956,14 +990,19 @@ async function publishX(
     }
   }
   if (article) {
-    if (!title.trim() || !body.trim() || media.length) {
+    if (
+      !title.trim() ||
+      !body.trim() ||
+      media.length ||
+      (settings.article != null && xArticleDocumentError(settings.article))
+    ) {
       throw new ProviderError(
-        "X Articles need a title and text body; Bento does not attach media to Articles yet.",
+        "X Articles need a title, text body, and valid Article content.",
         "article_invalid",
         false,
       );
     }
-    return publishXArticle(token, title, body, target);
+    return publishXArticle(token, title, body, settings, target);
   }
   const images = media.filter((item) => item.mimeType.startsWith("image/"));
   const videos = media.filter((item) => item.mimeType.startsWith("video/"));
