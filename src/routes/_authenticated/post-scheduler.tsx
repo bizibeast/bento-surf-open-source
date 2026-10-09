@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useEffect,
@@ -643,6 +643,11 @@ function SchedulerPage() {
     setUploadError(null);
     resetComposeForm();
     setComposeOpen(false);
+  };
+
+  const openNewPost = () => {
+    resetComposeForm();
+    setComposeOpen(true);
   };
 
   const openComposeForDate = (date: Date, slotTime?: string) => {
@@ -1336,15 +1341,16 @@ function SchedulerPage() {
       <AppHeader
         title="Social scheduler"
         actions={
-          <Link
-            to="/settings"
-            search={{ section: "integrations", integration: "social" }}
-            aria-label="Connect your socials"
-            className={micro.btnPrimaryCompact}
+          <button
+            type="button"
+            onClick={openNewPost}
+            disabled={isLoading || isError || !!data?.locked}
+            aria-label="Create new post"
+            className={`${micro.btnPrimaryCompact} disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0`}
           >
             <Plus className="size-4" />
-            <span className="hidden sm:inline">Connect your socials</span>
-          </Link>
+            <span className="hidden sm:inline">Create new post</span>
+          </button>
         }
       />
 
