@@ -80,6 +80,7 @@ import {
   getRedditCommunities,
   getSocialScheduler,
   getTikTokCreatorInfo,
+  moveSocialPostToDraft,
   refreshSocialConnectionAvatar,
   savePostingSchedule,
   rescheduleSocialPost,
@@ -606,6 +607,9 @@ function SchedulerPage() {
   const [savedProviderSettings, setSavedProviderSettings] = useState<SocialProviderSettings>({});
   const [postingSettingsOpen, setPostingSettingsOpen] = useState(false);
   const [publishingPostId, setPublishingPostId] = useState<string | null>(null);
+  const [postPendingDelete, setPostPendingDelete] = useState<SchedulerPost | null>(null);
+  const [draftDropActive, setDraftDropActive] = useState(false);
+  const draftDragDepth = useRef(0);
   const mediaInputRef = useRef<HTMLInputElement>(null);
   const youtubeThumbInputRef = useRef<HTMLInputElement>(null);
   const instagramCoverInputRef = useRef<HTMLInputElement>(null);
@@ -1394,9 +1398,13 @@ function SchedulerPage() {
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Could not cancel post"),
   });
-  const remove = useMutation({
-    mutationFn: (id: string) => deleteSocialPost({ data: { id } }),
-    onSuccess: (next) => queryClient.setQueryData(["social-scheduler"], next),
+  const deletePost = useMutation({
+    mutationFn: (post: SchedulerPost) => deleteSocialPost({ data: { id: post.id } }),
+    onSuccess: (next) => {
+      queryClient.setQueryData(["social-scheduler"], next);
+      setPostPendingDelete(null);
+      toast.success("Post deleted");
+    },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Could not delete post"),
   });
@@ -1425,6 +1433,26 @@ function SchedulerPage() {
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Could not reschedule post"),
   });
+  const moveToDraft = useMutation({
+    mutationFn: (id: string) => moveSocialPostToDraft({ data: { id } }),
+    onSuccess: (next) => {
+      queryClient.setQueryData(["social-scheduler"], next);
+      toast.success("Post moved to drafts");
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Could not move post to drafts"),
+  });
+
+  const handleDraftDrop = (event: DragEvent<HTMLElement>) => {
+    event.preventDefault();
+    draftDragDepth.current = 0;
+    setDraftDropActive(false);
+    if (data?.locked || moveToDraft.isPending) return;
+    const postId = event.dataTransfer.getData(CALENDAR_POST_DRAG_MIME);
+    const post = data?.posts.find((item: SchedulerPost) => item.id === postId);
+    if (!post || !["scheduled", "failed", "partially_failed"].includes(post.status)) return;
+    moveToDraft.mutate(post.id);
+  };
 
   async function uploadFiles(files: readonly File[]) {
     setUploadError(null);
@@ -1758,16 +1786,7 @@ function SchedulerPage() {
                 onCreateForDate={openComposeForDate}
                 onEditPost={openPostForEdit}
                 onDuplicatePost={(post) => duplicate.mutate(post.id)}
-                onDeletePost={(post) => {
-                  if (!window.confirm("Delete this post from your calendar?")) return;
-                  if (post.status === "scheduled") {
-                    cancel.mutate(post.id, {
-                      onSuccess: () => toast.success("Post deleted from the calendar"),
-                    });
-                  } else {
-                    remove.mutate(post.id, { onSuccess: () => toast.success("Post deleted") });
-                  }
-                }}
+                onDeletePost={setPostPendingDelete}
                 onOpenPostingSettings={() => setPostingSettingsOpen(true)}
                 onReschedule={(id, nextScheduledAt) =>
                   reschedule.mutate({ id, scheduledAt: nextScheduledAt })
@@ -1775,41 +1794,71 @@ function SchedulerPage() {
                 onAvatarError={repairAvatar}
               />
 
-              <MicroAppPanel>
-                <div className="flex min-w-0 items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className={micro.eyebrow}>Saved</p>
-                    <h2 className="mt-1 font-ui-display text-xl sm:text-2xl">Drafts</h2>
-                  </div>
-                  <span className={`${micro.soft} px-3 py-1.5 text-xs font-semibold tabular-nums`}>
-                    {draftPosts.length}
-                  </span>
-                </div>
-                {draftPosts.length > 0 && !data?.locked && (
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Drag a draft onto a calendar slot to schedule it.
-                  </p>
-                )}
-                <div className="mt-5 space-y-3">
-                  {draftPosts.length ? (
-                    draftPosts.map((post) => (
-                      <PostRow
-                        key={post.id}
-                        post={post}
-                        canEdit={!data?.locked}
-                        canDrag={!data?.locked}
-                        onCancel={() => cancel.mutate(post.id)}
-                        onDuplicate={() => duplicate.mutate(post.id)}
-                        onDelete={() => remove.mutate(post.id)}
-                      />
-                    ))
-                  ) : (
-                    <div className={`${micro.empty} py-8 text-sm text-muted-foreground`}>
-                      Saved drafts will appear here.
+              <div
+                role="region"
+                aria-label="Drafts drop area"
+                className={`rounded-[24px] transition-shadow ${draftDropActive ? "ring-2 ring-[#31577f]/60 ring-offset-2" : ""}`}
+                onDragEnter={(event) => {
+                  if (data?.locked || !event.dataTransfer.types.includes(CALENDAR_POST_DRAG_MIME))
+                    return;
+                  draftDragDepth.current += 1;
+                  setDraftDropActive(true);
+                }}
+                onDragOver={(event) => {
+                  if (data?.locked || !event.dataTransfer.types.includes(CALENDAR_POST_DRAG_MIME))
+                    return;
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                }}
+                onDragLeave={() => {
+                  draftDragDepth.current = Math.max(0, draftDragDepth.current - 1);
+                  if (draftDragDepth.current === 0) setDraftDropActive(false);
+                }}
+                onDrop={handleDraftDrop}
+              >
+                <MicroAppPanel>
+                  <div className="flex min-w-0 items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className={micro.eyebrow}>Saved</p>
+                      <h2 className="mt-1 font-ui-display text-xl sm:text-2xl">Drafts</h2>
                     </div>
+                    <span
+                      className={`${micro.soft} px-3 py-1.5 text-xs font-semibold tabular-nums`}
+                    >
+                      {draftPosts.length}
+                    </span>
+                  </div>
+                  {draftPosts.length > 0 && !data?.locked && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Drag a draft onto a calendar slot to schedule it.
+                    </p>
                   )}
-                </div>
-              </MicroAppPanel>
+                  {!data?.locked && (
+                    <p className="mt-4 rounded-xl border border-dashed border-[#31577f]/30 bg-[#e8f2ff]/45 px-4 py-3 text-center text-xs font-medium text-[#31577f]">
+                      Drop a calendar post here to move it to Drafts
+                    </p>
+                  )}
+                  <div className="mt-5 space-y-3">
+                    {draftPosts.length ? (
+                      draftPosts.map((post) => (
+                        <PostRow
+                          key={post.id}
+                          post={post}
+                          canEdit={!data?.locked}
+                          canDrag={!data?.locked}
+                          onCancel={() => cancel.mutate(post.id)}
+                          onDuplicate={() => duplicate.mutate(post.id)}
+                          onDelete={() => setPostPendingDelete(post)}
+                        />
+                      ))
+                    ) : (
+                      <div className={`${micro.empty} py-8 text-sm text-muted-foreground`}>
+                        Saved drafts will appear here.
+                      </div>
+                    )}
+                  </div>
+                </MicroAppPanel>
+              </div>
 
               <MicroAppPanel>
                 <div className="flex min-w-0 items-center justify-between gap-3">
@@ -1839,7 +1888,7 @@ function SchedulerPage() {
                         canEdit={!data?.locked}
                         onCancel={() => cancel.mutate(post.id)}
                         onDuplicate={() => duplicate.mutate(post.id)}
-                        onDelete={() => remove.mutate(post.id)}
+                        onDelete={() => setPostPendingDelete(post)}
                       />
                     ))
                   ) : (
@@ -2832,6 +2881,35 @@ function SchedulerPage() {
                 </AlertDialogContent>
               </AlertDialog>
 
+              <AlertDialog
+                open={Boolean(postPendingDelete)}
+                onOpenChange={(open) => {
+                  if (!open && !deletePost.isPending) setPostPendingDelete(null);
+                }}
+              >
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete this post?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Are you sure you want to delete this post? This action cannot be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={deletePost.isPending}>Keep post</AlertDialogCancel>
+                    <AlertDialogAction
+                      disabled={deletePost.isPending}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        if (postPendingDelete) deletePost.mutate(postPendingDelete);
+                      }}
+                      className="bg-rose-600 text-white hover:bg-rose-700"
+                    >
+                      {deletePost.isPending ? "Deleting…" : "Delete"}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+
               <PostingTimesDialog
                 open={postingSettingsOpen}
                 schedule={data?.postingSchedule}
@@ -3429,7 +3507,11 @@ function CalendarPost({
         <button
           type="button"
           title={
-            editable ? "Click to edit · Right-click for more actions" : "Right-click for actions"
+            draggable
+              ? "Drag to reschedule or move to Drafts · Click to edit · Right-click for more actions"
+              : editable
+                ? "Click to edit · Right-click for more actions"
+                : "Right-click for actions"
           }
           draggable={draggable}
           onClick={editable ? onEdit : undefined}

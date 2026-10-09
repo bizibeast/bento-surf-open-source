@@ -7,8 +7,10 @@ import { xAccountCapabilities } from "@/lib/x-account";
 import { uploadFileResult } from "@/lib/upload";
 import {
   cancelSocialPost,
+  deleteSocialPost,
   getRedditCommunities,
   getSocialScheduler,
+  moveSocialPostToDraft,
   rescheduleSocialPost,
   savePostingSchedule,
   saveSocialPost,
@@ -34,6 +36,7 @@ vi.mock("@/lib/social-scheduler.functions", () => ({
   getRedditCommunities: vi.fn(),
   getSocialScheduler: vi.fn(),
   getTikTokCreatorInfo: vi.fn(),
+  moveSocialPostToDraft: vi.fn(),
   refreshSocialConnectionAvatar: vi.fn(),
   rescheduleSocialPost: vi.fn(),
   savePostingSchedule: vi.fn(),
@@ -178,6 +181,96 @@ describe("publishing calendar slots", () => {
     expect(within(firstDay).getAllByText("Drop post here")).toHaveLength(2);
     fireEvent.click(within(firstDay).getByRole("button", { name: /Show 7 more slots on/i }));
     expect(within(firstDay).getAllByText("Drop post here")).toHaveLength(9);
+  });
+});
+
+describe("scheduler post moves and deletion", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+  });
+
+  const scheduledPost = () => ({
+    id: "11111111-1111-4111-8111-111111111113",
+    status: "scheduled" as const,
+    title: "Return to drafts",
+    body: "A post to move",
+    scheduledAt: new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString(),
+    createdAt: new Date().toISOString(),
+    timezone: "UTC",
+    targets: [],
+    media: [],
+  });
+
+  it("moves a calendar post into the Drafts area when dropped", async () => {
+    const post = scheduledPost();
+    const data = { ...schedulerData, posts: [post] };
+    vi.mocked(moveSocialPostToDraft).mockResolvedValue({
+      ...data,
+      posts: [{ ...post, status: "draft", scheduledAt: null }],
+    } as never);
+    renderScheduler(data);
+    await screen.findByRole("heading", { name: "Drafts" });
+    fireEvent.click(screen.getByRole("button", { name: "Next week" }));
+    const calendar = screen.getByRole("grid", { name: "week publishing calendar" });
+    const calendarPost = within(calendar).getByText(post.title).closest("button")!;
+    const draftsArea = screen.getByRole("region", { name: "Drafts drop area" });
+    const transfer = {
+      types: ["application/x-bento-social-post-id", "text/plain"],
+      effectAllowed: "none",
+      dropEffect: "none",
+      data: new Map<string, string>(),
+      setData(type: string, value: string) {
+        this.data.set(type, value);
+      },
+      getData(type: string) {
+        return this.data.get(type) || "";
+      },
+    };
+
+    fireEvent.dragStart(calendarPost, { dataTransfer: transfer });
+    fireEvent.dragEnter(draftsArea, { dataTransfer: transfer });
+    fireEvent.dragOver(draftsArea, { dataTransfer: transfer });
+    expect(draftsArea).toHaveClass("ring-2");
+    fireEvent.drop(draftsArea, { dataTransfer: transfer });
+
+    await waitFor(() =>
+      expect(moveSocialPostToDraft).toHaveBeenCalledWith({ data: { id: post.id } }),
+    );
+    await waitFor(() => expect(within(draftsArea).getByText(post.title)).toBeVisible());
+    expect(within(calendar).queryByText(post.title)).not.toBeInTheDocument();
+  });
+
+  it("asks for confirmation before deleting a calendar post", async () => {
+    const post = scheduledPost();
+    const confirm = vi.spyOn(window, "confirm");
+    const data = { ...schedulerData, posts: [post] };
+    vi.mocked(deleteSocialPost).mockResolvedValue({ ...data, posts: [] } as never);
+    renderScheduler(data);
+    await screen.findByRole("heading", { name: "Drafts" });
+    fireEvent.click(screen.getByRole("button", { name: "Next week" }));
+    const calendarPost = within(screen.getByRole("grid", { name: "week publishing calendar" }))
+      .getByText(post.title)
+      .closest("button")!;
+
+    fireEvent.contextMenu(calendarPost);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Delete this post?" });
+    expect(within(dialog).getByText(/Are you sure you want to delete this post/)).toBeVisible();
+    expect(deleteSocialPost).not.toHaveBeenCalled();
+    expect(confirm).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Keep post" }));
+    expect(screen.queryByRole("alertdialog", { name: "Delete this post?" })).toBeNull();
+
+    fireEvent.contextMenu(calendarPost);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    fireEvent.click(
+      within(await screen.findByRole("alertdialog", { name: "Delete this post?" })).getByRole(
+        "button",
+        { name: "Delete" },
+      ),
+    );
+    await waitFor(() => expect(deleteSocialPost).toHaveBeenCalledWith({ data: { id: post.id } }));
   });
 });
 

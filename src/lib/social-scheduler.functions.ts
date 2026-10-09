@@ -648,6 +648,54 @@ export const rescheduleSocialPost = createServerFn({ method: "POST" })
     return schedulerData(context.userId);
   });
 
+export const moveSocialPostToDraft = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input) => z.object({ id: z.string().uuid() }).parse(input))
+  .handler(async ({ context, data }) => {
+    await requireScheduler(context.userId);
+    await enforceRequestRateLimit(
+      "EXPENSIVE_API_RATE_LIMITER",
+      "social-post-move-to-draft",
+      context.userId,
+    );
+    const db = supabaseAdmin as any;
+    const { data: post, error: postError } = await db
+      .from("social_posts")
+      .select("body, title, media, timezone")
+      .eq("id", data.id)
+      .eq("user_id", context.userId)
+      .maybeSingle();
+    if (postError || !post) throw new Error("This post could not be found.");
+
+    const { data: targets, error: targetError } = await db
+      .from("social_post_targets")
+      .select("connection_id, provider, provider_settings")
+      .eq("post_id", data.id);
+    if (targetError || !targets?.length) {
+      throw new Error("This post has no publishing destinations.");
+    }
+
+    const { data: savedTargets, error: saveError } = await db.rpc("save_social_post_atomic", {
+      p_user_id: context.userId,
+      p_post_id: data.id,
+      p_body: post.body,
+      p_title: post.title,
+      p_media: Array.isArray(post.media) ? post.media : [],
+      p_scheduled_at: null,
+      p_timezone: post.timezone || "UTC",
+      p_targets: targets.map((target: any) => ({
+        connectionId: target.connection_id,
+        provider: target.provider,
+        providerSettings: target.provider_settings || {},
+      })),
+      p_as_draft: true,
+    });
+    if (saveError || !savedTargets?.length) {
+      throw new Error(saveError?.message || "This post could not be moved to drafts.");
+    }
+    return schedulerData(context.userId);
+  });
+
 export const duplicateSocialPost = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) => z.object({ id: z.string().uuid() }).parse(input))
@@ -689,6 +737,22 @@ export const deleteSocialPost = createServerFn({ method: "POST" })
   .validator((input) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ context, data }) => {
     const db = supabaseAdmin as any;
+    const { data: post, error: postError } = await db
+      .from("social_posts")
+      .select("status")
+      .eq("id", data.id)
+      .eq("user_id", context.userId)
+      .maybeSingle();
+    if (postError || !post) throw new Error("The post could not be deleted.");
+    if (post.status === "scheduled") {
+      const { data: cancelled, error: cancelError } = await db.rpc("cancel_social_post_atomic", {
+        p_user_id: context.userId,
+        p_post_id: data.id,
+      });
+      if (cancelError || !cancelled) {
+        throw new Error(cancelError?.message || "This post can no longer be deleted.");
+      }
+    }
     const { data: deleted, error } = await db
       .from("social_posts")
       .delete()
