@@ -143,6 +143,12 @@ const RESCHEDULABLE_POST_STATUSES = new Set<SchedulerPost["status"]>([
 ]);
 const CALENDAR_POST_DRAG_MIME = "application/x-bento-social-post-id";
 
+function startCalendarPostDrag(event: DragEvent<HTMLElement>, postId: string) {
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData(CALENDAR_POST_DRAG_MIME, postId);
+  event.dataTransfer.setData("text/plain", postId);
+}
+
 type SchedulerWebMcpState = Awaited<ReturnType<typeof getSocialScheduler>>;
 
 function schedulerWebMcpSummary(data: SchedulerWebMcpState | undefined) {
@@ -1499,6 +1505,11 @@ function SchedulerPage() {
                     {draftPosts.length}
                   </span>
                 </div>
+                {draftPosts.length > 0 && !data?.locked && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Drag a draft onto a calendar slot to schedule it.
+                  </p>
+                )}
                 <div className="mt-5 space-y-3">
                   {draftPosts.length ? (
                     draftPosts.map((post) => (
@@ -1506,6 +1517,7 @@ function SchedulerPage() {
                         key={post.id}
                         post={post}
                         canEdit={!data?.locked}
+                        canDrag={!data?.locked}
                         onCancel={() => cancel.mutate(post.id)}
                         onDuplicate={() => duplicate.mutate(post.id)}
                         onDelete={() => remove.mutate(post.id)}
@@ -2671,6 +2683,7 @@ function SchedulerCalendarView({
 }) {
   const [view, setView] = useState<"month" | "week">("week");
   const [cursor, setCursor] = useState(() => new Date());
+  const [expandedSlotDays, setExpandedSlotDays] = useState<Set<string>>(() => new Set());
   const dates = socialCalendarDates(cursor, view);
   const postsByDate = new Map<string, SchedulerPost[]>();
 
@@ -2837,7 +2850,9 @@ function SchedulerCalendarView({
               const daySlots = (postingSchedule?.slots || [])
                 .filter((slot) => slot.day === date.getDay())
                 .sort((left, right) => left.time.localeCompare(right.time));
-              const visibleSlots = daySlots.slice(0, view === "month" ? 2 : 4);
+              const slotLimit = view === "month" ? 2 : 4;
+              const slotsExpanded = expandedSlotDays.has(key);
+              const visibleSlots = slotsExpanded ? daySlots : daySlots.slice(0, slotLimit);
               const calendarTimeZone = postingSchedule?.timezone || browserTimeZone();
               const slotTimes = new Set(daySlots.map((slot) => slot.time));
               const postsBySlot = new Map<string, SchedulerPost[]>();
@@ -2948,10 +2963,25 @@ function SchedulerCalendarView({
                           </div>
                         );
                       })}
-                      {daySlots.length > visibleSlots.length && (
-                        <p className="px-1 text-center text-[9px] font-semibold text-muted-foreground">
-                          +{daySlots.length - visibleSlots.length} more slots
-                        </p>
+                      {daySlots.length > slotLimit && (
+                        <button
+                          type="button"
+                          aria-expanded={slotsExpanded}
+                          aria-label={`${slotsExpanded ? "Show fewer slots" : `Show ${daySlots.length - slotLimit} more slots`} on ${new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric" }).format(date)}`}
+                          onClick={() =>
+                            setExpandedSlotDays((current) => {
+                              const next = new Set(current);
+                              if (next.has(key)) next.delete(key);
+                              else next.add(key);
+                              return next;
+                            })
+                          }
+                          className="w-full rounded-md px-1 py-1 text-center text-[9px] font-semibold text-muted-foreground transition-colors hover:bg-[#e8f2ff]/65 hover:text-[#31577f]"
+                        >
+                          {slotsExpanded
+                            ? "Show fewer slots"
+                            : `+${daySlots.length - visibleSlots.length} more slots`}
+                        </button>
                       )}
                     </div>
                   )}
@@ -3033,9 +3063,7 @@ function CalendarPost({
               event.preventDefault();
               return;
             }
-            event.dataTransfer.effectAllowed = "move";
-            event.dataTransfer.setData(CALENDAR_POST_DRAG_MIME, post.id);
-            event.dataTransfer.setData("text/plain", post.id);
+            startCalendarPostDrag(event, post.id);
           }}
           className={`w-full rounded-xl border border-border/70 bg-card px-2 py-2 text-left shadow-sm transition-[border-color,box-shadow,transform] duration-150 hover:border-[#31577f]/30 hover:shadow-md active:scale-[0.98] ${
             draggable ? "cursor-grab active:cursor-grabbing" : ""
@@ -3394,12 +3422,14 @@ function AccountChip({
 function PostRow({
   post,
   canEdit = true,
+  canDrag = false,
   onCancel,
   onDuplicate,
   onDelete,
 }: {
   post: SchedulerPost;
   canEdit?: boolean;
+  canDrag?: boolean;
   onCancel: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
@@ -3429,17 +3459,26 @@ function PostRow({
     cancelled: "bg-zinc-400",
   };
   return (
-    <article className="rounded-[20px] border border-black/[0.06] bg-white p-4 shadow-[0_1px_2px_rgba(23,33,58,.04)] transition-shadow hover:shadow-[0_10px_30px_-20px_rgba(23,33,58,.35)] sm:p-5">
+    <article
+      draggable={canDrag}
+      title={canDrag ? "Drag to a calendar slot to schedule" : undefined}
+      onDragStart={(event) => {
+        if (!canDrag) return;
+        startCalendarPostDrag(event, post.id);
+      }}
+      className={`rounded-[20px] border border-black/[0.06] bg-white p-4 shadow-[0_1px_2px_rgba(23,33,58,.04)] transition-shadow hover:shadow-[0_10px_30px_-20px_rgba(23,33,58,.35)] sm:p-5 ${canDrag ? "cursor-grab active:cursor-grabbing" : ""}`}
+    >
       <div className="flex items-start gap-3.5 sm:gap-4">
         {media ? (
           <div className="size-16 shrink-0 overflow-hidden rounded-2xl bg-[#eef2f8] ring-1 ring-black/[0.05] sm:size-[72px]">
             {media.mimeType.startsWith("video/") ? (
-              <video src={media.url} muted className="size-full object-cover" />
+              <video src={media.url} muted draggable={false} className="size-full object-cover" />
             ) : (
               <DecodedImage
                 src={media.url}
                 alt=""
                 loading="lazy"
+                draggable={false}
                 className="size-full object-cover"
               />
             )}

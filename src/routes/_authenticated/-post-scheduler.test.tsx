@@ -2,13 +2,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { AnchorHTMLAttributes, ComponentType, ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { SchedulerConnection } from "@/lib/social-scheduler";
+import type { SchedulerConnection, SchedulerPost } from "@/lib/social-scheduler";
 import { xAccountCapabilities } from "@/lib/x-account";
 import { uploadFileResult } from "@/lib/upload";
 import {
   cancelSocialPost,
   getRedditCommunities,
   getSocialScheduler,
+  rescheduleSocialPost,
   savePostingSchedule,
   saveSocialPost,
 } from "@/lib/social-scheduler.functions";
@@ -85,6 +86,100 @@ function renderScheduler(data: unknown = schedulerData) {
     </QueryClientProvider>,
   );
 }
+
+describe("publishing calendar slots", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const slots = Array.from({ length: 7 }, (_, day) =>
+    ["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00"].map(
+      (time) => ({
+        day,
+        time,
+      }),
+    ),
+  ).flat();
+
+  it("expands every slot on one day and keeps the extra slots available for draft drops", async () => {
+    const draft = {
+      id: "11111111-1111-4111-8111-111111111112",
+      status: "draft",
+      title: "Draft ready",
+      body: "Schedule me",
+      scheduledAt: null,
+      createdAt: new Date().toISOString(),
+      timezone: "UTC",
+      targets: [],
+      media: [],
+    } as SchedulerPost;
+    renderScheduler({
+      ...schedulerData,
+      posts: [draft],
+      postingSchedule: { timezone: "UTC", slots, naturalOffset: false },
+    });
+
+    await screen.findByRole("heading", { name: "Drafts" });
+    fireEvent.click(screen.getByRole("button", { name: "Next week" }));
+    const calendar = screen.getByRole("grid", { name: "week publishing calendar" });
+    const firstDay = within(calendar).getAllByRole("gridcell")[0];
+    const secondDay = within(calendar).getAllByRole("gridcell")[1];
+    const expand = within(firstDay).getByRole("button", { name: /Show 5 more slots on/i });
+
+    expect(within(firstDay).getAllByText("Drop post here")).toHaveLength(4);
+    fireEvent.click(expand);
+    expect(expand).toHaveAttribute("aria-expanded", "true");
+    expect(within(firstDay).getAllByText("Drop post here")).toHaveLength(9);
+    expect(within(secondDay).getAllByText("Drop post here")).toHaveLength(4);
+
+    const transfer = {
+      effectAllowed: "none",
+      dropEffect: "none",
+      data: new Map<string, string>(),
+      setData(type: string, value: string) {
+        this.data.set(type, value);
+      },
+      getData(type: string) {
+        return this.data.get(type) || "";
+      },
+    };
+    const draftCard = screen.getByText("Draft ready").closest("article")!;
+    expect(draftCard).toHaveAttribute("draggable", "true");
+    fireEvent.dragStart(draftCard, { dataTransfer: transfer });
+    expect(transfer.getData("application/x-bento-social-post-id")).toBe(draft.id);
+    const lastSlot = within(firstDay).getByRole("button", { name: "5:00 PM" });
+    fireEvent.dragOver(lastSlot, { dataTransfer: transfer });
+    fireEvent.drop(lastSlot, { dataTransfer: transfer });
+
+    await waitFor(() =>
+      expect(rescheduleSocialPost).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          id: draft.id,
+          scheduledAt: expect.stringMatching(/T17:00:00\.000Z$/),
+          timezone: "UTC",
+        }),
+      }),
+    );
+
+    fireEvent.click(expand);
+    expect(within(firstDay).getAllByText("Drop post here")).toHaveLength(4);
+  });
+
+  it("reveals all slots in month view as well", async () => {
+    renderScheduler({
+      ...schedulerData,
+      postingSchedule: { timezone: "UTC", slots, naturalOffset: false },
+    });
+    await screen.findByRole("button", { name: "Next week" });
+    fireEvent.click(screen.getByRole("button", { name: "month" }));
+    const firstDay = within(
+      screen.getByRole("grid", { name: "month publishing calendar" }),
+    ).getAllByRole("gridcell")[0];
+    expect(within(firstDay).getAllByText("Drop post here")).toHaveLength(2);
+    fireEvent.click(within(firstDay).getByRole("button", { name: /Show 7 more slots on/i }));
+    expect(within(firstDay).getAllByText("Drop post here")).toHaveLength(9);
+  });
+});
 
 describe("scheduler compose close protection", () => {
   afterEach(() => {
