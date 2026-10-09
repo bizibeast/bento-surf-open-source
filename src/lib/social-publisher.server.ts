@@ -32,6 +32,8 @@ import {
 } from "./social-provider-media";
 import { socialProviderUsesMock } from "./social-provider-mode";
 import { enqueueEmail } from "./email.server";
+import { X_LONG_POST_LIMIT, X_STANDARD_POST_LIMIT, xArticleContentState } from "./x-account";
+import { fetchXAccountCapabilities } from "./x-account.server";
 
 export type SocialPublishMessage = {
   kind: "social_publish";
@@ -875,7 +877,94 @@ async function uploadXMediaChunked(
   return mediaId;
 }
 
-async function publishX(token: string, body: string, media: SchedulerMedia[]) {
+async function publishXArticle(token: string, title: string, body: string, target: any) {
+  let articleId = String(target.remote_post_id || "").replace(/^article-draft:/, "");
+  if (!/^\d{1,19}$/.test(articleId)) {
+    const draft = await providerJson(
+      "https://api.x.com/2/articles/draft",
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          content_state: xArticleContentState(body),
+        }),
+      },
+      "twitter",
+    );
+    articleId = String(draft.data.data?.id || "");
+    if (!/^\d{1,19}$/.test(articleId)) {
+      throw new ProviderError("X did not return an Article draft ID.", "invalid_response", false);
+    }
+    const { error } = await (supabaseAdmin as any)
+      .from("social_post_targets")
+      .update({ remote_post_id: `article-draft:${articleId}` })
+      .eq("id", target.id);
+    if (error) {
+      throw new ProviderError(
+        "The X Article draft was created, but Bento could not record its ID. Check X drafts before retrying.",
+        "article_draft_unconfirmed",
+        false,
+      );
+    }
+  }
+  try {
+    const published = await providerJson(
+      `https://api.x.com/2/articles/${articleId}/publish`,
+      { method: "POST", headers: { Authorization: `Bearer ${token}` } },
+      "twitter",
+    );
+    const id = String(published.data.data?.post_id || "");
+    if (!/^\d{1,19}$/.test(id)) throw new Error("X did not confirm the Article post ID.");
+    return { id, url: `https://x.com/i/web/status/${id}` };
+  } catch {
+    throw new ProviderError(
+      "X Article publication was not confirmed. Check the Article in X before retrying.",
+      "article_publish_unconfirmed",
+      false,
+    );
+  }
+}
+
+async function publishX(
+  token: string,
+  body: string,
+  media: SchedulerMedia[],
+  title: string,
+  settings: Record<string, unknown>,
+  target: any,
+) {
+  const article = settings.kind === "article";
+  if (body.length > X_LONG_POST_LIMIT) {
+    throw new ProviderError("X allows up to 25,000 characters.", "text_limit", false);
+  }
+  if (article || body.length > X_STANDARD_POST_LIMIT) {
+    const capabilities = await fetchXAccountCapabilities(token);
+    if (article && !capabilities.canPublishArticles) {
+      throw new ProviderError(
+        "This X account is not eligible to publish Articles.",
+        "article_subscription_required",
+        false,
+      );
+    }
+    if (!article && !capabilities.canPostLong) {
+      throw new ProviderError(
+        "This X account needs Premium to publish more than 280 characters.",
+        "long_post_subscription_required",
+        false,
+      );
+    }
+  }
+  if (article) {
+    if (!title.trim() || !body.trim() || media.length) {
+      throw new ProviderError(
+        "X Articles need a title and text body; Bento does not attach media to Articles yet.",
+        "article_invalid",
+        false,
+      );
+    }
+    return publishXArticle(token, title, body, target);
+  }
   const images = media.filter((item) => item.mimeType.startsWith("image/"));
   const videos = media.filter((item) => item.mimeType.startsWith("video/"));
   const gifs = images.filter((item) => item.mimeType === "image/gif");
@@ -1578,7 +1667,15 @@ async function publish(
     return publishFacebook(connection.provider_user_id, token, post.body, media);
   if (provider === "linkedin")
     return publishLinkedIn(connection.provider_user_id, token, post.body, media);
-  if (provider === "twitter") return publishX(token, post.body, media);
+  if (provider === "twitter")
+    return publishX(
+      token,
+      post.body,
+      media,
+      post.title || "",
+      target.provider_settings || {},
+      target,
+    );
   if (provider === "youtube")
     return publishYouTube(
       token,

@@ -38,6 +38,8 @@ import { configuredAppOrigin, configuredPublicOrigin } from "./application-urls"
 import { requirePlanEntitlement } from "./plan.server";
 import { getPlan } from "./plan.server";
 import { planHasEntitlement, type PlanId } from "./plans";
+import { xCapabilitiesFromMetadata, xCapabilitiesMetadata } from "./x-account";
+import { fetchXAccountCapabilities } from "./x-account.server";
 
 const requireScheduler = (userId: string) =>
   requirePlanEntitlement(
@@ -68,7 +70,37 @@ function connectionFromRow(row: any): SchedulerConnection {
       : needsReconnect
         ? "Reconnect this account before publishing."
         : "Reconnect Instagram from the scheduler and approve publishing access.",
+    ...(row.provider === "twitter"
+      ? { xCapabilities: xCapabilitiesFromMetadata(row.metadata) }
+      : {}),
   };
+}
+
+async function refreshXConnectionCapabilities(row: any) {
+  if (row.provider !== "twitter" || row.status !== "active" || row.reauth_required) return row;
+  const previous =
+    row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+      ? row.metadata
+      : {};
+  const checkedAt = Date.parse(String(previous.x_capabilities_checked_at || ""));
+  if (Number.isFinite(checkedAt) && Date.now() - checkedAt < 12 * 60 * 60_000) return row;
+  try {
+    const token = await accessTokenForConnection(row);
+    const capabilities = await fetchXAccountCapabilities(token);
+    const metadata = { ...previous, ...xCapabilitiesMetadata(capabilities) };
+    const { error } = await (supabaseAdmin as any)
+      .from("social_connections")
+      .update({ metadata })
+      .eq("id", row.id);
+    if (error) throw error;
+    return { ...row, metadata };
+  } catch (error) {
+    console.warn("X subscription check was deferred.", {
+      connectionId: row.id,
+      error: error instanceof Error ? error.message : "unknown error",
+    });
+    return row;
+  }
 }
 
 type TargetInsight = {
@@ -149,7 +181,7 @@ async function schedulerData(userId: string, plan?: PlanId) {
     db
       .from("social_connections")
       .select(
-        "id, provider, provider_handle, provider_display_name, provider_avatar_url, status, scopes, reauth_required, created_at",
+        "id, provider, provider_handle, provider_display_name, provider_avatar_url, status, scopes, reauth_required, created_at, metadata, access_token, refresh_token, token_expires_at",
       )
       .eq("user_id", userId)
       .order("created_at", { ascending: true }),
@@ -175,6 +207,9 @@ async function schedulerData(userId: string, plan?: PlanId) {
   ]);
   if (connectionError || postError || postingScheduleError || profileError || insightsError)
     throw new Error("The social scheduler could not be loaded.");
+  const checkedConnections = await Promise.all(
+    (connections || []).map(refreshXConnectionCapabilities),
+  );
   const insightsByTarget = new Map<string, TargetInsight>(
     (insights || []).map((insight: any) => [
       `${insight.connection_id}:${insight.remote_post_id}`,
@@ -195,7 +230,7 @@ async function schedulerData(userId: string, plan?: PlanId) {
   return {
     locked: false,
     plan: resolvedPlan,
-    connections: (connections || [])
+    connections: checkedConnections
       .filter((row: any) => isPublicSocialProvider(row.provider))
       .map(connectionFromRow),
     posts: (posts || []).map((post: any) => postFromRow(post, insightsByTarget)),
@@ -341,25 +376,28 @@ export async function saveSocialPostForUser(userId: string, input: SocialPostInp
   const db = supabaseAdmin as any;
   const { data: connections, error: connectionError } = await db
     .from("social_connections")
-    .select("id, provider, status, scopes, reauth_required")
+    .select(
+      "id, provider, status, scopes, reauth_required, metadata, access_token, refresh_token, token_expires_at",
+    )
     .eq("user_id", userId)
     .in("id", data.connectionIds);
   if (connectionError) throw new Error("Connected accounts could not be verified.");
   if ((connections || []).length !== new Set(data.connectionIds).size) {
     throw new Error("One or more selected accounts are unavailable.");
   }
+  const checkedConnections = await Promise.all(connections.map(refreshXConnectionCapabilities));
   if (
-    connections.some(
+    checkedConnections.some(
       (connection: any) => connection.status !== "active" || connection.reauth_required,
     )
   ) {
     throw new Error("Reconnect expired accounts before scheduling.");
   }
-  if (connections.some((connection: any) => !isPublicSocialProvider(connection.provider))) {
+  if (checkedConnections.some((connection: any) => !isPublicSocialProvider(connection.provider))) {
     throw new Error("One or more selected accounts are no longer supported.");
   }
   if (
-    connections.some(
+    checkedConnections.some(
       (connection: any) =>
         !socialConnectionCanPublish(
           connection.provider,
@@ -381,18 +419,24 @@ export async function saveSocialPostForUser(userId: string, input: SocialPostInp
     throw new Error("Upload media through Bento before scheduling it.");
   }
 
-  const providers = connections.map((connection: any) => connection.provider) as SocialProvider[];
+  const providers = checkedConnections.map(
+    (connection: any) => connection.provider,
+  ) as SocialProvider[];
+  const xConnection = checkedConnections.find(
+    (connection: any) => connection.provider === "twitter",
+  );
   const providerErrors = validatePostForProviders(
     data.body,
     data.media as SchedulerMedia[],
     providers,
     data.title,
     data.providerSettings,
+    xCapabilitiesFromMetadata(xConnection?.metadata),
   );
   if (Object.keys(providerErrors).length) throw new Error(Object.values(providerErrors)[0]);
 
   const redditSettings = data.providerSettings.reddit || {};
-  const redditConnections = connections.filter(
+  const redditConnections = checkedConnections.filter(
     (connection: any) => connection.provider === "reddit",
   );
   if (redditConnections.length) {
@@ -425,7 +469,7 @@ export async function saveSocialPostForUser(userId: string, input: SocialPostInp
     p_media: data.media,
     p_scheduled_at: scheduledAt,
     p_timezone: data.timezone,
-    p_targets: connections.map((connection: any) => ({
+    p_targets: checkedConnections.map((connection: any) => ({
       connectionId: connection.id,
       provider: connection.provider,
       providerSettings: data.providerSettings[connection.provider] || {},

@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import type { AnchorHTMLAttributes, ComponentType, ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SchedulerConnection } from "@/lib/social-scheduler";
+import { xAccountCapabilities } from "@/lib/x-account";
 import { uploadFileResult } from "@/lib/upload";
 import {
   cancelSocialPost,
@@ -74,8 +75,8 @@ const schedulerData = {
   postingSchedule: { timezone: "UTC", slots: [], naturalOffset: false },
 };
 
-function renderScheduler() {
-  vi.mocked(getSocialScheduler).mockResolvedValue(schedulerData as never);
+function renderScheduler(data: unknown = schedulerData) {
+  vi.mocked(getSocialScheduler).mockResolvedValue(data as never);
   vi.mocked(saveSocialPost).mockResolvedValue(schedulerData as never);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -121,6 +122,29 @@ describe("scheduler compose close protection", () => {
     const compose = await screen.findByRole("dialog", { name: "Create a post" });
     expect(compose).toBeVisible();
     expect(within(compose).getByRole("textbox")).toHaveValue("");
+  });
+
+  it("offers X Articles for an eligible connected account", async () => {
+    renderScheduler({
+      ...schedulerData,
+      connections: [
+        {
+          ...schedulerData.connections[0],
+          provider: "twitter",
+          xCapabilities: xAccountCapabilities("Premium", "blue"),
+        },
+      ],
+    });
+    const create = await screen.findByRole("button", { name: "Create new post" });
+    await waitFor(() => expect(create).toBeEnabled());
+    fireEvent.click(create);
+    const compose = await screen.findByRole("dialog", { name: "Create a post" });
+    fireEvent.click(within(compose).getByRole("button", { name: /Bizibeast/i }));
+    expect(within(compose).getByText(/25,000 characters/)).toBeVisible();
+    fireEvent.click(within(compose).getByRole("button", { name: "Article" }));
+    expect(within(compose).getByRole("textbox", { name: /Article title/i })).toBeVisible();
+    expect(within(compose).getByRole("button", { name: "Add media" })).toBeDisabled();
+    expect(within(compose).getByText("X Article preview")).toBeVisible();
   });
 
   it("keeps desktop scrolling on the compose pane and removes preview filler copy", async () => {

@@ -563,6 +563,7 @@ function SchedulerPage() {
   const [tiktokCoverMs, setTiktokCoverMs] = useState(1_000);
   const [redditCommunity, setRedditCommunity] = useState("");
   const [redditKind, setRedditKind] = useState<"self" | "link">("self");
+  const [xPostKind, setXPostKind] = useState<"post" | "article">("post");
   const [redditUrl, setRedditUrl] = useState("");
   const [previewConnectionId, setPreviewConnectionId] = useState("");
   const [composeOpen, setComposeOpen] = useState(false);
@@ -631,6 +632,7 @@ function SchedulerPage() {
     setTiktokCoverMs(1_000);
     setRedditCommunity("");
     setRedditKind("self");
+    setXPostKind("post");
     setRedditUrl("");
     setUploadError(null);
     setPreviewConnectionId("");
@@ -713,6 +715,7 @@ function SchedulerPage() {
     }
     if (typeof reddit.community === "string") setRedditCommunity(reddit.community);
     if (reddit.kind === "link" || reddit.kind === "self") setRedditKind(reddit.kind);
+    if (settings.twitter?.kind === "article") setXPostKind("article");
     if (typeof reddit.url === "string") setRedditUrl(reddit.url);
     setComposeOpen(true);
   };
@@ -725,8 +728,15 @@ function SchedulerPage() {
     [data?.connections, selected],
   );
   const connectedProviders = selectedConnections.map((connection) => connection.provider);
+  const selectedXConnection = selectedConnections.find(
+    (connection) => connection.provider === "twitter",
+  );
+  const xArticle = Boolean(selectedXConnection && xPostKind === "article");
   const usesCaption = schedulerUsesCaption(connectedProviders);
-  const captionLimit = schedulerCaptionLimit(connectedProviders);
+  const captionLimit = schedulerCaptionLimit(
+    connectedProviders,
+    selectedXConnection?.xCapabilities,
+  );
   const hasVideo = media.some((item) => item.mimeType.startsWith("video/"));
   const primaryVideo = media.find((item) => item.mimeType.startsWith("video/")) || null;
   const needsYouTubeTitle = connectedProviders.includes("youtube");
@@ -883,6 +893,10 @@ function SchedulerPage() {
         kind: redditKind,
         url: redditUrl,
       },
+      twitter: {
+        ...savedProviderSettings.twitter,
+        kind: xPostKind,
+      },
     }),
     [
       hasVideo,
@@ -893,6 +907,7 @@ function SchedulerPage() {
       redditCommunity,
       redditKind,
       redditUrl,
+      xPostKind,
       savedProviderSettings,
       tiktokAiGenerated,
       tiktokAllowComment,
@@ -946,10 +961,11 @@ function SchedulerPage() {
     connectedProviders,
     title,
     providerSettings,
+    selectedXConnection?.xCapabilities,
   );
   const mediaCompatibility = schedulerMediaCompatibility(connectedProviders);
   const needsRedditFields = connectedProviders.includes("reddit");
-  const needsPostTitle = needsYouTubeTitle || needsRedditFields;
+  const needsPostTitle = needsYouTubeTitle || needsRedditFields || xArticle;
   const previewConnection =
     selectedConnections.find((connection) => connection.id === previewConnectionId) ||
     selectedConnections[0] ||
@@ -1525,31 +1541,77 @@ function SchedulerPage() {
                             )}
                           </div>
 
+                          {selectedXConnection && (
+                            <div className="mt-5 rounded-2xl border border-border/70 bg-white p-4">
+                              <p className="text-xs font-semibold text-muted-foreground">
+                                X format
+                              </p>
+                              <div className="mt-2 flex gap-2">
+                                <button
+                                  type="button"
+                                  aria-pressed={xPostKind === "post"}
+                                  onClick={() => setXPostKind("post")}
+                                  className={xPostKind === "post" ? micro.btnInk : micro.btnSoft}
+                                >
+                                  Post
+                                </button>
+                                <button
+                                  type="button"
+                                  aria-pressed={xPostKind === "article"}
+                                  onClick={() => setXPostKind("article")}
+                                  disabled={
+                                    selectedConnections.length !== 1 ||
+                                    !selectedXConnection.xCapabilities?.canPublishArticles
+                                  }
+                                  className={xPostKind === "article" ? micro.btnInk : micro.btnSoft}
+                                >
+                                  Article
+                                </button>
+                              </div>
+                              <p className="mt-2 text-xs text-muted-foreground">
+                                {selectedXConnection.xCapabilities?.canPostLong
+                                  ? "This X account can publish posts up to 25,000 characters."
+                                  : "X Premium status is unavailable or this account has a 280-character limit."}
+                                {selectedXConnection.xCapabilities?.canPublishArticles
+                                  ? " Text-only Articles are available when X is the only destination."
+                                  : " Articles require X Premium, Premium+, or an eligible organization account."}
+                              </p>
+                            </div>
+                          )}
+
                           {needsPostTitle && (
                             <label className="mt-6 block">
                               <span className="flex items-end justify-between gap-3">
                                 <span className="text-xs font-semibold text-muted-foreground">
-                                  {needsYouTubeTitle && needsRedditFields
-                                    ? "Post title"
-                                    : needsYouTubeTitle
-                                      ? "YouTube title"
-                                      : "Reddit title"}
+                                  {xArticle
+                                    ? "Article title"
+                                    : needsYouTubeTitle && needsRedditFields
+                                      ? "Post title"
+                                      : needsYouTubeTitle
+                                        ? "YouTube title"
+                                        : "Reddit title"}
                                 </span>
                                 <span className="text-[11px] tabular-nums text-muted-foreground">
                                   {title.length}/
-                                  {needsRedditFields && !needsYouTubeTitle ? 300 : 100}
+                                  {xArticle || (needsRedditFields && !needsYouTubeTitle)
+                                    ? 300
+                                    : 100}
                                 </span>
                               </span>
                               <input
                                 value={title}
                                 onChange={(event) => setTitle(event.target.value)}
-                                maxLength={needsRedditFields && !needsYouTubeTitle ? 300 : 100}
+                                maxLength={
+                                  xArticle || (needsRedditFields && !needsYouTubeTitle) ? 300 : 100
+                                }
                                 placeholder={
-                                  youtubeFormat === "short"
-                                    ? "A short title for the Shorts feed"
-                                    : needsYouTubeTitle
-                                      ? "Give your video a clear title"
-                                      : "Write a clear title"
+                                  xArticle
+                                    ? "Give your Article a title"
+                                    : youtubeFormat === "short"
+                                      ? "A short title for the Shorts feed"
+                                      : needsYouTubeTitle
+                                        ? "Give your video a clear title"
+                                        : "Write a clear title"
                                 }
                                 className={`mt-2 ${micro.input}`}
                               />
@@ -1570,11 +1632,13 @@ function SchedulerPage() {
                                     : "sr-only"
                                 }
                               >
-                                {usesCaption
-                                  ? schedulerCaptionLabel(connectedProviders)
-                                  : needsYouTubeTitle
-                                    ? "Description"
-                                    : "Post text"}
+                                {xArticle
+                                  ? "Article body"
+                                  : usesCaption
+                                    ? schedulerCaptionLabel(connectedProviders)
+                                    : needsYouTubeTitle
+                                      ? "Description"
+                                      : "Post text"}
                               </span>
                               {connectedProviders.length > 0 && (
                                 <span className="text-[11px] tabular-nums text-muted-foreground">
@@ -1587,7 +1651,11 @@ function SchedulerPage() {
                               value={body}
                               onChange={(event) => setBody(event.target.value)}
                               rows={7}
-                              placeholder={schedulerCaptionPlaceholder(connectedProviders)}
+                              placeholder={
+                                xArticle
+                                  ? "Write your X Article"
+                                  : schedulerCaptionPlaceholder(connectedProviders)
+                              }
                               className="mt-2 w-full resize-none bg-transparent font-ui-sans text-[26px] leading-relaxed outline-none placeholder:text-muted-foreground/45 sm:text-[32px]"
                             />
                           </label>
@@ -2080,6 +2148,7 @@ function SchedulerPage() {
                               : body
                           }
                           title={title}
+                          xPostKind={xPostKind}
                           media={media}
                           youtubeThumbnail={youtubeThumbnailMedia}
                           youtubeFormat={youtubeFormat}
@@ -2101,7 +2170,7 @@ function SchedulerPage() {
                             <button
                               type="button"
                               onClick={openMediaPicker}
-                              disabled={uploading}
+                              disabled={uploading || xArticle}
                               className={`${micro.btnSoft} w-full sm:w-auto ${
                                 mediaCompatibility.disabled ||
                                 media.length >= mediaCompatibility.maxMedia
@@ -2285,6 +2354,7 @@ function PlatformPostPreview({
   onSelect,
   body,
   title,
+  xPostKind,
   media,
   youtubeThumbnail,
   youtubeFormat,
@@ -2301,6 +2371,7 @@ function PlatformPostPreview({
   onSelect: (connectionId: string) => void;
   body: string;
   title: string;
+  xPostKind: "post" | "article";
   media: SchedulerMedia[];
   youtubeThumbnail: SchedulerMedia | null;
   youtubeFormat: YouTubePostFormat | null;
@@ -2347,7 +2418,17 @@ function PlatformPostPreview({
 
       <FittedPreview>
         <div className={`${micro.soft} mt-2 p-3 sm:p-5`}>
-          {activeConnection ? (
+          {activeConnection?.provider === "twitter" && xPostKind === "article" ? (
+            <div className="rounded-2xl border border-border bg-white p-5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                X Article preview
+              </p>
+              <h3 className="mt-4 font-ui-display text-2xl">{title || "Article title"}</h3>
+              <p className="mt-3 whitespace-pre-wrap break-words text-sm text-foreground/80">
+                {body || "Your Article text will appear here."}
+              </p>
+            </div>
+          ) : activeConnection ? (
             <ProviderPostPreview
               connection={activeConnection}
               body={body}
