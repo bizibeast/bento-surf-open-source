@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mediaBelongsToCreator } from "./social-scheduler.functions";
+import { xAccountCapabilities } from "./x-account";
 import {
   deriveSocialPostStatus,
   isPublicSocialProvider,
@@ -8,6 +9,7 @@ import {
   providerSettingsMedia,
   PUBLIC_SOCIAL_PROVIDERS,
   schedulerCaptionLabel,
+  schedulerCaptionLimit,
   schedulerMediaCompatibility,
   schedulerPostEngagement,
   socialAccountsWithinLimit,
@@ -656,6 +658,42 @@ describe("social post drafts", () => {
       url: `http://localhost:8080/cdn/users/user/image/${index}.jpg`,
     }));
     expect(validatePostForProviders("Carousel", media, ["instagram"])).toEqual({});
+  });
+});
+
+describe("X Premium publishing limits", () => {
+  const basic = xAccountCapabilities("Basic", null);
+  const premium = xAccountCapabilities("Premium", "blue");
+
+  it("allows Basic accounts to compose longer posts up to 25,000 characters", () => {
+    expect(schedulerCaptionLimit(["twitter"], basic)).toBe(25_000);
+    expect(validatePostForProviders("a".repeat(25_000), [], ["twitter"], "", {}, basic)).toEqual(
+      {},
+    );
+    expect(validatePostForProviders("a".repeat(281), [], ["twitter"]).twitter).toContain("280");
+    expect(
+      validatePostForProviders("a".repeat(25_001), [], ["twitter"], "", {}, basic).twitter,
+    ).toContain("25,000");
+  });
+
+  it("requires an eligible X account, title, and text-only destination for Articles", () => {
+    const settings = { twitter: { kind: "article" } };
+    expect(validatePostForProviders("Body", [], ["twitter"], "Title", settings, premium)).toEqual(
+      {},
+    );
+    expect(
+      validatePostForProviders("Body", [], ["twitter"], "Title", settings, basic).twitter,
+    ).toContain("Premium");
+    expect(
+      validatePostForProviders("Body", [], ["twitter"], "", settings, premium).twitter,
+    ).toContain("title");
+    expect(
+      validatePostForProviders("Body", [image], ["twitter"], "Title", settings, premium).twitter,
+    ).toContain("text-only");
+    expect(
+      validatePostForProviders("Body", [], ["twitter", "linkedin"], "Title", settings, premium)
+        .twitter,
+    ).toContain("X only");
   });
 });
 

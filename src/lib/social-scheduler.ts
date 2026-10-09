@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { zonedDateTimeInputToIso } from "./local-datetime";
 import { isValidTimeZone } from "./timezones";
+import { X_LONG_POST_LIMIT, X_STANDARD_POST_LIMIT, type XAccountCapabilities } from "./x-account";
 
 export const SOCIAL_PROVIDERS = [
   "instagram",
@@ -47,6 +48,7 @@ export type SchedulerConnection = {
   connectedAt: string;
   canPublish: boolean;
   publishBlockReason: string | null;
+  xCapabilities?: XAccountCapabilities | null;
 };
 
 export const INSTAGRAM_CONTENT_PUBLISH_SCOPE = "instagram_business_content_publish";
@@ -635,10 +637,19 @@ export function schedulerCaptionPlaceholder(providers: readonly SocialProvider[]
   return "What do you want to share?";
 }
 
-export function schedulerCaptionLimit(providers: readonly SocialProvider[]) {
+export function schedulerCaptionLimit(
+  providers: readonly SocialProvider[],
+  xCapabilities?: XAccountCapabilities | null,
+) {
   const selected = providers.filter((provider) => CAPTION_FIELD_PROVIDERS.has(provider));
   if (!selected.length) return 10_000;
-  return Math.min(...selected.map((provider) => SOCIAL_PROVIDER_DEFINITIONS[provider].maxText));
+  return Math.min(
+    ...selected.map((provider) =>
+      provider === "twitter" && xCapabilities?.canPostLong
+        ? X_LONG_POST_LIMIT
+        : SOCIAL_PROVIDER_DEFINITIONS[provider].maxText,
+    ),
+  );
 }
 
 export function providerVideoCoverKind(provider: SocialProvider): VideoCoverKind | null {
@@ -833,7 +844,7 @@ export const SOCIAL_PROVIDER_DEFINITIONS: Record<SocialProvider, SocialProviderD
   twitter: {
     name: "X",
     color: "#111111",
-    maxText: 280,
+    maxText: X_STANDARD_POST_LIMIT,
     media: "optional",
     supportsImages: true,
     supportsVideo: true,
@@ -889,7 +900,7 @@ export const schedulerMediaSchema = z.object({
 export const socialPostInputSchema = z
   .object({
     id: z.string().uuid().optional(),
-    body: z.string().trim().max(10_000),
+    body: z.string().trim().max(X_LONG_POST_LIMIT),
     title: z.string().trim().max(300).optional().default(""),
     scheduledAt: z.string().datetime({ offset: true }).nullable(),
     timezone: z.string().min(1).max(100).default("UTC"),
@@ -902,6 +913,14 @@ export const socialPostInputSchema = z
   .superRefine((value, context) => {
     const reddit = value.providerSettings.reddit || {};
     const instagram = value.providerSettings.instagram || {};
+    const twitter = value.providerSettings.twitter || {};
+    if (twitter.kind != null && twitter.kind !== "post" && twitter.kind !== "article") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Choose a valid X publishing format.",
+        path: ["providerSettings", "twitter", "kind"],
+      });
+    }
     if (instagram.trialReel != null && typeof instagram.trialReel !== "boolean") {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -962,15 +981,41 @@ export function validatePostForProviders(
   providers: SocialProvider[],
   title = "",
   providerSettings: SocialProviderSettings = {},
+  xCapabilities?: XAccountCapabilities | null,
 ) {
   const errors: Partial<Record<SocialProvider, string>> = {};
   for (const provider of providers) {
     const definition = SOCIAL_PROVIDER_DEFINITIONS[provider];
     const settings = providerSettings[provider] || {};
+    const xArticle = provider === "twitter" && settings.kind === "article";
+    if (xArticle) {
+      if (providers.length !== 1) {
+        errors.twitter = "Publish an X Article to X only.";
+        continue;
+      }
+      if (!xCapabilities?.canPublishArticles) {
+        errors.twitter =
+          "X Articles require a Premium, Premium+, or eligible organization account.";
+        continue;
+      }
+      if (!title.trim()) {
+        errors.twitter = "Give your X Article a title.";
+        continue;
+      }
+      if (!body.trim()) {
+        errors.twitter = "Write the X Article body.";
+        continue;
+      }
+      if (media.length) {
+        errors.twitter = "Bento currently supports text-only X Articles.";
+        continue;
+      }
+    }
     const textForLimit = provider === "youtube" ? youtubeDescriptionFrom(body, settings) : body;
-    if (textForLimit.length > definition.maxText) {
-      errors[provider] =
-        `${definition.name} allows ${definition.maxText.toLocaleString()} characters.`;
+    const maxText =
+      provider === "twitter" && xCapabilities?.canPostLong ? X_LONG_POST_LIMIT : definition.maxText;
+    if (textForLimit.length > maxText) {
+      errors[provider] = `${definition.name} allows ${maxText.toLocaleString()} characters.`;
       continue;
     }
     if (definition.media === "required" && media.length === 0) {

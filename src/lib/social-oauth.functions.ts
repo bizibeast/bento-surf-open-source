@@ -9,6 +9,7 @@ import { socialApiErrorMessage, socialApiPayloadHasError } from "./social-provid
 import { requirePlanEntitlement } from "./plan.server";
 import { durableSocialAvatarUrl } from "./social-avatar.server";
 import { queueInitialSocialInsightsImport } from "./social-analytics.functions";
+import { xAccountCapabilities, xCapabilitiesMetadata } from "./x-account";
 import {
   SOCIAL_PROVIDERS,
   isPublicSocialProvider,
@@ -444,9 +445,16 @@ export async function socialAccountProfiles(
     ];
   }
   if (provider === "twitter") {
-    const data = await get("https://api.x.com/2/users/me?user.fields=profile_image_url", {
-      headers: bearer,
-    });
+    const data = await get(
+      "https://api.x.com/2/users/me?user.fields=profile_image_url,subscription_type,verified_type",
+      {
+        headers: bearer,
+      },
+    );
+    const xCapabilities =
+      typeof data.data.subscription_type === "string"
+        ? xAccountCapabilities(data.data.subscription_type, data.data.verified_type)
+        : null;
     return [
       {
         id: String(data.data.id),
@@ -454,6 +462,7 @@ export async function socialAccountProfiles(
         name: data.data.name,
         avatar: data.data.profile_image_url,
         token,
+        xCapabilities,
       },
     ];
   }
@@ -580,6 +589,9 @@ export const completeSocialConnection = createServerFn({ method: "POST" })
                     ? new Date(Date.now() + expiresIn * 1_000).toISOString()
                     : null,
               scopes,
+              ...(data.provider === "twitter" && account.xCapabilities
+                ? { metadata: xCapabilitiesMetadata(account.xCapabilities) }
+                : {}),
               status: "active",
               last_error: null,
             };
