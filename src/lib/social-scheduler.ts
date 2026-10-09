@@ -570,6 +570,24 @@ export function isSocialCalendarPost(
 
 export type SocialProviderSettings = Record<string, Record<string, unknown>>;
 
+export const scheduledInstagramAutoDmSchema = z
+  .object({
+    triggerType: z.enum(["comment_keyword", "any_comment"]),
+    keyword: z.string().trim().max(80),
+    openingMessage: z.string().trim().min(1).max(1000),
+    replyMessage: z.string().trim().min(1).max(1000),
+  })
+  .superRefine((value, context) => {
+    if (value.triggerType === "comment_keyword" && !value.keyword) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["keyword"],
+        message: "Add a comment keyword.",
+      });
+    }
+  });
+export type ScheduledInstagramAutoDm = z.infer<typeof scheduledInstagramAutoDmSchema>;
+
 export const INSTAGRAM_TRIAL_GRADUATION_STRATEGIES = ["MANUAL", "SS_PERFORMANCE"] as const;
 export type InstagramTrialGraduationStrategy =
   (typeof INSTAGRAM_TRIAL_GRADUATION_STRATEGIES)[number];
@@ -957,6 +975,22 @@ export const socialPostInputSchema = z
         message: "Instagram Trial Reel must be true or false.",
         path: ["providerSettings", "instagram", "trialReel"],
       });
+    }
+    if (instagram.scheduledAutoDm != null) {
+      const automation = scheduledInstagramAutoDmSchema.safeParse(instagram.scheduledAutoDm);
+      if (!automation.success) {
+        for (const issue of automation.error.issues) {
+          context.addIssue({
+            ...issue,
+            path: ["providerSettings", "instagram", "scheduledAutoDm", ...issue.path],
+          });
+        }
+      } else if (!value.media.some((item) => item.mimeType.startsWith("video/"))) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Add an Instagram video to schedule an auto DM.",
+        });
+      }
     }
     if (
       instagram.graduationStrategy != null &&

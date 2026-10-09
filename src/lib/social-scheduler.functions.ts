@@ -18,6 +18,7 @@ import {
   socialConnectionCanPublish,
   providerSettingsMedia,
   postingScheduleSchema,
+  scheduledInstagramAutoDmSchema,
   type PostingSchedule,
 } from "./social-scheduler";
 import {
@@ -33,6 +34,10 @@ import {
   type GenericProvider,
 } from "./social-oauth.functions";
 import { fetchInstagramAccountProfile } from "./instagram-auto-dm.server";
+import {
+  getInstagramConnectionReadiness,
+  instagramConnectionReadinessMessage,
+} from "./instagram-auto-dm";
 import { durableSocialAvatarUrl } from "./social-avatar.server";
 import { configuredAppOrigin, configuredPublicOrigin } from "./application-urls";
 import { requirePlanEntitlement } from "./plan.server";
@@ -377,7 +382,7 @@ export async function saveSocialPostForUser(userId: string, input: SocialPostInp
   const { data: connections, error: connectionError } = await db
     .from("social_connections")
     .select(
-      "id, provider, status, scopes, reauth_required, metadata, access_token, refresh_token, token_expires_at",
+      "id, provider, status, scopes, reauth_required, metadata, access_token, refresh_token, token_expires_at, connection_health, webhook_fields, last_verified_at",
     )
     .eq("user_id", userId)
     .in("id", data.connectionIds);
@@ -395,6 +400,41 @@ export async function saveSocialPostForUser(userId: string, input: SocialPostInp
   }
   if (checkedConnections.some((connection: any) => !isPublicSocialProvider(connection.provider))) {
     throw new Error("One or more selected accounts are no longer supported.");
+  }
+  if (data.providerSettings.instagram?.scheduledAutoDm != null) {
+    scheduledInstagramAutoDmSchema.parse(data.providerSettings.instagram.scheduledAutoDm);
+    const instagramConnections = connections.filter(
+      (connection: any) => connection.provider === "instagram",
+    );
+    if (!instagramConnections.length)
+      throw new Error("Select an Instagram account for the auto DM.");
+    if (
+      instagramConnections.some(
+        (connection: any) =>
+          ![
+            "instagram_business_basic",
+            "instagram_business_manage_comments",
+            "instagram_business_manage_messages",
+          ].every((scope) => connection.scopes?.includes(scope)),
+      )
+    )
+      throw new Error(
+        "Reconnect Instagram and approve comment and message access before scheduling an auto DM.",
+      );
+    for (const connection of instagramConnections) {
+      const readiness = getInstagramConnectionReadiness(connection);
+      if (!readiness.ready) {
+        throw new Error(
+          instagramConnectionReadinessMessage(readiness.issues) ||
+            "Repair and verify Instagram before scheduling an auto DM.",
+        );
+      }
+    }
+    await requirePlanEntitlement(
+      userId,
+      "advancedAutoDM",
+      "Scheduled Instagram Auto DMs are included with the Creator plan.",
+    );
   }
   if (
     checkedConnections.some(
