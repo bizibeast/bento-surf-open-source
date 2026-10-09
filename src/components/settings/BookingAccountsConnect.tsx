@@ -49,7 +49,7 @@ const PROVIDERS: Array<{
   {
     id: "fathom",
     title: "Fathom recordings",
-    search: "meetings fathom calls recordings",
+    search: "meetings knowledge agent fathom calls recordings transcripts",
     icon: FathomLogo,
     color: "#3478F6",
   },
@@ -62,6 +62,8 @@ export function BookingAccountsConnect({
   fathomReady,
   onChanged,
   query = "",
+  providers = ["google", "fathom"],
+  inlineTiles = false,
 }: {
   calendarConnections: BookingConnectAccount[];
   fathomConnections: BookingConnectAccount[];
@@ -69,15 +71,18 @@ export function BookingAccountsConnect({
   fathomReady: boolean;
   onChanged: () => void;
   query?: string;
+  providers?: BookingProvider[];
+  inlineTiles?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [selected, setSelected] = useState<BookingProvider | null>(null);
   const normalizedQuery = query.trim().toLowerCase();
   const shownProviders = PROVIDERS.filter(
     (provider) =>
-      !normalizedQuery ||
-      provider.title.toLowerCase().includes(normalizedQuery) ||
-      provider.search.includes(normalizedQuery),
+      providers.includes(provider.id) &&
+      (!normalizedQuery ||
+        provider.title.toLowerCase().includes(normalizedQuery) ||
+        provider.search.includes(normalizedQuery)),
   );
   const selectedProvider = PROVIDERS.find((provider) => provider.id === selected) || null;
   const connections = selected === "google" ? calendarConnections : fathomConnections;
@@ -114,7 +119,13 @@ export function BookingAccountsConnect({
 
   return (
     <>
-      <div className="grid grid-cols-3 gap-x-4 gap-y-6 sm:grid-cols-5 lg:grid-cols-8">
+      <div
+        className={
+          inlineTiles
+            ? "contents"
+            : "grid grid-cols-3 gap-x-4 gap-y-6 sm:grid-cols-5 lg:grid-cols-8"
+        }
+      >
         {shownProviders.map((provider) => {
           const providerConnections =
             provider.id === "google" ? calendarConnections : fathomConnections;
@@ -216,6 +227,12 @@ export function BookingAccountsConnect({
                     Connect your first account to use it across Bento.
                   </p>
                 </div>
+              )}
+              {selected === "fathom" && (
+                <p className="text-xs leading-5 text-[#17213a]/60">
+                  One Fathom connection powers paid call recordings and supplies meeting summaries
+                  and transcripts to your Agent.
+                </p>
               )}
               <button
                 type="button"

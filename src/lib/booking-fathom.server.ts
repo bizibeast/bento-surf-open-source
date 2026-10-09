@@ -130,12 +130,14 @@ export async function listFathomMeetings(
   input: {
     createdAfter: Date;
     createdBefore: Date;
+    includeTranscript?: boolean;
   },
 ) {
   const client = fathomClient("stored-connection", new DatabaseTokenStore(connection));
   const pages = await client.listMeetings({
     createdAfter: input.createdAfter.toISOString(),
     createdBefore: input.createdBefore.toISOString(),
+    includeTranscript: input.includeTranscript ?? false,
   });
   const meetings: any[] = [];
   for await (const page of pages) {

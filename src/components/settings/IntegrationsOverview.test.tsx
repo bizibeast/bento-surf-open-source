@@ -103,7 +103,7 @@ describe("IntegrationsOverview", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Google Calendar & Meet")).toBeInTheDocument();
-      expect(screen.getByText("Fathom recordings")).toBeInTheDocument();
+      expect(screen.getAllByText("Fathom recordings")).toHaveLength(2);
       expect(screen.getByText("Instagram DMs")).toBeInTheDocument();
       expect(screen.getByText("Facebook DMs")).toBeInTheDocument();
       expect(screen.getByText("X DMs")).toBeInTheDocument();
@@ -112,6 +112,47 @@ describe("IntegrationsOverview", () => {
     expect(screen.queryByText(/One Instagram login powers/i)).not.toBeInTheDocument();
     expect(screen.queryByText("Manage bookings")).not.toBeInTheDocument();
     expect(document.querySelector('img[src="/brands/fathom.png"]')).toBeInTheDocument();
+  });
+
+  it("shows Fathom in both sections and Granola only in Knowledge", async () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <IntegrationsOverview />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getAllByRole("button", { name: /Manage Fathom recordings integration/i }),
+      ).toHaveLength(2);
+      expect(screen.getAllByRole("button", { name: /Manage Granola integration/i })).toHaveLength(
+        1,
+      );
+    });
+  });
+
+  it("finds Fathom twice and Granola once when searching by provider", async () => {
+    const { rerender } = render(
+      <QueryClientProvider client={new QueryClient()}>
+        <IntegrationsOverview query="Fathom" />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("button", { name: /Manage Fathom recordings integration/i }),
+      ).toHaveLength(2),
+    );
+    rerender(
+      <QueryClientProvider client={new QueryClient()}>
+        <IntegrationsOverview query="Granola" />
+      </QueryClientProvider>,
+    );
+    await waitFor(() =>
+      expect(screen.getAllByRole("button", { name: /Manage Granola integration/i })).toHaveLength(
+        1,
+      ),
+    );
   });
 
   it("describes each provider as a single workspace account", async () => {
