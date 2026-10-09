@@ -50,17 +50,25 @@ export function CommerceTile({
   const pricingType = ["free", "one_time", "subscription"].includes(String(content.pricingType))
     ? (content.pricingType as "free" | "one_time" | "subscription")
     : "free";
-  const price = pricingLabel(
-    pricingType,
-    Number(content.priceAmount ?? 0),
-    typeof content.currency === "string" ? content.currency : "usd",
-    typeof content.billingInterval === "string" ? content.billingInterval : null,
-  );
+  const price =
+    typeof content.priceLabel === "string" && content.priceLabel
+      ? content.priceLabel
+      : pricingLabel(
+          pricingType,
+          Number(content.priceAmount ?? 0),
+          typeof content.currency === "string" ? content.currency : "usd",
+          typeof content.billingInterval === "string" ? content.billingInterval : null,
+        );
   const cta = published ? String(content.ctaLabel || definition.defaultCta) : "Finish setup";
   const draftLabel = "Draft · hidden from visitors";
   const layout = tileLayout(w, h);
   const TileElement = interactive ? "a" : "div";
-  const linkProps = interactive ? { href } : {};
+  const linkProps = interactive
+    ? {
+        href,
+        ...(typeof content.ariaLabel === "string" ? { "aria-label": content.ariaLabel } : {}),
+      }
+    : {};
   const style = {
     background: coverUrl
       ? `linear-gradient(180deg,rgba(10,18,35,.08),rgba(10,18,35,.82)),url("${coverUrl.replaceAll('"', "%22")}") center/cover`
@@ -75,7 +83,9 @@ export function CommerceTile({
     return (
       <TileElement
         {...linkProps}
-        aria-label={`${title} · ${price}`}
+        aria-label={
+          typeof content.ariaLabel === "string" ? content.ariaLabel : `${title} · ${price}`
+        }
         data-testid="commerce-tile"
         data-layout={layout}
         className={`${shellClass} group relative flex items-center justify-center`}

@@ -80,20 +80,29 @@ export function SystemPageTile({
         : text(data.ctaLabel ?? data.cta_label) ||
           (kind === "session" ? "Book session" : "View product");
 
-  if (item.system === "store" && kind === "product") {
+  if (
+    (item.system === "store" && kind === "product") ||
+    (item.system === "calendar" && kind === "session")
+  ) {
     return (
       <article aria-label={item.title} className="size-full min-w-0">
         <CommerceTile
           content={{
-            kind: text(data.kind),
+            kind: kind === "session" ? "coaching_call" : text(data.kind),
             title: item.title,
-            subtitle: text(data.subtitle),
-            coverUrl: data.cover_url,
+            subtitle:
+              kind === "session"
+                ? `${typeof data.durationMinutes === "number" ? data.durationMinutes : 60} min${text(data.subtitle) ? ` · ${text(data.subtitle)}` : ""}`
+                : text(data.subtitle),
+            coverUrl: data.cover_url ?? data.coverUrl,
             pricingType: text(data.pricing_type),
             priceAmount: typeof data.price_amount === "number" ? data.price_amount : 0,
             currency: text(data.currency),
             billingInterval: text(data.billing_interval),
-            ctaLabel: text(data.cta_label),
+            priceLabel: text(data.priceLabel),
+            ctaLabel:
+              data.soldOut === true ? "View session" : text(data.cta_label ?? data.ctaLabel),
+            ariaLabel: kind === "session" ? `${publicAction}: ${item.title}` : undefined,
             status: "published",
             href: publicHref,
           }}

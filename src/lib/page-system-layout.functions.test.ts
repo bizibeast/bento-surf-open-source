@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- Supabase query-chain test doubles accept generated row shapes. */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -205,6 +206,7 @@ describe("owned system canvas", () => {
       `session:${sessionId}`,
       "review:review",
     ]);
+    expect(result.items[0].defaultW).toBe(2);
     expect(
       result.items.every((entry) => entry.pageId === calendarId && entry.system === "calendar"),
     ).toBe(true);
@@ -287,9 +289,9 @@ describe("owned system canvas", () => {
     expect(canvas.items).toHaveLength(200);
     expect(canvas.layout.at(-1)).toEqual({
       itemKey: "session:session-199",
-      x: 4,
-      y: 198,
-      w: 4,
+      x: 6,
+      y: 98,
+      w: 2,
       h: 2,
       position: 199,
     });

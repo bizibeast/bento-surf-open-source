@@ -100,27 +100,37 @@ export async function loadSystemPageItems(
       throw new Error(sessions.error?.message || reviews.error.message);
     items.push(
       ...(sessions.data ?? []).map((product: any) =>
-        tile(`session:${product.id}`, "session", product.title, {
-          id: product.id,
-          slug: product.public_slug,
-          title: product.title,
-          subtitle: product.subtitle,
-          coverUrl: product.cover_url,
-          ctaLabel: product.cta_label,
-          durationMinutes: Number(
-            sanitizeCommerceSettingsForPublic("coaching_call", product.settings).durationMinutes ||
-              60,
-          ),
-          priceLabel: pricingLabel(
-            product.pricing_type,
-            product.price_amount,
-            product.currency,
-            product.billing_interval,
-          ),
-          soldOut: Boolean(
-            product.inventory_limit && product.sales_count >= product.inventory_limit,
-          ),
-        }),
+        tile(
+          `session:${product.id}`,
+          "session",
+          product.title,
+          {
+            id: product.id,
+            slug: product.public_slug,
+            title: product.title,
+            subtitle: product.subtitle,
+            coverUrl: product.cover_url,
+            pricing_type: product.pricing_type,
+            price_amount: product.price_amount,
+            currency: product.currency,
+            billing_interval: product.billing_interval,
+            ctaLabel: product.cta_label,
+            durationMinutes: Number(
+              sanitizeCommerceSettingsForPublic("coaching_call", product.settings)
+                .durationMinutes || 60,
+            ),
+            priceLabel: pricingLabel(
+              product.pricing_type,
+              product.price_amount,
+              product.currency,
+              product.billing_interval,
+            ),
+            soldOut: Boolean(
+              product.inventory_limit && product.sales_count >= product.inventory_limit,
+            ),
+          },
+          2,
+        ),
       ),
     );
     items.push(

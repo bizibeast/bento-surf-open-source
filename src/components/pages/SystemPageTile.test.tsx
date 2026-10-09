@@ -40,21 +40,28 @@ describe("SystemPageTile", () => {
     expect(screen.getByText("Last 90 days")).toBeVisible();
   });
 
-  it("renders a session's current details without a redundant editor action", () => {
-    render(
-      <SystemPageTile
-        item={tile("session", {
-          durationMinutes: 30,
-          priceLabel: "$20",
-          subtitle: "A focused call",
-        })}
-      />,
-    );
+  it("uses the product tile sizes for booking sessions in the editor and public calendar", () => {
+    const session = tile("session", {
+      slug: "studio-call",
+      durationMinutes: 30,
+      priceLabel: "$20",
+      subtitle: "A focused call",
+      ctaLabel: "Book a call",
+    });
+    const { rerender } = render(<SystemPageTile item={session} w={2} h={2} />);
+    expect(screen.getByTestId("commerce-tile")).toHaveAttribute("data-layout", "square");
     expect(screen.getByText("Studio")).toBeVisible();
-    expect(screen.getByText(/30 min/)).toBeVisible();
     expect(screen.getByText("$20")).toBeVisible();
     expect(screen.queryByRole("link")).toBeNull();
     expect(screen.queryByRole("button")).toBeNull();
+    rerender(<SystemPageTile item={session} publicUsername="creator" w={4} h={4} />);
+    expect(screen.getByTestId("commerce-tile")).toHaveAttribute("data-layout", "large");
+    expect(screen.getByText("30 min · A focused call")).toBeVisible();
+    expect(screen.getByText("Book a call")).toBeVisible();
+    expect(screen.getByRole("link", { name: /Studio/ })).toHaveAttribute(
+      "href",
+      "/@creator/products/studio-call",
+    );
   });
 
   it("reuses the review card without exposing source visibility or deletion controls", () => {
