@@ -122,9 +122,22 @@ function metric(value: unknown) {
 
 function postFromRow(row: any, insights: Map<string, TargetInsight>): SchedulerPost {
   return {
+    ...(typeof row.settings?.schedulingWarning === "string"
+      ? { automationNote: row.settings.schedulingWarning }
+      : {}),
     id: row.id,
-    body: row.body,
-    title: row.title || null,
+    body:
+      row.body ||
+      (row.targets || []).find(
+        (target: any) => typeof target.provider_settings?.bodyOverride === "string",
+      )?.provider_settings.bodyOverride ||
+      "",
+    title:
+      row.title ||
+      (row.targets || []).find(
+        (target: any) => typeof target.provider_settings?.titleOverride === "string",
+      )?.provider_settings.titleOverride ||
+      null,
     scheduledAt: row.scheduled_at || null,
     timezone: row.timezone,
     status: row.status,
@@ -379,6 +392,41 @@ export async function saveSocialPostForUser(userId: string, input: SocialPostInp
   await requireScheduler(userId);
   await enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "social-post-save", userId);
   const db = supabaseAdmin as any;
+  if (data.asDraft && data.connectionIds.length === 0) {
+    if (data.media.some((item) => !mediaBelongsToCreator(item, userId))) {
+      throw new Error("Upload media through Bento before saving it.");
+    }
+    if (data.id) {
+      const { data: existing, error: existingError } = await db
+        .from("social_posts")
+        .select("id,status")
+        .eq("id", data.id)
+        .eq("user_id", userId)
+        .single();
+      if (existingError || existing?.status !== "draft")
+        throw new Error("This draft can no longer be edited.");
+      const { error: targetsError } = await db
+        .from("social_post_targets")
+        .delete()
+        .eq("post_id", data.id);
+      if (targetsError) throw new Error("The draft destinations could not be cleared.");
+    }
+    const values = {
+      user_id: userId,
+      body: data.body,
+      title: data.title || null,
+      media: data.media,
+      scheduled_at: null,
+      timezone: data.timezone,
+      status: "draft",
+    };
+    const write = data.id
+      ? db.from("social_posts").update(values).eq("id", data.id).eq("user_id", userId)
+      : db.from("social_posts").insert(values);
+    const { data: saved, error: saveError } = await write.select("id").single();
+    if (saveError || !saved) throw new Error("The draft could not be saved.");
+    return { ...(await schedulerData(userId)), savedPostId: String(saved.id), queuedPostId: null };
+  }
   const { data: connections, error: connectionError } = await db
     .from("social_connections")
     .select(
@@ -401,7 +449,7 @@ export async function saveSocialPostForUser(userId: string, input: SocialPostInp
   if (checkedConnections.some((connection: any) => !isPublicSocialProvider(connection.provider))) {
     throw new Error("One or more selected accounts are no longer supported.");
   }
-  if (data.providerSettings.instagram?.scheduledAutoDm != null) {
+  if (!data.asDraft && data.providerSettings.instagram?.scheduledAutoDm != null) {
     scheduledInstagramAutoDmSchema.parse(data.providerSettings.instagram.scheduledAutoDm);
     const instagramConnections = connections.filter(
       (connection: any) => connection.provider === "instagram",
@@ -473,13 +521,14 @@ export async function saveSocialPostForUser(userId: string, input: SocialPostInp
     data.providerSettings,
     xCapabilitiesFromMetadata(xConnection?.metadata),
   );
-  if (Object.keys(providerErrors).length) throw new Error(Object.values(providerErrors)[0]);
+  if (!data.asDraft && Object.keys(providerErrors).length)
+    throw new Error(Object.values(providerErrors)[0]);
 
   const redditSettings = data.providerSettings.reddit || {};
   const redditConnections = checkedConnections.filter(
     (connection: any) => connection.provider === "reddit",
   );
-  if (redditConnections.length) {
+  if (!data.asDraft && redditConnections.length) {
     const community = String(redditSettings.community || "");
     const kind = redditSettings.kind === "link" ? "link" : "self";
     await Promise.all(
@@ -560,6 +609,7 @@ export async function saveSocialPostForUser(userId: string, input: SocialPostInp
 
   return {
     ...(await schedulerData(userId)),
+    savedPostId: String(savedTargets[0].saved_post_id),
     queuedPostId: data.publishNow && !data.asDraft ? String(savedTargets[0].saved_post_id) : null,
   };
 }

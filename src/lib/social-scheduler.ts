@@ -936,13 +936,43 @@ export const socialPostInputSchema = z
     title: z.string().trim().max(300).optional().default(""),
     scheduledAt: z.string().datetime({ offset: true }).nullable(),
     timezone: z.string().min(1).max(100).default("UTC"),
-    connectionIds: z.array(z.string().uuid()).min(1).max(20),
+    connectionIds: z.array(z.string().uuid()).max(20),
     media: z.array(schedulerMediaSchema).max(10).default([]),
     providerSettings: z.record(z.string(), z.record(z.string(), z.unknown())).default({}),
     publishNow: z.boolean().default(false),
     asDraft: z.boolean().default(false),
   })
   .superRefine((value, context) => {
+    for (const [provider, settings] of Object.entries(value.providerSettings)) {
+      if (
+        settings.bodyOverride !== undefined &&
+        (typeof settings.bodyOverride !== "string" ||
+          settings.bodyOverride.length > X_LONG_POST_LIMIT)
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Platform text is too long.",
+          path: ["providerSettings", provider, "bodyOverride"],
+        });
+      }
+      if (
+        settings.titleOverride !== undefined &&
+        (typeof settings.titleOverride !== "string" || settings.titleOverride.length > 300)
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Platform title is too long.",
+          path: ["providerSettings", provider, "titleOverride"],
+        });
+      }
+    }
+    if (!value.asDraft && value.connectionIds.length === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Choose a publishing destination.",
+        path: ["connectionIds"],
+      });
+    }
     const reddit = value.providerSettings.reddit || {};
     const instagram = value.providerSettings.instagram || {};
     const twitter = value.providerSettings.twitter || {};
@@ -962,7 +992,11 @@ export const socialPostInputSchema = z
           path: ["providerSettings", "twitter", "article"],
         });
       const article = xArticleDocument(twitter.article);
-      if (article && xArticlePlainText(article) !== value.body)
+      if (
+        article &&
+        xArticlePlainText(article) !==
+          (typeof twitter.bodyOverride === "string" ? twitter.bodyOverride : value.body)
+      )
         context.addIssue({
           code: z.ZodIssueCode.custom,
           message: "X Article text is out of sync.",
@@ -976,7 +1010,7 @@ export const socialPostInputSchema = z
         path: ["providerSettings", "instagram", "trialReel"],
       });
     }
-    if (instagram.scheduledAutoDm != null) {
+    if (!value.asDraft && instagram.scheduledAutoDm != null) {
       const automation = scheduledInstagramAutoDmSchema.safeParse(instagram.scheduledAutoDm);
       if (!automation.success) {
         for (const issue of automation.error.issues) {
@@ -1006,8 +1040,14 @@ export const socialPostInputSchema = z
     }
     if (
       !value.body &&
+      !Object.values(value.providerSettings).some(
+        (settings) => typeof settings.bodyOverride === "string" && settings.bodyOverride.trim(),
+      ) &&
       value.media.length === 0 &&
       !value.title &&
+      !Object.values(value.providerSettings).some(
+        (settings) => typeof settings.titleOverride === "string" && settings.titleOverride.trim(),
+      ) &&
       !(reddit.kind === "link" && typeof reddit.url === "string" && reddit.url.trim())
     ) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: "Add text, media, or a link." });
@@ -1051,6 +1091,9 @@ export function validatePostForProviders(
   for (const provider of providers) {
     const definition = SOCIAL_PROVIDER_DEFINITIONS[provider];
     const settings = providerSettings[provider] || {};
+    const providerBody = typeof settings.bodyOverride === "string" ? settings.bodyOverride : body;
+    const providerTitle =
+      typeof settings.titleOverride === "string" ? settings.titleOverride : title;
     const xArticle = provider === "twitter" && settings.kind === "article";
     if (xArticle) {
       if (providers.length !== 1) {
@@ -1062,11 +1105,11 @@ export function validatePostForProviders(
           "X Articles require a Premium, Premium+, or eligible organization account.";
         continue;
       }
-      if (!title.trim()) {
+      if (!providerTitle.trim()) {
         errors.twitter = "Give your X Article a title.";
         continue;
       }
-      if (!body.trim()) {
+      if (!providerBody.trim()) {
         errors.twitter = "Write the X Article body.";
         continue;
       }
@@ -1081,13 +1124,14 @@ export function validatePostForProviders(
           continue;
         }
         const article = xArticleDocument(settings.article)!;
-        if (xArticlePlainText(article) !== body) {
+        if (xArticlePlainText(article) !== providerBody) {
           errors.twitter = "X Article text is out of sync.";
           continue;
         }
       }
     }
-    const textForLimit = provider === "youtube" ? youtubeDescriptionFrom(body, settings) : body;
+    const textForLimit =
+      provider === "youtube" ? youtubeDescriptionFrom(providerBody, settings) : providerBody;
     const maxText =
       provider === "twitter" && xCapabilities?.canPostLong ? X_LONG_POST_LIMIT : definition.maxText;
     if (textForLimit.length > maxText) {
@@ -1204,14 +1248,14 @@ export function validatePostForProviders(
       errors[provider] = "LinkedIn document posts cannot include images or video.";
       continue;
     }
-    if (definition.requiresTitle && !title.trim()) {
+    if (definition.requiresTitle && !providerTitle.trim()) {
       errors[provider] =
         provider === "youtube"
           ? "YouTube needs a video title."
           : `${definition.name} needs a post title.`;
       continue;
     }
-    if (definition.maxTitle && title.trim().length > definition.maxTitle) {
+    if (definition.maxTitle && providerTitle.trim().length > definition.maxTitle) {
       errors[provider] =
         `${definition.name} allows ${definition.maxTitle.toLocaleString()} title characters.`;
       continue;
@@ -1273,7 +1317,7 @@ export function validatePostForProviders(
         errors.reddit = "Choose a Reddit text post or link post.";
         continue;
       }
-      if (kind === "self" && !body.trim()) {
+      if (kind === "self" && !providerBody.trim()) {
         errors.reddit = "Reddit text posts need post text.";
         continue;
       }
@@ -1285,6 +1329,13 @@ export function validatePostForProviders(
           errors.reddit = "Reddit link posts need a valid https:// URL.";
         }
       }
+    }
+    if (
+      !providerBody.trim() &&
+      media.length === 0 &&
+      !(provider === "reddit" && settings.kind === "link")
+    ) {
+      errors[provider] = `${definition.name} needs text or media.`;
     }
   }
   return errors;

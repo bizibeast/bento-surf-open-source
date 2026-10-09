@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -12,7 +13,6 @@ import {
 } from "react";
 import {
   CalendarClock,
-  Check,
   ChevronLeft,
   ChevronRight,
   Clock3,
@@ -101,7 +101,6 @@ import {
   isSocialCalendarPost,
   scheduleTimeForDate,
   defaultScheduleTime,
-  nextPostingSlot,
   isSchedulableCalendarDay,
   validatePostForProviders,
   youtubeDetectedFormat,
@@ -391,6 +390,16 @@ const PROVIDER_ICONS: Record<SocialProvider, ComponentType<{ className?: string 
   youtube: SiYoutube,
   reddit: SiReddit,
 };
+const ACTIVE_PLATFORM_COLORS: Record<SocialProvider, string> = {
+  instagram: "bg-pink-50 text-pink-600 ring-pink-300",
+  facebook: "bg-blue-50 text-blue-600 ring-blue-300",
+  threads: "bg-zinc-100 text-zinc-950 ring-zinc-400",
+  tiktok: "bg-cyan-50 text-zinc-950 ring-cyan-400",
+  linkedin: "bg-sky-50 text-sky-700 ring-sky-300",
+  twitter: "bg-zinc-100 text-zinc-950 ring-zinc-400",
+  youtube: "bg-red-50 text-red-600 ring-red-300",
+  reddit: "bg-orange-50 text-orange-600 ring-orange-300",
+};
 
 const TIKTOK_PRIVACY_LABELS: Record<string, string> = {
   SELF_ONLY: "Only me",
@@ -542,6 +551,9 @@ function SchedulerPage() {
   useWebMcpTools(schedulerWebMcpTools);
   const [body, setBody] = useState("");
   const [title, setTitle] = useState("");
+  const [sync, setSync] = useState(true);
+  const [bodyOverrides, setBodyOverrides] = useState<Partial<Record<SocialProvider, string>>>({});
+  const [platformTitles, setPlatformTitles] = useState<Partial<Record<SocialProvider, string>>>({});
   const [scheduledAt, setScheduledAt] = useState(defaultScheduleTime);
   const [selected, setSelected] = useState<string[]>([]);
   const [media, setMedia] = useState<SchedulerMedia[]>([]);
@@ -585,6 +597,11 @@ function SchedulerPage() {
   const [composeOpen, setComposeOpen] = useState(false);
   const [discardPromptOpen, setDiscardPromptOpen] = useState(false);
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
+  const [composeWasOpenedForEdit, setComposeWasOpenedForEdit] = useState(false);
+  const [editingPostStatus, setEditingPostStatus] = useState<SchedulerPost["status"] | null>(null);
+  const [autosaveStatus, setAutosaveStatus] = useState<"idle" | "saving" | "saved" | "error">(
+    "idle",
+  );
   const [savedProviderSettings, setSavedProviderSettings] = useState<SocialProviderSettings>({});
   const [postingSettingsOpen, setPostingSettingsOpen] = useState(false);
   const [publishingPostId, setPublishingPostId] = useState<string | null>(null);
@@ -592,20 +609,42 @@ function SchedulerPage() {
   const youtubeThumbInputRef = useRef<HTMLInputElement>(null);
   const instagramCoverInputRef = useRef<HTMLInputElement>(null);
   const initialComposeFingerprintRef = useRef<string | null>(null);
+  const autosavedFingerprintRef = useRef<string | null>(null);
+  const failedAutosaveFingerprintRef = useRef<string | null>(null);
+  const autosaveInFlightRef = useRef(false);
   const youtubeThumbnailRef = useRef<PendingThumbnail | null>(null);
   const instagramCoverRef = useRef<PendingThumbnail | null>(null);
   const schedulerTimeZone = data?.postingSchedule.timezone || browserTimeZone();
 
-  const replacePendingThumbnail = (
-    target: "youtube" | "instagram",
-    next: PendingThumbnail | null,
-  ) => {
-    const setter = target === "youtube" ? setYoutubeThumbnail : setInstagramCover;
-    setter((current) => {
-      if (current?.previewUrl !== next?.previewUrl) revokePendingThumbnail(current);
-      return next;
-    });
-  };
+  const replacePendingThumbnail = useCallback(
+    (target: "youtube" | "instagram", next: PendingThumbnail | null) => {
+      const setter = target === "youtube" ? setYoutubeThumbnail : setInstagramCover;
+      setter((current) => {
+        if (current?.previewUrl !== next?.previewUrl) revokePendingThumbnail(current);
+        return next;
+      });
+    },
+    [],
+  );
+
+  const materializeThumbnail = useCallback(
+    async (value: PendingThumbnail | null, target: "youtube" | "instagram") => {
+      if (!value) return null;
+      if (value.uploaded) return value.uploaded;
+      if (!value.file) return null;
+      setUploading(true);
+      try {
+        const uploaded = await uploadFileResult(value.file, "image", { optimize: false });
+        if (!uploaded.publicUrl) throw new Error("Upload failed");
+        const item = { ...uploaded, url: uploaded.publicUrl };
+        replacePendingThumbnail(target, { ...value, uploaded: item });
+        return item;
+      } finally {
+        setUploading(false);
+      }
+    },
+    [replacePendingThumbnail],
+  );
 
   useEffect(() => {
     youtubeThumbnailRef.current = youtubeThumbnail;
@@ -623,8 +662,14 @@ function SchedulerPage() {
 
   const resetComposeForm = () => {
     initialComposeFingerprintRef.current = null;
+    autosavedFingerprintRef.current = null;
+    failedAutosaveFingerprintRef.current = null;
+    setAutosaveStatus("idle");
     setBody("");
     setTitle("");
+    setSync(true);
+    setBodyOverrides({});
+    setPlatformTitles({});
     setMedia([]);
     setSelected([]);
     setScheduledAt(defaultScheduleInput(schedulerTimeZone));
@@ -659,6 +704,8 @@ function SchedulerPage() {
     setUploadError(null);
     setPreviewConnectionId("");
     setEditingPostId(null);
+    setComposeWasOpenedForEdit(false);
+    setEditingPostStatus(null);
     setSavedProviderSettings({});
   };
 
@@ -705,9 +752,28 @@ function SchedulerPage() {
     const instagram = settings.instagram || {};
     const reddit = settings.reddit || {};
     setEditingPostId(post.id);
+    setComposeWasOpenedForEdit(true);
+    setEditingPostStatus(post.status);
     setSavedProviderSettings(settings);
     setBody(post.body);
     setTitle(post.title || "");
+    const savedBodyOverrides = Object.fromEntries(
+      post.targets.flatMap((target) =>
+        typeof target.providerSettings?.bodyOverride === "string"
+          ? [[target.provider, target.providerSettings.bodyOverride]]
+          : [],
+      ),
+    ) as Partial<Record<SocialProvider, string>>;
+    const savedTitles = Object.fromEntries(
+      post.targets.flatMap((target) =>
+        typeof target.providerSettings?.titleOverride === "string"
+          ? [[target.provider, target.providerSettings.titleOverride]]
+          : [],
+      ),
+    ) as Partial<Record<SocialProvider, string>>;
+    setSync(Object.keys(savedBodyOverrides).length === 0);
+    setBodyOverrides(savedBodyOverrides);
+    setPlatformTitles(savedTitles);
     setMedia(post.media);
     setSelected(post.targets.map((target) => target.connectionId));
     setPreviewConnectionId(post.targets[0]?.connectionId || "");
@@ -766,17 +832,21 @@ function SchedulerPage() {
       ),
     [data?.connections, selected],
   );
+  const activeConnection =
+    selectedConnections.find((connection) => connection.id === previewConnectionId) ||
+    selectedConnections[0] ||
+    null;
+  const activeProvider = activeConnection?.provider;
+  const activeProviders = activeProvider ? [activeProvider] : [];
+  const editorBody = activeProvider && !sync ? (bodyOverrides[activeProvider] ?? body) : body;
+  const editorTitle = activeProvider ? (platformTitles[activeProvider] ?? title) : title;
   const connectedProviders = selectedConnections.map((connection) => connection.provider);
   const selectedXConnection = selectedConnections.find(
     (connection) => connection.provider === "twitter",
   );
-  const isXArticle = Boolean(selectedXConnection && xPostKind === "article");
+  const isXArticle = Boolean(activeProvider === "twitter" && xPostKind === "article");
   const instagramSelected = connectedProviders.includes("instagram");
   const usesCaption = schedulerUsesCaption(connectedProviders);
-  const captionLimit = schedulerCaptionLimit(
-    connectedProviders,
-    selectedXConnection?.xCapabilities,
-  );
   const hasVideo = media.some((item) => item.mimeType.startsWith("video/"));
   const primaryVideo = media.find((item) => item.mimeType.startsWith("video/")) || null;
   const needsYouTubeTitle = connectedProviders.includes("youtube");
@@ -892,8 +962,8 @@ function SchedulerPage() {
     staleTime: 15 * 60_000,
     retry: 1,
   });
-  const providerSettings = useMemo(
-    () => ({
+  const providerSettings = useMemo(() => {
+    const settings: SocialProviderSettings = {
       tiktok: {
         ...savedProviderSettings.tiktok,
         privacyLevel: tiktokPrivacy,
@@ -947,53 +1017,106 @@ function SchedulerPage() {
         kind: xPostKind,
         article: xPostKind === "article" ? xArticle : undefined,
       },
-    }),
-    [
-      autoDmEnabled,
-      autoDmTrigger,
-      autoDmKeyword,
-      autoDmOpening,
-      autoDmReply,
-      hasVideo,
-      instagramSelected,
-      instagramCover,
-      instagramGraduationStrategy,
-      instagramReelCover,
-      instagramTrialReel,
-      redditCommunity,
-      redditKind,
-      redditUrl,
-      xPostKind,
-      xArticle,
-      savedProviderSettings,
-      tiktokAiGenerated,
-      tiktokAllowComment,
-      tiktokAllowDuet,
-      tiktokAllowStitch,
-      tiktokBrandedContent,
-      tiktokCommercial,
-      tiktokCoverMs,
-      tiktokMaxVideoDurationSec,
-      tiktokOwnBrand,
-      tiktokPrivacy,
-      usesCaption,
-      videoDurationMs,
-      youtubeDescription,
-      youtubeFormat,
-      youtubePrivacy,
-      youtubeThumbnail,
-      videoMeta?.durationSeconds,
-    ],
+    };
+    for (const provider of Object.keys(settings)) {
+      delete settings[provider].bodyOverride;
+    }
+    for (const connection of selectedConnections) {
+      const provider = connection.provider;
+      settings[provider] = {
+        ...settings[provider],
+        ...(!sync ? { bodyOverride: bodyOverrides[provider] ?? body } : {}),
+        ...(platformTitles[provider] !== undefined
+          ? { titleOverride: platformTitles[provider] }
+          : {}),
+      };
+    }
+    return settings;
+  }, [
+    autoDmEnabled,
+    autoDmTrigger,
+    autoDmKeyword,
+    autoDmOpening,
+    autoDmReply,
+    hasVideo,
+    instagramSelected,
+    instagramCover,
+    instagramGraduationStrategy,
+    instagramReelCover,
+    instagramTrialReel,
+    redditCommunity,
+    redditKind,
+    redditUrl,
+    xPostKind,
+    xArticle,
+    savedProviderSettings,
+    selectedConnections,
+    sync,
+    body,
+    bodyOverrides,
+    platformTitles,
+    tiktokAiGenerated,
+    tiktokAllowComment,
+    tiktokAllowDuet,
+    tiktokAllowStitch,
+    tiktokBrandedContent,
+    tiktokCommercial,
+    tiktokCoverMs,
+    tiktokMaxVideoDurationSec,
+    tiktokOwnBrand,
+    tiktokPrivacy,
+    usesCaption,
+    videoDurationMs,
+    youtubeDescription,
+    youtubeFormat,
+    youtubePrivacy,
+    youtubeThumbnail,
+    videoMeta?.durationSeconds,
+  ]);
+  const postSettingsForTargets = useCallback(
+    (
+      uploadedYoutubeThumbnail: SchedulerMedia | null,
+      uploadedInstagramCover: SchedulerMedia | null,
+    ) =>
+      Object.fromEntries(
+        selectedConnections.map((connection) => {
+          const provider = connection.provider;
+          return [
+            provider,
+            {
+              ...providerSettings[provider],
+              ...(provider === "youtube" && uploadedYoutubeThumbnail
+                ? { thumbnail: uploadedYoutubeThumbnail }
+                : {}),
+              ...(provider === "instagram" && uploadedInstagramCover
+                ? { cover: uploadedInstagramCover }
+                : {}),
+            },
+          ];
+        }),
+      ) as SocialProviderSettings,
+    [selectedConnections, providerSettings],
   );
+  const selectedProviderSettings = postSettingsForTargets(null, null);
   const youtubeThumbnailMedia = pendingThumbnailMedia(youtubeThumbnail);
   const instagramCoverMedia = pendingThumbnailMedia(instagramCover);
+  const hasPostContent = Boolean(
+    body.trim() ||
+    title.trim() ||
+    media.length ||
+    redditUrl.trim() ||
+    selectedConnections.some(
+      (connection) =>
+        bodyOverrides[connection.provider]?.trim() || platformTitles[connection.provider]?.trim(),
+    ),
+  );
   const composeFingerprint = schedulerComposeFingerprint({
     body,
     title,
     scheduledAt,
     selected,
     media,
-    providerSettings,
+    providerSettings: selectedProviderSettings,
   });
   useEffect(() => {
     if (!composeOpen) {
@@ -1001,7 +1124,10 @@ function SchedulerPage() {
       return;
     }
     initialComposeFingerprintRef.current ??= composeFingerprint;
-  }, [composeFingerprint, composeOpen]);
+    if (editingPostStatus === "draft") {
+      autosavedFingerprintRef.current ??= composeFingerprint;
+    }
+  }, [composeFingerprint, composeOpen, editingPostStatus]);
   const composeDirty =
     initialComposeFingerprintRef.current !== null &&
     initialComposeFingerprintRef.current !== composeFingerprint;
@@ -1021,25 +1147,54 @@ function SchedulerPage() {
     selectedXConnection?.xCapabilities,
   );
   const mediaCompatibility = schedulerMediaCompatibility(connectedProviders);
-  const needsRedditFields = connectedProviders.includes("reddit");
-  const needsPostTitle = needsYouTubeTitle || needsRedditFields || isXArticle;
-  const previewConnection =
-    selectedConnections.find((connection) => connection.id === previewConnectionId) ||
-    selectedConnections[0] ||
-    null;
+  const previewConnection = activeConnection;
+  const editorUsesCaption = schedulerUsesCaption(activeProviders);
+  const editorCaptionLimit = schedulerCaptionLimit(
+    activeProviders,
+    selectedXConnection?.xCapabilities,
+  );
+  const showPostTitle = activeProvider === "youtube" || activeProvider === "reddit" || isXArticle;
+
+  const updateEditorBody = (value: string) => {
+    if (!activeProvider) {
+      setBody(value);
+    } else if (sync && selectedConnections.length > 1) {
+      setBodyOverrides(
+        Object.fromEntries(
+          selectedConnections.map((connection) => [
+            connection.provider,
+            connection.provider === activeProvider ? value : body,
+          ]),
+        ) as Partial<Record<SocialProvider, string>>,
+      );
+      setSync(false);
+    } else if (sync) {
+      setBody(value);
+    } else {
+      setBodyOverrides((current) => ({ ...current, [activeProvider]: value }));
+    }
+  };
+
+  const toggleSync = (enabled: boolean) => {
+    if (enabled) {
+      const firstWrittenVersion = selectedConnections
+        .map((connection) => bodyOverrides[connection.provider])
+        .find((value) => value?.trim());
+      setBody(editorBody.trim() ? editorBody : firstWrittenVersion || editorBody);
+      setBodyOverrides({});
+    } else {
+      setBodyOverrides(
+        Object.fromEntries(
+          selectedConnections.map((connection) => [connection.provider, body]),
+        ) as Partial<Record<SocialProvider, string>>,
+      );
+    }
+    setSync(enabled);
+  };
 
   const save = useMutation({
-    mutationFn: ({
-      publishNow,
-      asDraft = false,
-      scheduledAtOverride,
-    }: {
-      publishNow: boolean;
-      asDraft?: boolean;
-      scheduledAtOverride?: string;
-    }) => {
-      const scheduledIso =
-        scheduledAtOverride || zonedDateTimeInputToIso(scheduledAt, schedulerTimeZone);
+    mutationFn: ({ publishNow, asDraft = false }: { publishNow: boolean; asDraft?: boolean }) => {
+      const scheduledIso = zonedDateTimeInputToIso(scheduledAt, schedulerTimeZone);
       if (!publishNow && !asDraft && !scheduledIso) throw new Error("Choose a valid publish time.");
       return Promise.all([
         materializeThumbnail(youtubeThumbnail, "youtube"),
@@ -1054,17 +1209,10 @@ function SchedulerPage() {
             timezone: schedulerTimeZone,
             connectionIds: selected,
             media,
-            providerSettings: {
-              ...providerSettings,
-              youtube: {
-                ...providerSettings.youtube,
-                ...(uploadedYoutubeThumbnail ? { thumbnail: uploadedYoutubeThumbnail } : {}),
-              },
-              instagram: {
-                ...providerSettings.instagram,
-                ...(uploadedInstagramCover ? { cover: uploadedInstagramCover } : {}),
-              },
-            },
+            providerSettings: postSettingsForTargets(
+              uploadedYoutubeThumbnail,
+              uploadedInstagramCover,
+            ),
             publishNow,
             asDraft,
           },
@@ -1080,11 +1228,104 @@ function SchedulerPage() {
           description: "Bento will update this post as soon as the platforms respond.",
         });
       } else {
-        toast.success(asDraft ? "Draft saved" : editingPostId ? "Post updated" : "Post scheduled");
+        toast.success(
+          asDraft ? "Draft saved" : composeWasOpenedForEdit ? "Post updated" : "Post scheduled",
+        );
       }
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "Could not save post"),
   });
+
+  useEffect(() => {
+    if (
+      !composeOpen ||
+      (editingPostStatus !== null && editingPostStatus !== "draft") ||
+      !hasPostContent ||
+      uploading ||
+      save.isPending ||
+      autosaveInFlightRef.current ||
+      composeFingerprint === autosavedFingerprintRef.current ||
+      composeFingerprint === failedAutosaveFingerprintRef.current
+    )
+      return;
+
+    const fingerprint = composeFingerprint;
+    const timer = window.setTimeout(() => {
+      autosaveInFlightRef.current = true;
+      setAutosaveStatus("saving");
+      let persistedFingerprint = fingerprint;
+      void Promise.all([
+        materializeThumbnail(youtubeThumbnail, "youtube"),
+        materializeThumbnail(instagramCover, "instagram"),
+      ])
+        .then(([uploadedYoutubeThumbnail, uploadedInstagramCover]) => {
+          const draftProviderSettings = postSettingsForTargets(
+            uploadedYoutubeThumbnail,
+            uploadedInstagramCover,
+          );
+          persistedFingerprint = schedulerComposeFingerprint({
+            body,
+            title,
+            scheduledAt,
+            selected,
+            media,
+            providerSettings: draftProviderSettings,
+          });
+          return saveSocialPost({
+            data: {
+              id: editingPostId || undefined,
+              body,
+              title,
+              scheduledAt: null,
+              timezone: schedulerTimeZone,
+              connectionIds: selected,
+              media,
+              providerSettings: draftProviderSettings,
+              publishNow: false,
+              asDraft: true,
+            },
+          });
+        })
+        .then((next) => {
+          queryClient.setQueryData(["social-scheduler"], next);
+          setEditingPostId(next.savedPostId);
+          setEditingPostStatus("draft");
+          autosavedFingerprintRef.current = persistedFingerprint;
+          initialComposeFingerprintRef.current = persistedFingerprint;
+          setAutosaveStatus("saved");
+        })
+        .catch((error) => {
+          failedAutosaveFingerprintRef.current = fingerprint;
+          setAutosaveStatus("error");
+          toast.error(error instanceof Error ? error.message : "Could not save draft");
+        })
+        .finally(() => {
+          autosaveInFlightRef.current = false;
+        });
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [
+    composeFingerprint,
+    composeOpen,
+    editingPostStatus,
+    body,
+    title,
+    redditUrl,
+    hasPostContent,
+    scheduledAt,
+    selected,
+    media,
+    postSettingsForTargets,
+    youtubeThumbnail,
+    instagramCover,
+    editingPostId,
+    schedulerTimeZone,
+    materializeThumbnail,
+    queryClient,
+    uploading,
+    save.isPending,
+    autosaveStatus,
+  ]);
 
   const publishingNow = save.isPending && save.variables?.publishNow === true;
 
@@ -1111,31 +1352,6 @@ function SchedulerPage() {
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Could not save posting times"),
   });
-
-  const scheduleAtNextSlot = () => {
-    const postingSchedule = data?.postingSchedule;
-    if (!postingSchedule?.slots.length) {
-      setPostingSettingsOpen(true);
-      toast.error("Add a posting time first.");
-      return;
-    }
-    const occupied = (data?.posts || [])
-      .filter((post: SchedulerPost) => post.status === "scheduled" && post.scheduledAt)
-      .map((post: SchedulerPost) => post.scheduledAt!);
-    const offset = postingSchedule.naturalOffset ? Math.floor(Math.random() * 9) - 4 : 0;
-    const nextSlot = nextPostingSlot(
-      postingSchedule.slots,
-      postingSchedule.timezone,
-      new Date(),
-      occupied,
-      offset,
-    );
-    if (!nextSlot) {
-      toast.error("No open posting slot was found.");
-      return;
-    }
-    save.mutate({ publishNow: false, scheduledAtOverride: nextSlot });
-  };
 
   const cancel = useMutation({
     mutationFn: (id: string) => cancelSocialPost({ data: { id } }),
@@ -1322,7 +1538,9 @@ function SchedulerPage() {
 
   function updateArticle(value: XArticleDocument) {
     setXArticle(value);
-    setBody(xArticlePlainText(value));
+    const articleBody = xArticlePlainText(value);
+    if (sync) setBody(articleBody);
+    else setBodyOverrides((current) => ({ ...current, twitter: articleBody }));
   }
 
   function openMediaPicker() {
@@ -1412,37 +1630,23 @@ function SchedulerPage() {
     }
   }
 
-  async function materializeThumbnail(
-    value: PendingThumbnail | null,
-    target: "youtube" | "instagram",
-  ) {
-    if (!value) return null;
-    if (value.uploaded) return value.uploaded;
-    if (!value.file) return null;
-    setUploading(true);
-    try {
-      const uploaded = await uploadFileResult(value.file, "image", { optimize: false });
-      if (!uploaded.publicUrl) throw new Error("Upload failed");
-      const item = { ...uploaded, url: uploaded.publicUrl };
-      replacePendingThumbnail(target, { ...value, uploaded: item });
-      return item;
-    } finally {
-      setUploading(false);
-    }
-  }
-
   const canSubmit =
     selected.length > 0 &&
-    (body.trim().length > 0 || media.length > 0 || (redditKind === "link" && redditUrl.trim())) &&
-    (!needsPostTitle || title.trim().length > 0) &&
+    hasPostContent &&
     Object.keys(providerErrors).length === 0 &&
     (!autoDmEnabled ||
       !hasVideo ||
       scheduledInstagramAutoDmSchema.safeParse(providerSettings.instagram.scheduledAutoDm)
         .success) &&
     !save.isPending &&
+    autosaveStatus !== "saving" &&
     !(primaryVideo && !videoMeta && (needsYouTubeTitle || tiktokSelected)) &&
     (!tiktokSelected || (tiktokCreatorInfo.isSuccess && tiktokPrivacyOptions.length > 0));
+  const canSaveDraft =
+    hasPostContent &&
+    (editingPostStatus === null || editingPostStatus === "draft" || selected.length > 0) &&
+    !save.isPending &&
+    autosaveStatus !== "saving";
 
   const sortedPosts = useMemo(
     () =>
@@ -1621,44 +1825,89 @@ function SchedulerPage() {
                 <DialogContent
                   overlayClassName="bg-[#17213a]/35 backdrop-blur-[6px]"
                   onPaste={handleComposePaste}
-                  className="h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-4xl gap-0 overflow-hidden rounded-[24px] border-white/80 bg-[#f7f8fc] p-0 shadow-[0_42px_130px_-45px_rgba(23,33,58,.7)] data-[state=closed]:slide-out-to-bottom-2 data-[state=open]:slide-in-from-bottom-2 sm:h-[min(88dvh,720px)] sm:w-[88vw] sm:rounded-[32px] [&>button]:z-40"
+                  className="h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-6xl gap-0 overflow-hidden rounded-[24px] border-white/80 bg-[#f7f8fc] p-0 shadow-[0_42px_130px_-45px_rgba(23,33,58,.7)] data-[state=closed]:slide-out-to-bottom-2 data-[state=open]:slide-in-from-bottom-2 sm:h-[min(90dvh,840px)] sm:w-[90vw] sm:rounded-[32px] [&>button]:z-40"
                 >
                   <div className="flex h-full min-h-0 flex-col overflow-x-hidden overflow-y-auto sm:overflow-hidden">
                     <div className="shrink-0 border-b border-border/70 px-5 py-3 pr-14 sm:px-7">
                       <DialogTitle className="font-ui-display text-2xl sm:text-3xl">
-                        {editingPostId ? "Edit post" : "Create a post"}
+                        {composeWasOpenedForEdit ? "Edit post" : "Create a post"}
                       </DialogTitle>
                     </div>
 
-                    <div className="min-h-0 flex-none overflow-visible px-5 py-5 sm:flex-1 sm:overflow-y-auto sm:px-7 sm:py-6 lg:overflow-hidden">
-                      <div className="grid gap-6 lg:h-full lg:min-h-0 lg:grid-cols-2 lg:items-stretch lg:gap-0">
-                        <div
-                          data-testid="scheduler-compose-scroll"
-                          className="min-w-0 lg:min-h-0 lg:overflow-y-auto lg:pr-8"
-                        >
-                          <div className="flex min-h-10 flex-wrap items-center gap-2">
-                            {(data?.connections || []).map((connection: SchedulerConnection) => (
-                              <AccountChip
+                    <div className="shrink-0 px-4 pt-3 sm:px-5">
+                      <div
+                        className="flex items-center gap-2 overflow-x-auto pb-3 whitespace-nowrap"
+                        aria-label="Publishing platforms"
+                      >
+                        {(data?.connections || []).map((connection: SchedulerConnection) => (
+                          <AccountChip
+                            key={connection.id}
+                            connection={connection}
+                            selected={selected.includes(connection.id)}
+                            onToggle={() => {
+                              setSelected((current) =>
+                                current.includes(connection.id)
+                                  ? current.filter((id) => id !== connection.id)
+                                  : [...current, connection.id],
+                              );
+                              if (!selected.includes(connection.id))
+                                setPreviewConnectionId(connection.id);
+                            }}
+                          />
+                        ))}
+                        {!data?.connections.length && (
+                          <p className="text-sm text-muted-foreground">
+                            Connect your social accounts in Settings → Integrations.
+                          </p>
+                        )}
+                      </div>
+                      {selectedConnections.length > 0 && (
+                        <div className="border-t border-border/70 pt-2">
+                          <div
+                            className="flex items-center gap-2 overflow-x-auto whitespace-nowrap"
+                            aria-label="Selected accounts"
+                          >
+                            {selectedConnections.map((connection) => (
+                              <SelectedAccountTab
                                 key={connection.id}
                                 connection={connection}
-                                selected={selected.includes(connection.id)}
-                                onToggle={() =>
-                                  setSelected((current) =>
-                                    current.includes(connection.id)
-                                      ? current.filter((id) => id !== connection.id)
-                                      : [...current, connection.id],
-                                  )
-                                }
+                                active={connection.id === activeConnection?.id}
+                                hasError={Boolean(providerErrors[connection.provider])}
+                                onClick={() => setPreviewConnectionId(connection.id)}
                               />
                             ))}
-                            {!data?.connections.length && (
-                              <p className="text-sm text-muted-foreground">
-                                Connect your social accounts in Settings → Integrations.
-                              </p>
-                            )}
                           </div>
+                          <div className="flex justify-center py-2">
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={sync}
+                              aria-label="Sync"
+                              onClick={() => toggleSync(!sync)}
+                              className="inline-flex items-center gap-2 text-xs font-semibold text-[#17213a]"
+                            >
+                              Sync
+                              <span
+                                className={`relative h-5 w-9 rounded-full transition-colors ${sync ? "bg-[#3478f6]" : "bg-[#b8c1d3]"}`}
+                                aria-hidden="true"
+                              >
+                                <span
+                                  className={`absolute top-0.5 size-4 rounded-full bg-white shadow-sm transition-transform ${sync ? "translate-x-[18px]" : "translate-x-0.5"}`}
+                                />
+                              </span>
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
 
-                          {selectedXConnection && (
+                    <div className="min-h-0 flex-none overflow-visible px-4 py-4 sm:flex-1 sm:overflow-y-auto sm:px-5 sm:py-4 lg:overflow-hidden">
+                      <div className="grid gap-4 lg:h-full lg:min-h-0 lg:grid-cols-2 lg:items-stretch lg:gap-0">
+                        <div
+                          data-testid="scheduler-compose-scroll"
+                          className="min-w-0 lg:min-h-0 lg:overflow-y-auto lg:pr-5"
+                        >
+                          {activeProvider === "twitter" && selectedXConnection && (
                             <div className="mt-5 rounded-2xl border border-border/70 bg-white p-4">
                               <p className="text-xs font-semibold text-muted-foreground">
                                 X format
@@ -1677,10 +1926,13 @@ function SchedulerPage() {
                                   aria-pressed={xPostKind === "article"}
                                   onClick={() => {
                                     setXPostKind("article");
-                                    if (!xArticlePlainText(xArticle).trim() && body.trim())
+                                    setSync(true);
+                                    setBody(editorBody);
+                                    setBodyOverrides({});
+                                    if (!xArticlePlainText(xArticle).trim() && editorBody.trim())
                                       setXArticle({
                                         cover: null,
-                                        blocks: body.split(/\r?\n/).map((text) => ({
+                                        blocks: editorBody.split(/\r?\n/).map((text) => ({
                                           kind: "text",
                                           type: "unstyled",
                                           text,
@@ -1707,39 +1959,40 @@ function SchedulerPage() {
                             </div>
                           )}
 
-                          {needsPostTitle && (
-                            <label className="mt-6 block">
+                          {showPostTitle && (
+                            <label className="mt-4 block">
                               <span className="flex items-end justify-between gap-3">
                                 <span className="text-xs font-semibold text-muted-foreground">
                                   {isXArticle
                                     ? "Article title"
-                                    : needsYouTubeTitle && needsRedditFields
-                                      ? "Post title"
-                                      : needsYouTubeTitle
-                                        ? "YouTube title"
-                                        : "Reddit title"}
+                                    : activeProvider === "youtube"
+                                      ? "YouTube title"
+                                      : "Reddit title"}
                                 </span>
                                 <span className="text-[11px] tabular-nums text-muted-foreground">
-                                  {title.length}/
-                                  {isXArticle || (needsRedditFields && !needsYouTubeTitle)
-                                    ? 300
-                                    : 100}
+                                  {editorTitle.length}/
+                                  {isXArticle || activeProvider === "reddit" ? 300 : 100}
                                 </span>
                               </span>
                               <input
-                                value={title}
-                                onChange={(event) => setTitle(event.target.value)}
-                                maxLength={
-                                  isXArticle || (needsRedditFields && !needsYouTubeTitle)
-                                    ? 300
-                                    : 100
-                                }
+                                value={editorTitle}
+                                onChange={(event) => {
+                                  if (activeProvider) {
+                                    setPlatformTitles((current) => ({
+                                      ...current,
+                                      [activeProvider]: event.target.value,
+                                    }));
+                                  } else {
+                                    setTitle(event.target.value);
+                                  }
+                                }}
+                                maxLength={isXArticle || activeProvider === "reddit" ? 300 : 100}
                                 placeholder={
                                   isXArticle
                                     ? "Give your Article a title"
                                     : youtubeFormat === "short"
                                       ? "A short title for the Shorts feed"
-                                      : needsYouTubeTitle
+                                      : activeProvider === "youtube"
                                         ? "Give your video a clear title"
                                         : "Write a clear title"
                                 }
@@ -1765,41 +2018,44 @@ function SchedulerPage() {
                               <span className="flex items-end justify-between gap-3">
                                 <span
                                   className={
-                                    connectedProviders.length
+                                    activeProviders.length
                                       ? "text-xs font-semibold text-muted-foreground"
                                       : "sr-only"
                                   }
                                 >
                                   {isXArticle
                                     ? "Article body"
-                                    : usesCaption
-                                      ? schedulerCaptionLabel(connectedProviders)
-                                      : needsYouTubeTitle
+                                    : editorUsesCaption
+                                      ? schedulerCaptionLabel(activeProviders)
+                                      : activeProvider === "youtube"
                                         ? "Description"
                                         : "Post text"}
                                 </span>
-                                {connectedProviders.length > 0 && (
+                                {activeProviders.length > 0 && (
                                   <span className="text-[11px] tabular-nums text-muted-foreground">
-                                    {body.length.toLocaleString()}/
-                                    {(usesCaption ? captionLimit : 5_000).toLocaleString()}
+                                    {editorBody.length.toLocaleString()}/
+                                    {(editorUsesCaption
+                                      ? editorCaptionLimit
+                                      : 5_000
+                                    ).toLocaleString()}
                                   </span>
                                 )}
                               </span>
                               <textarea
-                                value={body}
-                                onChange={(event) => setBody(event.target.value)}
-                                rows={7}
+                                value={editorBody}
+                                onChange={(event) => updateEditorBody(event.target.value)}
+                                rows={10}
                                 placeholder={
                                   isXArticle
                                     ? "Write your X Article"
-                                    : schedulerCaptionPlaceholder(connectedProviders)
+                                    : schedulerCaptionPlaceholder(activeProviders)
                                 }
-                                className="mt-2 w-full resize-none bg-transparent font-ui-sans text-[26px] leading-relaxed outline-none placeholder:text-muted-foreground/45 sm:text-[32px]"
+                                className="mt-2 min-h-64 w-full resize-none bg-transparent font-ui-sans text-[26px] leading-relaxed outline-none placeholder:text-muted-foreground/45 sm:min-h-80 sm:text-[32px]"
                               />
                             </label>
                           )}
 
-                          {needsYouTubeTitle && usesCaption && (
+                          {activeProvider === "youtube" && usesCaption && (
                             <label className="mt-5 block">
                               <span className="flex items-end justify-between gap-3">
                                 <span className="text-xs font-semibold text-muted-foreground">
@@ -1820,7 +2076,7 @@ function SchedulerPage() {
                             </label>
                           )}
 
-                          {needsRedditFields && (
+                          {activeProvider === "reddit" && (
                             <div
                               className={`mt-5 grid gap-4 border border-black/[0.08] p-4 sm:grid-cols-2 ${micro.soft}`}
                             >
@@ -1936,12 +2192,12 @@ function SchedulerPage() {
                           )}
 
                           {hasVideo &&
-                            (needsYouTubeTitle ||
-                              instagramReelCover ||
-                              connectedProviders.includes("tiktok")) && (
+                            (activeProvider === "youtube" ||
+                              (activeProvider === "instagram" && instagramReelCover) ||
+                              activeProvider === "tiktok") && (
                               <div className="mt-5 space-y-3">
                                 <p className={micro.eyebrowMuted}>Thumbnails</p>
-                                {needsYouTubeTitle && (
+                                {activeProvider === "youtube" && (
                                   <ProviderComposeCard
                                     provider="youtube"
                                     title={youtubeFormat === "short" ? "YouTube Short" : "YouTube"}
@@ -2011,7 +2267,7 @@ function SchedulerPage() {
                                   </ProviderComposeCard>
                                 )}
 
-                                {instagramReelCover && (
+                                {activeProvider === "instagram" && instagramReelCover && (
                                   <ProviderComposeCard
                                     provider="instagram"
                                     title="Instagram"
@@ -2083,7 +2339,7 @@ function SchedulerPage() {
                                   </ProviderComposeCard>
                                 )}
 
-                                {connectedProviders.includes("tiktok") && (
+                                {activeProvider === "tiktok" && (
                                   <ProviderComposeCard
                                     provider="tiktok"
                                     title="TikTok"
@@ -2253,7 +2509,7 @@ function SchedulerPage() {
                               </div>
                             )}
 
-                          {!hasVideo && needsYouTubeTitle && (
+                          {!hasVideo && activeProvider === "youtube" && (
                             <label className="mt-5 block max-w-sm">
                               <span className="text-xs font-semibold text-muted-foreground">
                                 YouTube visibility
@@ -2270,7 +2526,7 @@ function SchedulerPage() {
                             </label>
                           )}
 
-                          {instagramSelected && hasVideo && (
+                          {activeProvider === "instagram" && hasVideo && (
                             <div className="mt-5 rounded-2xl border border-border/70 bg-white/70 p-4">
                               <label className="flex items-center gap-3 text-sm font-semibold">
                                 <input
@@ -2340,99 +2596,13 @@ function SchedulerPage() {
                             </div>
                           )}
 
-                          {Object.entries(providerErrors).length > 0 && (
+                          {activeProvider && providerErrors[activeProvider] && (
                             <div className="mt-5 rounded-2xl bg-rose-500/10 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
-                              {Object.values(providerErrors)[0]}
+                              {providerErrors[activeProvider]}
                             </div>
                           )}
-                        </div>
-
-                        <PlatformPostPreview
-                          connections={selectedConnections}
-                          activeConnection={previewConnection}
-                          onSelect={setPreviewConnectionId}
-                          body={
-                            previewConnection?.provider === "youtube" && youtubeDescription.trim()
-                              ? youtubeDescription
-                              : body
-                          }
-                          title={title}
-                          xPostKind={xPostKind}
-                          xArticle={xArticle}
-                          media={media}
-                          youtubeThumbnail={youtubeThumbnailMedia}
-                          youtubeFormat={youtubeFormat}
-                          instagramCover={instagramReelCover ? instagramCoverMedia : null}
-                          tiktokPrivacy={tiktokPrivacy}
-                          youtubePrivacy={youtubePrivacy}
-                          redditCommunity={redditCommunity}
-                          redditKind={redditKind}
-                          redditUrl={redditUrl}
-                          onAvatarError={repairAvatar}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="shrink-0 border-t border-border/70 bg-white/70 px-5 py-4 backdrop-blur sm:px-7">
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                        <div className="grid w-full gap-3 sm:flex sm:w-auto sm:flex-wrap sm:items-end">
-                          <div className="min-w-0 sm:max-w-xs">
-                            <button
-                              type="button"
-                              onClick={openMediaPicker}
-                              disabled={uploading || isXArticle}
-                              className={`${micro.btnSoft} w-full sm:w-auto ${
-                                mediaCompatibility.disabled ||
-                                media.length >= mediaCompatibility.maxMedia
-                                  ? "cursor-not-allowed opacity-50"
-                                  : ""
-                              }`}
-                            >
-                              {uploading ? (
-                                <LoaderCircle className="size-4 animate-spin" />
-                              ) : (
-                                <ImagePlus className="size-4" />
-                              )}
-                              {uploading ? "Uploading…" : "Add media"}
-                            </button>
-                            <input
-                              ref={mediaInputRef}
-                              type="file"
-                              accept={mediaCompatibility.accept}
-                              multiple={mediaCompatibility.maxMedia > 1}
-                              className="hidden"
-                              onChange={(event) => {
-                                const files = Array.from(event.currentTarget.files || []);
-                                event.currentTarget.value = "";
-                                void uploadFiles(files);
-                              }}
-                            />
-                            <span className="mt-1.5 block text-xs leading-relaxed text-muted-foreground">
-                              {mediaCompatibility.summary}
-                              {!mediaCompatibility.disabled && (
-                                <> Paste supported images or videos anywhere in this box.</>
-                              )}
-                            </span>
-                            {uploadError && (
-                              <p className="mt-2 rounded-xl bg-rose-500/10 px-3 py-2 text-xs leading-5 text-rose-700 dark:text-rose-300">
-                                {uploadError}
-                              </p>
-                            )}
-                          </div>
-                          <label className="min-w-0">
-                            <span className={`mb-1 block ${micro.eyebrowMuted}`}>Publish at</span>
-                            <input
-                              type="datetime-local"
-                              value={scheduledAt}
-                              min={minimumScheduleInput(schedulerTimeZone)}
-                              onChange={(event) => setScheduledAt(event.target.value)}
-                              className={`min-w-0 ${micro.input} py-2.5`}
-                            />
-                          </label>
-                        </div>
-                        <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
-                          {tiktokSelected && (
-                            <p className="w-full text-right text-xs text-muted-foreground">
+                          {activeProvider === "tiktok" && (
+                            <p className="mt-4 text-xs text-muted-foreground">
                               By posting, you agree to TikTok&apos;s{" "}
                               {tiktokBrandedContent && (
                                 <>
@@ -2458,46 +2628,112 @@ function SchedulerPage() {
                               .
                             </p>
                           )}
+                        </div>
+
+                        <PlatformPostPreview
+                          activeConnection={previewConnection}
+                          body={
+                            previewConnection?.provider === "youtube" && youtubeDescription.trim()
+                              ? youtubeDescription
+                              : editorBody
+                          }
+                          title={editorTitle}
+                          xPostKind={xPostKind}
+                          xArticle={xArticle}
+                          media={media}
+                          youtubeThumbnail={youtubeThumbnailMedia}
+                          youtubeFormat={youtubeFormat}
+                          instagramCover={instagramReelCover ? instagramCoverMedia : null}
+                          tiktokPrivacy={tiktokPrivacy}
+                          youtubePrivacy={youtubePrivacy}
+                          redditCommunity={redditCommunity}
+                          redditKind={redditKind}
+                          redditUrl={redditUrl}
+                          onAvatarError={repairAvatar}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="shrink-0 border-t border-border/70 bg-white/90 px-4 py-2 sm:px-5">
+                      <div className="flex min-w-0 items-center gap-2 overflow-x-auto whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={openMediaPicker}
+                          disabled={uploading || isXArticle}
+                          title={mediaCompatibility.summary}
+                          className={`${micro.btnSoft} h-9 shrink-0 px-3 text-xs ${
+                            mediaCompatibility.disabled ||
+                            media.length >= mediaCompatibility.maxMedia
+                              ? "cursor-not-allowed opacity-50"
+                              : ""
+                          }`}
+                        >
+                          {uploading ? (
+                            <LoaderCircle className="size-4 animate-spin" />
+                          ) : (
+                            <ImagePlus className="size-4" />
+                          )}
+                          Add media
+                        </button>
+                        <input
+                          ref={mediaInputRef}
+                          type="file"
+                          accept={mediaCompatibility.accept}
+                          multiple={mediaCompatibility.maxMedia > 1}
+                          className="hidden"
+                          onChange={(event) => {
+                            const files = Array.from(event.currentTarget.files || []);
+                            event.currentTarget.value = "";
+                            void uploadFiles(files);
+                          }}
+                        />
+                        {autosaveStatus !== "idle" && (
+                          <span role="status" className="shrink-0 text-xs text-muted-foreground">
+                            {autosaveStatus === "saving"
+                              ? "Saving…"
+                              : autosaveStatus === "saved"
+                                ? "Saved"
+                                : "Draft not saved"}
+                          </span>
+                        )}
+                        {uploadError && (
+                          <span
+                            role="alert"
+                            title={uploadError}
+                            className="max-w-32 truncate text-xs text-rose-700"
+                          >
+                            {uploadError}
+                          </span>
+                        )}
+                        <div className="ml-auto flex shrink-0 items-center gap-2">
+                          <label className="sr-only" htmlFor="scheduler-publish-at">
+                            Publish at
+                          </label>
+                          <input
+                            id="scheduler-publish-at"
+                            type="datetime-local"
+                            value={scheduledAt}
+                            min={minimumScheduleInput(schedulerTimeZone)}
+                            onChange={(event) => setScheduledAt(event.target.value)}
+                            className={`${micro.input} h-9 w-[172px] px-2 py-1 text-xs`}
+                          />
                           <button
                             type="button"
                             disabled={!canSubmit}
-                            onClick={() => save.mutate({ publishNow: false, asDraft: true })}
-                            className="rounded-lg px-3 py-2.5 text-sm font-semibold text-muted-foreground transition-colors hover:bg-accent"
+                            onClick={() => save.mutate({ publishNow: false })}
+                            className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#ff922b] px-3 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-[#f58218] disabled:opacity-45"
                           >
-                            Save draft
+                            <CalendarClock className="size-4" /> Schedule
                           </button>
-                          <div className="flex overflow-hidden rounded-lg bg-[#ff922b] text-white shadow-sm">
-                            <button
-                              type="button"
-                              disabled={!canSubmit}
-                              onClick={() => save.mutate({ publishNow: false })}
-                              className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold transition-colors hover:bg-[#f58218] disabled:opacity-45"
-                            >
-                              <CalendarClock className="size-4" /> Schedule
-                            </button>
-                            <button
-                              type="button"
-                              disabled={!canSubmit}
-                              onClick={scheduleAtNextSlot}
-                              aria-label="Schedule at the next posting slot"
-                              className="inline-flex items-center border-l border-black/20 px-3 py-2.5 transition-colors hover:bg-[#f58218] disabled:opacity-45"
-                            >
-                              <ChevronRight className="size-4" />
-                            </button>
-                          </div>
                           <button
                             type="button"
                             disabled={!canSubmit}
                             onClick={() => save.mutate({ publishNow: true })}
                             aria-busy={publishingNow}
-                            className={`${micro.btnPrimary} min-w-0 px-4 ${
-                              publishingNow
-                                ? "scale-[0.98] animate-pulse shadow-[0_0_0_4px_rgba(49,87,127,.12)] motion-reduce:animate-none"
-                                : ""
-                            }`}
+                            className={`${micro.btnPrimary} h-9 min-w-0 shrink-0 px-3 text-xs`}
                           >
                             {publishingNow ? (
-                              <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" />
+                              <LoaderCircle className="size-4 animate-spin" />
                             ) : (
                               <Send className="size-4" />
                             )}
@@ -2519,18 +2755,20 @@ function SchedulerPage() {
                       them before closing.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
-                  {!canSubmit && (
+                  {!canSaveDraft && (
                     <p className="text-sm text-muted-foreground">
-                      {selected.length
-                        ? "Complete the required post fields before saving this draft."
-                        : "Select an account before saving this draft."}
+                      {editingPostStatus !== null &&
+                      editingPostStatus !== "draft" &&
+                      !selected.length
+                        ? "Select an account before saving this scheduled post as a draft."
+                        : "Add text or media before saving this draft."}
                     </p>
                   )}
                   <AlertDialogFooter>
                     <AlertDialogCancel>Keep editing</AlertDialogCancel>
                     <button
                       type="button"
-                      disabled={!canSubmit || save.isPending}
+                      disabled={!canSaveDraft}
                       onClick={() => save.mutate({ publishNow: false, asDraft: true })}
                       className={`${micro.btnSoft} disabled:cursor-not-allowed disabled:opacity-45`}
                     >
@@ -2562,9 +2800,7 @@ function SchedulerPage() {
 }
 
 function PlatformPostPreview({
-  connections,
   activeConnection,
-  onSelect,
   body,
   title,
   xPostKind,
@@ -2580,9 +2816,7 @@ function PlatformPostPreview({
   redditUrl,
   onAvatarError,
 }: {
-  connections: SchedulerConnection[];
   activeConnection: SchedulerConnection | null;
-  onSelect: (connectionId: string) => void;
   body: string;
   title: string;
   xPostKind: "post" | "article";
@@ -2601,40 +2835,13 @@ function PlatformPostPreview({
   return (
     <section
       data-testid="scheduler-preview-pane"
-      className="min-w-0 overflow-hidden border-t border-border/70 pt-6 lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:border-l lg:border-t-0 lg:py-0 lg:pl-8"
+      className="min-w-0 overflow-hidden border-t border-border/70 pt-3 lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:border-l lg:border-t-0 lg:py-0 lg:pl-4"
       aria-label="Live preview"
     >
-      {connections.length > 0 && (
-        <div
-          className="flex min-h-10 max-w-full items-center gap-1.5 overflow-x-auto pb-1"
-          aria-label="Preview account"
-        >
-          {connections.map((connection) => {
-            const Icon = PROVIDER_ICONS[connection.provider];
-            const active = connection.id === activeConnection?.id;
-            return (
-              <button
-                key={connection.id}
-                type="button"
-                onClick={() => onSelect(connection.id)}
-                title={`${SOCIAL_PROVIDER_DEFINITIONS[connection.provider].name}: ${connection.displayName}`}
-                aria-pressed={active}
-                className={`inline-flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold ${
-                  active ? "bg-foreground text-background" : "bg-accent text-muted-foreground"
-                }`}
-              >
-                <Icon className="size-3.5" />
-                {SOCIAL_PROVIDER_DEFINITIONS[connection.provider].name}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
       {activeConnection?.provider === "twitter" && xPostKind === "article" ? (
         <div
           data-testid="x-article-preview-scroll"
-          className={`${micro.soft} mt-2 max-h-[24rem] overflow-y-auto p-3 sm:p-5 lg:min-h-0 lg:max-h-none lg:flex-1`}
+          className={`${micro.soft} mt-2 max-h-[24rem] overflow-y-auto p-2 lg:min-h-0 lg:max-h-none lg:flex-1`}
         >
           <XArticlePreview
             connection={activeConnection}
@@ -2649,23 +2856,32 @@ function PlatformPostPreview({
         </div>
       ) : (
         <ScrollablePreview>
-          <div className={`${micro.soft} mt-2 p-3 sm:p-5`}>
+          <div className="mt-2">
             {activeConnection ? (
-              <ProviderPostPreview
-                connection={activeConnection}
-                body={body}
-                title={title}
-                media={media}
-                youtubeThumbnail={youtubeThumbnail}
-                youtubeFormat={youtubeFormat}
-                instagramCover={instagramCover}
-                tiktokPrivacy={tiktokPrivacy}
-                youtubePrivacy={youtubePrivacy}
-                redditCommunity={redditCommunity}
-                redditKind={redditKind}
-                redditUrl={redditUrl}
-                onAvatarError={() => onAvatarError?.(activeConnection.id)}
-              />
+              <div
+                className={
+                  activeConnection.provider === "tiktok" ||
+                  (activeConnection.provider === "youtube" && youtubeFormat === "short")
+                    ? ""
+                    : "[&>div]:w-full [&>div]:max-w-none"
+                }
+              >
+                <ProviderPostPreview
+                  connection={activeConnection}
+                  body={body}
+                  title={title}
+                  media={media}
+                  youtubeThumbnail={youtubeThumbnail}
+                  youtubeFormat={youtubeFormat}
+                  instagramCover={instagramCover}
+                  tiktokPrivacy={tiktokPrivacy}
+                  youtubePrivacy={youtubePrivacy}
+                  redditCommunity={redditCommunity}
+                  redditKind={redditKind}
+                  redditUrl={redditUrl}
+                  onAvatarError={() => onAvatarError?.(activeConnection.id)}
+                />
+              </div>
             ) : (
               <div
                 className={`${micro.empty} flex min-h-48 items-center justify-center px-6 text-sm text-muted-foreground`}
@@ -3519,13 +3735,39 @@ function AccountChip({
       type="button"
       onClick={onToggle}
       disabled={!connection.canPublish}
-      title={connection.publishBlockReason || undefined}
-      className={`inline-flex items-center gap-2 rounded-2xl px-3 py-2 text-sm font-medium ring-1 transition disabled:cursor-not-allowed disabled:opacity-55 ${selected ? "bg-[#17213a] text-white ring-[#17213a]" : "bg-white ring-black/[0.08] hover:bg-[#f2f5fb]"}`}
+      title={connection.publishBlockReason || connection.displayName}
+      aria-label={`${SOCIAL_PROVIDER_DEFINITIONS[connection.provider].name}: ${connection.displayName}`}
+      aria-pressed={selected}
+      className={`inline-flex size-9 shrink-0 items-center justify-center rounded-xl ring-1 transition disabled:cursor-not-allowed disabled:opacity-55 ${selected ? ACTIVE_PLATFORM_COLORS[connection.provider] : "bg-white text-[#17213a] ring-black/[0.08] hover:bg-[#f2f5fb]"}`}
     >
       <Icon className="size-4" />
-      <span className="max-w-36 truncate">{connection.displayName}</span>
-      {!connection.canPublish && <RefreshCw className="size-3.5" />}
-      {selected && <Check className="size-3.5" />}
+    </button>
+  );
+}
+
+function SelectedAccountTab({
+  connection,
+  active,
+  hasError,
+  onClick,
+}: {
+  connection: SchedulerConnection;
+  active: boolean;
+  hasError: boolean;
+  onClick: () => void;
+}) {
+  const Icon = PROVIDER_ICONS[connection.provider];
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      aria-label={`Edit ${SOCIAL_PROVIDER_DEFINITIONS[connection.provider].name}: ${connection.displayName}`}
+      className={`inline-flex shrink-0 items-center gap-2 rounded-t-lg border-b-2 px-2.5 py-2 text-xs font-medium ${active ? "border-[#3478f6] text-[#17213a]" : "border-transparent text-muted-foreground hover:text-[#17213a]"}`}
+    >
+      <Icon className="size-4" />
+      <span>@{connection.handle.replace(/^@/, "")}</span>
+      {hasError && <span className="size-1.5 rounded-full bg-rose-500" aria-hidden="true" />}
     </button>
   );
 }

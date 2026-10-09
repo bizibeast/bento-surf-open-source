@@ -48,6 +48,41 @@ const image: SchedulerMedia = {
 const video = { ...image, key: "video.mp4", name: "video.mp4", mimeType: "video/mp4" };
 
 describe("social scheduler validation", () => {
+  it("keeps unfinished text as a draft before a destination is selected", () => {
+    const input = {
+      body: "An idea in progress",
+      scheduledAt: null,
+      connectionIds: [],
+      asDraft: true,
+    };
+    expect(socialPostInputSchema.safeParse(input).success).toBe(true);
+    expect(socialPostInputSchema.safeParse({ ...input, asDraft: false }).success).toBe(false);
+  });
+
+  it("validates each platform's text and title separately", () => {
+    const settings = {
+      reddit: {
+        community: "creators",
+        kind: "self",
+        bodyOverride: "Reddit copy",
+        titleOverride: "Reddit title",
+      },
+      youtube: { bodyOverride: "Video description", titleOverride: "Video title" },
+    };
+    expect(validatePostForProviders("", [], ["reddit"], "", settings)).toEqual({});
+    expect(validatePostForProviders("", [video], ["youtube"], "", settings)).toEqual({});
+    expect(
+      validatePostForProviders("", [], ["reddit"], "", {
+        reddit: { ...settings.reddit, bodyOverride: "" },
+      }).reddit,
+    ).toMatch(/post text/i);
+    expect(
+      validatePostForProviders("Shared", [], ["linkedin"], "", {
+        linkedin: { bodyOverride: "" },
+      }).linkedin,
+    ).toMatch(/text or media/i);
+  });
+
   it("requires an Instagram video and a complete scheduled auto DM", () => {
     const input = {
       body: "Watch this",

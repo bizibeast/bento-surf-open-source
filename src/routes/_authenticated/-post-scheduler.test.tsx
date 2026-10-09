@@ -287,7 +287,7 @@ describe("scheduler compose close protection", () => {
     expect(
       within(preview).getByText(/X may render the published Article differently/),
     ).toBeVisible();
-    fireEvent.click(within(compose).getAllByRole("button", { name: "Save draft" })[0]);
+    await waitFor(() => expect(saveSocialPost).toHaveBeenCalled(), { timeout: 3_000 });
     await waitFor(() =>
       expect(saveSocialPost).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -353,22 +353,123 @@ describe("scheduler compose close protection", () => {
     fireEvent.click(create);
     const compose = await screen.findByRole("dialog", { name: "Create a post" });
     for (const connection of connections) {
-      fireEvent.click(within(compose).getByRole("button", { name: connection.displayName }));
+      fireEvent.click(
+        within(compose).getByRole("button", { name: new RegExp(connection.displayName) }),
+      );
     }
 
     const longPost = Array.from({ length: 30 }, (_, index) => `Paragraph ${index + 1}`).join(
       "\n\n",
     );
-    fireEvent.change(within(compose).getByPlaceholderText("Write a caption for these networks"), {
+    fireEvent.change(within(compose).getByRole("textbox", { name: /Post text/i }), {
       target: { value: longPost },
     });
+    expect(within(compose).getByRole("switch", { name: "Sync" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
     const previewScroll = within(compose).getByTestId("scheduler-preview-scroll");
-    for (const [, label] of networks) {
-      fireEvent.click(within(compose).getByRole("button", { name: label }));
+    for (const [provider, label] of networks) {
+      fireEvent.click(
+        within(compose).getByRole("button", { name: `Edit ${label}: ${provider} account` }),
+      );
       expect(previewScroll).toHaveClass("overflow-y-auto");
-      expect(previewScroll).toHaveTextContent("Paragraph 30");
+      if (provider === "reddit") expect(previewScroll).toHaveTextContent("Paragraph 30");
+      else expect(previewScroll).not.toHaveTextContent("Paragraph 30");
       expect(previewScroll.querySelector('[style*="scale("]')).toBeNull();
     }
+  });
+
+  it("switches platform settings and keeps edited copy separate until Sync is enabled", async () => {
+    const connections = [
+      {
+        ...missingAvatar,
+        id: "linkedin",
+        provider: "linkedin" as const,
+        displayName: "LinkedIn account",
+        avatarUrl: "https://bento.surf/avatar.png",
+      },
+      {
+        ...missingAvatar,
+        id: "twitter",
+        provider: "twitter" as const,
+        displayName: "X account",
+        avatarUrl: "https://bento.surf/avatar.png",
+      },
+    ];
+    renderScheduler({ ...schedulerData, connections });
+    const create = await screen.findByRole("button", { name: "Create new post" });
+    await waitFor(() => expect(create).toBeEnabled());
+    fireEvent.click(create);
+    const compose = await screen.findByRole("dialog", { name: "Create a post" });
+    fireEvent.click(within(compose).getByRole("button", { name: "LinkedIn: LinkedIn account" }));
+    fireEvent.click(within(compose).getByRole("button", { name: "X: X account" }));
+    expect(within(compose).getByText("X format")).toBeVisible();
+    fireEvent.click(
+      within(compose).getByRole("button", { name: "Edit LinkedIn: LinkedIn account" }),
+    );
+    expect(within(compose).queryByText("X format")).not.toBeInTheDocument();
+    expect(within(compose).getByRole("switch", { name: "Sync" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+
+    fireEvent.change(within(compose).getByRole("textbox", { name: /Post text/i }), {
+      target: { value: "LinkedIn version" },
+    });
+    expect(within(compose).getByRole("switch", { name: "Sync" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    fireEvent.click(within(compose).getByRole("button", { name: "Edit X: X account" }));
+    expect(within(compose).getByText("X format")).toBeVisible();
+    expect(within(compose).getByRole("textbox")).toHaveValue("");
+    fireEvent.click(within(compose).getByRole("switch", { name: "Sync" }));
+    expect(within(compose).getByRole("textbox")).toHaveValue("LinkedIn version");
+  });
+
+  it("shows video settings only for the active platform", async () => {
+    vi.mocked(uploadFileResult).mockResolvedValue({
+      key: "users/creator/video/post.mp4",
+      publicUrl: "https://bento.surf/cdn/users/creator/video/post.mp4",
+      size: 2_000,
+      name: "post.mp4",
+      mimeType: "video/mp4",
+    });
+    const connections = [
+      {
+        ...missingAvatar,
+        id: "instagram",
+        provider: "instagram" as const,
+        avatarUrl: "https://bento.surf/avatar.png",
+      },
+      {
+        ...missingAvatar,
+        id: "youtube",
+        provider: "youtube" as const,
+        avatarUrl: "https://bento.surf/avatar.png",
+      },
+    ];
+    renderScheduler({ ...schedulerData, connections });
+    const create = await screen.findByRole("button", { name: "Create new post" });
+    await waitFor(() => expect(create).toBeEnabled());
+    fireEvent.click(create);
+    const compose = await screen.findByRole("dialog", { name: "Create a post" });
+    fireEvent.click(within(compose).getByRole("button", { name: "Instagram: Bizibeast" }));
+    fireEvent.click(within(compose).getByRole("button", { name: "YouTube: Bizibeast" }));
+    fireEvent.change(document.querySelector('input[type="file"][accept*="video"]')!, {
+      target: { files: [new File(["video"], "post.mp4", { type: "video/mp4" })] },
+    });
+    await within(compose).findByText("Thumbnails");
+    expect(
+      within(compose).getByText(/Reading this video|Custom thumbnail and visibility/),
+    ).toBeVisible();
+    expect(within(compose).queryByText(/Choose Trial Reel delivery/)).not.toBeInTheDocument();
+    fireEvent.click(within(compose).getByRole("button", { name: "Edit Instagram: Bizibeast" }));
+    expect(within(compose).getByText(/Choose Trial Reel delivery/)).toBeVisible();
+    expect(
+      within(compose).queryByText(/Reading this video|Custom thumbnail and visibility/),
+    ).not.toBeInTheDocument();
   });
 
   it("adds pasted images and videos while leaving text paste alone", async () => {
@@ -396,7 +497,7 @@ describe("scheduler compose close protection", () => {
     await waitFor(() => expect(create).toBeEnabled());
     fireEvent.click(create);
     const compose = await screen.findByRole("dialog", { name: "Create a post" });
-    fireEvent.click(within(compose).getByRole("button", { name: "Bizibeast" }));
+    fireEvent.click(within(compose).getByRole("button", { name: /Bizibeast/ }));
     const editor = within(compose).getByRole("textbox");
     const paste = (
       items: Array<{ kind: string; getAsFile: () => File | null }>,
@@ -431,12 +532,22 @@ describe("scheduler compose close protection", () => {
     fireEvent.click(within(compose).getByRole("button", { name: "Close" }));
 
     const warning = await screen.findByRole("alertdialog", { name: "Save this post?" });
-    expect(within(warning).getByRole("button", { name: "Save draft" })).toBeDisabled();
-    expect(within(warning).getByText(/select an account before saving/i)).toBeVisible();
+    expect(within(warning).getByRole("button", { name: "Save draft" })).toBeEnabled();
     fireEvent.click(within(warning).getByRole("button", { name: "Keep editing" }));
 
     expect(screen.getByRole("dialog", { name: "Create a post" })).toBeVisible();
     expect(screen.getByRole("textbox")).toHaveValue("Keep this idea");
+    await waitFor(
+      () =>
+        expect(saveSocialPost).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            body: "Keep this idea",
+            connectionIds: [],
+            asDraft: true,
+          }),
+        }),
+      { timeout: 3_000 },
+    );
   });
 
   it("previews a selected frame locally and uploads it only when saving", async () => {
@@ -502,7 +613,7 @@ describe("scheduler compose close protection", () => {
       expect(document.querySelector('img[src="blob:local-thumbnail"]')).not.toBeNull(),
     );
     expect(uploadFileResult).toHaveBeenCalledTimes(1);
-    fireEvent.click(within(compose).getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(saveSocialPost).toHaveBeenCalled(), { timeout: 3_000 });
 
     await waitFor(() => expect(saveSocialPost).toHaveBeenCalledOnce());
     expect(uploadFileResult).toHaveBeenCalledTimes(2);
@@ -517,7 +628,8 @@ describe("scheduler compose close protection", () => {
         }),
       }),
     });
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:local-thumbnail");
+    fireEvent.click(within(compose).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:local-thumbnail"));
   });
 
   it("saves an Instagram video's auto DM with the scheduled post", async () => {
@@ -551,7 +663,7 @@ describe("scheduler compose close protection", () => {
     fireEvent.change(within(compose).getByRole("textbox", { name: "DM after they tap Send it" }), {
       target: { value: "Here is the guide" },
     });
-    fireEvent.click(within(compose).getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(saveSocialPost).toHaveBeenCalled(), { timeout: 3_000 });
 
     await waitFor(() => expect(saveSocialPost).toHaveBeenCalledOnce());
     expect(saveSocialPost).toHaveBeenCalledWith({
@@ -594,7 +706,7 @@ describe("scheduler compose close protection", () => {
     expect(within(compose).getByRole("combobox", { name: "Graduation strategy" })).toHaveValue(
       "MANUAL",
     );
-    fireEvent.click(within(compose).getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(saveSocialPost).toHaveBeenCalled(), { timeout: 3_000 });
 
     await waitFor(() => expect(saveSocialPost).toHaveBeenCalledOnce());
     expect(saveSocialPost).toHaveBeenCalledWith({
