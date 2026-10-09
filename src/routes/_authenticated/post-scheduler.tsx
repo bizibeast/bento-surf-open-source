@@ -101,6 +101,7 @@ import {
   isSocialCalendarPost,
   scheduleTimeForDate,
   defaultScheduleTime,
+  nextPostingSlot,
   isSchedulableCalendarDay,
   validatePostForProviders,
   youtubeDetectedFormat,
@@ -1193,8 +1194,17 @@ function SchedulerPage() {
   };
 
   const save = useMutation({
-    mutationFn: ({ publishNow, asDraft = false }: { publishNow: boolean; asDraft?: boolean }) => {
-      const scheduledIso = zonedDateTimeInputToIso(scheduledAt, schedulerTimeZone);
+    mutationFn: ({
+      publishNow,
+      asDraft = false,
+      scheduledAtOverride,
+    }: {
+      publishNow: boolean;
+      asDraft?: boolean;
+      scheduledAtOverride?: string;
+    }) => {
+      const scheduledIso =
+        scheduledAtOverride || zonedDateTimeInputToIso(scheduledAt, schedulerTimeZone);
       if (!publishNow && !asDraft && !scheduledIso) throw new Error("Choose a valid publish time.");
       return Promise.all([
         materializeThumbnail(youtubeThumbnail, "youtube"),
@@ -1328,6 +1338,31 @@ function SchedulerPage() {
   ]);
 
   const publishingNow = save.isPending && save.variables?.publishNow === true;
+
+  const scheduleAtNextSlot = () => {
+    const postingSchedule = data?.postingSchedule;
+    if (!postingSchedule?.slots.length) {
+      setPostingSettingsOpen(true);
+      toast.error("Add a posting time first.");
+      return;
+    }
+    const occupied = (data?.posts || [])
+      .filter((post: SchedulerPost) => post.status === "scheduled" && post.scheduledAt)
+      .map((post: SchedulerPost) => post.scheduledAt!);
+    const offset = postingSchedule.naturalOffset ? Math.floor(Math.random() * 9) - 4 : 0;
+    const nextSlot = nextPostingSlot(
+      postingSchedule.slots,
+      postingSchedule.timezone,
+      new Date(),
+      occupied,
+      offset,
+    );
+    if (!nextSlot) {
+      toast.error("No open posting slot was found.");
+      return;
+    }
+    save.mutate({ publishNow: false, scheduledAtOverride: nextSlot });
+  };
 
   useEffect(() => {
     if (!publishingPostId) return;
@@ -1827,7 +1862,7 @@ function SchedulerPage() {
                   onPaste={handleComposePaste}
                   className="h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-6xl gap-0 overflow-hidden rounded-[24px] border-white/80 bg-[#f7f8fc] p-0 shadow-[0_42px_130px_-45px_rgba(23,33,58,.7)] data-[state=closed]:slide-out-to-bottom-2 data-[state=open]:slide-in-from-bottom-2 sm:h-[min(90dvh,840px)] sm:w-[90vw] sm:rounded-[32px] [&>button]:z-40"
                 >
-                  <div className="flex h-full min-h-0 flex-col overflow-x-hidden overflow-y-auto sm:overflow-hidden">
+                  <div className="flex h-full min-h-0 flex-col overflow-hidden">
                     <div className="shrink-0 border-b border-border/70 px-5 py-3 pr-14 sm:px-7">
                       <DialogTitle className="font-ui-display text-2xl sm:text-3xl">
                         {composeWasOpenedForEdit ? "Edit post" : "Create a post"}
@@ -1835,30 +1870,52 @@ function SchedulerPage() {
                     </div>
 
                     <div className="shrink-0 px-4 pt-3 sm:px-5">
-                      <div
-                        className="flex items-center gap-2 overflow-x-auto pb-3 whitespace-nowrap"
-                        aria-label="Publishing platforms"
-                      >
-                        {(data?.connections || []).map((connection: SchedulerConnection) => (
-                          <AccountChip
-                            key={connection.id}
-                            connection={connection}
-                            selected={selected.includes(connection.id)}
-                            onToggle={() => {
-                              setSelected((current) =>
-                                current.includes(connection.id)
-                                  ? current.filter((id) => id !== connection.id)
-                                  : [...current, connection.id],
-                              );
-                              if (!selected.includes(connection.id))
-                                setPreviewConnectionId(connection.id);
-                            }}
-                          />
-                        ))}
-                        {!data?.connections.length && (
-                          <p className="text-sm text-muted-foreground">
-                            Connect your social accounts in Settings → Integrations.
-                          </p>
+                      <div className="flex min-w-0 items-center gap-3 pb-3">
+                        <div
+                          className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto whitespace-nowrap"
+                          aria-label="Publishing platforms"
+                        >
+                          {(data?.connections || []).map((connection: SchedulerConnection) => (
+                            <AccountChip
+                              key={connection.id}
+                              connection={connection}
+                              selected={selected.includes(connection.id)}
+                              onToggle={() => {
+                                setSelected((current) =>
+                                  current.includes(connection.id)
+                                    ? current.filter((id) => id !== connection.id)
+                                    : [...current, connection.id],
+                                );
+                                if (!selected.includes(connection.id))
+                                  setPreviewConnectionId(connection.id);
+                              }}
+                            />
+                          ))}
+                          {!data?.connections.length && (
+                            <p className="text-sm text-muted-foreground">
+                              Connect your social accounts in Settings → Integrations.
+                            </p>
+                          )}
+                        </div>
+                        {selectedConnections.length > 0 && (
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={sync}
+                            aria-label="Sync"
+                            onClick={() => toggleSync(!sync)}
+                            className="ml-auto inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-border/70 bg-white px-2.5 text-xs font-semibold text-[#17213a] transition-colors hover:bg-[#f2f5fb]"
+                          >
+                            Sync
+                            <span
+                              className={`relative h-5 w-8 shrink-0 rounded-md transition-colors ${sync ? "bg-[#3478f6]" : "bg-[#b8c1d3]"}`}
+                              aria-hidden="true"
+                            >
+                              <span
+                                className={`absolute left-0 top-[3px] size-3.5 rounded-[3px] bg-white shadow-sm transition-transform ${sync ? "translate-x-[15px]" : "translate-x-[3px]"}`}
+                              />
+                            </span>
+                          </button>
                         )}
                       </div>
                       {selectedConnections.length > 0 && (
@@ -1877,35 +1934,15 @@ function SchedulerPage() {
                               />
                             ))}
                           </div>
-                          <div className="flex justify-center py-2">
-                            <button
-                              type="button"
-                              role="switch"
-                              aria-checked={sync}
-                              aria-label="Sync"
-                              onClick={() => toggleSync(!sync)}
-                              className="inline-flex items-center gap-2 text-xs font-semibold text-[#17213a]"
-                            >
-                              Sync
-                              <span
-                                className={`relative h-5 w-9 rounded-full transition-colors ${sync ? "bg-[#3478f6]" : "bg-[#b8c1d3]"}`}
-                                aria-hidden="true"
-                              >
-                                <span
-                                  className={`absolute top-0.5 size-4 rounded-full bg-white shadow-sm transition-transform ${sync ? "translate-x-[18px]" : "translate-x-0.5"}`}
-                                />
-                              </span>
-                            </button>
-                          </div>
                         </div>
                       )}
                     </div>
 
-                    <div className="min-h-0 flex-none overflow-visible px-4 py-4 sm:flex-1 sm:overflow-y-auto sm:px-5 sm:py-4 lg:overflow-hidden">
+                    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5 lg:overflow-hidden">
                       <div className="grid gap-4 lg:h-full lg:min-h-0 lg:grid-cols-2 lg:items-stretch lg:gap-0">
                         <div
                           data-testid="scheduler-compose-scroll"
-                          className="min-w-0 lg:min-h-0 lg:overflow-y-auto lg:pr-5"
+                          className="min-w-0 pb-4 lg:min-h-0 lg:overflow-y-auto lg:pr-5"
                         >
                           {activeProvider === "twitter" && selectedXConnection && (
                             <div className="mt-5 rounded-2xl border border-border/70 bg-white p-4">
@@ -2654,7 +2691,7 @@ function SchedulerPage() {
                       </div>
                     </div>
 
-                    <div className="shrink-0 border-t border-border/70 bg-white/90 px-4 py-2 sm:px-5">
+                    <div className="shrink-0 border-t border-border/70 bg-[#f7f8fc] px-4 py-2 sm:px-5">
                       <div className="flex min-w-0 items-center gap-2 overflow-x-auto whitespace-nowrap">
                         <button
                           type="button"
@@ -2717,14 +2754,25 @@ function SchedulerPage() {
                             onChange={(event) => setScheduledAt(event.target.value)}
                             className={`${micro.input} h-9 w-[172px] px-2 py-1 text-xs`}
                           />
-                          <button
-                            type="button"
-                            disabled={!canSubmit}
-                            onClick={() => save.mutate({ publishNow: false })}
-                            className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#ff922b] px-3 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-[#f58218] disabled:opacity-45"
-                          >
-                            <CalendarClock className="size-4" /> Schedule
-                          </button>
+                          <div className="flex shrink-0 overflow-hidden rounded-lg bg-[#ff922b] text-white shadow-sm">
+                            <button
+                              type="button"
+                              disabled={!canSubmit}
+                              onClick={() => save.mutate({ publishNow: false })}
+                              className="inline-flex h-9 items-center gap-1.5 px-3 text-xs font-semibold transition-colors hover:bg-[#f58218] disabled:opacity-45"
+                            >
+                              <CalendarClock className="size-4" /> Schedule
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!canSubmit}
+                              onClick={scheduleAtNextSlot}
+                              aria-label="Schedule at the next posting slot"
+                              className="inline-flex h-9 items-center border-l border-white/25 px-2 transition-colors hover:bg-[#f58218] disabled:opacity-45"
+                            >
+                              <ChevronRight className="size-4" />
+                            </button>
+                          </div>
                           <button
                             type="button"
                             disabled={!canSubmit}
@@ -2900,7 +2948,7 @@ function ScrollablePreview({ children }: { children: ReactNode }) {
   return (
     <div
       data-testid="scheduler-preview-scroll"
-      className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+      className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-4"
     >
       {children}
     </div>
