@@ -151,9 +151,68 @@ describe("scheduler compose close protection", () => {
     expect(within(reader).getByText("A closer look")).toBeVisible();
     expect(within(reader).getByText("First paragraph")).toBeVisible();
     expect(within(reader).getByText("Second paragraph")).toBeVisible();
+    fireEvent.click(within(compose).getByRole("button", { name: "Embed X post" }));
+    fireEvent.change(within(compose).getByRole("textbox", { name: "X post URL for section 2" }), {
+      target: { value: "https://x.com/creator/status/123456789" },
+    });
+    expect(within(reader).getByTitle("Embedded X post 2")).toHaveAttribute(
+      "src",
+      expect.stringContaining("id=123456789"),
+    );
+    expect(within(compose).getByRole("button", { name: "Inline image" })).toBeEnabled();
+    expect(within(compose).getByRole("button", { name: "Add cover" })).toBeEnabled();
+    vi.mocked(uploadFileResult)
+      .mockResolvedValueOnce({
+        key: "users/creator/image/cover.jpg",
+        publicUrl: "https://bento.surf/cdn/users/creator/image/cover.jpg",
+        size: 100,
+        name: "cover.jpg",
+        mimeType: "image/jpeg",
+      })
+      .mockResolvedValueOnce({
+        key: "users/creator/image/inline.jpg",
+        publicUrl: "https://bento.surf/cdn/users/creator/image/inline.jpg",
+        size: 100,
+        name: "inline.jpg",
+        mimeType: "image/jpeg",
+      });
+    fireEvent.change(within(compose).getByLabelText("Upload Article cover"), {
+      target: { files: [new File(["cover"], "cover.jpg", { type: "image/jpeg" })] },
+    });
+    await waitFor(() =>
+      expect(within(reader).getByAltText("Article cover")).toHaveAttribute(
+        "src",
+        expect.stringContaining("cover.jpg"),
+      ),
+    );
+    fireEvent.change(within(compose).getByLabelText("Upload inline Article image"), {
+      target: { files: [new File(["inline"], "inline.jpg", { type: "image/jpeg" })] },
+    });
+    await waitFor(() => expect(within(reader).getByAltText("inline.jpg")).toBeVisible());
     expect(
       within(preview).getByText(/X may render the published Article differently/),
     ).toBeVisible();
+    fireEvent.click(within(compose).getAllByRole("button", { name: "Save draft" })[0]);
+    await waitFor(() =>
+      expect(saveSocialPost).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            providerSettings: expect.objectContaining({
+              twitter: expect.objectContaining({
+                kind: "article",
+                article: expect.objectContaining({
+                  cover: expect.objectContaining({ name: "cover.jpg" }),
+                  blocks: expect.arrayContaining([
+                    expect.objectContaining({ kind: "image" }),
+                    expect.objectContaining({ kind: "post" }),
+                  ]),
+                }),
+              }),
+            }),
+          }),
+        }),
+      ),
+    );
   });
 
   it("scrolls the composer and preview independently without scaling the post", async () => {
