@@ -2422,36 +2422,53 @@ function PlatformPostPreview({
           data-testid="x-article-preview-scroll"
           className={`${micro.soft} mt-2 max-h-[24rem] overflow-y-auto p-3 sm:p-5 lg:min-h-0 lg:max-h-none lg:flex-1`}
         >
-          <div className="rounded-2xl border border-border bg-white p-5">
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Article content preview
-            </p>
-            <p className="mt-2 text-xs text-muted-foreground">
-              This shows the title and text sent to X. X controls the final Article layout and feed
-              card.
-            </p>
-            <article className="mt-6">
-              <h3 className="break-words font-ui-sans text-2xl font-bold">
-                {title || "Article title"}
+          <div
+            aria-label="X Article reader preview"
+            className="mx-auto max-w-[600px] overflow-hidden rounded-2xl border border-[#eff3f4] bg-white text-[#0f1419] shadow-sm"
+          >
+            <div className="flex items-center gap-5 border-b border-[#eff3f4] px-5 py-3.5">
+              <ChevronLeft className="size-5 shrink-0" aria-hidden="true" />
+              <span className="text-lg font-bold">Article</span>
+              <SiXLogo className="ml-auto size-5 shrink-0" aria-hidden="true" />
+            </div>
+            <article className="px-5 py-7 sm:px-8">
+              <h3 className="break-words text-[28px] font-extrabold leading-tight sm:text-[32px]">
+                {title.trim() || "Article title"}
               </h3>
-              <div className="mt-5 space-y-3">
-                {body ? (
-                  xArticleContentState(body).blocks.map((block, index) => (
+              <div className="mt-5 flex items-center gap-3">
+                <PreviewAvatar
+                  connection={activeConnection}
+                  onError={() => onAvatarError?.(activeConnection.id)}
+                />
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-bold">{activeConnection.displayName}</p>
+                  <p className="truncate text-sm text-[#536471]">
+                    @{activeConnection.handle.replace(/^@/, "")}
+                  </p>
+                </div>
+              </div>
+              <div className="mt-7 space-y-3">
+                {body.trim() ? (
+                  xArticleContentState(body.trim()).blocks.map((block, index) => (
                     <p
                       key={index}
-                      className="min-h-[1.25rem] whitespace-pre-wrap break-words text-sm text-foreground/80"
+                      className="min-h-[1.5rem] whitespace-pre-wrap break-words text-[15px] leading-6"
                     >
                       {block.text || "\u00a0"}
                     </p>
                   ))
                 ) : (
-                  <p className="text-sm text-muted-foreground">
+                  <p className="text-[15px] leading-6 text-[#536471]">
                     Your Article text will appear here.
                   </p>
                 )}
               </div>
             </article>
           </div>
+          <p className="mx-auto mt-3 max-w-[600px] text-xs text-muted-foreground">
+            X-style reader preview. X may render the published Article differently across devices
+            and feeds.
+          </p>
         </div>
       ) : (
         <FittedPreview>

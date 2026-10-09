@@ -151,12 +151,14 @@ describe("scheduler compose close protection", () => {
     expect(within(compose).getByRole("button", { name: "Add media" })).toBeDisabled();
     const preview = within(compose).getByTestId("x-article-preview-scroll");
     expect(preview).toHaveClass("overflow-y-auto");
-    expect(within(preview).getByText("Article content preview")).toBeVisible();
-    expect(within(preview).getByText("A closer look")).toBeVisible();
-    expect(within(preview).getByText("First paragraph")).toBeVisible();
-    expect(within(preview).getByText("Second paragraph")).toBeVisible();
+    const reader = within(preview).getByLabelText("X Article reader preview");
+    expect(within(reader).getByText("Article")).toBeVisible();
+    expect(within(reader).getByText("@bizibeast")).toBeVisible();
+    expect(within(reader).getByText("A closer look")).toBeVisible();
+    expect(within(reader).getByText("First paragraph")).toBeVisible();
+    expect(within(reader).getByText("Second paragraph")).toBeVisible();
     expect(
-      within(preview).getByText(/X controls the final Article layout and feed card/),
+      within(preview).getByText(/X may render the published Article differently/),
     ).toBeVisible();
   });
 
