@@ -330,6 +330,67 @@ describe("scheduler compose close protection", () => {
     expect(within(compose).queryByText(/Platform chrome and truncation/i)).not.toBeInTheDocument();
   });
 
+  it("schedules the next open posting slot from the footer arrow", async () => {
+    const first = new Date(Date.now() + 3 * 60 * 60_000);
+    first.setUTCMinutes(0, 0, 0);
+    const second = new Date(first.getTime() + 60 * 60_000);
+    const connection = {
+      ...missingAvatar,
+      id: "linkedin",
+      provider: "linkedin" as const,
+      displayName: "LinkedIn account",
+      avatarUrl: "https://bento.surf/avatar.png",
+    };
+    renderScheduler({
+      ...schedulerData,
+      connections: [connection],
+      posts: [
+        {
+          id: "occupied",
+          status: "scheduled",
+          body: "Already scheduled",
+          title: null,
+          scheduledAt: first.toISOString(),
+          createdAt: new Date().toISOString(),
+          timezone: "UTC",
+          targets: [],
+          media: [],
+        } as SchedulerPost,
+      ],
+      postingSchedule: {
+        timezone: "UTC",
+        slots: [first, second].map((date) => ({
+          day: date.getUTCDay(),
+          time: date.toISOString().slice(11, 16),
+        })),
+        naturalOffset: false,
+      },
+    });
+
+    const create = await screen.findByRole("button", { name: "Create new post" });
+    await waitFor(() => expect(create).toBeEnabled());
+    fireEvent.click(create);
+    const compose = await screen.findByRole("dialog", { name: "Create a post" });
+    fireEvent.click(within(compose).getByRole("button", { name: "LinkedIn: LinkedIn account" }));
+    fireEvent.change(within(compose).getByRole("textbox", { name: /Post text/i }), {
+      target: { value: "Next slot please" },
+    });
+    fireEvent.click(
+      within(compose).getByRole("button", { name: "Schedule at the next posting slot" }),
+    );
+
+    await waitFor(() =>
+      expect(saveSocialPost).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          scheduledAt: second.toISOString(),
+          connectionIds: [connection.id],
+          publishNow: false,
+          asDraft: false,
+        }),
+      }),
+    );
+  });
+
   it("keeps long posts scrollable when switching between network previews", async () => {
     const networks = [
       ["twitter", "X"],
