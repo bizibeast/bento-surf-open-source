@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mediaBelongsToCreator } from "./social-scheduler.functions";
 import { xAccountCapabilities } from "./x-account";
 import {
+  autoRepostSchema,
   deriveSocialPostStatus,
   isPublicSocialProvider,
   parseRetryAfterSeconds,
@@ -81,6 +82,20 @@ describe("social scheduler validation", () => {
         linkedin: { bodyOverride: "" },
       }).linkedin,
     ).toMatch(/text or media/i);
+  });
+
+  it("requires removal to happen after the native repost", () => {
+    expect(autoRepostSchema.parse({ afterHours: 24, removeAfterHours: 48 })).toEqual({
+      afterHours: 24,
+      removeAfterHours: 48,
+    });
+    expect(autoRepostSchema.safeParse({ afterHours: 24, removeAfterHours: null }).success).toBe(
+      true,
+    );
+    expect(autoRepostSchema.safeParse({ afterHours: 24, removeAfterHours: 24 }).success).toBe(
+      false,
+    );
+    expect(autoRepostSchema.safeParse({ afterHours: 0, removeAfterHours: 48 }).success).toBe(false);
   });
 
   it("requires an Instagram video and a complete scheduled auto DM", () => {

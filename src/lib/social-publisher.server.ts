@@ -75,7 +75,7 @@ export class ProviderError extends Error {
   }
 }
 
-async function providerJson(url: string, init: RequestInit, provider: SocialProvider) {
+export async function providerJson(url: string, init: RequestInit, provider: SocialProvider) {
   const response = await fetch(url, { ...init, signal: AbortSignal.timeout(120_000) });
   const text = await response.text();
   let data: any = {};

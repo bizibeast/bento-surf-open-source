@@ -123,6 +123,14 @@ export type SchedulerTarget = {
   likes?: number | null;
   comments?: number | null;
   providerSettings?: Record<string, unknown>;
+  repost?: {
+    status: string;
+    repostDueAt: string;
+    removeDueAt: string | null;
+    repostedAt: string | null;
+    removedAt: string | null;
+    errorMessage: string | null;
+  } | null;
 };
 
 export const MAX_SOCIAL_PROFILES_PER_PROVIDER = 1;
@@ -570,6 +578,22 @@ export function isSocialCalendarPost(
 
 export type SocialProviderSettings = Record<string, Record<string, unknown>>;
 
+export const autoRepostSchema = z
+  .object({
+    afterHours: z.number().int().min(1).max(168),
+    removeAfterHours: z.number().int().min(2).max(336).nullable(),
+  })
+  .superRefine((value, context) => {
+    if (value.removeAfterHours != null && value.removeAfterHours <= value.afterHours) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["removeAfterHours"],
+        message: "Remove the repost after its repost time.",
+      });
+    }
+  });
+export type AutoRepost = z.infer<typeof autoRepostSchema>;
+
 export const scheduledInstagramAutoDmSchema = z
   .object({
     triggerType: z.enum(["comment_keyword", "any_comment"]),
@@ -976,6 +1000,20 @@ export const socialPostInputSchema = z
     const reddit = value.providerSettings.reddit || {};
     const instagram = value.providerSettings.instagram || {};
     const twitter = value.providerSettings.twitter || {};
+    for (const provider of ["twitter", "linkedin"] as const) {
+      const autoRepost = value.providerSettings[provider]?.autoRepost;
+      if (autoRepost != null) {
+        const result = autoRepostSchema.safeParse(autoRepost);
+        if (!result.success) {
+          for (const issue of result.error.issues) {
+            context.addIssue({
+              ...issue,
+              path: ["providerSettings", provider, "autoRepost", ...issue.path],
+            });
+          }
+        }
+      }
+    }
     if (twitter.kind != null && twitter.kind !== "post" && twitter.kind !== "article") {
       context.addIssue({
         code: z.ZodIssueCode.custom,

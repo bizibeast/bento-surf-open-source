@@ -74,6 +74,11 @@ import {
   type SocialPublishMessage,
 } from "./lib/social-publisher.server";
 import {
+  enqueueDueSocialReposts,
+  processSocialRepostMessage,
+  type SocialRepostMessage,
+} from "./lib/social-repost.server";
+import {
   failSocialInsightsBackfillMessage,
   enqueueDueSocialInsightsRefreshes,
   normalizeSocialInsightsBackfillMessage,
@@ -1107,6 +1112,7 @@ export default {
       | DodoQueueMessage
       | EmailQueueMessage
       | SocialPublishMessage
+      | SocialRepostMessage
       | SocialInsightsBackfillMessage
       | ReferralQueueMessage
       | InstagramDmQueueMessage
@@ -1133,6 +1139,9 @@ export default {
     const socialMessages = batch.messages
       .map((message) => message.body)
       .filter((body): body is SocialPublishMessage => body.kind === "social_publish");
+    const socialRepostMessages = batch.messages
+      .map((message) => message.body)
+      .filter((body): body is SocialRepostMessage => body.kind === "social_repost");
     const socialInsightsMessages = batch.messages.filter(
       (message): message is Message<SocialInsightsBackfillMessage> =>
         "kind" in message.body && message.body.kind === "social_insights_backfill",
@@ -1169,6 +1178,7 @@ export default {
             body.kind !== "email_outbox_kick" &&
             body.kind !== "audience_campaign" &&
             body.kind !== "social_publish" &&
+            body.kind !== "social_repost" &&
             body.kind !== "social_insights_backfill" &&
             body.kind !== "referral_reach_verify" &&
             body.kind !== "instagram_dm_event" &&
@@ -1194,6 +1204,7 @@ export default {
       }
     }
     for (const message of socialMessages) await processSocialPublishMessage(message);
+    for (const message of socialRepostMessages) await processSocialRepostMessage(message);
     for (const message of socialInsightsMessages) {
       const body = normalizeSocialInsightsBackfillMessage(message.body);
       try {
@@ -1320,6 +1331,7 @@ export default {
         await env.EMAIL_QUEUE.send({ kind: "email_outbox_kick" });
       }
       const socialResult = await enqueueDueSocialPosts(env.SOCIAL_PUBLISH_QUEUE, env);
+      const socialRepostsDue = await enqueueDueSocialReposts(env);
       const socialInsightsDue = await enqueueDueSocialInsightsRefreshes(env.SOCIAL_INSIGHTS_QUEUE);
       const socialInsightsRecovery = await requeueStaleSocialInsightsBackfills(
         env.SOCIAL_INSIGHTS_QUEUE,
@@ -1383,6 +1395,8 @@ export default {
         console.log("[email] repaired Priority DM notifications", priorityDmNotificationResult);
       }
       if (socialResult.queued > 0) console.log("[social] queued scheduled posts", socialResult);
+      if (socialRepostsDue.queued > 0)
+        console.log("[social] queued native repost actions", socialRepostsDue);
       if (socialInsightsDue.queued > 0)
         console.log("[social-insights] daily refreshes queued", socialInsightsDue);
       if (socialInsightsRecovery.queued > 0)

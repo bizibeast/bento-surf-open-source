@@ -95,6 +95,7 @@ import {
   schedulerMediaCompatibility,
   schedulerMediaKindForFile,
   schedulerPostEngagement,
+  autoRepostSchema,
   scheduledInstagramAutoDmSchema,
   schedulerUsesCaption,
   socialCalendarDateKey,
@@ -584,6 +585,10 @@ function SchedulerPage() {
   const [autoDmKeyword, setAutoDmKeyword] = useState("");
   const [autoDmOpening, setAutoDmOpening] = useState("");
   const [autoDmReply, setAutoDmReply] = useState("");
+  const [autoRepostEnabled, setAutoRepostEnabled] = useState(false);
+  const [repostAfterHours, setRepostAfterHours] = useState(24);
+  const [removeRepost, setRemoveRepost] = useState(false);
+  const [removeRepostAfterHours, setRemoveRepostAfterHours] = useState(48);
   const [instagramGraduationStrategy, setInstagramGraduationStrategy] =
     useState<InstagramTrialGraduationStrategy>("MANUAL");
   const [tiktokCoverMs, setTiktokCoverMs] = useState(1_000);
@@ -699,6 +704,10 @@ function SchedulerPage() {
     setAutoDmKeyword("");
     setAutoDmOpening("");
     setAutoDmReply("");
+    setAutoRepostEnabled(false);
+    setRepostAfterHours(24);
+    setRemoveRepost(false);
+    setRemoveRepostAfterHours(48);
     setInstagramGraduationStrategy("MANUAL");
     setTiktokCoverMs(1_000);
     setRedditCommunity("");
@@ -756,6 +765,17 @@ function SchedulerPage() {
     const youtube = settings.youtube || {};
     const instagram = settings.instagram || {};
     const reddit = settings.reddit || {};
+    const savedRepost = autoRepostSchema.safeParse(
+      settings.linkedin?.autoRepost ?? settings.twitter?.autoRepost,
+    );
+    if (savedRepost.success) {
+      setAutoRepostEnabled(true);
+      setRepostAfterHours(savedRepost.data.afterHours);
+      setRemoveRepost(savedRepost.data.removeAfterHours != null);
+      setRemoveRepostAfterHours(
+        savedRepost.data.removeAfterHours ?? Math.max(48, savedRepost.data.afterHours + 1),
+      );
+    }
     setEditingPostId(post.id);
     setComposeWasOpenedForEdit(true);
     setEditingPostStatus(post.status);
@@ -851,6 +871,13 @@ function SchedulerPage() {
   );
   const isXArticle = Boolean(activeProvider === "twitter" && xPostKind === "article");
   const instagramSelected = connectedProviders.includes("instagram");
+  const repostProviders = useMemo(
+    () =>
+      selectedConnections
+        .map((connection) => connection.provider)
+        .filter((provider) => provider === "linkedin" || provider === "twitter"),
+    [selectedConnections],
+  );
   const usesCaption = schedulerUsesCaption(connectedProviders);
   const hasVideo = media.some((item) => item.mimeType.startsWith("video/"));
   const primaryVideo = media.find((item) => item.mimeType.startsWith("video/")) || null;
@@ -1021,6 +1048,23 @@ function SchedulerPage() {
         ...savedProviderSettings.twitter,
         kind: xPostKind,
         article: xPostKind === "article" ? xArticle : undefined,
+        autoRepost:
+          autoRepostEnabled && repostProviders.includes("twitter")
+            ? {
+                afterHours: repostAfterHours,
+                removeAfterHours: removeRepost ? removeRepostAfterHours : null,
+              }
+            : null,
+      },
+      linkedin: {
+        ...savedProviderSettings.linkedin,
+        autoRepost:
+          autoRepostEnabled && repostProviders.includes("linkedin")
+            ? {
+                afterHours: repostAfterHours,
+                removeAfterHours: removeRepost ? removeRepostAfterHours : null,
+              }
+            : null,
       },
     };
     for (const provider of Object.keys(settings)) {
@@ -1043,6 +1087,11 @@ function SchedulerPage() {
     autoDmKeyword,
     autoDmOpening,
     autoDmReply,
+    autoRepostEnabled,
+    repostAfterHours,
+    removeRepost,
+    removeRepostAfterHours,
+    repostProviders,
     hasVideo,
     instagramSelected,
     instagramCover,
@@ -1701,6 +1750,12 @@ function SchedulerPage() {
       !hasVideo ||
       scheduledInstagramAutoDmSchema.safeParse(providerSettings.instagram.scheduledAutoDm)
         .success) &&
+    (!autoRepostEnabled ||
+      repostProviders.length === 0 ||
+      autoRepostSchema.safeParse({
+        afterHours: repostAfterHours,
+        removeAfterHours: removeRepost ? removeRepostAfterHours : null,
+      }).success) &&
     !save.isPending &&
     autosaveStatus !== "saving" &&
     !(primaryVideo && !videoMeta && (needsYouTubeTitle || tiktokSelected)) &&
@@ -2677,6 +2732,79 @@ function SchedulerPage() {
                                       className={`mt-1 ${micro.input}`}
                                     />
                                   </label>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {repostProviders.length > 0 && (
+                            <div className="mt-5 rounded-2xl border border-border/70 bg-white/70 p-4">
+                              <label className="flex items-center gap-3 text-sm font-semibold">
+                                <input
+                                  type="checkbox"
+                                  checked={autoRepostEnabled}
+                                  onChange={(event) => setAutoRepostEnabled(event.target.checked)}
+                                />
+                                Auto-repost on{" "}
+                                {repostProviders
+                                  .map((provider) => (provider === "twitter" ? "X" : "LinkedIn"))
+                                  .join(" and ")}
+                              </label>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                Repost the original post on each selected platform after it goes
+                                live.
+                              </p>
+                              {autoRepostEnabled && (
+                                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                                  <label className="block text-xs font-semibold text-muted-foreground">
+                                    Repost after (hours)
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      max={168}
+                                      step={1}
+                                      value={repostAfterHours}
+                                      onChange={(event) => {
+                                        const hours = Number(event.target.value);
+                                        setRepostAfterHours(hours);
+                                        setRemoveRepostAfterHours((current) =>
+                                          Math.max(current, hours + 1),
+                                        );
+                                      }}
+                                      className={`mt-1 ${micro.input}`}
+                                    />
+                                  </label>
+                                  <div className="sm:col-span-2">
+                                    <label className="flex items-center gap-2 text-xs font-semibold">
+                                      <input
+                                        type="checkbox"
+                                        checked={removeRepost}
+                                        onChange={(event) => setRemoveRepost(event.target.checked)}
+                                      />
+                                      Remove the repost later
+                                    </label>
+                                  </div>
+                                  {removeRepost && (
+                                    <label className="block text-xs font-semibold text-muted-foreground">
+                                      Remove after (total hours from original post)
+                                      <input
+                                        type="number"
+                                        min={repostAfterHours + 1}
+                                        max={336}
+                                        step={1}
+                                        value={removeRepostAfterHours}
+                                        onChange={(event) =>
+                                          setRemoveRepostAfterHours(Number(event.target.value))
+                                        }
+                                        className={`mt-1 ${micro.input}`}
+                                      />
+                                    </label>
+                                  )}
+                                  <p className="text-xs text-muted-foreground sm:col-span-2">
+                                    The original post stays published. For example, 24 and 48 hours
+                                    means repost one day after publishing and remove that repost one
+                                    day later.
+                                  </p>
                                 </div>
                               )}
                             </div>
@@ -4050,6 +4178,30 @@ function PostRow({
               </span>
             )}
           </div>
+          {post.targets
+            .filter((target) => target.repost || target.providerSettings?.autoRepost)
+            .map((target) => {
+              const repost = target.repost;
+              const state = repost
+                ? repost.status === "removed"
+                  ? "Repost removed"
+                  : repost.status === "complete"
+                    ? "Reposted"
+                    : repost.status === "reposted" ||
+                        repost.status.startsWith("remove_") ||
+                        repost.status === "removing"
+                      ? "Reposted · removal scheduled"
+                      : repost.status === "failed" || repost.status === "outcome_unknown"
+                        ? "Repost needs attention"
+                        : "Repost scheduled"
+                : "Repost set for after publishing";
+              return (
+                <p key={`${target.id}-repost`} className="mt-1 text-xs text-muted-foreground">
+                  {SOCIAL_PROVIDER_DEFINITIONS[target.provider].name}: {state}
+                  {repost?.errorMessage ? `: ${repost.errorMessage}` : ""}
+                </p>
+              );
+            })}
         </div>
         <div className="flex shrink-0 gap-0.5">
           {canEdit && post.status !== "published" && (
