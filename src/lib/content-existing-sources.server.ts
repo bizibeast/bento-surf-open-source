@@ -62,6 +62,7 @@ const defaultDependencies: ExistingContentDependencies = {
     return listFathomMeetings(connection, {
       createdAfter: new Date(now.getTime() - 14 * 86_400_000),
       createdBefore: new Date(now.getTime() + 86_400_000),
+      includeTranscript: true,
     });
   },
   now: () => new Date(),

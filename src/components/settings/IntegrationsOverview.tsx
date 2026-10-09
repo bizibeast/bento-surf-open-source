@@ -127,9 +127,10 @@ export function IntegrationsOverview({
     matches(provider, SOCIAL_PROVIDER_DEFINITIONS[provider].name),
   );
   const showMeetings = matches("meetings", "google calendar", "google meet", "fathom");
-  const showKnowledge = knowledgeProviders.some((provider) =>
-    matches("knowledge", provider, provider === "github" ? "git hub" : provider),
-  );
+  const showKnowledge =
+    knowledgeProviders.some((provider) =>
+      matches("knowledge", provider, provider === "github" ? "git hub" : provider),
+    ) || matches("knowledge", "fathom");
   const showChannels = matches("agent channels", "agent", "telegram");
   const shownAutomations = AUTOMATIONS.filter((automation) =>
     matches("automations", automation.label),
@@ -176,21 +177,35 @@ export function IntegrationsOverview({
           description="Ground your Brain and Agent in the work, meetings, and conversations you choose."
         >
           {isLoading ? (
-            <TileSkeleton count={4} />
+            <TileSkeleton count={5} />
           ) : (
             <div className="grid grid-cols-3 gap-x-4 gap-y-6 sm:grid-cols-5 lg:grid-cols-8">
-              {knowledgeProviders.map((provider) => (
-                <KnowledgeIntegrationCard
-                  key={provider}
-                  provider={provider}
-                  connection={
-                    contentConnections.find((connection) => connection.provider === provider) ||
-                    null
-                  }
-                  ready={Boolean(contentReadiness[provider])}
-                  onChanged={refreshOverview}
-                />
-              ))}
+              {knowledgeProviders
+                .filter((provider) =>
+                  matches("knowledge", provider, provider === "github" ? "git hub" : provider),
+                )
+                .map((provider) => (
+                  <KnowledgeIntegrationCard
+                    key={provider}
+                    provider={provider}
+                    connection={
+                      contentConnections.find((connection) => connection.provider === provider) ||
+                      null
+                    }
+                    ready={Boolean(contentReadiness[provider])}
+                    onChanged={refreshOverview}
+                  />
+                ))}
+              <BookingAccountsConnect
+                calendarConnections={calendarConnections}
+                fathomConnections={fathomConnections}
+                googleReady={Boolean(bookingReadiness.google)}
+                fathomReady={Boolean(bookingReadiness.fathom)}
+                onChanged={refreshOverview}
+                query={query}
+                providers={["fathom"]}
+                inlineTiles
+              />
             </div>
           )}
         </IntegrationPanel>

@@ -37,6 +37,7 @@ describe("existing Content source compatibility", () => {
     expect(result.find((item) => item.provider === "fathom")?.text).toContain(
       "We decided to launch next week.",
     );
+    expect(result.find((item) => item.provider === "fathom")?.text).toContain("Sam: Ship it");
   });
 
   it("keeps one existing source failure from blocking the other", async () => {
