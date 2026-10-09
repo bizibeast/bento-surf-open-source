@@ -306,6 +306,55 @@ describe("scheduler compose close protection", () => {
     expect(within(compose).getByRole("textbox")).toHaveValue("");
   });
 
+  it("saves the same native repost and removal timing for selected X and LinkedIn posts", async () => {
+    renderScheduler({
+      ...schedulerData,
+      connections: [
+        {
+          ...missingAvatar,
+          id: "11111111-1111-4111-8111-111111111121",
+          provider: "twitter",
+          displayName: "X account",
+          avatarUrl: "https://bento.surf/x-avatar.png",
+        },
+        {
+          ...missingAvatar,
+          id: "11111111-1111-4111-8111-111111111122",
+          provider: "linkedin",
+          displayName: "LinkedIn account",
+          avatarUrl: "https://bento.surf/linkedin-avatar.png",
+        },
+      ],
+    });
+    const create = await screen.findByRole("button", { name: "Create new post" });
+    await waitFor(() => expect(create).toBeEnabled());
+    fireEvent.click(create);
+    const compose = await screen.findByRole("dialog", { name: "Create a post" });
+    fireEvent.click(within(compose).getByRole("button", { name: /X account/i }));
+    fireEvent.click(within(compose).getByRole("button", { name: /LinkedIn account/i }));
+    fireEvent.change(within(compose).getByRole("textbox"), {
+      target: { value: "Native repost test" },
+    });
+    fireEvent.click(within(compose).getByRole("checkbox", { name: /Auto-repost on/i }));
+    fireEvent.click(within(compose).getByRole("checkbox", { name: "Remove the repost later" }));
+    await waitFor(
+      () =>
+        expect(saveSocialPost).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            providerSettings: expect.objectContaining({
+              twitter: expect.objectContaining({
+                autoRepost: { afterHours: 24, removeAfterHours: 48 },
+              }),
+              linkedin: expect.objectContaining({
+                autoRepost: { afterHours: 24, removeAfterHours: 48 },
+              }),
+            }),
+          }),
+        }),
+      { timeout: 3_000 },
+    );
+  });
+
   it("offers X Articles for an eligible connected account", async () => {
     renderScheduler({
       ...schedulerData,

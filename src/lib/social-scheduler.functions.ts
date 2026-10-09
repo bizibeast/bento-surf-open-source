@@ -161,6 +161,16 @@ function postFromRow(row: any, insights: Map<string, TargetInsight>): SchedulerP
             target.provider_settings && typeof target.provider_settings === "object"
               ? target.provider_settings
               : {},
+          repost: target.repost
+            ? {
+                status: target.repost.phase,
+                repostDueAt: target.repost.repost_due_at,
+                removeDueAt: target.repost.remove_due_at || null,
+                repostedAt: target.repost.reposted_at || null,
+                removedAt: target.repost.removed_at || null,
+                errorMessage: target.repost.last_error_message || null,
+              }
+            : null,
         };
       }),
   };
@@ -206,7 +216,7 @@ async function schedulerData(userId: string, plan?: PlanId) {
     db
       .from("social_posts")
       .select(
-        "*, targets:social_post_targets(id, connection_id, provider, status, remote_post_id, remote_post_url, last_error_message, published_at, provider_settings)",
+        "*, targets:social_post_targets(id, connection_id, provider, status, remote_post_id, remote_post_url, last_error_message, published_at, provider_settings, repost:social_repost_jobs(phase, repost_due_at, remove_due_at, reposted_at, removed_at, last_error_message))",
       )
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
@@ -510,6 +520,20 @@ export async function saveSocialPostForUser(userId: string, input: SocialPostInp
   const providers = checkedConnections.map(
     (connection: any) => connection.provider,
   ) as SocialProvider[];
+  for (const provider of ["linkedin", "twitter"] as const) {
+    if (data.providerSettings[provider]?.autoRepost != null && !providers.includes(provider)) {
+      throw new Error(`Select ${provider === "twitter" ? "X" : "LinkedIn"} to auto-repost there.`);
+    }
+    if (data.providerSettings[provider]?.autoRepost != null) {
+      const connection = checkedConnections.find((item: any) => item.provider === provider);
+      const requiredScope = provider === "linkedin" ? "w_member_social" : "tweet.write";
+      if (!connection?.scopes?.includes(requiredScope)) {
+        throw new Error(
+          `Reconnect ${provider === "twitter" ? "X" : "LinkedIn"} and approve posting access before enabling auto-repost.`,
+        );
+      }
+    }
+  }
   const xConnection = checkedConnections.find(
     (connection: any) => connection.provider === "twitter",
   );
