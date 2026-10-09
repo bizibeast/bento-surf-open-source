@@ -10,6 +10,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { BookingReviewCard } from "@/components/bookings/BookingReviewCard";
+import { CommerceTile } from "@/components/blocks/CommerceTile";
 import { DecodedImage } from "@/components/DecodedImage";
 import { pricingLabel, type CommercePricingType } from "@/lib/commerce";
 import type { SystemPageItem } from "@/lib/page-system-layout";
@@ -49,9 +50,13 @@ const ACCOUNT_METRICS = [
 export function SystemPageTile({
   item,
   publicUsername,
+  w = item.defaultW,
+  h = item.defaultH,
 }: {
   item: SystemPageItem;
   publicUsername?: string;
+  w?: number;
+  h?: number;
 }) {
   const { data, kind } = item;
   const isPublic = publicUsername !== undefined;
@@ -74,6 +79,32 @@ export function SystemPageTile({
         ? "View session"
         : text(data.ctaLabel ?? data.cta_label) ||
           (kind === "session" ? "Book session" : "View product");
+
+  if (item.system === "store" && kind === "product") {
+    return (
+      <article aria-label={item.title} className="size-full min-w-0">
+        <CommerceTile
+          content={{
+            kind: text(data.kind),
+            title: item.title,
+            subtitle: text(data.subtitle),
+            coverUrl: data.cover_url,
+            pricingType: text(data.pricing_type),
+            priceAmount: typeof data.price_amount === "number" ? data.price_amount : 0,
+            currency: text(data.currency),
+            billingInterval: text(data.billing_interval),
+            ctaLabel: text(data.cta_label),
+            status: "published",
+            href: publicHref,
+          }}
+          w={w}
+          h={h}
+          interactive={isPublic}
+          shellClass="size-full overflow-hidden rounded-[28px]"
+        />
+      </article>
+    );
+  }
 
   return (
     <article

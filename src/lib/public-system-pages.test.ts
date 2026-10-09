@@ -271,9 +271,8 @@ it("selects the canonical system UUID even when an older custom page uses the St
   expect(store?.page).toMatchObject({ id: `${pageId.slice(0, -1)}2`, system: "store" });
 });
 
-it("serves a standalone catalog when published products have no Store page", async () => {
+it("serves a standalone catalog when enabled without a Store page", async () => {
   state.tables.pages = state.tables.pages.filter((page) => page.system !== "store");
-  state.tables.profiles[0].store_page_enabled = false;
   const store = await getPublicCommerceStore({ data: { username: "bizibeast" } });
   expect(store?.isStandalone).toBe(true);
   expect(store?.products.map((product) => product.id)).toEqual(["session", "guide"]);
@@ -282,6 +281,15 @@ it("serves a standalone catalog when published products have no Store page", asy
     href: "/@bizibeast/store",
   });
   expect(store?.chrome.creator).toMatchObject({ username: "bizibeast" });
+});
+
+it("keeps the Store tab and catalog hidden until the creator adds the page", async () => {
+  state.tables.pages = state.tables.pages.filter((page) => page.system !== "store");
+  state.tables.profiles[0].store_page_enabled = false;
+  expect(await getPublicCommerceStore({ data: { username: "bizibeast" } })).toBeNull();
+  const { loadPublicCreatorChrome } = await import("./public-creator-chrome.server");
+  const chrome = await loadPublicCreatorChrome("owner");
+  expect(chrome?.pages.some((page) => page.system === "store")).toBe(false);
 });
 
 it("keeps the legacy Store tab visible when enabled without a dedicated page", async () => {

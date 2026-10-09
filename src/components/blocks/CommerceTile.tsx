@@ -23,11 +23,13 @@ export function CommerceTile({
   w,
   h,
   shellClass,
+  interactive = true,
 }: {
   content: CommerceTileContent;
   w: number;
   h: number;
   shellClass: string;
+  interactive?: boolean;
 }) {
   const kind = COMMERCE_PRODUCT_KINDS.includes(content.kind as CommerceProductKind)
     ? (content.kind as CommerceProductKind)
@@ -57,6 +59,8 @@ export function CommerceTile({
   const cta = published ? String(content.ctaLabel || definition.defaultCta) : "Finish setup";
   const draftLabel = "Draft · hidden from visitors";
   const layout = tileLayout(w, h);
+  const TileElement = interactive ? "a" : "div";
+  const linkProps = interactive ? { href } : {};
   const style = {
     background: coverUrl
       ? `linear-gradient(180deg,rgba(10,18,35,.08),rgba(10,18,35,.82)),url("${coverUrl.replaceAll('"', "%22")}") center/cover`
@@ -69,8 +73,8 @@ export function CommerceTile({
 
   if (layout === "icon") {
     return (
-      <a
-        href={href}
+      <TileElement
+        {...linkProps}
         aria-label={`${title} · ${price}`}
         data-testid="commerce-tile"
         data-layout={layout}
@@ -90,14 +94,14 @@ export function CommerceTile({
             aria-label={draftLabel}
           />
         )}
-      </a>
+      </TileElement>
     );
   }
 
   if (layout === "strip") {
     return (
-      <a
-        href={href}
+      <TileElement
+        {...linkProps}
         data-testid="commerce-tile"
         data-layout={layout}
         className={`${shellClass} group flex items-center gap-3 px-3`}
@@ -119,14 +123,14 @@ export function CommerceTile({
         )}
         <span className="shrink-0 text-xs font-semibold">{price}</span>
         <ArrowUpRight className="size-3.5 shrink-0 opacity-50 transition group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
-      </a>
+      </TileElement>
     );
   }
 
   if (layout === "square") {
     return (
-      <a
-        href={href}
+      <TileElement
+        {...linkProps}
         data-testid="commerce-tile"
         data-layout={layout}
         className={`${shellClass} group flex flex-col p-4`}
@@ -151,14 +155,14 @@ export function CommerceTile({
           <div className="line-clamp-2 font-display text-lg leading-[1.02]">{title}</div>
           <div className="mt-2 text-xs font-semibold">{price}</div>
         </div>
-      </a>
+      </TileElement>
     );
   }
 
   if (layout === "wide") {
     return (
-      <a
-        href={href}
+      <TileElement
+        {...linkProps}
         data-testid="commerce-tile"
         data-layout={layout}
         className={`${shellClass} group grid grid-cols-[1fr_auto] items-stretch gap-4 p-4`}
@@ -182,13 +186,13 @@ export function CommerceTile({
             {cta}
           </span>
         </div>
-      </a>
+      </TileElement>
     );
   }
 
   return (
-    <a
-      href={href}
+    <TileElement
+      {...linkProps}
       data-testid="commerce-tile"
       data-layout={layout}
       className={`${shellClass} group flex flex-col p-5`}
@@ -224,6 +228,6 @@ export function CommerceTile({
           </span>
         </div>
       </div>
-    </a>
+    </TileElement>
   );
 }

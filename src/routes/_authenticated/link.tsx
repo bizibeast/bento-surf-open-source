@@ -1364,7 +1364,7 @@ function DashboardPage() {
                           >
                             <div style={creatorFontVars} className="contents">
                               {tile.systemItem ? (
-                                <SystemPageTile item={tile.systemItem} />
+                                <SystemPageTile item={tile.systemItem} w={tile.w} h={tile.h} />
                               ) : (
                                 b && (
                                   <BlockRenderer
