@@ -3,10 +3,21 @@ import {
   buildInstagramMediaParams,
   buildTikTokPostInfo,
   socialPublishQueueBinding,
+  targetPostCopy,
   tiktokRetryRemotePostId,
 } from "./social-publisher.server";
 
 describe("provider queue routing", () => {
+  it("publishes each destination's own copy when sync is off", () => {
+    const post = { body: "Shared copy", title: "Shared title" };
+    expect(targetPostCopy(post, {})).toEqual(post);
+    expect(
+      targetPostCopy(post, { bodyOverride: "YouTube copy", titleOverride: "Video title" }),
+    ).toEqual({
+      body: "YouTube copy",
+      title: "Video title",
+    });
+  });
   it("routes providers onto isolated queue bindings", () => {
     expect(socialPublishQueueBinding("instagram")).toBe("SOCIAL_PUBLISH_QUEUE_META");
     expect(socialPublishQueueBinding("linkedin")).toBe("SOCIAL_PUBLISH_QUEUE_LINKEDIN");

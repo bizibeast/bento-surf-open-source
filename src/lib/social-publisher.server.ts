@@ -1696,43 +1696,39 @@ async function publish(
   }
   const token = await accessTokenForConnection(connection);
   const media = (Array.isArray(post.media) ? post.media : []) as SchedulerMedia[];
+  const { body, title } = targetPostCopy(post, target.provider_settings || {});
   if (provider === "threads")
-    return publishThreads(connection.provider_user_id, token, post.body, media);
+    return publishThreads(connection.provider_user_id, token, body, media);
   if (provider === "instagram")
     return publishInstagram(
       connection.provider_user_id,
       token,
-      post.body,
+      body,
       media,
       target.provider_settings || {},
     );
   if (provider === "facebook")
-    return publishFacebook(connection.provider_user_id, token, post.body, media);
+    return publishFacebook(connection.provider_user_id, token, body, media);
   if (provider === "linkedin")
-    return publishLinkedIn(connection.provider_user_id, token, post.body, media);
+    return publishLinkedIn(connection.provider_user_id, token, body, media);
   if (provider === "twitter")
-    return publishX(
-      token,
-      post.body,
-      media,
-      post.title || "",
-      target.provider_settings || {},
-      target,
-    );
+    return publishX(token, body, media, title || "", target.provider_settings || {}, target);
   if (provider === "youtube")
-    return publishYouTube(
-      token,
-      post.title,
-      post.body,
-      media,
-      target.provider_settings || {},
-      target,
-    );
+    return publishYouTube(token, title || "", body, media, target.provider_settings || {}, target);
   if (provider === "reddit")
-    return publishReddit(token, post.title, post.body, target.provider_settings || {});
-  if (provider === "tiktok")
-    return publishTikTok(token, post.body, media, target.provider_settings);
+    return publishReddit(token, title || "", body, target.provider_settings || {});
+  if (provider === "tiktok") return publishTikTok(token, body, media, target.provider_settings);
   throw new ProviderError("This provider is not supported.", "unsupported_provider", false);
+}
+
+export function targetPostCopy(
+  post: { body: string; title?: string | null },
+  settings: Record<string, unknown>,
+) {
+  return {
+    body: typeof settings.bodyOverride === "string" ? settings.bodyOverride : post.body,
+    title: typeof settings.titleOverride === "string" ? settings.titleOverride : post.title,
+  };
 }
 
 async function finishPendingPublish(
