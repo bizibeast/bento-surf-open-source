@@ -1834,7 +1834,7 @@ function SchedulerPage() {
                     </p>
                   )}
                   {!data?.locked && (
-                    <p className="mt-4 rounded-xl border border-dashed border-[#31577f]/30 bg-[#e8f2ff]/45 px-4 py-3 text-center text-xs font-medium text-[#31577f]">
+                    <p className="mt-4 rounded-xl border border-dashed border-[#31577f]/30 bg-muted/40 px-4 py-3 text-center text-xs font-medium text-[#31577f]">
                       Drop a calendar post here to move it to Drafts
                     </p>
                   )}
