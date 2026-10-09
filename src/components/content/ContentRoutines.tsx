@@ -1,9 +1,8 @@
-import { useState } from "react";
+import { useState, type ComponentType } from "react";
 import {
   ArrowLeft,
   Check,
   Clock3,
-  Github,
   Mail,
   Plus,
   RefreshCw,
@@ -11,6 +10,7 @@ import {
   Sun,
   Sunset,
 } from "lucide-react";
+import { SiGithub as Github } from "react-icons/si";
 import type { ContentRoutineInput } from "@/lib/content-routines.functions";
 import type { ContentRoutineSchedule, ContentRoutineTemplate } from "@/lib/content-routines";
 import type { SocialProvider } from "@/lib/social-scheduler";
@@ -45,7 +45,7 @@ type Preset = {
   time?: string;
   weekly?: boolean;
   color: string;
-  icon: typeof Sun;
+  icon: ComponentType<{ className?: string }>;
 };
 const presets: Preset[] = [
   {

@@ -161,7 +161,7 @@ const audiencePageInput = z
     query: z.string().trim().max(120).default(""),
     status: z.enum(["all", "subscribed", "unsubscribed", "unknown"]).default("all"),
   })
-  .default({});
+  .default({ query: "", status: "all" });
 
 const AUDIENCE_PAGE_SIZE = 50;
 

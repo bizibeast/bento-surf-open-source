@@ -6,12 +6,6 @@ import {
   ArrowLeft,
   ArrowRight,
   Check,
-  Twitter,
-  Instagram,
-  Linkedin,
-  Github,
-  Youtube,
-  Dribbble,
   X,
   AtSign,
   FileText,
@@ -19,6 +13,13 @@ import {
   Quote as QuoteIcon,
   Sparkles,
 } from "lucide-react";
+import { FaLinkedin as Linkedin, FaTwitter as Twitter } from "react-icons/fa6";
+import {
+  SiDribbble as Dribbble,
+  SiGithub as Github,
+  SiInstagram as Instagram,
+  SiYoutube as Youtube,
+} from "react-icons/si";
 import { getMyProfile, updateProfile, checkUsername } from "@/lib/profile.functions";
 import { createBlock, getMyBlocks } from "@/lib/blocks.functions";
 import { BlockRenderer, type Block } from "@/components/blocks/BlockRenderer";

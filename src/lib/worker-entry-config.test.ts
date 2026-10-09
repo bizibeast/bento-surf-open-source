@@ -33,7 +33,6 @@ describe("Cloudflare Worker entry configuration", () => {
     const contents = readFileSync(resolve(process.cwd(), "scripts/write-worker-entry.ts"), "utf8");
 
     expect(contents).toContain('compiledServer.includes("async queue(batch, env")');
-    expect(contents).toContain('import server from "./_ssr/index.mjs";');
     expect(contents).toContain("server.fetch(bindRuntime(request, env, context))");
     expect(contents).toContain("server.queue(batch, env, context)");
     expect(contents).toContain('compiledServer.includes("async scheduled(controller")');

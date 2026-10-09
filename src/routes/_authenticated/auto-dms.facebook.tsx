@@ -10,7 +10,6 @@ import {
   CheckCircle2,
   ChevronDown,
   History,
-  Facebook,
   ListChecks,
   LoaderCircle,
   Mail,
@@ -417,7 +416,7 @@ function FacebookAutoDmPage() {
               <StatCard icon={Bot} label="Active automations" value={activeCount} />
               <StatCard icon={Mail} label="DMs sent recently" value={sentCount} />
               <StatCard
-                icon={Facebook}
+                icon={SiFacebook}
                 label="Connected accounts"
                 value={readyConnections.length}
               />
