@@ -112,6 +112,17 @@ describe("scheduler compose close protection", () => {
     expect(fitPreviewScale(0, 900)).toBe(1);
   });
 
+  it("opens the Create a post dialog from the header button", async () => {
+    renderScheduler();
+    const create = await screen.findByRole("button", { name: "Create new post" });
+    await waitFor(() => expect(create).toBeEnabled());
+    fireEvent.click(create);
+
+    const compose = await screen.findByRole("dialog", { name: "Create a post" });
+    expect(compose).toBeVisible();
+    expect(within(compose).getByRole("textbox")).toHaveValue("");
+  });
+
   it("keeps desktop scrolling on the compose pane and removes preview filler copy", async () => {
     renderScheduler();
     const create = await screen.findAllByRole("button", { name: /Create post on/i });
