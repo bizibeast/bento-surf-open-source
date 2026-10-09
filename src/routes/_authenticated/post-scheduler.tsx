@@ -4198,7 +4198,7 @@ function PostRow({
               return (
                 <p key={`${target.id}-repost`} className="mt-1 text-xs text-muted-foreground">
                   {SOCIAL_PROVIDER_DEFINITIONS[target.provider].name}: {state}
-                  {repost?.errorMessage ? ` — ${repost.errorMessage}` : ""}
+                  {repost?.errorMessage ? `: ${repost.errorMessage}` : ""}
                 </p>
               );
             })}
