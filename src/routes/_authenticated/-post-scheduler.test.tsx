@@ -818,7 +818,7 @@ describe("scheduler compose close protection", () => {
     );
   });
 
-  it("keeps the YouTube title tied to the Instagram caption while Sync is on", async () => {
+  it("lets the YouTube title lead synced captions and turn Sync back on from YouTube", async () => {
     const connections = [
       {
         ...missingAvatar,
@@ -853,8 +853,32 @@ describe("scheduler compose close protection", () => {
     expect(within(compose).getByRole("textbox", { name: /YouTube title/i })).toHaveValue(
       "Updated Instagram caption",
     );
-    expect(within(compose).getByRole("textbox", { name: /YouTube title/i })).toHaveAttribute(
-      "readonly",
+    fireEvent.change(within(compose).getByRole("textbox", { name: /YouTube title/i }), {
+      target: { value: "YouTube leads the copy" },
+    });
+    fireEvent.click(within(compose).getByRole("button", { name: "Edit Instagram: Bizibeast" }));
+    expect(within(compose).getByRole("textbox", { name: /Caption/i })).toHaveValue(
+      "YouTube leads the copy",
+    );
+    fireEvent.click(within(compose).getByRole("button", { name: "Edit YouTube: Bizibeast" }));
+    fireEvent.click(within(compose).getByRole("switch", { name: "Sync" }));
+    expect(within(compose).getByRole("textbox", { name: /YouTube title/i })).toHaveValue(
+      "YouTube leads the copy",
+    );
+    fireEvent.change(within(compose).getByRole("textbox", { name: /YouTube title/i }), {
+      target: { value: "Independent YouTube title" },
+    });
+    fireEvent.click(within(compose).getByRole("button", { name: "Edit Instagram: Bizibeast" }));
+    expect(within(compose).getByRole("textbox", { name: /Caption/i })).toHaveValue(
+      "YouTube leads the copy",
+    );
+    fireEvent.click(within(compose).getByRole("button", { name: "Edit YouTube: Bizibeast" }));
+    fireEvent.click(
+      within(compose).getByRole("button", { name: "Turn on Sync from YouTube title" }),
+    );
+    fireEvent.click(within(compose).getByRole("button", { name: "Edit Instagram: Bizibeast" }));
+    expect(within(compose).getByRole("textbox", { name: /Caption/i })).toHaveValue(
+      "Independent YouTube title",
     );
   });
 
