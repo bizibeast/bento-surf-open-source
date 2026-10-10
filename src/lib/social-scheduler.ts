@@ -549,6 +549,7 @@ export function deriveSocialPostStatus(
 }
 
 export type SchedulerPost = {
+  automationNote?: string;
   id: string;
   body: string;
   title: string | null;
@@ -598,8 +599,26 @@ export const scheduledInstagramAutoDmSchema = z
   .object({
     triggerType: z.enum(["comment_keyword", "any_comment"]),
     keyword: z.string().trim().max(80),
+    excludedKeywords: z.array(z.string().trim().min(1).max(80)).max(20).default([]),
+    matchType: z.enum(["contains", "exact"]).default("contains"),
     openingMessage: z.string().trim().min(1).max(1000),
     replyMessage: z.string().trim().min(1).max(1000),
+    confirmationButtonLabel: z.string().trim().min(1).max(20).default("Send it"),
+    publicReplyEnabled: z.boolean().default(false),
+    publicReplyMessages: z.array(z.string().trim().min(1).max(300)).max(3).default([]),
+    emailCaptureEnabled: z.boolean().default(false),
+    emailPromptMessage: z.string().trim().min(1).max(700).nullable().default(null),
+    followGateEnabled: z.boolean().default(false),
+    followPromptMessage: z
+      .string()
+      .trim()
+      .min(1)
+      .max(700)
+      .default("Follow this account, then tap I’ve followed."),
+    followMaxRechecks: z.number().int().min(1).max(3).default(3),
+    followFailAction: z.enum(["send_anyway", "withhold"]).default("send_anyway"),
+    replyButtonLabel: z.string().trim().min(1).max(20).nullable().default(null),
+    replyButtonUrl: z.string().url().max(2048).nullable().default(null),
   })
   .superRefine((value, context) => {
     if (value.triggerType === "comment_keyword" && !value.keyword) {
@@ -609,6 +628,30 @@ export const scheduledInstagramAutoDmSchema = z
         message: "Add a comment keyword.",
       });
     }
+    if (value.publicReplyEnabled && value.publicReplyMessages.length === 0)
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["publicReplyMessages"],
+        message: "Add at least one public reply.",
+      });
+    if (value.emailCaptureEnabled && !value.emailPromptMessage)
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["emailPromptMessage"],
+        message: "Add an email prompt.",
+      });
+    if (Boolean(value.replyButtonLabel) !== Boolean(value.replyButtonUrl))
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["replyButtonUrl"],
+        message: "Add both a button label and URL.",
+      });
+    if (value.replyButtonUrl && !value.replyButtonUrl.startsWith("https://"))
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["replyButtonUrl"],
+        message: "Use a secure https:// link.",
+      });
   });
 export type ScheduledInstagramAutoDm = z.infer<typeof scheduledInstagramAutoDmSchema>;
 
@@ -731,8 +774,7 @@ export function providerSettingsMedia(settings: SocialProviderSettings): Schedul
 }
 
 export function youtubeDescriptionFrom(body: string, settings: Record<string, unknown> = {}) {
-  const override = typeof settings.description === "string" ? settings.description.trim() : "";
-  return override || body;
+  return typeof settings.description === "string" ? settings.description.trim() : body;
 }
 
 /** YouTube classifies new square or vertical videos up to 3 minutes as Shorts. */

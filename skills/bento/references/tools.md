@@ -4,8 +4,8 @@
 - `list_social_accounts`: connected publishing/Auto-DM accounts and readiness.
 - `upload_media`: import a public media URL or a small base64 payload into Bento storage.
 - `list_social_posts`: recent drafts, scheduled posts, publishing outcomes, and stable IDs.
-- `create_social_post`: draft, schedule, or publish to one or more connected accounts.
-- `get_scheduler_workspace`, `manage_scheduler`: inspect posting times and lifecycle state, then save posting times or reschedule, duplicate, cancel, or delete owned posts.
+- `create_social_post`: create or edit a draft, schedule, or publish to connected accounts. Use `providerSettings` for YouTube title, description, privacy, and thumbnail; Instagram Trial Reels and scheduled Auto DM; TikTok privacy and interactions; and X repost timing.
+- `get_scheduler_workspace`, `manage_scheduler`: inspect posting times and lifecycle state, then save posting times or reschedule, move to draft, duplicate, cancel, or delete owned posts.
 - `list_auto_dm_automations`: Instagram, Facebook, or X automations and connection health.
 - `save_auto_dm_automation`: create or update an automation using the platform's native validation.
 - `set_auto_dm_enabled`: pause or enable one owned automation.
@@ -22,6 +22,7 @@
 - `list_products`, `list_bookings`: compact product and booking lookups when the full workspace is unnecessary.
 
 Media returned by `upload_media` can be passed directly in `create_social_post.media`. For a scheduled post, use an ISO-8601 timestamp with an offset and the creator's IANA timezone.
+For a scheduled Instagram comment Auto DM, set `providerSettings.instagram.scheduledAutoDm` with `triggerType`, `keyword`, `openingMessage`, and `replyMessage`. Optional fields include public replies, email capture and prompt, follower check settings, and a final HTTPS link button. The automation activates only after Instagram confirms publication.
 
 Product fields are `kind`, `title`, `subtitle`, `description`, `cover_url`, `pricing_type`, `price_amount`, `currency`, `billing_interval`, `cta_label`, `settings`, and `inventory_limit`. Store money uses integer minor units. `settings` depends on product kind; inspect an existing same-kind product or Bento's current Store state before updating it.
 
