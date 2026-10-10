@@ -202,6 +202,39 @@ describe("scheduler post moves and deletion", () => {
     media: [],
   });
 
+  it("opens an existing draft for editing and saves changes to the same post", async () => {
+    const draft = {
+      ...scheduledPost(),
+      status: "draft" as const,
+      title: "Draft title",
+      body: "Original caption",
+      scheduledAt: null,
+    };
+    renderScheduler({ ...schedulerData, posts: [draft] });
+    const drafts = await screen.findByRole("region", { name: "Drafts drop area" });
+
+    fireEvent.click(within(drafts).getByRole("button", { name: "Edit draft" }));
+    const compose = await screen.findByRole("dialog", { name: "Edit post" });
+    expect(within(compose).getByRole("textbox", { name: /Post text/i })).toHaveValue(
+      "Original caption",
+    );
+
+    fireEvent.change(within(compose).getByRole("textbox", { name: /Post text/i }), {
+      target: { value: "Updated caption" },
+    });
+    await waitFor(
+      () =>
+        expect(saveSocialPost).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            id: draft.id,
+            body: "Updated caption",
+            asDraft: true,
+          }),
+        }),
+      { timeout: 3_000 },
+    );
+  });
+
   it("moves a calendar post into the Drafts area when dropped", async () => {
     const post = scheduledPost();
     const data = { ...schedulerData, posts: [post] };

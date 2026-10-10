@@ -1905,6 +1905,7 @@ function SchedulerPage() {
                           post={post}
                           canEdit={!data?.locked}
                           canDrag={!data?.locked}
+                          onEdit={() => openPostForEdit(post)}
                           onCancel={() => cancel.mutate(post.id)}
                           onDuplicate={() => duplicate.mutate(post.id)}
                           onDelete={() => setPostPendingDelete(post)}
@@ -1945,6 +1946,7 @@ function SchedulerPage() {
                         key={post.id}
                         post={post}
                         canEdit={!data?.locked}
+                        onEdit={() => openPostForEdit(post)}
                         onCancel={() => cancel.mutate(post.id)}
                         onDuplicate={() => duplicate.mutate(post.id)}
                         onDelete={() => setPostPendingDelete(post)}
@@ -4088,6 +4090,7 @@ function PostRow({
   post,
   canEdit = true,
   canDrag = false,
+  onEdit,
   onCancel,
   onDuplicate,
   onDelete,
@@ -4095,6 +4098,7 @@ function PostRow({
   post: SchedulerPost;
   canEdit?: boolean;
   canDrag?: boolean;
+  onEdit: () => void;
   onCancel: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
@@ -4258,6 +4262,16 @@ function PostRow({
             })}
         </div>
         <div className="flex shrink-0 gap-0.5">
+          {canEdit && RESCHEDULABLE_POST_STATUSES.has(post.status) && (
+            <button
+              type="button"
+              onClick={onEdit}
+              aria-label={post.status === "draft" ? "Edit draft" : "Edit post"}
+              className="inline-flex size-8 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <Pencil className="size-3.5" />
+            </button>
+          )}
           {canEdit && post.status !== "published" && (
             <button
               type="button"
