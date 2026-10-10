@@ -72,7 +72,7 @@ const missingAvatar: SchedulerConnection = {
 const schedulerData = {
   locked: false,
   plan: "creator" as const,
-  connections: [{ ...missingAvatar, avatarUrl: "https://example.com/avatar.png" }],
+  connections: [{ ...missingAvatar, avatarUrl: "https://bento.surf/avatar.png" }],
   posts: [],
   providers: [],
   readiness: {},
@@ -428,6 +428,7 @@ describe("scheduler compose close protection", () => {
     const compose = await screen.findByRole("dialog", { name: "Create a post" });
     fireEvent.click(within(compose).getByRole("button", { name: /X account/i }));
     fireEvent.click(within(compose).getByRole("button", { name: /LinkedIn account/i }));
+    fireEvent.click(within(compose).getByRole("button", { name: "Edit X: X account" }));
     fireEvent.change(within(compose).getByRole("textbox"), {
       target: { value: "Native repost test" },
     });
@@ -660,6 +661,7 @@ describe("scheduler compose close protection", () => {
     const longPost = Array.from({ length: 30 }, (_, index) => `Paragraph ${index + 1}`).join(
       "\n\n",
     );
+    fireEvent.click(within(compose).getByRole("switch", { name: "Sync" }));
     fireEvent.change(within(compose).getByRole("textbox", { name: /Post text/i }), {
       target: { value: longPost },
     });
@@ -679,7 +681,7 @@ describe("scheduler compose close protection", () => {
     }
   });
 
-  it("switches platform settings and keeps edited copy separate until Sync is enabled", async () => {
+  it("keeps copy synchronized until Sync is explicitly disabled", async () => {
     const connections = [
       {
         ...missingAvatar,
@@ -718,12 +720,16 @@ describe("scheduler compose close protection", () => {
     });
     expect(within(compose).getByRole("switch", { name: "Sync" })).toHaveAttribute(
       "aria-checked",
-      "false",
+      "true",
     );
     fireEvent.click(within(compose).getByRole("button", { name: "Edit X: X account" }));
     expect(within(compose).getByText("X format")).toBeVisible();
-    expect(within(compose).getByRole("textbox")).toHaveValue("");
+    expect(within(compose).getByRole("textbox")).toHaveValue("LinkedIn version");
     fireEvent.click(within(compose).getByRole("switch", { name: "Sync" }));
+    fireEvent.change(within(compose).getByRole("textbox"), { target: { value: "X version" } });
+    fireEvent.click(
+      within(compose).getByRole("button", { name: "Edit LinkedIn: LinkedIn account" }),
+    );
     expect(within(compose).getByRole("textbox")).toHaveValue("LinkedIn version");
   });
 
@@ -769,6 +775,142 @@ describe("scheduler compose close protection", () => {
     expect(
       within(compose).queryByText(/Reading this video|Custom thumbnail and visibility/),
     ).not.toBeInTheDocument();
+  });
+
+  it("syncs Instagram caption into the YouTube title and keeps one separate description", async () => {
+    const connections = [
+      {
+        ...missingAvatar,
+        id: "instagram",
+        provider: "instagram" as const,
+        avatarUrl: "https://bento.surf/avatar.png",
+      },
+      {
+        ...missingAvatar,
+        id: "youtube",
+        provider: "youtube" as const,
+        avatarUrl: "https://bento.surf/avatar.png",
+      },
+    ];
+    renderScheduler({ ...schedulerData, connections });
+    const create = await screen.findByRole("button", { name: "Create new post" });
+    await waitFor(() => expect(create).toBeEnabled());
+    fireEvent.click(create);
+    const compose = await screen.findByRole("dialog", { name: "Create a post" });
+    fireEvent.click(within(compose).getByRole("button", { name: "Instagram: Bizibeast" }));
+    fireEvent.click(within(compose).getByRole("button", { name: "YouTube: Bizibeast" }));
+    fireEvent.click(within(compose).getByRole("button", { name: "Edit Instagram: Bizibeast" }));
+    fireEvent.change(within(compose).getByRole("textbox", { name: /Caption/i }), {
+      target: { value: "My Reel caption" },
+    });
+    fireEvent.click(within(compose).getByRole("button", { name: "Edit YouTube: Bizibeast" }));
+    expect(within(compose).getByRole("textbox", { name: /YouTube title/i })).toHaveValue(
+      "My Reel caption",
+    );
+    expect(within(compose).getAllByRole("textbox", { name: /Description/i })).toHaveLength(1);
+    expect(within(compose).getByRole("textbox", { name: /Description/i })).toHaveValue("");
+    fireEvent.change(within(compose).getByRole("textbox", { name: /Description/i }), {
+      target: { value: "YouTube details" },
+    });
+    fireEvent.click(within(compose).getByRole("button", { name: "Edit Instagram: Bizibeast" }));
+    expect(within(compose).getByRole("textbox", { name: /Caption/i })).toHaveValue(
+      "My Reel caption",
+    );
+  });
+
+  it("restores the most recent saved settings for each platform on a new post", async () => {
+    vi.mocked(uploadFileResult).mockResolvedValue({
+      key: "users/creator/video/post.mp4",
+      publicUrl: "https://bento.surf/cdn/users/creator/video/post.mp4",
+      name: "post.mp4",
+      mimeType: "video/mp4",
+      size: 2_000,
+    });
+    const connections = [
+      {
+        ...missingAvatar,
+        id: "instagram",
+        provider: "instagram" as const,
+        avatarUrl: "https://bento.surf/avatar.png",
+      },
+      {
+        ...missingAvatar,
+        id: "youtube",
+        provider: "youtube" as const,
+        avatarUrl: "https://bento.surf/avatar.png",
+      },
+    ];
+    const post = {
+      id: "11111111-1111-4111-8111-111111111199",
+      status: "published",
+      body: "Earlier post",
+      title: "Earlier title",
+      scheduledAt: null,
+      createdAt: new Date().toISOString(),
+      timezone: "UTC",
+      media: [],
+      targets: [
+        {
+          id: "target-ig",
+          connectionId: "instagram",
+          provider: "instagram",
+          status: "published",
+          remotePostUrl: null,
+          errorMessage: null,
+          publishedAt: null,
+          providerSettings: {
+            trialReel: true,
+            graduationStrategy: "SS_PERFORMANCE",
+            scheduledAutoDm: {
+              triggerType: "any_comment",
+              keyword: "",
+              openingMessage: "Ready to send?",
+              replyMessage: "Here it is",
+              emailCaptureEnabled: true,
+              emailPromptMessage: "Your email?",
+            },
+          },
+        },
+        {
+          id: "target-yt",
+          connectionId: "youtube",
+          provider: "youtube",
+          status: "published",
+          remotePostUrl: null,
+          errorMessage: null,
+          publishedAt: null,
+          providerSettings: { youtubePrivacy: "unlisted" },
+        },
+      ],
+    } as SchedulerPost;
+    renderScheduler({ ...schedulerData, connections, posts: [post] });
+    const create = await screen.findByRole("button", { name: "Create new post" });
+    await waitFor(() => expect(create).toBeEnabled());
+    fireEvent.click(create);
+    const compose = await screen.findByRole("dialog", { name: "Create a post" });
+    fireEvent.click(within(compose).getByRole("button", { name: "YouTube: Bizibeast" }));
+    expect(within(compose).getByRole("combobox", { name: "YouTube visibility" })).toHaveValue(
+      "unlisted",
+    );
+    fireEvent.click(within(compose).getByRole("button", { name: "Instagram: Bizibeast" }));
+    fireEvent.change(document.querySelector('input[type="file"][accept*="video"]')!, {
+      target: { files: [new File(["video"], "post.mp4", { type: "video/mp4" })] },
+    });
+    expect(
+      await within(compose).findByRole("checkbox", { name: "Publish as a Trial Reel" }),
+    ).toBeChecked();
+    expect(within(compose).getByRole("combobox", { name: "Graduation strategy" })).toHaveValue(
+      "SS_PERFORMANCE",
+    );
+    expect(
+      within(compose).getByRole("checkbox", {
+        name: /Auto DM after this Instagram video goes live/i,
+      }),
+    ).toBeChecked();
+    expect(within(compose).getByRole("combobox", { name: "Trigger" })).toHaveValue("any_comment");
+    expect(within(compose).getByRole("textbox", { name: "Opening message" })).toHaveValue(
+      "Ready to send?",
+    );
   });
 
   it("adds pasted images and videos while leaving text paste alone", async () => {
@@ -853,14 +995,14 @@ describe("scheduler compose close protection", () => {
     vi.mocked(uploadFileResult)
       .mockResolvedValueOnce({
         key: "users/creator/video/post.mp4",
-        publicUrl: "https://example.com/cdn/users/creator/video/post.mp4",
+        publicUrl: "https://bento.surf/cdn/users/creator/video/post.mp4",
         size: 2_000,
         name: "post.mp4",
         mimeType: "video/mp4",
       })
       .mockResolvedValueOnce({
         key: "users/creator/image/thumbnail.jpg",
-        publicUrl: "https://example.com/cdn/users/creator/image/thumbnail.jpg",
+        publicUrl: "https://bento.surf/cdn/users/creator/image/thumbnail.jpg",
         size: 100,
         name: "video-thumbnail-8571.jpg",
         mimeType: "image/jpeg",
@@ -929,7 +1071,7 @@ describe("scheduler compose close protection", () => {
         providerSettings: expect.objectContaining({
           instagram: expect.objectContaining({
             cover: expect.objectContaining({
-              url: "https://example.com/cdn/users/creator/image/thumbnail.jpg",
+              url: "https://bento.surf/cdn/users/creator/image/thumbnail.jpg",
             }),
           }),
         }),
@@ -942,7 +1084,7 @@ describe("scheduler compose close protection", () => {
   it("saves an Instagram video's auto DM with the scheduled post", async () => {
     vi.mocked(uploadFileResult).mockResolvedValueOnce({
       key: "users/creator/video/post.mp4",
-      publicUrl: "https://example.com/cdn/users/creator/video/post.mp4",
+      publicUrl: "https://bento.surf/cdn/users/creator/video/post.mp4",
       size: 2_000,
       name: "post.mp4",
       mimeType: "video/mp4",
@@ -970,6 +1112,24 @@ describe("scheduler compose close protection", () => {
     fireEvent.change(within(compose).getByRole("textbox", { name: "DM after they tap Send it" }), {
       target: { value: "Here is the guide" },
     });
+    fireEvent.click(
+      within(compose).getByRole("checkbox", { name: "Reply publicly to matching comments" }),
+    );
+    fireEvent.change(within(compose).getByRole("textbox", { name: /Public replies/i }), {
+      target: { value: "Check your DMs\nSent the guide" },
+    });
+    fireEvent.click(
+      within(compose).getByRole("checkbox", { name: "Ask them to follow before delivery" }),
+    );
+    fireEvent.click(
+      within(compose).getByRole("checkbox", { name: "Ask for email before delivery" }),
+    );
+    fireEvent.change(within(compose).getByRole("textbox", { name: /Final link button text/i }), {
+      target: { value: "Get guide" },
+    });
+    fireEvent.change(within(compose).getByRole("textbox", { name: /Secure destination URL/i }), {
+      target: { value: "https://bento.surf/guide" },
+    });
     await waitFor(() => expect(saveSocialPost).toHaveBeenCalled(), { timeout: 3_000 });
 
     await waitFor(() => expect(saveSocialPost).toHaveBeenCalledOnce());
@@ -977,12 +1137,19 @@ describe("scheduler compose close protection", () => {
       data: expect.objectContaining({
         providerSettings: expect.objectContaining({
           instagram: expect.objectContaining({
-            scheduledAutoDm: {
+            scheduledAutoDm: expect.objectContaining({
               triggerType: "comment_keyword",
               keyword: "GUIDE",
               openingMessage: "Tap Send it",
               replyMessage: "Here is the guide",
-            },
+              confirmationButtonLabel: "Send it",
+              publicReplyEnabled: true,
+              publicReplyMessages: ["Check your DMs", "Sent the guide"],
+              emailCaptureEnabled: true,
+              followGateEnabled: true,
+              replyButtonLabel: "Get guide",
+              replyButtonUrl: "https://bento.surf/guide",
+            }),
           }),
         }),
       }),
@@ -992,7 +1159,7 @@ describe("scheduler compose close protection", () => {
   it("saves an Instagram Trial Reel with manual graduation by default", async () => {
     vi.mocked(uploadFileResult).mockResolvedValue({
       key: "users/creator/video/trial.mp4",
-      publicUrl: "https://example.com/cdn/users/creator/video/trial.mp4",
+      publicUrl: "https://bento.surf/cdn/users/creator/video/trial.mp4",
       size: 2_000,
       name: "trial.mp4",
       mimeType: "video/mp4",
@@ -1057,10 +1224,7 @@ describe("SchedulerStatusLine", () => {
     const refresh = vi
       .fn<() => Promise<{ id: string; avatarUrl: string }>>()
       .mockRejectedValueOnce(new Error("temporary"))
-      .mockResolvedValueOnce({
-        id: missingAvatar.id,
-        avatarUrl: "http://localhost:8080/avatar.png",
-      });
+      .mockResolvedValueOnce({ id: missingAvatar.id, avatarUrl: "https://bento.surf/avatar.png" });
     const onSuccess = vi.fn();
     const repair = createAvatarRepairHandler({
       refresh,
@@ -1080,7 +1244,7 @@ describe("SchedulerStatusLine", () => {
     expect(refresh).toHaveBeenCalledTimes(2);
     expect(onSuccess).toHaveBeenCalledWith({
       id: missingAvatar.id,
-      avatarUrl: "http://localhost:8080/avatar.png",
+      avatarUrl: "https://bento.surf/avatar.png",
     });
   });
 });
@@ -1157,7 +1321,7 @@ describe("VideoCoverFramePicker", () => {
       <VideoCoverFramePicker
         video={{
           key: "scheduler/user/video.mp4",
-          url: "https://app.example.com/cdn/scheduler/user/video.mp4",
+          url: "https://app.bento.surf/cdn/scheduler/user/video.mp4",
           name: "video.mp4",
           mimeType: "video/mp4",
           size: 1_000,
@@ -1188,7 +1352,7 @@ describe("VideoCoverFramePicker", () => {
       <VideoCoverFramePicker
         video={{
           key: "scheduler/user/video.mp4",
-          url: "https://app.example.com/cdn/scheduler/user/video.mp4",
+          url: "https://app.bento.surf/cdn/scheduler/user/video.mp4",
           name: "video.mp4",
           mimeType: "video/mp4",
           size: 1_000,

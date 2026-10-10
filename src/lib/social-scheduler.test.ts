@@ -41,7 +41,7 @@ import {
 
 const image: SchedulerMedia = {
   key: "users/user/image/file.jpg",
-  url: "http://localhost:8080/cdn/users/user/image/file.jpg",
+  url: "https://bento.surf/cdn/users/user/image/file.jpg",
   name: "file.jpg",
   mimeType: "image/jpeg",
   size: 100,
@@ -236,6 +236,7 @@ describe("social scheduler validation", () => {
     expect(youtubeDescriptionFrom("Instagram caption", { description: " Watch notes " })).toBe(
       "Watch notes",
     );
+    expect(youtubeDescriptionFrom("Instagram caption", { description: "" })).toBe("");
     expect(
       validatePostForProviders("short", [video], ["youtube"], "Title", {
         youtube: { description: "x".repeat(5_001) },
@@ -408,7 +409,7 @@ describe("social scheduler validation", () => {
         {
           ...image,
           key: "users/user/../someone-else/image.jpg",
-          url: "http://localhost:8080/cdn/users/user/../someone-else/image.jpg",
+          url: "https://bento.surf/cdn/users/user/../someone-else/image.jpg",
         },
         "user",
       ),
@@ -647,7 +648,7 @@ describe("social scheduler validation", () => {
     const media = [
       {
         key: "users/user/file/deck.pdf",
-        url: "http://localhost:8080/cdn/users/user/file/deck.pdf",
+        url: "https://app.test.bento.surf/cdn/users/user/file/deck.pdf",
         name: "deck.pdf",
         mimeType: "application/pdf",
         size: 12_000,
@@ -684,7 +685,7 @@ describe("social scheduler validation", () => {
   it("accepts a Reddit link post without requiring duplicate body text", () => {
     expect(
       validatePostForProviders("", [], ["reddit"], "A useful resource", {
-        reddit: { community: "r/creators", kind: "link", url: "http://localhost:8080" },
+        reddit: { community: "r/creators", kind: "link", url: "https://bento.surf" },
       }),
     ).toEqual({});
   });
@@ -736,7 +737,7 @@ describe("social post drafts", () => {
     const media = Array.from({ length: 3 }, (_, index) => ({
       ...image,
       key: `users/user/image/${index}.jpg`,
-      url: `http://localhost:8080/cdn/users/user/image/${index}.jpg`,
+      url: `https://bento.surf/cdn/users/user/image/${index}.jpg`,
     }));
     expect(validatePostForProviders("Carousel", media, ["instagram"])).toEqual({});
   });

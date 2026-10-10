@@ -5,19 +5,14 @@ import { z } from "zod-v4";
 import type { Database } from "@/integrations/supabase/types";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import {
-  deriveSocialPostStatus,
   INSTAGRAM_TRIAL_GRADUATION_STRATEGIES,
   isPublicSocialProvider,
-  providerSettingsMedia,
   postingScheduleSchema,
+  scheduledInstagramAutoDmSchema,
   socialConnectionCanPublish,
   socialPostInputSchema,
-  validatePostForProviders,
-  type SchedulerMedia,
-  type SocialProvider,
 } from "./social-scheduler";
-import { mediaBelongsToCreator } from "./social-scheduler.functions";
-import type { SocialPublishMessage } from "./social-publisher.server";
+import { saveSocialPostForUser as saveSchedulerPostForUser } from "./social-scheduler.functions";
 import {
   enforceRequestRateLimit,
   readResponseBytes,
@@ -260,123 +255,12 @@ async function listSocialPosts(userId: string, status: string | undefined, limit
 
 async function saveSocialPostForUser(userId: string, input: unknown) {
   const data = socialPostInputSchema.parse(input);
-  await requirePlanEntitlement(
-    userId,
-    "postScheduler",
-    "The post scheduler is not available on this plan.",
-  );
-  await enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "mcp-social-post-save", userId);
-  const client = db();
-  const { data: connections, error: connectionError } = await client
-    .from("social_connections")
-    .select("id,provider,status,scopes,reauth_required")
-    .eq("user_id", userId)
-    .in("id", data.connectionIds);
-  if (connectionError || connections?.length !== new Set(data.connectionIds).size) {
-    throw new Error("One or more selected social accounts are unavailable.");
-  }
-  if (
-    connections.some(
-      (connection: any) => connection.status !== "active" || connection.reauth_required,
-    )
-  ) {
-    throw new Error("Reconnect expired social accounts before posting.");
-  }
-  if (connections.some((connection: any) => !isPublicSocialProvider(connection.provider))) {
-    throw new Error("One or more selected social accounts are not supported.");
-  }
-  if (
-    connections.some(
-      (connection: any) =>
-        !socialConnectionCanPublish(
-          connection.provider,
-          connection.scopes,
-          connection.status,
-          Boolean(connection.reauth_required),
-        ),
-    )
-  ) {
-    throw new Error("Reconnect Instagram and approve publishing access before posting.");
-  }
-  if (
-    [...data.media, ...providerSettingsMedia(data.providerSettings)].some(
-      (media) => !mediaBelongsToCreator(media, userId),
-    )
-  ) {
-    throw new Error("Upload media through Bento before posting it.");
-  }
-  const providerErrors = validatePostForProviders(
-    data.body,
-    data.media as SchedulerMedia[],
-    connections.map((connection: any) => connection.provider) as SocialProvider[],
-    data.title,
-    data.providerSettings,
-  );
-  if (Object.keys(providerErrors).length) throw new Error(Object.values(providerErrors)[0]);
-
-  const scheduledAt = data.asDraft
-    ? null
-    : data.publishNow
-      ? new Date().toISOString()
-      : data.scheduledAt;
-  const { data: savedTargets, error: saveError } = await client.rpc("save_social_post_atomic", {
-    p_user_id: userId,
-    p_post_id: data.id || null,
-    p_body: data.body,
-    p_title: data.title || null,
-    p_media: data.media,
-    p_scheduled_at: scheduledAt,
-    p_timezone: data.timezone,
-    p_targets: connections.map((connection: any) => ({
-      connectionId: connection.id,
-      provider: connection.provider,
-      providerSettings: data.providerSettings[connection.provider] || {},
-    })),
-    p_as_draft: Boolean(data.asDraft),
-  });
-  if (saveError || !savedTargets?.length) {
-    throw new Error("The social post could not be saved.");
-  }
-
-  const postId = String(savedTargets[0].saved_post_id);
-  if (data.publishNow && !data.asDraft) {
-    const { error: stateError } = await client
-      .from("social_posts")
-      .update({ status: deriveSocialPostStatus(["pending"]) })
-      .eq("id", postId)
-      .eq("user_id", userId);
-    if (stateError) throw new Error("The publishing queue could not be updated.");
-    const queue = globalThis.__env__?.SOCIAL_PUBLISH_QUEUE as
-      Queue<SocialPublishMessage> | undefined;
-    if (queue) {
-      const targetIds = savedTargets.map((target: any) => String(target.target_id));
-      const { error: queueStateError } = await client
-        .from("social_post_targets")
-        .update({
-          status: "queued",
-          lease_expires_at: new Date(Date.now() + 300_000).toISOString(),
-        })
-        .in("id", targetIds)
-        .eq("status", "pending");
-      if (!queueStateError) {
-        try {
-          await queue.sendBatch(
-            savedTargets.map((target: any) => ({
-              body: {
-                kind: "social_publish",
-                targetId: target.target_id,
-                idempotencyKey: target.idempotency_key,
-              },
-            })),
-          );
-        } catch {
-          await client.rpc("release_social_target_claims", { p_target_ids: targetIds });
-        }
-      }
+  const result = await saveSchedulerPostForUser(userId, data);
+  return (
+    result.posts.find((post: { id: string }) => post.id === result.savedPostId) || {
+      id: result.savedPostId,
     }
-  }
-  const posts = await listSocialPosts(userId, undefined, 100);
-  return posts.find((post: any) => post.id === postId) || { id: postId };
+  );
 }
 
 async function listAutoDmAutomations(userId: string, platform?: AutoDmPlatform) {
@@ -772,7 +656,7 @@ const schedulerMutationSchema = z.discriminatedUnion("action", [
     timezone: z.string().min(1).max(100).optional(),
   }),
   z.object({
-    action: z.enum(["duplicate_post", "cancel_post", "delete_post"]),
+    action: z.enum(["move_to_draft", "duplicate_post", "cancel_post", "delete_post"]),
     id: z.uuid(),
   }),
 ]);
@@ -812,6 +696,37 @@ async function manageScheduler(userId: string, input: unknown) {
       p_post_id: data.id,
     });
     if (error || !duplicated) throw new Error("The post could not be duplicated.");
+  } else if (data.action === "move_to_draft") {
+    await requirePlanEntitlement(userId, "postScheduler", "The post scheduler is not available.");
+    const { data: post, error: postError } = await client
+      .from("social_posts")
+      .select("body,title,media,timezone")
+      .eq("id", data.id)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (postError || !post) throw new Error("This post could not be found.");
+    const { data: targets, error: targetError } = await client
+      .from("social_post_targets")
+      .select("connection_id,provider,provider_settings")
+      .eq("post_id", data.id);
+    if (targetError || !targets?.length)
+      throw new Error("This post has no publishing destinations.");
+    const { data: saved, error } = await client.rpc("save_social_post_atomic", {
+      p_user_id: userId,
+      p_post_id: data.id,
+      p_body: post.body,
+      p_title: post.title,
+      p_media: Array.isArray(post.media) ? post.media : [],
+      p_scheduled_at: null,
+      p_timezone: post.timezone || "UTC",
+      p_targets: targets.map((target: any) => ({
+        connectionId: target.connection_id,
+        provider: target.provider,
+        providerSettings: target.provider_settings || {},
+      })),
+      p_as_draft: true,
+    });
+    if (error || !saved?.length) throw new Error("This post could not be moved to drafts.");
   } else if (data.action === "cancel_post") {
     const { data: cancelled, error } = await client.rpc("cancel_social_post_atomic", {
       p_user_id: userId,
@@ -895,6 +810,55 @@ const socialProviderSettingsSchema = z
       .object({
         trialReel: z.boolean().optional(),
         graduationStrategy: z.enum(INSTAGRAM_TRIAL_GRADUATION_STRATEGIES).default("MANUAL"),
+        cover: mediaSchema.optional(),
+        scheduledAutoDm: scheduledInstagramAutoDmSchema.nullable().optional(),
+      })
+      .passthrough()
+      .optional(),
+    youtube: z
+      .object({
+        youtubePrivacy: z.enum(["private", "unlisted", "public"]).optional(),
+        description: z.string().max(5_000).optional(),
+        titleOverride: z.string().max(100).optional(),
+        thumbnail: mediaSchema.optional(),
+      })
+      .passthrough()
+      .optional(),
+    tiktok: z
+      .object({
+        privacyLevel: z.string().optional(),
+        disableComment: z.boolean().optional(),
+        disableDuet: z.boolean().optional(),
+        disableStitch: z.boolean().optional(),
+        commercialContent: z.boolean().optional(),
+        brandOrganicToggle: z.boolean().optional(),
+        brandContentToggle: z.boolean().optional(),
+        isAigc: z.boolean().optional(),
+        videoCoverTimestampMs: z.number().int().min(0).optional(),
+      })
+      .passthrough()
+      .optional(),
+    twitter: z
+      .object({
+        autoRepost: z
+          .object({
+            afterHours: z.number().int().min(1).max(168),
+            removeAfterHours: z.number().int().min(2).max(336).nullable(),
+          })
+          .nullable()
+          .optional(),
+      })
+      .passthrough()
+      .optional(),
+    linkedin: z
+      .object({
+        autoRepost: z
+          .object({
+            afterHours: z.number().int().min(1).max(168),
+            removeAfterHours: z.number().int().min(2).max(336).nullable(),
+          })
+          .nullable()
+          .optional(),
       })
       .passthrough()
       .optional(),
@@ -1362,12 +1326,12 @@ export function createBentoMcpServer(
     {
       title: "Create social post",
       description:
-        "Create a Bento social draft, schedule it, or publish it now to selected connected account IDs.",
+        "Create or edit a social draft, schedule it, or publish now. providerSettings supports Instagram Trial Reels and scheduled Auto DM (public replies, email, follow gate, link button), YouTube title, description, visibility and thumbnail, TikTok privacy and interactions, and auto repost.",
       inputSchema: z.object({
         id: z.uuid().optional(),
-        body: z.string().max(10_000),
+        body: z.string().max(25_000),
         title: z.string().max(300).default(""),
-        connectionIds: z.array(z.uuid()).min(1).max(20),
+        connectionIds: z.array(z.uuid()).max(20),
         media: z.array(mediaSchema).max(10).default([]),
         providerSettings: socialProviderSettingsSchema,
         mode: z.enum(["draft", "schedule", "publish_now"]),
@@ -1576,7 +1540,7 @@ export function createBentoMcpServer(
     {
       title: "Manage scheduler lifecycle",
       description:
-        "Save posting times or reschedule, duplicate, cancel, or delete an owned social post.",
+        "Save posting times or reschedule, move to draft, duplicate, cancel, or delete an owned social post.",
       inputSchema: schedulerMutationSchema,
       annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
     },

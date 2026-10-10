@@ -239,7 +239,7 @@ export function createSchedulerWebMcpTools({
       name: "bento_manage_scheduler",
       title: "Manage scheduler lifecycle",
       description:
-        "Saves posting times or reschedules, duplicates, cancels, deletes, or repairs a scheduler item after browser approval.",
+        "Saves posting times or reschedules, moves to draft, duplicates, cancels, deletes, or repairs a scheduler item after browser approval.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -249,6 +249,7 @@ export function createSchedulerWebMcpTools({
             enum: [
               "save_posting_schedule",
               "reschedule_post",
+              "move_to_draft",
               "duplicate_post",
               "cancel_post",
               "delete_post",
@@ -270,7 +271,13 @@ export function createSchedulerWebMcpTools({
             properties: { action: { const: "reschedule_post" } },
             required: ["action", "id", "scheduledAt"],
           },
-          ...["duplicate_post", "cancel_post", "delete_post", "refresh_avatar"].map((action) => ({
+          ...[
+            "move_to_draft",
+            "duplicate_post",
+            "cancel_post",
+            "delete_post",
+            "refresh_avatar",
+          ].map((action) => ({
             properties: { action: { const: action } },
             required: ["action", "id"],
           })),
@@ -304,6 +311,8 @@ export function createSchedulerWebMcpTools({
           });
         } else if (action === "duplicate_post") {
           next = await duplicateSocialPost({ data: { id: String(input.id) } });
+        } else if (action === "move_to_draft") {
+          next = await moveSocialPostToDraft({ data: { id: String(input.id) } });
         } else if (action === "cancel_post") {
           next = await cancelSocialPost({ data: { id: String(input.id) } });
         } else if (action === "delete_post") {
@@ -585,8 +594,27 @@ function SchedulerPage() {
     "comment_keyword",
   );
   const [autoDmKeyword, setAutoDmKeyword] = useState("");
+  const [autoDmExcludedKeywords, setAutoDmExcludedKeywords] = useState("");
+  const [autoDmMatchType, setAutoDmMatchType] = useState<"contains" | "exact">("contains");
   const [autoDmOpening, setAutoDmOpening] = useState("");
   const [autoDmReply, setAutoDmReply] = useState("");
+  const [autoDmButton, setAutoDmButton] = useState("Send it");
+  const [autoDmPublicReply, setAutoDmPublicReply] = useState(false);
+  const [autoDmPublicReplies, setAutoDmPublicReplies] = useState("Sent it to your DMs ✨");
+  const [autoDmEmail, setAutoDmEmail] = useState(false);
+  const [autoDmEmailPrompt, setAutoDmEmailPrompt] = useState(
+    "What’s the best email address to send this to?",
+  );
+  const [autoDmFollow, setAutoDmFollow] = useState(false);
+  const [autoDmFollowPrompt, setAutoDmFollowPrompt] = useState(
+    "Follow this account, then tap I’ve followed.",
+  );
+  const [autoDmFollowChecks, setAutoDmFollowChecks] = useState(3);
+  const [autoDmFollowFail, setAutoDmFollowFail] = useState<"send_anyway" | "withhold">(
+    "send_anyway",
+  );
+  const [autoDmLinkLabel, setAutoDmLinkLabel] = useState("");
+  const [autoDmLinkUrl, setAutoDmLinkUrl] = useState("");
   const [autoRepostEnabled, setAutoRepostEnabled] = useState(false);
   const [repostAfterHours, setRepostAfterHours] = useState(24);
   const [removeRepost, setRemoveRepost] = useState(false);
@@ -627,6 +655,25 @@ function SchedulerPage() {
   const youtubeThumbnailRef = useRef<PendingThumbnail | null>(null);
   const instagramCoverRef = useRef<PendingThumbnail | null>(null);
   const schedulerTimeZone = data?.postingSchedule.timezone || browserTimeZone();
+  const lastUsedSettings = useMemo(() => {
+    const settings: SocialProviderSettings = {};
+    for (const post of data?.posts || []) {
+      for (const target of post.targets) {
+        if (settings[target.provider]) continue;
+        const {
+          bodyOverride: _body,
+          titleOverride: _title,
+          thumbnail: _thumbnail,
+          cover: _cover,
+          description: _description,
+          article: _article,
+          ...preferences
+        } = target.providerSettings || {};
+        settings[target.provider] = preferences;
+      }
+    }
+    return settings;
+  }, [data?.posts]);
 
   const replacePendingThumbnail = useCallback(
     (target: "youtube" | "instagram", next: PendingThumbnail | null) => {
@@ -685,36 +732,84 @@ function SchedulerPage() {
     setMedia([]);
     setSelected([]);
     setScheduledAt(defaultScheduleInput(schedulerTimeZone));
-    setTiktokPrivacy("");
-    setTiktokAllowComment(false);
-    setTiktokAllowDuet(false);
-    setTiktokAllowStitch(false);
-    setTiktokCommercial(false);
-    setTiktokOwnBrand(false);
-    setTiktokBrandedContent(false);
-    setTiktokAiGenerated(false);
-    setYoutubePrivacy("private");
+    const tiktok = lastUsedSettings.tiktok || {};
+    const youtube = lastUsedSettings.youtube || {};
+    const instagram = lastUsedSettings.instagram || {};
+    const savedAutoDm = scheduledInstagramAutoDmSchema.safeParse(instagram.scheduledAutoDm);
+    const savedRepost = autoRepostSchema.safeParse(
+      lastUsedSettings.twitter?.autoRepost ?? lastUsedSettings.linkedin?.autoRepost,
+    );
+    setTiktokPrivacy(typeof tiktok.privacyLevel === "string" ? tiktok.privacyLevel : "");
+    setTiktokAllowComment(tiktok.disableComment === false);
+    setTiktokAllowDuet(tiktok.disableDuet === false);
+    setTiktokAllowStitch(tiktok.disableStitch === false);
+    setTiktokCommercial(tiktok.commercialContent === true);
+    setTiktokOwnBrand(tiktok.brandOrganicToggle === true);
+    setTiktokBrandedContent(tiktok.brandContentToggle === true);
+    setTiktokAiGenerated(tiktok.isAigc === true);
+    setYoutubePrivacy(
+      typeof youtube.youtubePrivacy === "string" ? youtube.youtubePrivacy : "private",
+    );
     setYoutubeDescription("");
     replacePendingThumbnail("youtube", null);
     setYoutubeFrameMs(1_000);
     setVideoMeta(null);
     replacePendingThumbnail("instagram", null);
     setInstagramFrameMs(1_000);
-    setInstagramTrialReel(false);
-    setAutoDmEnabled(false);
-    setAutoDmTrigger("comment_keyword");
-    setAutoDmKeyword("");
-    setAutoDmOpening("");
-    setAutoDmReply("");
-    setAutoRepostEnabled(false);
-    setRepostAfterHours(24);
-    setRemoveRepost(false);
-    setRemoveRepostAfterHours(48);
-    setInstagramGraduationStrategy("MANUAL");
-    setTiktokCoverMs(1_000);
-    setRedditCommunity("");
-    setRedditKind("self");
-    setXPostKind("post");
+    setInstagramTrialReel(instagram.trialReel === true);
+    setAutoDmEnabled(savedAutoDm.success);
+    setAutoDmTrigger(savedAutoDm.success ? savedAutoDm.data.triggerType : "comment_keyword");
+    setAutoDmKeyword(savedAutoDm.success ? savedAutoDm.data.keyword : "");
+    setAutoDmExcludedKeywords(
+      savedAutoDm.success ? savedAutoDm.data.excludedKeywords.join(", ") : "",
+    );
+    setAutoDmMatchType(savedAutoDm.success ? savedAutoDm.data.matchType : "contains");
+    setAutoDmOpening(savedAutoDm.success ? savedAutoDm.data.openingMessage : "");
+    setAutoDmReply(savedAutoDm.success ? savedAutoDm.data.replyMessage : "");
+    setAutoDmButton(savedAutoDm.success ? savedAutoDm.data.confirmationButtonLabel : "Send it");
+    setAutoDmPublicReply(savedAutoDm.success && savedAutoDm.data.publicReplyEnabled);
+    setAutoDmPublicReplies(
+      savedAutoDm.success
+        ? savedAutoDm.data.publicReplyMessages.join("\n")
+        : "Sent it to your DMs ✨",
+    );
+    setAutoDmEmail(savedAutoDm.success && savedAutoDm.data.emailCaptureEnabled);
+    setAutoDmEmailPrompt(
+      savedAutoDm.success
+        ? savedAutoDm.data.emailPromptMessage || ""
+        : "What’s the best email address to send this to?",
+    );
+    setAutoDmFollow(savedAutoDm.success && savedAutoDm.data.followGateEnabled);
+    setAutoDmFollowPrompt(
+      savedAutoDm.success
+        ? savedAutoDm.data.followPromptMessage
+        : "Follow this account, then tap I’ve followed.",
+    );
+    setAutoDmFollowChecks(savedAutoDm.success ? savedAutoDm.data.followMaxRechecks : 3);
+    setAutoDmFollowFail(savedAutoDm.success ? savedAutoDm.data.followFailAction : "send_anyway");
+    setAutoDmLinkLabel(savedAutoDm.success ? savedAutoDm.data.replyButtonLabel || "" : "");
+    setAutoDmLinkUrl(savedAutoDm.success ? savedAutoDm.data.replyButtonUrl || "" : "");
+    setAutoRepostEnabled(savedRepost.success);
+    setRepostAfterHours(savedRepost.success ? savedRepost.data.afterHours : 24);
+    setRemoveRepost(savedRepost.success && savedRepost.data.removeAfterHours != null);
+    setRemoveRepostAfterHours(
+      savedRepost.success
+        ? (savedRepost.data.removeAfterHours ?? Math.max(48, savedRepost.data.afterHours + 1))
+        : 48,
+    );
+    setInstagramGraduationStrategy(
+      instagram.graduationStrategy === "SS_PERFORMANCE" ? "SS_PERFORMANCE" : "MANUAL",
+    );
+    setTiktokCoverMs(
+      typeof tiktok.videoCoverTimestampMs === "number" ? tiktok.videoCoverTimestampMs : 1_000,
+    );
+    setRedditCommunity(
+      typeof lastUsedSettings.reddit?.community === "string"
+        ? lastUsedSettings.reddit.community
+        : "",
+    );
+    setRedditKind(lastUsedSettings.reddit?.kind === "link" ? "link" : "self");
+    setXPostKind(lastUsedSettings.twitter?.kind === "article" ? "article" : "post");
     setXArticle({ cover: null, blocks: [{ kind: "text", type: "unstyled", text: "" }] });
     setRedditUrl("");
     setUploadError(null);
@@ -722,7 +817,7 @@ function SchedulerPage() {
     setEditingPostId(null);
     setComposeWasOpenedForEdit(false);
     setEditingPostStatus(null);
-    setSavedProviderSettings({});
+    setSavedProviderSettings(lastUsedSettings);
   };
 
   const closeCompose = () => {
@@ -827,8 +922,21 @@ function SchedulerPage() {
       setAutoDmEnabled(true);
       setAutoDmTrigger(scheduledAutoDm.data.triggerType);
       setAutoDmKeyword(scheduledAutoDm.data.keyword);
+      setAutoDmExcludedKeywords(scheduledAutoDm.data.excludedKeywords.join(", "));
+      setAutoDmMatchType(scheduledAutoDm.data.matchType);
       setAutoDmOpening(scheduledAutoDm.data.openingMessage);
       setAutoDmReply(scheduledAutoDm.data.replyMessage);
+      setAutoDmButton(scheduledAutoDm.data.confirmationButtonLabel);
+      setAutoDmPublicReply(scheduledAutoDm.data.publicReplyEnabled);
+      setAutoDmPublicReplies(scheduledAutoDm.data.publicReplyMessages.join("\n"));
+      setAutoDmEmail(scheduledAutoDm.data.emailCaptureEnabled);
+      setAutoDmEmailPrompt(scheduledAutoDm.data.emailPromptMessage || "");
+      setAutoDmFollow(scheduledAutoDm.data.followGateEnabled);
+      setAutoDmFollowPrompt(scheduledAutoDm.data.followPromptMessage);
+      setAutoDmFollowChecks(scheduledAutoDm.data.followMaxRechecks);
+      setAutoDmFollowFail(scheduledAutoDm.data.followFailAction);
+      setAutoDmLinkLabel(scheduledAutoDm.data.replyButtonLabel || "");
+      setAutoDmLinkUrl(scheduledAutoDm.data.replyButtonUrl || "");
     }
     if (
       instagram.graduationStrategy === "MANUAL" ||
@@ -866,7 +974,14 @@ function SchedulerPage() {
   const activeProvider = activeConnection?.provider;
   const activeProviders = activeProvider ? [activeProvider] : [];
   const editorBody = activeProvider && !sync ? (bodyOverrides[activeProvider] ?? body) : body;
-  const editorTitle = activeProvider ? (platformTitles[activeProvider] ?? title) : title;
+  const syncedYoutubeTitle =
+    sync && selectedConnections.some((connection) => connection.provider === "instagram")
+      ? body.trim().slice(0, 100)
+      : title;
+  const editorTitle = activeProvider
+    ? (platformTitles[activeProvider] ??
+      (activeProvider === "youtube" ? syncedYoutubeTitle : title))
+    : title;
   const connectedProviders = selectedConnections.map((connection) => connection.provider);
   const selectedXConnection = selectedConnections.find(
     (connection) => connection.provider === "twitter",
@@ -1018,7 +1133,7 @@ function SchedulerPage() {
         ...savedProviderSettings.youtube,
         youtubePrivacy,
         ...(youtubeFormat ? { youtubeFormat } : {}),
-        ...(usesCaption && youtubeDescription.trim() ? { description: youtubeDescription } : {}),
+        ...(usesCaption ? { description: youtubeDescription } : {}),
         ...(hasVideo && youtubeThumbnail
           ? { thumbnail: pendingThumbnailMedia(youtubeThumbnail) }
           : {}),
@@ -1032,8 +1147,27 @@ function SchedulerPage() {
             ? {
                 triggerType: autoDmTrigger,
                 keyword: autoDmKeyword.trim(),
+                excludedKeywords: autoDmExcludedKeywords
+                  .split(",")
+                  .map((keyword) => keyword.trim())
+                  .filter(Boolean),
+                matchType: autoDmMatchType,
                 openingMessage: autoDmOpening.trim(),
                 replyMessage: autoDmReply.trim(),
+                confirmationButtonLabel: autoDmButton.trim(),
+                publicReplyEnabled: autoDmPublicReply,
+                publicReplyMessages: autoDmPublicReplies
+                  .split("\n")
+                  .map((reply) => reply.trim())
+                  .filter(Boolean),
+                emailCaptureEnabled: autoDmEmail,
+                emailPromptMessage: autoDmEmail ? autoDmEmailPrompt.trim() : null,
+                followGateEnabled: autoDmFollow,
+                followPromptMessage: autoDmFollowPrompt.trim(),
+                followMaxRechecks: autoDmFollowChecks,
+                followFailAction: autoDmFollowFail,
+                replyButtonLabel: autoDmLinkLabel.trim() || null,
+                replyButtonUrl: autoDmLinkUrl.trim() || null,
               }
             : null,
         ...(instagramReelCover && instagramCover
@@ -1079,7 +1213,9 @@ function SchedulerPage() {
         ...(!sync ? { bodyOverride: bodyOverrides[provider] ?? body } : {}),
         ...(platformTitles[provider] !== undefined
           ? { titleOverride: platformTitles[provider] }
-          : {}),
+          : provider === "youtube" && sync && instagramSelected
+            ? { titleOverride: body.trim().slice(0, 100) }
+            : {}),
       };
     }
     return settings;
@@ -1087,8 +1223,21 @@ function SchedulerPage() {
     autoDmEnabled,
     autoDmTrigger,
     autoDmKeyword,
+    autoDmExcludedKeywords,
+    autoDmMatchType,
     autoDmOpening,
     autoDmReply,
+    autoDmButton,
+    autoDmPublicReply,
+    autoDmPublicReplies,
+    autoDmEmail,
+    autoDmEmailPrompt,
+    autoDmFollow,
+    autoDmFollowPrompt,
+    autoDmFollowChecks,
+    autoDmFollowFail,
+    autoDmLinkLabel,
+    autoDmLinkUrl,
     autoRepostEnabled,
     repostAfterHours,
     removeRepost,
@@ -1212,18 +1361,10 @@ function SchedulerPage() {
   const showPostTitle = activeProvider === "youtube" || activeProvider === "reddit" || isXArticle;
 
   const updateEditorBody = (value: string) => {
-    if (!activeProvider) {
+    if (activeProvider === "youtube" && usesCaption) {
+      setYoutubeDescription(value);
+    } else if (!activeProvider) {
       setBody(value);
-    } else if (sync && selectedConnections.length > 1) {
-      setBodyOverrides(
-        Object.fromEntries(
-          selectedConnections.map((connection) => [
-            connection.provider,
-            connection.provider === activeProvider ? value : body,
-          ]),
-        ) as Partial<Record<SocialProvider, string>>,
-      );
-      setSync(false);
     } else if (sync) {
       setBody(value);
     } else {
@@ -1236,8 +1377,37 @@ function SchedulerPage() {
       const firstWrittenVersion = selectedConnections
         .map((connection) => bodyOverrides[connection.provider])
         .find((value) => value?.trim());
-      setBody(editorBody.trim() ? editorBody : firstWrittenVersion || editorBody);
+      setBody(
+        activeProvider === "youtube" && usesCaption
+          ? firstWrittenVersion || body
+          : editorBody.trim()
+            ? editorBody
+            : firstWrittenVersion || editorBody,
+      );
       setBodyOverrides({});
+      if (needsYouTubeTitle && instagramSelected && hasVideo) {
+        const source =
+          activeProvider === "instagram"
+            ? instagramCover || youtubeThumbnail
+            : youtubeThumbnail || instagramCover;
+        if (source) {
+          const copy = source.file
+            ? { ...source, previewUrl: URL.createObjectURL(source.file) }
+            : { ...source };
+          replacePendingThumbnail(activeProvider === "instagram" ? "youtube" : "instagram", copy);
+        }
+      }
+      if (hasVideo) {
+        const timestamp =
+          activeProvider === "instagram"
+            ? instagramFrameMs
+            : activeProvider === "tiktok"
+              ? tiktokCoverMs
+              : youtubeFrameMs;
+        if (needsYouTubeTitle) setYoutubeFrameMs(timestamp);
+        if (instagramSelected) setInstagramFrameMs(timestamp);
+        if (tiktokSelected) setTiktokCoverMs(timestamp);
+      }
     } else {
       setBodyOverrides(
         Object.fromEntries(
@@ -1763,7 +1933,10 @@ function SchedulerPage() {
     setUploading(true);
     try {
       const prepared = await prepareSchedulerImageUpload(file);
-      if (target === "youtube" && prepared.size > YOUTUBE_THUMBNAIL_MAX_BYTES) {
+      if (
+        (target === "youtube" || (sync && needsYouTubeTitle && instagramSelected)) &&
+        prepared.size > YOUTUBE_THUMBNAIL_MAX_BYTES
+      ) {
         toast.error("YouTube thumbnails must be 2 MB or smaller.");
         return;
       }
@@ -1772,6 +1945,12 @@ function SchedulerPage() {
         file: prepared,
         uploaded: null,
       });
+      if (sync && needsYouTubeTitle && instagramSelected)
+        replacePendingThumbnail(target === "youtube" ? "instagram" : "youtube", {
+          previewUrl: URL.createObjectURL(prepared),
+          file: prepared,
+          uploaded: null,
+        });
       toast.success("Thumbnail ready");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not prepare the cover");
@@ -1790,17 +1969,42 @@ function SchedulerPage() {
     try {
       const file = await captureVideoFrame(video, timestampMs);
       if (sequence !== coverCaptureSequence.current) return;
+      if (
+        (target === "youtube" || (sync && needsYouTubeTitle && instagramSelected)) &&
+        file.size > YOUTUBE_THUMBNAIL_MAX_BYTES
+      ) {
+        toast.error("YouTube thumbnails must be 2 MB or smaller. Choose another frame.");
+        return;
+      }
       replacePendingThumbnail(target, {
         previewUrl: URL.createObjectURL(file),
         file,
         uploaded: null,
       });
+      if (sync && needsYouTubeTitle && instagramSelected)
+        replacePendingThumbnail(target === "youtube" ? "instagram" : "youtube", {
+          previewUrl: URL.createObjectURL(file),
+          file,
+          uploaded: null,
+        });
     } catch (error) {
       if (sequence === coverCaptureSequence.current)
         toast.error(error instanceof Error ? error.message : "Could not capture this video frame");
     } finally {
       if (sequence === coverCaptureSequence.current) setUploading(false);
     }
+  }
+
+  function changeCoverFrame(target: "youtube" | "instagram" | "tiktok", timestampMs: number) {
+    if (target === "youtube" || (sync && needsYouTubeTitle)) setYoutubeFrameMs(timestampMs);
+    if (target === "instagram" || (sync && instagramSelected)) setInstagramFrameMs(timestampMs);
+    if (target === "tiktok" || (sync && tiktokSelected)) setTiktokCoverMs(timestampMs);
+  }
+
+  function removeCover(target: "youtube" | "instagram") {
+    replacePendingThumbnail(target, null);
+    if (sync && needsYouTubeTitle && instagramSelected)
+      replacePendingThumbnail(target === "youtube" ? "instagram" : "youtube", null);
   }
 
   const canSubmit =
@@ -2239,7 +2443,11 @@ function SchedulerPage() {
                                 </span>
                                 {activeProviders.length > 0 && (
                                   <span className="text-[11px] tabular-nums text-muted-foreground">
-                                    {editorBody.length.toLocaleString()}/
+                                    {(activeProvider === "youtube" && usesCaption
+                                      ? youtubeDescription
+                                      : editorBody
+                                    ).length.toLocaleString()}
+                                    /
                                     {(editorUsesCaption
                                       ? editorCaptionLimit
                                       : 5_000
@@ -2248,7 +2456,11 @@ function SchedulerPage() {
                                 )}
                               </span>
                               <textarea
-                                value={editorBody}
+                                value={
+                                  activeProvider === "youtube" && usesCaption
+                                    ? youtubeDescription
+                                    : editorBody
+                                }
                                 onChange={(event) => updateEditorBody(event.target.value)}
                                 rows={10}
                                 placeholder={
@@ -2257,27 +2469,6 @@ function SchedulerPage() {
                                     : schedulerCaptionPlaceholder(activeProviders)
                                 }
                                 className="mt-2 min-h-64 w-full resize-none bg-transparent font-ui-sans text-[26px] leading-relaxed outline-none placeholder:text-muted-foreground/45 sm:min-h-80 sm:text-[32px]"
-                              />
-                            </label>
-                          )}
-
-                          {activeProvider === "youtube" && usesCaption && (
-                            <label className="mt-5 block">
-                              <span className="flex items-end justify-between gap-3">
-                                <span className="text-xs font-semibold text-muted-foreground">
-                                  YouTube description
-                                </span>
-                                <span className="text-[11px] tabular-nums text-muted-foreground">
-                                  {youtubeDescription.length.toLocaleString()}/5,000
-                                </span>
-                              </span>
-                              <textarea
-                                value={youtubeDescription}
-                                onChange={(event) => setYoutubeDescription(event.target.value)}
-                                rows={5}
-                                maxLength={5_000}
-                                placeholder="Defaults to your caption if left blank"
-                                className={`mt-2 min-h-32 ${micro.input}`}
                               />
                             </label>
                           )}
@@ -2437,7 +2628,9 @@ function SchedulerPage() {
                                       <VideoCoverFramePicker
                                         video={primaryVideo}
                                         timestampMs={youtubeFrameMs}
-                                        onChange={setYoutubeFrameMs}
+                                        onChange={(timestampMs) =>
+                                          changeCoverFrame("youtube", timestampMs)
+                                        }
                                         onSelectFrame={(video, timestampMs) =>
                                           void selectVideoFrame(video, timestampMs, "youtube")
                                         }
@@ -2445,7 +2638,7 @@ function SchedulerPage() {
                                         aspect={youtubeFormat === "short" ? "portrait" : "video"}
                                         uploading={uploading}
                                         onPick={() => youtubeThumbInputRef.current?.click()}
-                                        onRemove={() => replacePendingThumbnail("youtube", null)}
+                                        onRemove={() => removeCover("youtube")}
                                         hint={
                                           youtubeFormat === "short"
                                             ? "9:16 JPEG, up to 2 MB. 1080×1920 works best for Shorts."
@@ -2524,7 +2717,9 @@ function SchedulerPage() {
                                       <VideoCoverFramePicker
                                         video={primaryVideo}
                                         timestampMs={instagramFrameMs}
-                                        onChange={setInstagramFrameMs}
+                                        onChange={(timestampMs) =>
+                                          changeCoverFrame("instagram", timestampMs)
+                                        }
                                         onSelectFrame={(video, timestampMs) =>
                                           void selectVideoFrame(video, timestampMs, "instagram")
                                         }
@@ -2532,7 +2727,7 @@ function SchedulerPage() {
                                         aspect="portrait"
                                         uploading={uploading}
                                         onPick={() => instagramCoverInputRef.current?.click()}
-                                        onRemove={() => replacePendingThumbnail("instagram", null)}
+                                        onRemove={() => removeCover("instagram")}
                                         hint="Portrait JPEG works best. This image is sent as the Reel cover."
                                       />
                                     )}
@@ -2576,7 +2771,9 @@ function SchedulerPage() {
                                       <VideoCoverFramePicker
                                         video={primaryVideo}
                                         timestampMs={tiktokCoverMs}
-                                        onChange={setTiktokCoverMs}
+                                        onChange={(timestampMs) =>
+                                          changeCoverFrame("tiktok", timestampMs)
+                                        }
                                       />
                                     )}
                                     <label className="block max-w-sm">
@@ -2758,17 +2955,45 @@ function SchedulerPage() {
                                     </select>
                                   </label>
                                   {autoDmTrigger === "comment_keyword" && (
-                                    <label className="block text-xs font-semibold text-muted-foreground">
-                                      Keyword
-                                      <input
-                                        value={autoDmKeyword}
-                                        onChange={(event) => setAutoDmKeyword(event.target.value)}
-                                        maxLength={80}
-                                        placeholder="e.g. GUIDE"
-                                        className={`mt-1 ${micro.input}`}
-                                      />
-                                    </label>
+                                    <div className="grid gap-3 sm:grid-cols-2">
+                                      <label className="block text-xs font-semibold text-muted-foreground">
+                                        Keyword
+                                        <input
+                                          value={autoDmKeyword}
+                                          onChange={(event) => setAutoDmKeyword(event.target.value)}
+                                          maxLength={80}
+                                          placeholder="e.g. GUIDE"
+                                          className={`mt-1 ${micro.input}`}
+                                        />
+                                      </label>
+                                      <label className="block text-xs font-semibold text-muted-foreground">
+                                        Match
+                                        <select
+                                          value={autoDmMatchType}
+                                          onChange={(event) =>
+                                            setAutoDmMatchType(
+                                              event.target.value as typeof autoDmMatchType,
+                                            )
+                                          }
+                                          className={`mt-1 ${micro.input}`}
+                                        >
+                                          <option value="contains">Contains keyword</option>
+                                          <option value="exact">Exact comment</option>
+                                        </select>
+                                      </label>
+                                    </div>
                                   )}
+                                  <label className="block text-xs font-semibold text-muted-foreground">
+                                    Excluded keywords (comma separated)
+                                    <input
+                                      value={autoDmExcludedKeywords}
+                                      onChange={(event) =>
+                                        setAutoDmExcludedKeywords(event.target.value)
+                                      }
+                                      placeholder="e.g. spam, stop"
+                                      className={`mt-1 ${micro.input}`}
+                                    />
+                                  </label>
                                   <label className="block text-xs font-semibold text-muted-foreground">
                                     Opening message
                                     <textarea
@@ -2781,6 +3006,120 @@ function SchedulerPage() {
                                     />
                                   </label>
                                   <label className="block text-xs font-semibold text-muted-foreground">
+                                    Opening reply button
+                                    <input
+                                      value={autoDmButton}
+                                      onChange={(event) => setAutoDmButton(event.target.value)}
+                                      maxLength={20}
+                                      placeholder="Send it"
+                                      className={`mt-1 ${micro.input}`}
+                                    />
+                                  </label>
+                                  <label className="flex items-center gap-2 text-xs font-semibold">
+                                    <input
+                                      type="checkbox"
+                                      checked={autoDmPublicReply}
+                                      onChange={(event) =>
+                                        setAutoDmPublicReply(event.target.checked)
+                                      }
+                                    />
+                                    Reply publicly to matching comments
+                                  </label>
+                                  {autoDmPublicReply && (
+                                    <label className="block text-xs font-semibold text-muted-foreground">
+                                      Public replies (one per line, up to three)
+                                      <textarea
+                                        value={autoDmPublicReplies}
+                                        onChange={(event) =>
+                                          setAutoDmPublicReplies(event.target.value)
+                                        }
+                                        rows={3}
+                                        placeholder="Sent it to your DMs ✨"
+                                        className={`mt-1 ${micro.input}`}
+                                      />
+                                    </label>
+                                  )}
+                                  <label className="flex items-center gap-2 text-xs font-semibold">
+                                    <input
+                                      type="checkbox"
+                                      checked={autoDmFollow}
+                                      onChange={(event) => setAutoDmFollow(event.target.checked)}
+                                    />
+                                    Ask them to follow before delivery
+                                  </label>
+                                  {autoDmFollow && (
+                                    <div className="grid gap-3 sm:grid-cols-2">
+                                      <label className="block text-xs font-semibold text-muted-foreground sm:col-span-2">
+                                        Follow prompt
+                                        <textarea
+                                          value={autoDmFollowPrompt}
+                                          onChange={(event) =>
+                                            setAutoDmFollowPrompt(event.target.value)
+                                          }
+                                          maxLength={700}
+                                          rows={2}
+                                          className={`mt-1 ${micro.input}`}
+                                        />
+                                      </label>
+                                      <label className="block text-xs font-semibold text-muted-foreground">
+                                        Maximum checks
+                                        <select
+                                          value={autoDmFollowChecks}
+                                          onChange={(event) =>
+                                            setAutoDmFollowChecks(Number(event.target.value))
+                                          }
+                                          className={`mt-1 ${micro.input}`}
+                                        >
+                                          {[1, 2, 3].map((count) => (
+                                            <option key={count} value={count}>
+                                              {count}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </label>
+                                      <label className="block text-xs font-semibold text-muted-foreground">
+                                        If they do not follow
+                                        <select
+                                          value={autoDmFollowFail}
+                                          onChange={(event) =>
+                                            setAutoDmFollowFail(
+                                              event.target.value as typeof autoDmFollowFail,
+                                            )
+                                          }
+                                          className={`mt-1 ${micro.input}`}
+                                        >
+                                          <option value="send_anyway">Send anyway</option>
+                                          <option value="withhold">Do not send</option>
+                                        </select>
+                                      </label>
+                                    </div>
+                                  )}
+                                  <label className="flex items-center gap-2 text-xs font-semibold">
+                                    <input
+                                      type="checkbox"
+                                      checked={autoDmEmail}
+                                      onChange={(event) => setAutoDmEmail(event.target.checked)}
+                                    />
+                                    Ask for email before delivery
+                                  </label>
+                                  {autoDmEmail && (
+                                    <label className="block text-xs font-semibold text-muted-foreground">
+                                      Email prompt
+                                      <textarea
+                                        value={autoDmEmailPrompt}
+                                        onChange={(event) =>
+                                          setAutoDmEmailPrompt(event.target.value)
+                                        }
+                                        maxLength={700}
+                                        rows={2}
+                                        className={`mt-1 ${micro.input}`}
+                                      />
+                                      <span className="mt-1 block font-normal">
+                                        Bento records consent and saves the address to Audience.
+                                      </span>
+                                    </label>
+                                  )}
+                                  <label className="block text-xs font-semibold text-muted-foreground">
                                     DM after they tap Send it
                                     <textarea
                                       value={autoDmReply}
@@ -2791,12 +3130,33 @@ function SchedulerPage() {
                                       className={`mt-1 ${micro.input}`}
                                     />
                                   </label>
+                                  <div className="grid gap-3 sm:grid-cols-2">
+                                    <label className="block text-xs font-semibold text-muted-foreground">
+                                      Final link button text (optional)
+                                      <input
+                                        value={autoDmLinkLabel}
+                                        onChange={(event) => setAutoDmLinkLabel(event.target.value)}
+                                        maxLength={20}
+                                        placeholder="Get the guide"
+                                        className={`mt-1 ${micro.input}`}
+                                      />
+                                    </label>
+                                    <label className="block text-xs font-semibold text-muted-foreground">
+                                      Secure destination URL
+                                      <input
+                                        value={autoDmLinkUrl}
+                                        onChange={(event) => setAutoDmLinkUrl(event.target.value)}
+                                        placeholder="https://…"
+                                        className={`mt-1 ${micro.input}`}
+                                      />
+                                    </label>
+                                  </div>
                                 </div>
                               )}
                             </div>
                           )}
 
-                          {repostProviders.length > 0 && (
+                          {activeProvider === "twitter" && repostProviders.includes("twitter") && (
                             <div className="mt-5 rounded-2xl border border-border/70 bg-white/70 p-4">
                               <label className="flex items-center gap-3 text-sm font-semibold">
                                 <input
@@ -2906,7 +3266,7 @@ function SchedulerPage() {
                         <PlatformPostPreview
                           activeConnection={previewConnection}
                           body={
-                            previewConnection?.provider === "youtube" && youtubeDescription.trim()
+                            previewConnection?.provider === "youtube" && usesCaption
                               ? youtubeDescription
                               : editorBody
                           }
@@ -4255,6 +4615,9 @@ function PostRow({
           >
             {post.body || (media ? "Media post" : "Untitled post")}
           </p>
+          {post.status === "draft" && post.automationNote && (
+            <p className="mt-2 text-xs leading-5 text-amber-700">{post.automationNote}</p>
+          )}
           <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
             <span className="inline-flex items-center gap-1.5 capitalize">
               <span
