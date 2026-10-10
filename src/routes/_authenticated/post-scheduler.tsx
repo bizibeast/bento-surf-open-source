@@ -153,6 +153,7 @@ function startCalendarPostDrag(event: DragEvent<HTMLElement>, postId: string) {
 }
 
 type SchedulerWebMcpState = Awaited<ReturnType<typeof getSocialScheduler>>;
+type SchedulerPostMove = { id: string; scheduledAt: string | null };
 
 function schedulerWebMcpSummary(data: SchedulerWebMcpState | undefined) {
   return {
@@ -1467,41 +1468,97 @@ function SchedulerPage() {
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Could not duplicate post"),
   });
-  const reschedule = useMutation({
-    mutationFn: ({ id, scheduledAt }: { id: string; scheduledAt: string }) =>
-      rescheduleSocialPost({
-        data: {
-          id,
-          scheduledAt,
-          timezone: schedulerTimeZone,
-        },
-      }),
-    onSuccess: (next) => {
-      queryClient.setQueryData(["social-scheduler"], next);
-      toast.success("Post rescheduled");
+  const movingPostIds = useRef(new Set<string>());
+  const movePost = useMutation({
+    mutationKey: ["social-scheduler", "move"],
+    mutationFn: ({ id, scheduledAt }: SchedulerPostMove) =>
+      scheduledAt
+        ? rescheduleSocialPost({ data: { id, scheduledAt, timezone: schedulerTimeZone } })
+        : moveSocialPostToDraft({ data: { id } }),
+    onMutate: async ({ id, scheduledAt }) => {
+      await queryClient.cancelQueries({ queryKey: ["social-scheduler"] });
+      const previousPost = queryClient
+        .getQueryData<SchedulerWebMcpState>(["social-scheduler"])
+        ?.posts.find((post: SchedulerPost) => post.id === id);
+      queryClient.setQueryData<SchedulerWebMcpState>(["social-scheduler"], (current) =>
+        current
+          ? {
+              ...current,
+              posts: current.posts.map((post: SchedulerPost) =>
+                post.id === id
+                  ? {
+                      ...post,
+                      status: scheduledAt ? "scheduled" : "draft",
+                      scheduledAt,
+                      timezone: scheduledAt ? schedulerTimeZone : post.timezone,
+                    }
+                  : post,
+              ),
+            }
+          : current,
+      );
+      return { previousPost };
     },
-    onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Could not reschedule post"),
-  });
-  const moveToDraft = useMutation({
-    mutationFn: (id: string) => moveSocialPostToDraft({ data: { id } }),
-    onSuccess: (next) => {
-      queryClient.setQueryData(["social-scheduler"], next);
-      toast.success("Post moved to drafts");
+    onSuccess: (next, { id, scheduledAt }) => {
+      const savedPost = next.posts.find((post: SchedulerPost) => post.id === id);
+      if (savedPost) {
+        queryClient.setQueryData<SchedulerWebMcpState>(["social-scheduler"], (current) =>
+          current
+            ? {
+                ...current,
+                posts: current.posts.map((post: SchedulerPost) =>
+                  post.id === id ? savedPost : post,
+                ),
+              }
+            : next,
+        );
+      }
+      toast.success(scheduledAt ? "Post rescheduled" : "Post moved to drafts");
     },
-    onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Could not move post to drafts"),
+    onError: (error, { id, scheduledAt }, context) => {
+      if (context?.previousPost) {
+        queryClient.setQueryData<SchedulerWebMcpState>(["social-scheduler"], (current) =>
+          current
+            ? {
+                ...current,
+                posts: current.posts.map((post: SchedulerPost) =>
+                  post.id === id ? context.previousPost : post,
+                ),
+              }
+            : current,
+        );
+      }
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : scheduledAt
+            ? "Could not reschedule post"
+            : "Could not move post to drafts",
+      );
+    },
+    onSettled: (_next, _error, { id }) => {
+      movingPostIds.current.delete(id);
+      if (queryClient.isMutating({ mutationKey: ["social-scheduler", "move"] }) === 1) {
+        void queryClient.invalidateQueries({ queryKey: ["social-scheduler"] });
+      }
+    },
   });
 
   const handleDraftDrop = (event: DragEvent<HTMLElement>) => {
     event.preventDefault();
     draftDragDepth.current = 0;
     setDraftDropActive(false);
-    if (data?.locked || moveToDraft.isPending) return;
+    if (data?.locked) return;
     const postId = event.dataTransfer.getData(CALENDAR_POST_DRAG_MIME);
     const post = data?.posts.find((item: SchedulerPost) => item.id === postId);
-    if (!post || !["scheduled", "failed", "partially_failed"].includes(post.status)) return;
-    moveToDraft.mutate(post.id);
+    if (
+      !post ||
+      movingPostIds.current.has(post.id) ||
+      !["scheduled", "failed", "partially_failed"].includes(post.status)
+    )
+      return;
+    movingPostIds.current.add(post.id);
+    movePost.mutate({ id: post.id, scheduledAt: null });
   };
 
   async function uploadFiles(files: readonly File[]) {
@@ -1847,9 +1904,11 @@ function SchedulerPage() {
                 onDuplicatePost={(post) => duplicate.mutate(post.id)}
                 onDeletePost={setPostPendingDelete}
                 onOpenPostingSettings={() => setPostingSettingsOpen(true)}
-                onReschedule={(id, nextScheduledAt) =>
-                  reschedule.mutate({ id, scheduledAt: nextScheduledAt })
-                }
+                onReschedule={(id, nextScheduledAt) => {
+                  if (movingPostIds.current.has(id)) return;
+                  movingPostIds.current.add(id);
+                  movePost.mutate({ id, scheduledAt: nextScheduledAt });
+                }}
                 onAvatarError={repairAvatar}
               />
 
@@ -3675,24 +3734,35 @@ function CalendarPost({
                 post.status === "publishing" ? "animate-pulse motion-reduce:animate-none" : ""
               }`}
             />
-            <Clock3 className="size-2.5" />
-            <span>
+            <Clock3 className="size-2.5 shrink-0" />
+            <span className="whitespace-nowrap">
               {new Intl.DateTimeFormat(undefined, {
                 hour: "numeric",
                 minute: "2-digit",
                 timeZone,
               }).format(date)}
             </span>
-            <span className="ml-auto flex -space-x-0.5">
-              {post.targets.slice(0, 3).map((target) => {
-                const Icon = PROVIDER_ICONS[target.provider];
-                return <Icon key={target.id} className="size-2.5" />;
-              })}
-            </span>
           </div>
           <p className="mt-1 line-clamp-2 text-[10px] font-medium leading-4">
             {post.title || post.body || "Media post"}
           </p>
+          {post.targets.length > 0 && (
+            <span className="mt-1 flex flex-wrap items-center gap-1 text-muted-foreground">
+              {post.targets.map((target) => {
+                const Icon = PROVIDER_ICONS[target.provider];
+                return (
+                  <span
+                    key={target.id}
+                    role="img"
+                    aria-label={SOCIAL_PROVIDER_DEFINITIONS[target.provider].name}
+                    className="inline-flex size-3.5 shrink-0 items-center justify-center"
+                  >
+                    <Icon className="size-3.5" />
+                  </span>
+                );
+              })}
+            </span>
+          )}
         </button>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-44 rounded-xl border-black/[0.08] p-1.5 shadow-xl">

@@ -238,10 +238,16 @@ describe("scheduler post moves and deletion", () => {
   it("moves a calendar post into the Drafts area when dropped", async () => {
     const post = scheduledPost();
     const data = { ...schedulerData, posts: [post] };
-    vi.mocked(moveSocialPostToDraft).mockResolvedValue({
+    const moved = {
       ...data,
       posts: [{ ...post, status: "draft", scheduledAt: null }],
-    } as never);
+    };
+    let resolveMove!: (value: typeof moved) => void;
+    vi.mocked(moveSocialPostToDraft).mockReturnValue(
+      new Promise((resolve) => {
+        resolveMove = resolve;
+      }) as never,
+    );
     renderScheduler(data);
     await screen.findByRole("heading", { name: "Drafts" });
     fireEvent.click(screen.getByRole("button", { name: "Next week" }));
@@ -272,6 +278,63 @@ describe("scheduler post moves and deletion", () => {
     );
     await waitFor(() => expect(within(draftsArea).getByText(post.title)).toBeVisible());
     expect(within(calendar).queryByText(post.title)).not.toBeInTheDocument();
+    resolveMove(moved);
+  });
+
+  it("shows a draft on the calendar before the reschedule request finishes", async () => {
+    const draft = {
+      ...scheduledPost(),
+      status: "draft" as const,
+      title: "Schedule instantly",
+      scheduledAt: null,
+    };
+    const data = { ...schedulerData, posts: [draft] };
+    let resolveMove!: (value: unknown) => void;
+    vi.mocked(rescheduleSocialPost).mockReturnValue(
+      new Promise((resolve) => {
+        resolveMove = resolve;
+      }) as never,
+    );
+    renderScheduler(data);
+    const draftsArea = await screen.findByRole("region", { name: "Drafts drop area" });
+    fireEvent.click(screen.getByRole("button", { name: "Next week" }));
+    const calendar = screen.getByRole("grid", { name: "week publishing calendar" });
+    const firstDay = within(calendar).getAllByRole("gridcell")[0];
+    const transfer = {
+      getData: () => draft.id,
+      dropEffect: "none",
+    };
+
+    fireEvent.drop(firstDay, { dataTransfer: transfer });
+
+    await waitFor(() => expect(within(firstDay).getByText(draft.title)).toBeVisible());
+    expect(within(draftsArea).queryByText(draft.title)).not.toBeInTheDocument();
+    const scheduledAt = (
+      vi.mocked(rescheduleSocialPost).mock.calls[0]![0] as { data: { scheduledAt: string } }
+    ).data.scheduledAt;
+    resolveMove({ ...data, posts: [{ ...draft, status: "scheduled", scheduledAt }] });
+  });
+
+  it("restores a calendar post if moving it to drafts fails", async () => {
+    const post = scheduledPost();
+    let rejectMove!: (error: Error) => void;
+    vi.mocked(moveSocialPostToDraft).mockReturnValue(
+      new Promise((_, reject) => {
+        rejectMove = reject;
+      }) as never,
+    );
+    renderScheduler({ ...schedulerData, posts: [post] });
+    await screen.findByRole("heading", { name: "Drafts" });
+    fireEvent.click(screen.getByRole("button", { name: "Next week" }));
+    const calendar = screen.getByRole("grid", { name: "week publishing calendar" });
+    const draftsArea = screen.getByRole("region", { name: "Drafts drop area" });
+
+    fireEvent.drop(draftsArea, { dataTransfer: { getData: () => post.id } });
+    await waitFor(() => expect(within(draftsArea).getByText(post.title)).toBeVisible());
+    rejectMove(new Error("Save failed"));
+
+    await waitFor(() => expect(within(calendar).getByText(post.title)).toBeVisible());
+    expect(within(draftsArea).queryByText(post.title)).not.toBeInTheDocument();
   });
 
   it("asks for confirmation before deleting a calendar post", async () => {
