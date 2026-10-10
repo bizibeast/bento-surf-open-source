@@ -974,13 +974,14 @@ function SchedulerPage() {
   const activeProvider = activeConnection?.provider;
   const activeProviders = activeProvider ? [activeProvider] : [];
   const editorBody = activeProvider && !sync ? (bodyOverrides[activeProvider] ?? body) : body;
-  const syncedYoutubeTitle =
-    sync && selectedConnections.some((connection) => connection.provider === "instagram")
-      ? body.trim().slice(0, 100)
-      : title;
+  const youtubeTitleFollowsCaption =
+    sync && selectedConnections.some((connection) => connection.provider === "instagram");
+  const syncedYoutubeTitle = youtubeTitleFollowsCaption ? body.trim().slice(0, 100) : title;
   const editorTitle = activeProvider
-    ? (platformTitles[activeProvider] ??
-      (activeProvider === "youtube" ? syncedYoutubeTitle : title))
+    ? activeProvider === "youtube" && youtubeTitleFollowsCaption
+      ? syncedYoutubeTitle
+      : (platformTitles[activeProvider] ??
+        (activeProvider === "youtube" ? syncedYoutubeTitle : title))
     : title;
   const connectedProviders = selectedConnections.map((connection) => connection.provider);
   const selectedXConnection = selectedConnections.find(
@@ -1211,10 +1212,10 @@ function SchedulerPage() {
       settings[provider] = {
         ...settings[provider],
         ...(!sync ? { bodyOverride: bodyOverrides[provider] ?? body } : {}),
-        ...(platformTitles[provider] !== undefined
-          ? { titleOverride: platformTitles[provider] }
-          : provider === "youtube" && sync && instagramSelected
-            ? { titleOverride: body.trim().slice(0, 100) }
+        ...(provider === "youtube" && youtubeTitleFollowsCaption
+          ? { titleOverride: syncedYoutubeTitle }
+          : platformTitles[provider] !== undefined
+            ? { titleOverride: platformTitles[provider] }
             : {}),
       };
     }
@@ -1260,6 +1261,8 @@ function SchedulerPage() {
     body,
     bodyOverrides,
     platformTitles,
+    syncedYoutubeTitle,
+    youtubeTitleFollowsCaption,
     tiktokAiGenerated,
     tiktokAllowComment,
     tiktokAllowDuet,
@@ -2386,6 +2389,9 @@ function SchedulerPage() {
                               </span>
                               <input
                                 value={editorTitle}
+                                readOnly={
+                                  activeProvider === "youtube" && youtubeTitleFollowsCaption
+                                }
                                 onChange={(event) => {
                                   if (activeProvider) {
                                     setPlatformTitles((current) => ({
@@ -2408,6 +2414,12 @@ function SchedulerPage() {
                                 }
                                 className={`mt-2 ${micro.input}`}
                               />
+                              {activeProvider === "youtube" && youtubeTitleFollowsCaption && (
+                                <span className="mt-2 block text-[11px] leading-4 text-muted-foreground">
+                                  Synced from the Instagram caption. Turn off Sync to edit it
+                                  separately.
+                                </span>
+                              )}
                               {youtubeFormat === "short" && (
                                 <span className="mt-2 block text-[11px] leading-4 text-muted-foreground">
                                   The Shorts feed truncates long titles.
@@ -4250,31 +4262,6 @@ export async function captureVideoFrame(video: HTMLVideoElement, timestampMs: nu
   });
 }
 
-function TimelineVideoFrame({
-  video,
-  timestampMs,
-}: {
-  video: SchedulerMedia;
-  timestampMs: number;
-}) {
-  return (
-    <video
-      src={video.url}
-      muted
-      playsInline
-      preload="metadata"
-      aria-hidden="true"
-      className="pointer-events-none size-full object-cover"
-      onLoadedMetadata={(event) => {
-        event.currentTarget.currentTime = Math.min(
-          event.currentTarget.duration,
-          timestampMs / 1_000,
-        );
-      }}
-    />
-  );
-}
-
 export function VideoCoverFramePicker({
   video,
   timestampMs,
@@ -4302,6 +4289,7 @@ export function VideoCoverFramePicker({
   const stripRef = useRef<HTMLDivElement>(null);
   const selectedMsRef = useRef(timestampMs);
   const [durationMs, setDurationMs] = useState(0);
+  const [timelineFrames, setTimelineFrames] = useState<string[]>([]);
 
   function syncFrame(ms: number) {
     const el = ref.current;
@@ -4311,7 +4299,55 @@ export function VideoCoverFramePicker({
 
   useEffect(() => {
     setDurationMs(0);
+    setTimelineFrames([]);
   }, [video.url]);
+
+  useEffect(() => {
+    if (!durationMs) return;
+    const timestamps = timelineFrameTimestamps(durationMs);
+    const thumbnailVideo = document.createElement("video");
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    thumbnailVideo.crossOrigin = "anonymous";
+    thumbnailVideo.muted = true;
+    thumbnailVideo.playsInline = true;
+    thumbnailVideo.preload = "auto";
+    let index = 0;
+    let cancelled = false;
+
+    const capture = () => {
+      if (cancelled || index >= timestamps.length) return;
+      try {
+        canvas.width = 120;
+        canvas.height = Math.max(
+          1,
+          Math.round((120 * thumbnailVideo.videoHeight) / thumbnailVideo.videoWidth),
+        );
+        context.drawImage(thumbnailVideo, 0, 0, canvas.width, canvas.height);
+        const frame = canvas.toDataURL("image/jpeg", 0.65);
+        const frameIndex = index;
+        setTimelineFrames((current) => {
+          const next = [...current];
+          next[frameIndex] = frame;
+          return next;
+        });
+        index++;
+        if (index < timestamps.length) thumbnailVideo.currentTime = timestamps[index] / 1_000;
+      } catch {
+        // The timeline remains draggable even if a preview frame cannot be decoded.
+      }
+    };
+    thumbnailVideo.addEventListener("loadeddata", capture, { once: true });
+    thumbnailVideo.addEventListener("seeked", capture);
+    thumbnailVideo.src = video.url;
+    return () => {
+      cancelled = true;
+      thumbnailVideo.removeEventListener("loadeddata", capture);
+      thumbnailVideo.removeEventListener("seeked", capture);
+      thumbnailVideo.removeAttribute("src");
+    };
+  }, [durationMs, video.url]);
 
   const maxMs = Math.max(0, durationMs - 1);
   const valueMs = durationMs ? clampTikTokCoverTimestampMs(timestampMs, durationMs) : 0;
@@ -4347,9 +4383,10 @@ export function VideoCoverFramePicker({
           ref={ref}
           src={video.url}
           aria-label="Selected thumbnail frame"
+          crossOrigin="anonymous"
           muted
           playsInline
-          preload="metadata"
+          preload="auto"
           className="size-full object-contain"
           onLoadedMetadata={(event) => {
             const duration = event.currentTarget.duration;
@@ -4423,14 +4460,16 @@ export function VideoCoverFramePicker({
           }}
           className="relative mt-3 flex h-16 touch-none select-none gap-0.5 overflow-hidden rounded-xl bg-black p-1.5 outline-none focus-visible:ring-2 focus-visible:ring-[#3478f6] sm:h-20"
         >
-          {frameTimestamps.map((frameMs) => {
+          {frameTimestamps.map((frameMs, index) => {
             return (
               <div
                 key={frameMs}
                 aria-hidden="true"
                 className="min-w-0 flex-1 overflow-hidden rounded-sm opacity-75"
               >
-                <TimelineVideoFrame video={video} timestampMs={frameMs} />
+                {timelineFrames[index] && (
+                  <img src={timelineFrames[index]} alt="" className="size-full object-cover" />
+                )}
               </div>
             );
           })}

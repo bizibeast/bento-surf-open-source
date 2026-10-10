@@ -818,6 +818,46 @@ describe("scheduler compose close protection", () => {
     );
   });
 
+  it("keeps the YouTube title tied to the Instagram caption while Sync is on", async () => {
+    const connections = [
+      {
+        ...missingAvatar,
+        id: "instagram",
+        provider: "instagram" as const,
+        avatarUrl: "https://bento.surf/avatar.png",
+      },
+      {
+        ...missingAvatar,
+        id: "youtube",
+        provider: "youtube" as const,
+        avatarUrl: "https://bento.surf/avatar.png",
+      },
+    ];
+    renderScheduler({ ...schedulerData, connections });
+    const create = await screen.findByRole("button", { name: "Create new post" });
+    await waitFor(() => expect(create).toBeEnabled());
+    fireEvent.click(create);
+    const compose = await screen.findByRole("dialog", { name: "Create a post" });
+    fireEvent.click(within(compose).getByRole("button", { name: "Instagram: Bizibeast" }));
+    fireEvent.click(within(compose).getByRole("button", { name: "YouTube: Bizibeast" }));
+    fireEvent.click(within(compose).getByRole("switch", { name: "Sync" }));
+    fireEvent.click(within(compose).getByRole("button", { name: "Edit YouTube: Bizibeast" }));
+    const youtubeTitle = within(compose).getByRole("textbox", { name: /YouTube title/i });
+    fireEvent.change(youtubeTitle, { target: { value: "Old YouTube title" } });
+    fireEvent.click(within(compose).getByRole("switch", { name: "Sync" }));
+    fireEvent.click(within(compose).getByRole("button", { name: "Edit Instagram: Bizibeast" }));
+    fireEvent.change(within(compose).getByRole("textbox", { name: /Caption/i }), {
+      target: { value: "Updated Instagram caption" },
+    });
+    fireEvent.click(within(compose).getByRole("button", { name: "Edit YouTube: Bizibeast" }));
+    expect(within(compose).getByRole("textbox", { name: /YouTube title/i })).toHaveValue(
+      "Updated Instagram caption",
+    );
+    expect(within(compose).getByRole("textbox", { name: /YouTube title/i })).toHaveAttribute(
+      "readonly",
+    );
+  });
+
   it("restores the most recent saved settings for each platform on a new post", async () => {
     vi.mocked(uploadFileResult).mockResolvedValue({
       key: "users/creator/video/post.mp4",
@@ -1314,7 +1354,17 @@ describe("scheduler WebMCP tools", () => {
 describe("VideoCoverFramePicker", () => {
   afterEach(() => vi.restoreAllMocks());
 
+  function stubTimelineCanvas() {
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      drawImage: vi.fn(),
+    } as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockReturnValue(
+      "data:image/jpeg;base64,AA==",
+    );
+  }
+
   it("uses the filmstrip itself as the thumbnail scrubber", () => {
+    stubTimelineCanvas();
     const onChange = vi.fn();
     const onSelectFrame = vi.fn();
     render(
@@ -1335,6 +1385,7 @@ describe("VideoCoverFramePicker", () => {
     const preview = screen.getByLabelText("Selected thumbnail frame");
     Object.defineProperty(preview, "duration", { configurable: true, value: 10 });
     fireEvent.loadedMetadata(preview);
+    expect(document.querySelectorAll("video")).toHaveLength(1);
 
     const strip = screen.getByRole("slider", { name: "Thumbnail frame position" });
     vi.spyOn(strip, "getBoundingClientRect").mockReturnValue({ left: 0, width: 100 } as DOMRect);
@@ -1348,6 +1399,7 @@ describe("VideoCoverFramePicker", () => {
   });
 
   it("does not require a separate use-frame action", () => {
+    stubTimelineCanvas();
     render(
       <VideoCoverFramePicker
         video={{
