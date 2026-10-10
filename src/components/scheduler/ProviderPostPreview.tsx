@@ -77,6 +77,42 @@ export function ProviderPostPreview({
   const placeholderClass = body.trim() ? "" : "text-muted-foreground";
 
   if (provider === "instagram") {
+    if (media.some((item) => item.mimeType.startsWith("video/"))) {
+      return (
+        <div className="relative mx-auto aspect-[9/16] h-full max-h-[620px] w-auto max-w-full overflow-hidden rounded-[28px] bg-black text-white shadow-xl">
+          <PreviewMedia
+            media={media}
+            className="absolute inset-0 size-full"
+            emptyLabel="Instagram Reel"
+            controls={false}
+          />
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-black/20" />
+          <div className="absolute left-4 top-4 text-lg font-semibold">Reels</div>
+          <div className="absolute bottom-5 left-4 right-14 flex max-h-[45%] flex-col">
+            <div className="flex shrink-0 items-center gap-2">
+              <PreviewAvatar
+                connection={connection}
+                onError={onAvatarError}
+                className="!size-8 ring-1 ring-white"
+              />
+              <span className="truncate text-sm font-semibold">{handle}</span>
+            </div>
+            <p
+              className={`mt-2 min-h-0 overflow-hidden whitespace-pre-wrap break-words text-xs leading-5 ${placeholderClass}`}
+            >
+              {copy}
+            </p>
+            <p className="mt-2 shrink-0 text-xs">♫ Original audio</p>
+          </div>
+          <div className="absolute bottom-6 right-3 flex flex-col items-center gap-5">
+            <Heart className="size-6" aria-hidden="true" />
+            <MessageCircle className="size-6" aria-hidden="true" />
+            <Send className="size-6" aria-hidden="true" />
+            <MoreHorizontal className="size-6" aria-hidden="true" />
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="mx-auto max-w-md overflow-hidden rounded-xl border border-border bg-card shadow-sm">
         <div className="flex items-center gap-3 p-3">
@@ -186,7 +222,7 @@ export function ProviderPostPreview({
           ? "Friends"
           : "Only you";
     return (
-      <div className="relative mx-auto aspect-[9/16] max-h-[620px] w-full max-w-[320px] overflow-hidden rounded-[28px] bg-black text-white shadow-xl">
+      <div className="relative mx-auto aspect-[9/16] h-full max-h-[620px] w-auto max-w-full overflow-hidden rounded-[28px] bg-black text-white shadow-xl">
         <PreviewMedia
           media={media}
           className="absolute inset-0 size-full"
@@ -201,8 +237,7 @@ export function ProviderPostPreview({
           <p className="shrink-0 text-sm font-semibold">@{handle}</p>
           <p
             aria-label="Post caption"
-            tabIndex={0}
-            className={`mt-2 min-h-0 overflow-y-auto overscroll-contain whitespace-pre-wrap break-words text-xs leading-5 ${body.trim() ? "" : "text-white/65"}`}
+            className={`mt-2 line-clamp-2 whitespace-pre-wrap break-words text-xs leading-5 ${body.trim() ? "" : "text-white/65"}`}
           >
             {copy}
           </p>
@@ -308,11 +343,11 @@ export function ProviderPostPreview({
   if (provider === "youtube") {
     if (youtubeFormat === "short") {
       return (
-        <div className="relative mx-auto aspect-[9/16] max-h-[620px] w-full max-w-[320px] overflow-hidden rounded-[28px] bg-black text-white shadow-xl">
+        <div className="relative mx-auto aspect-[9/16] h-full max-h-[620px] w-auto max-w-full overflow-hidden rounded-[28px] bg-black text-white shadow-xl">
           <PreviewMedia
-            media={youtubeThumbnail ? [youtubeThumbnail] : media}
+            media={media}
             className="absolute inset-0 size-full"
-            emptyLabel="Short thumbnail"
+            emptyLabel="YouTube Short"
             controls={false}
           />
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-black/20" />

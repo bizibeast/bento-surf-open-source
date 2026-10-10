@@ -802,6 +802,9 @@ describe("scheduler compose close protection", () => {
     });
     await waitFor(() => expect(uploadFileResult).toHaveBeenCalledTimes(1));
 
+    expect(within(compose).getByTestId("scheduler-preview-scroll")).toHaveClass("overflow-hidden");
+    expect(within(compose).getByTestId("scheduler-preview-pane")).toHaveTextContent("Reels");
+
     const preview = await screen.findByLabelText("Selected thumbnail frame");
     Object.defineProperties(preview, {
       duration: { configurable: true, value: 10 },
@@ -810,11 +813,16 @@ describe("scheduler compose close protection", () => {
       currentTime: { configurable: true, writable: true, value: 1 },
     });
     fireEvent.loadedMetadata(preview);
-    fireEvent.click(screen.getAllByRole("button", { name: /Choose frame at/ })[6]);
+    const strip = screen.getByRole("slider", { name: "Thumbnail frame position" });
+    vi.spyOn(strip, "getBoundingClientRect").mockReturnValue({ left: 0, width: 100 } as DOMRect);
+    fireEvent.pointerDown(strip, { clientX: 85.71, pointerId: 1, button: 0 });
+    fireEvent.pointerUp(strip, { clientX: 85.71, pointerId: 1 });
 
     await waitFor(() =>
       expect(document.querySelector('img[src="blob:local-thumbnail"]')).not.toBeNull(),
     );
+    expect(screen.getAllByAltText("Selected cover image")).toHaveLength(1);
+    expect(within(compose).getByRole("button", { name: "Add from camera roll" })).toBeVisible();
     expect(uploadFileResult).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(saveSocialPost).toHaveBeenCalled(), { timeout: 3_000 });
 
@@ -1044,6 +1052,8 @@ describe("scheduler WebMCP tools", () => {
 });
 
 describe("VideoCoverFramePicker", () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it("uses the filmstrip itself as the thumbnail scrubber", () => {
     const onChange = vi.fn();
     const onSelectFrame = vi.fn();
@@ -1066,12 +1076,15 @@ describe("VideoCoverFramePicker", () => {
     Object.defineProperty(preview, "duration", { configurable: true, value: 10 });
     fireEvent.loadedMetadata(preview);
 
-    const frames = screen.getAllByRole("button", { name: /Choose frame at/ });
-    expect(frames).toHaveLength(8);
-    expect(screen.queryByRole("slider", { name: "Thumbnail frame position" })).toBeNull();
-    fireEvent.click(frames[6]);
-    expect(onChange).toHaveBeenLastCalledWith(8_571);
-    expect(onSelectFrame).toHaveBeenCalledWith(preview, 8_571);
+    const strip = screen.getByRole("slider", { name: "Thumbnail frame position" });
+    vi.spyOn(strip, "getBoundingClientRect").mockReturnValue({ left: 0, width: 100 } as DOMRect);
+    expect(screen.queryByRole("button", { name: /Choose frame at/ })).toBeNull();
+    fireEvent.pointerDown(strip, { clientX: 10, pointerId: 1, button: 0 });
+    fireEvent.pointerMove(strip, { clientX: 50, pointerId: 1, buttons: 1 });
+    fireEvent.pointerUp(strip, { clientX: 85.71, pointerId: 1 });
+    expect(onChange).toHaveBeenCalledWith(5_000);
+    expect(onChange).toHaveBeenLastCalledWith(8_570);
+    expect(onSelectFrame).toHaveBeenCalledWith(preview, 8_570);
   });
 
   it("does not require a separate use-frame action", () => {
@@ -1118,5 +1131,33 @@ describe("VideoCoverFramePicker", () => {
 
     expect(drawImage).toHaveBeenCalledWith(video, 0, 0, 1_920, 1_080);
     expect(file).toMatchObject({ name: "video-thumbnail-1000.jpg", type: "image/jpeg" });
+  });
+
+  it("waits for an in-progress seek before capturing the visible frame", async () => {
+    const createElement = document.createElement.bind(document);
+    const drawImage = vi.fn();
+    vi.spyOn(document, "createElement").mockImplementation((tagName, options) => {
+      if (tagName !== "canvas") return createElement(tagName, options);
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => ({ drawImage }),
+        toBlob: (callback: BlobCallback) => callback(new Blob(["jpeg"], { type: "image/jpeg" })),
+      } as unknown as HTMLCanvasElement;
+    });
+    const video = createElement("video");
+    Object.defineProperties(video, {
+      currentTime: { configurable: true, value: 1 },
+      duration: { configurable: true, value: 10 },
+      videoWidth: { configurable: true, value: 1_920 },
+      videoHeight: { configurable: true, value: 1_080 },
+      seeking: { configurable: true, value: true },
+    });
+
+    const capture = captureVideoFrame(video, 1_000);
+    expect(drawImage).not.toHaveBeenCalled();
+    video.dispatchEvent(new Event("seeked"));
+    await capture;
+    expect(drawImage).toHaveBeenCalledOnce();
   });
 });

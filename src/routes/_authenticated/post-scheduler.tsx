@@ -577,6 +577,7 @@ function SchedulerPage() {
   const [videoMeta, setVideoMeta] = useState<YouTubeVideoMeta | null>(null);
   const [instagramCover, setInstagramCover] = useState<PendingThumbnail | null>(null);
   const [instagramFrameMs, setInstagramFrameMs] = useState(1_000);
+  const coverCaptureSequence = useRef(0);
   const [instagramTrialReel, setInstagramTrialReel] = useState(false);
   const [autoDmEnabled, setAutoDmEnabled] = useState(false);
   const [autoDmTrigger, setAutoDmTrigger] = useState<"comment_keyword" | "any_comment">(
@@ -1727,18 +1728,21 @@ function SchedulerPage() {
     timestampMs: number,
     target: "youtube" | "instagram",
   ) {
+    const sequence = ++coverCaptureSequence.current;
     setUploading(true);
     try {
       const file = await captureVideoFrame(video, timestampMs);
+      if (sequence !== coverCaptureSequence.current) return;
       replacePendingThumbnail(target, {
         previewUrl: URL.createObjectURL(file),
         file,
         uploaded: null,
       });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not capture this video frame");
+      if (sequence === coverCaptureSequence.current)
+        toast.error(error instanceof Error ? error.message : "Could not capture this video frame");
     } finally {
-      setUploading(false);
+      if (sequence === coverCaptureSequence.current) setUploading(false);
     }
   }
 
@@ -2357,19 +2361,6 @@ function SchedulerPage() {
                                         feed plays the video instead of this image.
                                       </p>
                                     )}
-                                    <CoverImagePicker
-                                      label="Thumbnail"
-                                      hint={
-                                        youtubeFormat === "short"
-                                          ? "9:16 JPEG, up to 2 MB. 1080×1920 works best for Shorts."
-                                          : "16:9 JPEG, up to 2 MB. Channels must be allowed to upload custom thumbnails."
-                                      }
-                                      aspect={youtubeFormat === "short" ? "portrait" : "video"}
-                                      image={youtubeThumbnailMedia}
-                                      uploading={uploading}
-                                      onPick={() => youtubeThumbInputRef.current?.click()}
-                                      onRemove={() => replacePendingThumbnail("youtube", null)}
-                                    />
                                     <input
                                       ref={youtubeThumbInputRef}
                                       type="file"
@@ -2388,6 +2379,16 @@ function SchedulerPage() {
                                         onChange={setYoutubeFrameMs}
                                         onSelectFrame={(video, timestampMs) =>
                                           void selectVideoFrame(video, timestampMs, "youtube")
+                                        }
+                                        image={youtubeThumbnailMedia}
+                                        aspect={youtubeFormat === "short" ? "portrait" : "video"}
+                                        uploading={uploading}
+                                        onPick={() => youtubeThumbInputRef.current?.click()}
+                                        onRemove={() => replacePendingThumbnail("youtube", null)}
+                                        hint={
+                                          youtubeFormat === "short"
+                                            ? "9:16 JPEG, up to 2 MB. 1080×1920 works best for Shorts."
+                                            : "16:9 JPEG, up to 2 MB. Channels must be allowed to upload custom thumbnails."
                                         }
                                       />
                                     )}
@@ -2447,15 +2448,6 @@ function SchedulerPage() {
                                         </select>
                                       </label>
                                     )}
-                                    <CoverImagePicker
-                                      label="Thumbnail"
-                                      hint="Portrait JPEG works best. This image is sent as the Reel cover."
-                                      aspect="portrait"
-                                      image={instagramCoverMedia}
-                                      uploading={uploading}
-                                      onPick={() => instagramCoverInputRef.current?.click()}
-                                      onRemove={() => replacePendingThumbnail("instagram", null)}
-                                    />
                                     <input
                                       ref={instagramCoverInputRef}
                                       type="file"
@@ -2475,6 +2467,12 @@ function SchedulerPage() {
                                         onSelectFrame={(video, timestampMs) =>
                                           void selectVideoFrame(video, timestampMs, "instagram")
                                         }
+                                        image={instagramCoverMedia}
+                                        aspect="portrait"
+                                        uploading={uploading}
+                                        onPick={() => instagramCoverInputRef.current?.click()}
+                                        onRemove={() => replacePendingThumbnail("instagram", null)}
+                                        hint="Portrait JPEG works best. This image is sent as the Reel cover."
                                       />
                                     )}
                                   </ProviderComposeCard>
@@ -3086,6 +3084,12 @@ function PlatformPostPreview({
   redditUrl: string;
   onAvatarError?: (connectionId: string) => void;
 }) {
+  const verticalVideo =
+    !!activeConnection &&
+    media.some((item) => item.mimeType.startsWith("video/")) &&
+    (activeConnection.provider === "instagram" ||
+      activeConnection.provider === "tiktok" ||
+      (activeConnection.provider === "youtube" && youtubeFormat === "short"));
   return (
     <section
       data-testid="scheduler-preview-pane"
@@ -3109,14 +3113,13 @@ function PlatformPostPreview({
           </p>
         </div>
       ) : (
-        <ScrollablePreview>
-          <div className="mt-2">
+        <ScrollablePreview verticalVideo={verticalVideo}>
+          <div className={verticalVideo ? "flex h-full min-h-0 justify-center" : "mt-2"}>
             {activeConnection ? (
               <div
                 className={
-                  activeConnection.provider === "tiktok" ||
-                  (activeConnection.provider === "youtube" && youtubeFormat === "short")
-                    ? ""
+                  verticalVideo
+                    ? "flex h-full min-h-0 max-w-full justify-center"
                     : "[&>div]:w-full [&>div]:max-w-none"
                 }
               >
@@ -3150,11 +3153,21 @@ function PlatformPostPreview({
   );
 }
 
-function ScrollablePreview({ children }: { children: ReactNode }) {
+function ScrollablePreview({
+  children,
+  verticalVideo = false,
+}: {
+  children: ReactNode;
+  verticalVideo?: boolean;
+}) {
   return (
     <div
       data-testid="scheduler-preview-scroll"
-      className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-4"
+      className={
+        verticalVideo
+          ? "h-[min(70dvh,620px)] min-h-0 overflow-hidden pt-2 lg:h-auto lg:flex-1"
+          : "min-h-0 flex-1 overflow-y-auto overscroll-contain pb-4"
+      }
     >
       {children}
     </div>
@@ -3750,68 +3763,6 @@ function ProviderComposeCard({
   );
 }
 
-function CoverImagePicker({
-  label,
-  hint,
-  aspect,
-  image,
-  uploading,
-  onPick,
-  onRemove,
-}: {
-  label: string;
-  hint: string;
-  aspect: "video" | "portrait";
-  image: SchedulerMedia | null;
-  uploading: boolean;
-  onPick: () => void;
-  onRemove: () => void;
-}) {
-  return (
-    <div>
-      <span className="text-xs font-semibold text-muted-foreground">{label}</span>
-      <div
-        className={`relative mt-2 overflow-hidden ${micro.soft} ${
-          aspect === "video" ? "aspect-video" : "mx-auto aspect-[9/16] max-w-[180px]"
-        }`}
-      >
-        {image ? (
-          <>
-            <DecodedImage src={image.url} alt="" className="size-full object-cover" />
-            <button
-              type="button"
-              aria-label={`Remove ${label.toLowerCase()}`}
-              onClick={onRemove}
-              className="absolute right-2 top-2 inline-flex size-8 items-center justify-center rounded-full bg-black/65 text-white backdrop-blur"
-            >
-              <X className="size-4" />
-            </button>
-          </>
-        ) : (
-          <div className="flex size-full flex-col items-center justify-center gap-2 border border-dashed border-[#3478f6]/30 bg-white px-4 text-center text-xs text-muted-foreground">
-            <ImagePlus className="size-5 text-[#3478f6]" />
-            Choose a video frame or camera roll image
-          </div>
-        )}
-      </div>
-      <button
-        type="button"
-        onClick={onPick}
-        disabled={uploading}
-        className={`${micro.btnSoft} mt-2 w-full disabled:opacity-50`}
-      >
-        {uploading ? (
-          <LoaderCircle className="size-4 animate-spin" />
-        ) : (
-          <ImagePlus className="size-4" />
-        )}
-        {uploading ? "Preparing…" : "Add from camera roll"}
-      </button>
-      <p className="mt-2 text-[11px] leading-4 text-muted-foreground">{hint}</p>
-    </div>
-  );
-}
-
 function timelineFrameTimestamps(durationMs: number, count = 8) {
   if (durationMs <= 0 || count <= 1) return [];
   const maxMs = durationMs - 1;
@@ -3824,7 +3775,7 @@ export async function captureVideoFrame(video: HTMLVideoElement, timestampMs: nu
     throw new Error("This video frame is not ready yet.");
   }
   const targetSeconds = Math.min(video.duration, Math.max(0, timestampMs / 1_000));
-  if (Math.abs(video.currentTime - targetSeconds) > 0.05) {
+  if (video.seeking || Math.abs(video.currentTime - targetSeconds) > 0.001) {
     await new Promise<void>((resolve, reject) => {
       const timeout = window.setTimeout(() => {
         cleanup();
@@ -3845,7 +3796,7 @@ export async function captureVideoFrame(video: HTMLVideoElement, timestampMs: nu
       };
       video.addEventListener("seeked", onSeeked, { once: true });
       video.addEventListener("error", onError, { once: true });
-      video.currentTime = targetSeconds;
+      if (Math.abs(video.currentTime - targetSeconds) > 0.001) video.currentTime = targetSeconds;
     });
   }
 
@@ -3897,13 +3848,27 @@ export function VideoCoverFramePicker({
   timestampMs,
   onChange,
   onSelectFrame,
+  image,
+  aspect = "portrait",
+  uploading = false,
+  onPick,
+  onRemove,
+  hint,
 }: {
   video: SchedulerMedia;
   timestampMs: number;
   onChange: (ms: number) => void;
   onSelectFrame?: (video: HTMLVideoElement, timestampMs: number) => void;
+  image?: SchedulerMedia | null;
+  aspect?: "video" | "portrait";
+  uploading?: boolean;
+  onPick?: () => void;
+  onRemove?: () => void;
+  hint?: string;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
+  const stripRef = useRef<HTMLDivElement>(null);
+  const selectedMsRef = useRef(timestampMs);
   const [durationMs, setDurationMs] = useState(0);
 
   function syncFrame(ms: number) {
@@ -3920,13 +3885,32 @@ export function VideoCoverFramePicker({
   const valueMs = durationMs ? clampTikTokCoverTimestampMs(timestampMs, durationMs) : 0;
   const frameTimestamps = timelineFrameTimestamps(durationMs);
 
+  function chooseFrame(ms: number) {
+    const clamped = Math.min(maxMs, Math.max(0, Math.round(ms)));
+    selectedMsRef.current = clamped;
+    onChange(clamped);
+    syncFrame(clamped);
+  }
+
+  function scrubAt(clientX: number) {
+    const bounds = stripRef.current?.getBoundingClientRect();
+    if (!bounds?.width || !durationMs) return;
+    chooseFrame(((clientX - bounds.left) / bounds.width) * maxMs);
+  }
+
+  function finishScrub() {
+    if (ref.current && durationMs) onSelectFrame?.(ref.current, selectedMsRef.current);
+  }
+
   return (
     <div>
       <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
         <Film className="size-3.5" />
         Thumbnail frame
       </span>
-      <div className={`${micro.soft} mx-auto mt-2 aspect-[9/16] max-h-72 overflow-hidden bg-black`}>
+      <div
+        className={`${micro.soft} relative mx-auto mt-2 overflow-hidden bg-black ${aspect === "video" ? "aspect-video max-w-md" : "aspect-[9/16] max-h-72"}`}
+      >
         <video
           ref={ref}
           src={video.url}
@@ -3934,7 +3918,7 @@ export function VideoCoverFramePicker({
           muted
           playsInline
           preload="metadata"
-          className="size-full object-cover"
+          className="size-full object-contain"
           onLoadedMetadata={(event) => {
             const duration = event.currentTarget.duration;
             if (!Number.isFinite(duration) || duration <= 0) return;
@@ -3945,32 +3929,102 @@ export function VideoCoverFramePicker({
             syncFrame(clamped);
           }}
         />
+        {image && (
+          <DecodedImage
+            src={image.url}
+            alt="Selected cover image"
+            className="absolute inset-0 size-full object-contain"
+          />
+        )}
+        {image && onRemove && (
+          <button
+            type="button"
+            aria-label="Remove thumbnail"
+            onClick={onRemove}
+            className="absolute right-2 top-2 inline-flex size-8 items-center justify-center rounded-full bg-black/65 text-white"
+          >
+            <X className="size-4" />
+          </button>
+        )}
       </div>
       {frameTimestamps.length > 0 && (
-        <div className="mt-3 flex gap-1.5 overflow-x-auto rounded-xl bg-black p-1.5">
+        <div
+          ref={stripRef}
+          role="slider"
+          tabIndex={0}
+          aria-label="Thumbnail frame position"
+          aria-valuemin={0}
+          aria-valuemax={maxMs}
+          aria-valuenow={valueMs}
+          aria-valuetext={`${(valueMs / 1_000).toFixed(1)} seconds`}
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            event.currentTarget.setPointerCapture?.(event.pointerId);
+            onRemove?.();
+            scrubAt(event.clientX);
+          }}
+          onPointerMove={(event) => {
+            if (event.buttons & 1) scrubAt(event.clientX);
+          }}
+          onPointerUp={(event) => {
+            scrubAt(event.clientX);
+            finishScrub();
+            event.currentTarget.releasePointerCapture?.(event.pointerId);
+          }}
+          onKeyDown={(event) => {
+            const step = event.shiftKey ? 1_000 : 100;
+            const next =
+              event.key === "ArrowRight" || event.key === "ArrowUp"
+                ? valueMs + step
+                : event.key === "ArrowLeft" || event.key === "ArrowDown"
+                  ? valueMs - step
+                  : event.key === "Home"
+                    ? 0
+                    : event.key === "End"
+                      ? maxMs
+                      : null;
+            if (next === null) return;
+            event.preventDefault();
+            onRemove?.();
+            chooseFrame(next);
+            if (ref.current) onSelectFrame?.(ref.current, selectedMsRef.current);
+          }}
+          className="relative mt-3 flex h-16 touch-none select-none gap-0.5 overflow-hidden rounded-xl bg-black p-1.5 outline-none focus-visible:ring-2 focus-visible:ring-[#3478f6] sm:h-20"
+        >
           {frameTimestamps.map((frameMs) => {
-            const selected = Math.abs(frameMs - valueMs) <= Math.max(100, maxMs / 16);
             return (
-              <button
+              <div
                 key={frameMs}
-                type="button"
-                aria-label={`Choose frame at ${(frameMs / 1_000).toFixed(1)} seconds`}
-                aria-pressed={selected}
-                onClick={() => {
-                  onChange(frameMs);
-                  syncFrame(frameMs);
-                  if (ref.current) onSelectFrame?.(ref.current, frameMs);
-                }}
-                className={`aspect-[4/5] min-w-12 flex-1 overflow-hidden rounded-lg border-2 transition sm:min-w-14 ${
-                  selected ? "border-[#3478f6]" : "border-transparent opacity-65 hover:opacity-100"
-                }`}
+                aria-hidden="true"
+                className="min-w-0 flex-1 overflow-hidden rounded-sm opacity-75"
               >
                 <TimelineVideoFrame video={video} timestampMs={frameMs} />
-              </button>
+              </div>
             );
           })}
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 w-1 -translate-x-1/2 rounded-full bg-[#3478f6] shadow-[0_0_0_2px_white]"
+            style={{ left: `${(valueMs / maxMs) * 100}%` }}
+          />
         </div>
       )}
+      {onPick && (
+        <button
+          type="button"
+          onClick={onPick}
+          disabled={uploading}
+          className={`${micro.btnSoft} mt-3 w-full disabled:opacity-50`}
+        >
+          {uploading ? (
+            <LoaderCircle className="size-4 animate-spin" />
+          ) : (
+            <ImagePlus className="size-4" />
+          )}
+          {uploading ? "Preparing…" : "Add from camera roll"}
+        </button>
+      )}
+      {hint && <p className="mt-2 text-[11px] leading-4 text-muted-foreground">{hint}</p>}
       <p className="mt-1 text-[11px] text-muted-foreground">
         Frame at {(valueMs / 1_000).toFixed(1)}s
       </p>

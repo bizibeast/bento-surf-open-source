@@ -52,7 +52,7 @@ describe("ProviderPostPreview", () => {
     expect(markup("tiktok")).toContain("object-contain");
   });
 
-  it("lets long TikTok captions scroll within the video preview", () => {
+  it("keeps long TikTok captions contained within the video preview", () => {
     const { getByLabelText } = render(
       <ProviderPostPreview
         {...props}
@@ -61,8 +61,30 @@ describe("ProviderPostPreview", () => {
       />,
     );
 
-    expect(getByLabelText("Post caption")).toHaveClass("overflow-y-auto");
-    expect(getByLabelText("Post caption")).toHaveAttribute("tabindex", "0");
+    expect(getByLabelText("Post caption")).toHaveClass("line-clamp-2");
+    expect(getByLabelText("Post caption")).not.toHaveClass("overflow-y-auto");
+  });
+
+  it("shows Instagram videos as Reels and keeps vertical previews height constrained", () => {
+    const videoMedia = [
+      { key: "video", url: "/clip.mp4", name: "clip.mp4", mimeType: "video/mp4", size: 1_000 },
+    ];
+    const instagram = renderToStaticMarkup(
+      <ProviderPostPreview {...props} connection={connection("instagram")} media={videoMedia} />,
+    );
+    const short = renderToStaticMarkup(
+      <ProviderPostPreview
+        {...props}
+        connection={connection("youtube")}
+        youtubeFormat="short"
+        media={videoMedia}
+      />,
+    );
+    expect(instagram).toContain("Reels");
+    expect(instagram).toContain("aspect-[9/16]");
+    expect(instagram).not.toContain("aspect-square");
+    expect(instagram).toContain("h-full max-h-[620px]");
+    expect(short).toContain("h-full max-h-[620px]");
   });
 
   it("falls back to the provider mark when a remote avatar is blocked or expired", () => {
