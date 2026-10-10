@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mediaBelongsToCreator } from "./social-scheduler.functions";
+import { configuredPublicOrigin } from "./application-urls";
 import { xAccountCapabilities } from "./x-account";
 import {
   autoRepostSchema,
@@ -399,8 +400,12 @@ describe("social scheduler validation", () => {
   });
 
   it("accepts only media uploaded by the post owner to Bento's CDN", () => {
-    expect(mediaBelongsToCreator(image, "user")).toBe(true);
-    expect(mediaBelongsToCreator(image, "someone-else")).toBe(false);
+    const ownedMedia = {
+      ...image,
+      url: `${configuredPublicOrigin(process.env.VITE_PUBLIC_URL)}/cdn/${image.key}`,
+    };
+    expect(mediaBelongsToCreator(ownedMedia, "user")).toBe(true);
+    expect(mediaBelongsToCreator(ownedMedia, "someone-else")).toBe(false);
     expect(mediaBelongsToCreator({ ...image, url: "https://example.com/image.jpg" }, "user")).toBe(
       false,
     );
