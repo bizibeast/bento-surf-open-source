@@ -974,11 +974,13 @@ function SchedulerPage() {
   const activeProvider = activeConnection?.provider;
   const activeProviders = activeProvider ? [activeProvider] : [];
   const editorBody = activeProvider && !sync ? (bodyOverrides[activeProvider] ?? body) : body;
-  const youtubeTitleFollowsCaption =
-    sync && selectedConnections.some((connection) => connection.provider === "instagram");
-  const syncedYoutubeTitle = youtubeTitleFollowsCaption ? body.trim().slice(0, 100) : title;
+  const youtubeTitleSynced =
+    sync &&
+    selectedConnections.some((connection) => connection.provider === "youtube") &&
+    selectedConnections.some((connection) => connection.provider !== "youtube");
+  const syncedYoutubeTitle = youtubeTitleSynced ? body.slice(0, 100) : title;
   const editorTitle = activeProvider
-    ? activeProvider === "youtube" && youtubeTitleFollowsCaption
+    ? activeProvider === "youtube" && youtubeTitleSynced
       ? syncedYoutubeTitle
       : (platformTitles[activeProvider] ??
         (activeProvider === "youtube" ? syncedYoutubeTitle : title))
@@ -1212,8 +1214,8 @@ function SchedulerPage() {
       settings[provider] = {
         ...settings[provider],
         ...(!sync ? { bodyOverride: bodyOverrides[provider] ?? body } : {}),
-        ...(provider === "youtube" && youtubeTitleFollowsCaption
-          ? { titleOverride: syncedYoutubeTitle }
+        ...(provider === "youtube" && youtubeTitleSynced
+          ? { titleOverride: syncedYoutubeTitle.trim() }
           : platformTitles[provider] !== undefined
             ? { titleOverride: platformTitles[provider] }
             : {}),
@@ -1262,7 +1264,7 @@ function SchedulerPage() {
     bodyOverrides,
     platformTitles,
     syncedYoutubeTitle,
-    youtubeTitleFollowsCaption,
+    youtubeTitleSynced,
     tiktokAiGenerated,
     tiktokAllowComment,
     tiktokAllowDuet,
@@ -1381,8 +1383,8 @@ function SchedulerPage() {
         .map((connection) => bodyOverrides[connection.provider])
         .find((value) => value?.trim());
       setBody(
-        activeProvider === "youtube" && usesCaption
-          ? firstWrittenVersion || body
+        activeProvider === "youtube" && editorTitle.trim()
+          ? editorTitle
           : editorBody.trim()
             ? editorBody
             : firstWrittenVersion || editorBody,
@@ -1417,6 +1419,9 @@ function SchedulerPage() {
           selectedConnections.map((connection) => [connection.provider, body]),
         ) as Partial<Record<SocialProvider, string>>,
       );
+      if (youtubeTitleSynced) {
+        setPlatformTitles((current) => ({ ...current, youtube: syncedYoutubeTitle }));
+      }
     }
     setSync(enabled);
   };
@@ -2373,59 +2378,73 @@ function SchedulerPage() {
                           )}
 
                           {showPostTitle && (
-                            <label className="mt-4 block">
-                              <span className="flex items-end justify-between gap-3">
-                                <span className="text-xs font-semibold text-muted-foreground">
-                                  {isXArticle
-                                    ? "Article title"
-                                    : activeProvider === "youtube"
-                                      ? "YouTube title"
-                                      : "Reddit title"}
-                                </span>
-                                <span className="text-[11px] tabular-nums text-muted-foreground">
-                                  {editorTitle.length}/
-                                  {isXArticle || activeProvider === "reddit" ? 300 : 100}
-                                </span>
-                              </span>
-                              <input
-                                value={editorTitle}
-                                readOnly={
-                                  activeProvider === "youtube" && youtubeTitleFollowsCaption
-                                }
-                                onChange={(event) => {
-                                  if (activeProvider) {
-                                    setPlatformTitles((current) => ({
-                                      ...current,
-                                      [activeProvider]: event.target.value,
-                                    }));
-                                  } else {
-                                    setTitle(event.target.value);
-                                  }
-                                }}
-                                maxLength={isXArticle || activeProvider === "reddit" ? 300 : 100}
-                                placeholder={
-                                  isXArticle
-                                    ? "Give your Article a title"
-                                    : youtubeFormat === "short"
-                                      ? "A short title for the Shorts feed"
+                            <div className="mt-4">
+                              <label className="block">
+                                <span className="flex items-end justify-between gap-3">
+                                  <span className="text-xs font-semibold text-muted-foreground">
+                                    {isXArticle
+                                      ? "Article title"
                                       : activeProvider === "youtube"
-                                        ? "Give your video a clear title"
-                                        : "Write a clear title"
-                                }
-                                className={`mt-2 ${micro.input}`}
-                              />
-                              {activeProvider === "youtube" && youtubeTitleFollowsCaption && (
-                                <span className="mt-2 block text-[11px] leading-4 text-muted-foreground">
-                                  Synced from the Instagram caption. Turn off Sync to edit it
-                                  separately.
+                                        ? "YouTube title"
+                                        : "Reddit title"}
+                                  </span>
+                                  <span className="text-[11px] tabular-nums text-muted-foreground">
+                                    {editorTitle.length}/
+                                    {isXArticle || activeProvider === "reddit" ? 300 : 100}
+                                  </span>
                                 </span>
-                              )}
-                              {youtubeFormat === "short" && (
-                                <span className="mt-2 block text-[11px] leading-4 text-muted-foreground">
-                                  The Shorts feed truncates long titles.
-                                </span>
-                              )}
-                            </label>
+                                <input
+                                  value={editorTitle}
+                                  onChange={(event) => {
+                                    if (activeProvider === "youtube" && youtubeTitleSynced) {
+                                      setBody(event.target.value);
+                                      return;
+                                    }
+                                    if (activeProvider) {
+                                      setPlatformTitles((current) => ({
+                                        ...current,
+                                        [activeProvider]: event.target.value,
+                                      }));
+                                    } else {
+                                      setTitle(event.target.value);
+                                    }
+                                  }}
+                                  maxLength={isXArticle || activeProvider === "reddit" ? 300 : 100}
+                                  placeholder={
+                                    isXArticle
+                                      ? "Give your Article a title"
+                                      : youtubeFormat === "short"
+                                        ? "A short title for the Shorts feed"
+                                        : activeProvider === "youtube"
+                                          ? "Give your video a clear title"
+                                          : "Write a clear title"
+                                  }
+                                  className={`mt-2 ${micro.input}`}
+                                />
+                                {activeProvider === "youtube" && youtubeTitleSynced && (
+                                  <span className="mt-2 block text-[11px] leading-4 text-muted-foreground">
+                                    Editing this title also updates captions on the selected
+                                    platforms.
+                                  </span>
+                                )}
+                                {youtubeFormat === "short" && (
+                                  <span className="mt-2 block text-[11px] leading-4 text-muted-foreground">
+                                    The Shorts feed truncates long titles.
+                                  </span>
+                                )}
+                              </label>
+                              {activeProvider === "youtube" &&
+                                !sync &&
+                                selectedConnections.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleSync(true)}
+                                    className="mt-2 text-xs font-semibold text-[#3478f6] hover:underline"
+                                  >
+                                    Turn on Sync from YouTube title
+                                  </button>
+                                )}
+                            </div>
                           )}
 
                           {isXArticle ? (
