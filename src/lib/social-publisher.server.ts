@@ -1791,7 +1791,10 @@ export async function processSocialPublishMessage(message: SocialPublishMessage)
   const isStatusCheck =
     Boolean(target.remote_post_id) &&
     (["instagram", "threads", "tiktok"] as SocialProvider[]).includes(target.provider);
-  if (isStatusCheck && Date.now() - new Date(target.created_at).getTime() > 24 * 60 * 60_000) {
+  if (
+    isStatusCheck &&
+    Date.now() - new Date(target.retry_started_at || target.created_at).getTime() > 24 * 60 * 60_000
+  ) {
     await db
       .from("social_post_targets")
       .update({

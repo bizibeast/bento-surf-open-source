@@ -12,6 +12,7 @@ import {
   getSocialScheduler,
   moveSocialPostToDraft,
   rescheduleSocialPost,
+  retryFailedSocialPost,
   savePostingSchedule,
   saveSocialPost,
 } from "@/lib/social-scheduler.functions";
@@ -39,6 +40,7 @@ vi.mock("@/lib/social-scheduler.functions", () => ({
   moveSocialPostToDraft: vi.fn(),
   refreshSocialConnectionAvatar: vi.fn(),
   rescheduleSocialPost: vi.fn(),
+  retryFailedSocialPost: vi.fn(),
   savePostingSchedule: vi.fn(),
   saveSocialPost: vi.fn(),
 }));
@@ -201,6 +203,59 @@ describe("scheduler post moves and deletion", () => {
     targets: [],
     media: [],
   });
+
+  it.each(["failed", "partially_failed"] as const)(
+    "retries failed destinations from a %s post",
+    async (status) => {
+      const post = {
+        ...scheduledPost(),
+        status,
+        title: `Retry ${status}`,
+        scheduledAt: new Date(Date.now() - 60_000).toISOString(),
+        targets: [
+          {
+            id: "11111111-1111-4111-8111-111111111114",
+            connectionId: missingAvatar.id,
+            provider: "instagram" as const,
+            status: "failed" as const,
+            remotePostUrl: null,
+            errorMessage: "Publishing failed",
+            publishedAt: null,
+          },
+          ...(status === "partially_failed"
+            ? [
+                {
+                  id: "11111111-1111-4111-8111-111111111115",
+                  connectionId: "11111111-1111-4111-8111-111111111116",
+                  provider: "facebook" as const,
+                  status: "published" as const,
+                  remotePostUrl: "https://example.com/post",
+                  errorMessage: null,
+                  publishedAt: new Date().toISOString(),
+                },
+              ]
+            : []),
+        ],
+      } as SchedulerPost;
+      const data = { ...schedulerData, posts: [post] };
+      vi.mocked(retryFailedSocialPost).mockResolvedValue({
+        ...data,
+        posts: [{ ...post, status: "publishing" }],
+      } as never);
+      renderScheduler(data);
+
+      const retryButton = await screen.findByRole("button", {
+        name: "Retry failed destinations",
+      });
+      const card = retryButton.closest("article")!;
+      fireEvent.click(retryButton);
+
+      await waitFor(() =>
+        expect(retryFailedSocialPost).toHaveBeenCalledWith({ data: { id: post.id } }),
+      );
+      await waitFor(() => expect(within(card).getByText("publishing")).toBeVisible());
+    },
+  );
 
   it("opens an existing draft for editing and saves changes to the same post", async () => {
     const draft = {
