@@ -82,6 +82,7 @@ import {
   getTikTokCreatorInfo,
   moveSocialPostToDraft,
   refreshSocialConnectionAvatar,
+  retryFailedSocialPost,
   savePostingSchedule,
   rescheduleSocialPost,
   saveSocialPost,
@@ -239,7 +240,7 @@ export function createSchedulerWebMcpTools({
       name: "bento_manage_scheduler",
       title: "Manage scheduler lifecycle",
       description:
-        "Saves posting times or reschedules, moves to draft, duplicates, cancels, deletes, or repairs a scheduler item after browser approval.",
+        "Saves posting times or reschedules, retries failed destinations, moves to draft, duplicates, cancels, deletes, or repairs a scheduler item after browser approval.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -249,6 +250,7 @@ export function createSchedulerWebMcpTools({
             enum: [
               "save_posting_schedule",
               "reschedule_post",
+              "retry_post",
               "move_to_draft",
               "duplicate_post",
               "cancel_post",
@@ -273,6 +275,7 @@ export function createSchedulerWebMcpTools({
           },
           ...[
             "move_to_draft",
+            "retry_post",
             "duplicate_post",
             "cancel_post",
             "delete_post",
@@ -311,6 +314,8 @@ export function createSchedulerWebMcpTools({
           });
         } else if (action === "duplicate_post") {
           next = await duplicateSocialPost({ data: { id: String(input.id) } });
+        } else if (action === "retry_post") {
+          next = await retryFailedSocialPost({ data: { id: String(input.id) } });
         } else if (action === "move_to_draft") {
           next = await moveSocialPostToDraft({ data: { id: String(input.id) } });
         } else if (action === "cancel_post") {
@@ -1646,6 +1651,15 @@ function SchedulerPage() {
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Could not duplicate post"),
   });
+  const retryPost = useMutation({
+    mutationFn: (id: string) => retryFailedSocialPost({ data: { id } }),
+    onSuccess: (next) => {
+      queryClient.setQueryData(["social-scheduler"], next);
+      toast.success("Failed destinations added to the publishing queue");
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Could not retry post"),
+  });
   const movingPostIds = useRef(new Set<string>());
   const movePost = useMutation({
     mutationKey: ["social-scheduler", "move"],
@@ -2114,6 +2128,7 @@ function SchedulerPage() {
                 onCreateForDate={openComposeForDate}
                 onEditPost={openPostForEdit}
                 onDuplicatePost={(post) => duplicate.mutate(post.id)}
+                onRetryPost={(post) => retryPost.mutate(post.id)}
                 onDeletePost={setPostPendingDelete}
                 onOpenPostingSettings={() => setPostingSettingsOpen(true)}
                 onReschedule={(id, nextScheduledAt) => {
@@ -2179,6 +2194,8 @@ function SchedulerPage() {
                           onEdit={() => openPostForEdit(post)}
                           onCancel={() => cancel.mutate(post.id)}
                           onDuplicate={() => duplicate.mutate(post.id)}
+                          onRetry={() => retryPost.mutate(post.id)}
+                          retryPending={retryPost.isPending && retryPost.variables === post.id}
                           onDelete={() => setPostPendingDelete(post)}
                         />
                       ))
@@ -2220,6 +2237,8 @@ function SchedulerPage() {
                         onEdit={() => openPostForEdit(post)}
                         onCancel={() => cancel.mutate(post.id)}
                         onDuplicate={() => duplicate.mutate(post.id)}
+                        onRetry={() => retryPost.mutate(post.id)}
+                        retryPending={retryPost.isPending && retryPost.variables === post.id}
                         onDelete={() => setPostPendingDelete(post)}
                       />
                     ))
@@ -3709,6 +3728,7 @@ function SchedulerCalendarView({
   onCreateForDate,
   onEditPost,
   onDuplicatePost,
+  onRetryPost,
   onDeletePost,
   onOpenPostingSettings,
   onReschedule,
@@ -3722,6 +3742,7 @@ function SchedulerCalendarView({
   onCreateForDate?: (date: Date, slotTime?: string) => void;
   onEditPost: (post: SchedulerPost) => void;
   onDuplicatePost: (post: SchedulerPost) => void;
+  onRetryPost: (post: SchedulerPost) => void;
   onDeletePost: (post: SchedulerPost) => void;
   onOpenPostingSettings: () => void;
   onReschedule: (postId: string, scheduledAt: string) => void;
@@ -3990,6 +4011,7 @@ function SchedulerCalendarView({
                                   canReschedule={canReschedule}
                                   onEdit={() => onEditPost(post)}
                                   onDuplicate={() => onDuplicatePost(post)}
+                                  onRetry={() => onRetryPost(post)}
                                   onDelete={() => onDeletePost(post)}
                                 />
                               ))}
@@ -4040,6 +4062,7 @@ function SchedulerCalendarView({
                         canReschedule={canReschedule}
                         onEdit={() => onEditPost(post)}
                         onDuplicate={() => onDuplicatePost(post)}
+                        onRetry={() => onRetryPost(post)}
                         onDelete={() => onDeletePost(post)}
                       />
                     ))}
@@ -4072,6 +4095,7 @@ function CalendarPost({
   canReschedule = false,
   onEdit,
   onDuplicate,
+  onRetry,
   onDelete,
 }: {
   post: SchedulerPost;
@@ -4079,12 +4103,17 @@ function CalendarPost({
   canReschedule?: boolean;
   onEdit: () => void;
   onDuplicate: () => void;
+  onRetry: () => void;
   onDelete: () => void;
 }) {
   const date = new Date(post.scheduledAt || post.createdAt);
   const draggable = canReschedule && RESCHEDULABLE_POST_STATUSES.has(post.status);
   const editable = RESCHEDULABLE_POST_STATUSES.has(post.status);
   const deletable = post.status === "scheduled" || post.status === "failed";
+  const retryable =
+    canReschedule &&
+    (post.status === "failed" || post.status === "partially_failed") &&
+    post.targets.some((target) => target.status === "failed");
   const statusColor: Record<SchedulerPost["status"], string> = {
     draft: "bg-zinc-400",
     scheduled: "bg-sky-500",
@@ -4165,6 +4194,11 @@ function CalendarPost({
         <ContextMenuItem onSelect={onDuplicate} className="gap-2 rounded-lg px-2.5 py-2">
           <Repeat2 className="size-3.5" /> Duplicate
         </ContextMenuItem>
+        {retryable && (
+          <ContextMenuItem onSelect={onRetry} className="gap-2 rounded-lg px-2.5 py-2">
+            <RefreshCw className="size-3.5" /> Retry failed destinations
+          </ContextMenuItem>
+        )}
         {deletable && (
           <>
             <ContextMenuSeparator />
@@ -4581,6 +4615,8 @@ function PostRow({
   onEdit,
   onCancel,
   onDuplicate,
+  onRetry,
+  retryPending = false,
   onDelete,
 }: {
   post: SchedulerPost;
@@ -4589,10 +4625,16 @@ function PostRow({
   onEdit: () => void;
   onCancel: () => void;
   onDuplicate: () => void;
+  onRetry: () => void;
+  retryPending?: boolean;
   onDelete: () => void;
 }) {
   const cancellable = ["draft", "scheduled", "failed", "partially_failed"].includes(post.status);
   const deletable = ["draft", "cancelled", "failed"].includes(post.status);
+  const retryable =
+    canEdit &&
+    (post.status === "failed" || post.status === "partially_failed") &&
+    post.targets.some((target) => target.status === "failed");
   const media = post.media[0];
   const liveTargets = post.targets.filter((target) => target.remotePostUrl);
   const providerNames = [...new Set(post.targets.map((target) => target.provider))]
@@ -4808,6 +4850,22 @@ function PostRow({
               </p>
             ))}
         </div>
+      )}
+      {retryable && (
+        <button
+          type="button"
+          onClick={onRetry}
+          disabled={retryPending}
+          aria-busy={retryPending}
+          className="mt-3 inline-flex min-h-9 items-center gap-2 rounded-xl bg-[#e8f2ff] px-3 text-xs font-semibold text-[#31577f] transition-colors hover:bg-accent disabled:cursor-wait disabled:opacity-50"
+        >
+          {retryPending ? (
+            <LoaderCircle className="size-3.5 animate-spin" />
+          ) : (
+            <RefreshCw className="size-3.5" />
+          )}
+          Retry failed destinations
+        </button>
       )}
     </article>
   );

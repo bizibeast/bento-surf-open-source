@@ -638,6 +638,26 @@ export async function saveSocialPostForUser(userId: string, input: SocialPostInp
   };
 }
 
+export const retryFailedSocialPost = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input) => z.object({ id: z.string().uuid() }).parse(input))
+  .handler(async ({ context, data }) => {
+    await requireScheduler(context.userId);
+    await enforceRequestRateLimit(
+      "EXPENSIVE_API_RATE_LIMITER",
+      "social-post-retry",
+      context.userId,
+    );
+    const { data: retried, error } = await (supabaseAdmin as any).rpc(
+      "retry_failed_social_post_atomic",
+      { p_user_id: context.userId, p_post_id: data.id },
+    );
+    if (error || !retried) {
+      throw new Error(error?.message || "This post could not be retried.");
+    }
+    return schedulerData(context.userId);
+  });
+
 export const rescheduleSocialPost = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) =>
