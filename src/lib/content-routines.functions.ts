@@ -15,7 +15,7 @@ export const CONTENT_ROUTINE_TEMPLATES = [
   "weekly_performance_review",
 ] as const;
 
-const routineInputSchema = z
+export const routineInputSchema = z
   .object({
     template: z
       .enum(CONTENT_ROUTINE_TEMPLATES)

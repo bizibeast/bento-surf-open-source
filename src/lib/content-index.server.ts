@@ -2,7 +2,6 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { requireContentWorkspace } from "./content-access.server";
 import { generateConnectedBrainSuggestions, sampleBrainSourcePosts } from "./content-agent.server";
-import { indexMediaMetadata, cachePendingContentMedia } from "./content-media.server";
 import {
   brainItemFromRow,
   contentProfileFromRow,
@@ -113,8 +112,10 @@ async function saveIndexedBrain(
 
 export type ContentIndexDependencies = {
   claim(): Promise<any[]>;
+  ensureWorkspace(userId: string): Promise<unknown>;
   load(userId: string): Promise<{
     posts: any[];
+    sourceCount?: number;
     existing: BrainItem[];
     profile?: ContentProfile;
     profileSaved?: boolean;
@@ -123,8 +124,7 @@ export type ContentIndexDependencies = {
     posts: Array<Record<string, unknown>>,
     profile?: ContentProfile,
   ): Promise<BrainSuggestion[]>;
-  indexMedia(userId: string, posts: any[]): Promise<unknown>;
-  cacheMedia(userId: string): Promise<unknown>;
+  selectMedia(userId: string): Promise<unknown>;
   save(userId: string, existing: BrainItem[], suggestions: BrainSuggestion[]): Promise<unknown>;
   finish(
     job: any,
@@ -139,26 +139,29 @@ const defaults: ContentIndexDependencies = {
     if (error) throw new Error("Source indexing jobs could not be claimed.");
     return data || [];
   },
+  ensureWorkspace: requireContentWorkspace,
   async load(userId) {
-    await requireContentWorkspace(userId);
     const db = supabaseAdmin as any;
-    const [posts, brain, profile, identity] = await Promise.all([
+    const [posts, sourceTotal, brain, profile, identity] = await Promise.all([
       db
         .from("social_content_insights")
-        .select(
-          "connection_id,provider,remote_post_id,remote_post_url,caption,content_type,media_sources,published_at,engagements",
-        )
+        .select("provider,remote_post_id,remote_post_url,caption,published_at,engagements")
         .eq("user_id", userId)
         .order("published_at", { ascending: false })
-        .limit(5000),
+        .limit(300),
+      db
+        .from("social_content_insights")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId),
       db.from("creator_brain_items").select("*").eq("user_id", userId).limit(1000),
       db.from("creator_content_profiles").select("*").eq("user_id", userId).maybeSingle(),
       db.from("profiles").select("account_timezone").eq("id", userId).maybeSingle(),
     ]);
-    if (posts.error || brain.error || profile.error || identity.error)
+    if (posts.error || sourceTotal.error || brain.error || profile.error || identity.error)
       throw new Error("Your source posts could not be loaded for indexing.");
     return {
       posts: posts.data || [],
+      sourceCount: sourceTotal.count || 0,
       existing: (brain.data || []).map(brainItemFromRow),
       profile: profile.data
         ? contentProfileFromRow(profile.data)
@@ -167,12 +170,16 @@ const defaults: ContentIndexDependencies = {
     };
   },
   generate: generateConnectedBrainSuggestions,
-  indexMedia: indexMediaMetadata,
-  cacheMedia: cachePendingContentMedia,
+  async selectMedia(userId) {
+    const { error } = await (supabaseAdmin as any).rpc("refresh_creator_auto_media", {
+      p_user_id: userId,
+    });
+    if (error) throw new Error("Your best-performing media could not be selected.");
+  },
   save: saveIndexedBrain,
   async finish(job, value) {
     const db = supabaseAdmin as any;
-    const [current, pending, ready] = await Promise.all([
+    const [current, ready] = await Promise.all([
       db
         .from("creator_content_index_jobs")
         .select("requested_at")
@@ -183,22 +190,13 @@ const defaults: ContentIndexDependencies = {
         .from("creator_content_media")
         .select("id", { count: "exact", head: true })
         .eq("user_id", job.user_id)
-        .eq("status", "pending"),
-      db
-        .from("creator_content_media")
-        .select("id", { count: "exact", head: true })
-        .eq("user_id", job.user_id)
         .eq("status", "ready"),
     ]);
-    if (current.error || pending.error || ready.error)
+    if (current.error || ready.error)
       throw new Error("Source indexing completion could not be checked.");
     if (!current.data) return;
     const changed = current.data.requested_at !== job.requested_at;
-    const status = value.error
-      ? "error"
-      : changed || (pending.count || 0) > 0
-        ? "pending"
-        : "ready";
+    const status = value.error ? "error" : changed ? "pending" : "ready";
     const delay = value.error
       ? Math.min(86_400_000, 60_000 * 2 ** Math.min(job.attempts || 1, 10))
       : 15_000;
@@ -229,10 +227,27 @@ export async function processDueContentIndexes(dependencies: ContentIndexDepende
   for (const job of jobs) {
     let sourceCount = 0;
     try {
-      const { posts, existing, profile, profileSaved } = await dependencies.load(job.user_id);
-      sourceCount = posts.length;
-      await dependencies.indexMedia(job.user_id, posts);
-      await dependencies.cacheMedia(job.user_id);
+      await dependencies.ensureWorkspace(job.user_id);
+      // Media imports run in their own queue after Brain source indexing completes.
+      if (
+        job.source_fingerprint &&
+        job.indexed_at &&
+        job.requested_at &&
+        Date.parse(job.indexed_at) >= Date.parse(job.requested_at)
+      ) {
+        await dependencies.finish(job, { sourceCount: job.source_count || 0 });
+        succeeded += 1;
+        continue;
+      }
+      const {
+        posts,
+        sourceCount: totalPosts,
+        existing,
+        profile,
+        profileSaved,
+      } = await dependencies.load(job.user_id);
+      sourceCount = totalPosts ?? posts.length;
+      await dependencies.selectMedia(job.user_id);
       const fingerprint = await contentSourceFingerprint(posts);
       if (
         posts.some((post) => String(post.caption || "").trim().length >= 8) &&
@@ -269,10 +284,14 @@ export async function processDueContentIndexes(dependencies: ContentIndexDepende
         // Topic labels travel with the original post's assets, not with copied example photos.
         if (dependencies === defaults && tagsByPost.size) {
           const db = supabaseAdmin as any;
+          const postIds = [...tagsByPost.keys()].map((sourceRef) =>
+            sourceRef.slice(sourceRef.indexOf(":") + 1),
+          );
           const { data: media, error } = await db
             .from("creator_content_media")
             .select("id,provider,post_id")
-            .eq("user_id", job.user_id);
+            .eq("user_id", job.user_id)
+            .in("post_id", [...new Set(postIds)]);
           if (error) throw new Error("Media topic index could not be loaded.");
           const topics = (media || []).flatMap((asset: any) => {
             const tags = tagsByPost.get(`${asset.provider}:${asset.post_id}`);

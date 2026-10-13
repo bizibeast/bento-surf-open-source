@@ -18,7 +18,6 @@ import {
   handleInstagramDataRequest,
 } from "./integrations/meta/data-requests.server";
 import { handleR2StorageRequest } from "./lib/r2-storage.server";
-import { handleBentoMcpRequest } from "./lib/mcp.server";
 import { OPEN_GRAPH_IMAGE_PATH, handleOpenGraphImageRequest } from "./lib/open-graph-image.server";
 import { GOOGLE_MAP_EMBED_PATH, handleGoogleMapEmbedRequest } from "./lib/google-map.server";
 import {
@@ -43,7 +42,6 @@ import {
   reconcileReferralLedger,
   type ReferralQueueMessage,
 } from "./lib/referral-worker.server";
-import { handlePolarWebhook } from "./integrations/polar/webhook.server";
 import { handleDodoCreatorWebhook } from "./integrations/dodo/creator-webhook.server";
 import {
   handleDirectStripeWebhook,
@@ -121,6 +119,12 @@ import {
 } from "./lib/telegram.server";
 import { processBookingFollowups } from "./lib/booking-followups.server";
 import { processDueContentIndexes } from "./lib/content-index.server";
+import {
+  enqueueDueContentMediaImports,
+  processDueCreatorMediaRankRefreshes,
+  processContentMediaImportMessage,
+  type ContentMediaImportMessage,
+} from "./lib/content-media.server";
 import { processDueContentRoutines } from "./lib/content-routines.server";
 import { routeCanonicalHostname } from "./lib/hostname-routing.server";
 import { configuredPublicOrigin } from "./lib/application-urls";
@@ -152,6 +156,7 @@ type RuntimeEnv = Env & {
   EMAIL_QUEUE?: Queue<EmailQueueMessage>;
   SOCIAL_PUBLISH_QUEUE?: Queue<SocialPublishMessage>;
   SOCIAL_INSIGHTS_QUEUE?: Queue<SocialInsightsBackfillMessage>;
+  CONTENT_MEDIA_QUEUE?: Queue<ContentMediaImportMessage>;
   REFERRAL_QUEUE?: Queue<ReferralQueueMessage>;
   SOCIAL_PUBLISH_QUEUE_META?: Queue<SocialPublishMessage>;
   SOCIAL_PUBLISH_QUEUE_LINKEDIN?: Queue<SocialPublishMessage>;
@@ -890,8 +895,17 @@ export default {
       );
     }
 
-    const mcpResponse = await handleBentoMcpRequest(request, env?.VITE_APP_URL);
-    if (mcpResponse) return withDeploymentHeaders(mcpResponse, env, request);
+    if (
+      [
+        "/mcp",
+        "/.well-known/oauth-protected-resource",
+        "/.well-known/oauth-protected-resource/mcp",
+      ].includes(path)
+    ) {
+      const { handleBentoMcpRequest } = await import("./lib/mcp.server");
+      const mcpResponse = await handleBentoMcpRequest(request, env?.VITE_APP_URL);
+      if (mcpResponse) return withDeploymentHeaders(mcpResponse, env, request);
+    }
 
     const creatorRedirect = await guardCreatorDocument(request);
     if (creatorRedirect) return withDeploymentHeaders(creatorRedirect, env, request);
@@ -992,6 +1006,7 @@ export default {
     }
     if (request.method === "POST" && path.startsWith("/api/webhooks/polar/")) {
       const connectionId = path.slice("/api/webhooks/polar/".length);
+      const { handlePolarWebhook } = await import("./integrations/polar/webhook.server");
       return withDeploymentHeaders(await handlePolarWebhook(request, connectionId), env, request);
     }
     if (request.method === "POST" && path === "/api/webhooks/stripe") {
@@ -1114,6 +1129,7 @@ export default {
       | SocialPublishMessage
       | SocialRepostMessage
       | SocialInsightsBackfillMessage
+      | ContentMediaImportMessage
       | ReferralQueueMessage
       | InstagramDmQueueMessage
       | TwitterDmQueueMessage
@@ -1145,6 +1161,10 @@ export default {
     const socialInsightsMessages = batch.messages.filter(
       (message): message is Message<SocialInsightsBackfillMessage> =>
         "kind" in message.body && message.body.kind === "social_insights_backfill",
+    );
+    const contentMediaMessages = batch.messages.filter(
+      (message): message is Message<ContentMediaImportMessage> =>
+        "kind" in message.body && message.body.kind === "content_media_import",
     );
     const referralMessages = batch.messages.filter(
       (message): message is Message<ReferralQueueMessage> =>
@@ -1180,6 +1200,7 @@ export default {
             body.kind !== "social_publish" &&
             body.kind !== "social_repost" &&
             body.kind !== "social_insights_backfill" &&
+            body.kind !== "content_media_import" &&
             body.kind !== "referral_reach_verify" &&
             body.kind !== "instagram_dm_event" &&
             body.kind !== "instagram_comment_reconcile" &&
@@ -1227,6 +1248,20 @@ export default {
           if (disposition === "dead_letter") message.retry();
           else message.ack();
         }
+      }
+    }
+    for (const message of contentMediaMessages) {
+      try {
+        await processContentMediaImportMessage(message.body);
+        await enqueueDueContentMediaImports(env.CONTENT_MEDIA_QUEUE, 1);
+        message.ack();
+      } catch (error) {
+        console.error("[content-media] import failed", {
+          messageId: message.id,
+          attempt: message.attempts,
+          error: error instanceof Error ? error.message : "Unknown queue error",
+        });
+        message.retry({ delaySeconds: Math.min(900, 30 * 2 ** Math.max(0, message.attempts - 1)) });
       }
     }
     for (const message of referralMessages) {
@@ -1306,6 +1341,7 @@ export default {
       audienceCampaignMessages.length +
         emailMessages.length +
         socialInsightsMessages.length +
+        contentMediaMessages.length +
         referralMessages.length +
         instagramDmMessages.length +
         twitterDmMessages.length +
@@ -1325,13 +1361,23 @@ export default {
       if (controller.cron === "0 9 * * *") {
         await enqueueLifecycleEmails();
         await reconcileReferralLedger();
+        return;
       }
-      const audienceCampaignResult = await enqueueDueAudienceCampaigns(env.EMAIL_QUEUE);
-      if (env.EMAIL_QUEUE && (await hasDeliverableEmailOutbox())) {
-        await env.EMAIL_QUEUE.send({ kind: "email_outbox_kick" });
+      if (controller.cron === "* * * * *") {
+        const audienceCampaignResult = await enqueueDueAudienceCampaigns(env.EMAIL_QUEUE);
+        if (env.EMAIL_QUEUE && (await hasDeliverableEmailOutbox())) {
+          await env.EMAIL_QUEUE.send({ kind: "email_outbox_kick" });
+        }
+        const socialResult = await enqueueDueSocialPosts(env.SOCIAL_PUBLISH_QUEUE, env);
+        const socialRepostsDue = await enqueueDueSocialReposts(env);
+        if (socialResult.queued > 0) console.log("[social] queued scheduled posts", socialResult);
+        if (socialRepostsDue.queued > 0)
+          console.log("[social] queued native repost actions", socialRepostsDue);
+        if (audienceCampaignResult.claimed > 0)
+          console.log("[email] scheduled campaigns queued", audienceCampaignResult);
+        return;
       }
-      const socialResult = await enqueueDueSocialPosts(env.SOCIAL_PUBLISH_QUEUE, env);
-      const socialRepostsDue = await enqueueDueSocialReposts(env);
+      if (controller.cron !== "*/5 * * * *") return;
       const socialInsightsDue = await enqueueDueSocialInsightsRefreshes(env.SOCIAL_INSIGHTS_QUEUE);
       const socialInsightsRecovery = await requeueStaleSocialInsightsBackfills(
         env.SOCIAL_INSIGHTS_QUEUE,
@@ -1352,6 +1398,15 @@ export default {
       } catch (error) {
         console.error("[content-index] scheduled processing failed", error);
         await captureServerException(error, "content-index-scheduled", {
+          surface: "content_brain",
+        });
+      }
+      try {
+        await processDueCreatorMediaRankRefreshes();
+        await enqueueDueContentMediaImports(env.CONTENT_MEDIA_QUEUE);
+      } catch (error) {
+        console.error("[content-media] queueing failed", error);
+        await captureServerException(error, "content-media-scheduled", {
           surface: "content_brain",
         });
       }
@@ -1394,9 +1449,6 @@ export default {
       if (priorityDmNotificationResult.repaired > 0 || priorityDmNotificationResult.failed > 0) {
         console.log("[email] repaired Priority DM notifications", priorityDmNotificationResult);
       }
-      if (socialResult.queued > 0) console.log("[social] queued scheduled posts", socialResult);
-      if (socialRepostsDue.queued > 0)
-        console.log("[social] queued native repost actions", socialRepostsDue);
       if (socialInsightsDue.queued > 0)
         console.log("[social-insights] daily refreshes queued", socialInsightsDue);
       if (socialInsightsRecovery.queued > 0)
@@ -1429,9 +1481,6 @@ export default {
         facebookHealth.transientFailures > 0
       ) {
         console.log("[facebook-auto-dm] connection health audit", facebookHealth);
-      }
-      if (audienceCampaignResult.claimed > 0) {
-        console.log("[email] scheduled campaigns queued", audienceCampaignResult);
       }
     } catch (error) {
       console.error("[scheduled] background processing failed", error);

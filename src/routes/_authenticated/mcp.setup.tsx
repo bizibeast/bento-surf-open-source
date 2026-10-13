@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
   Bot,
+  Brain,
   CalendarDays,
   Check,
   CheckCircle2,
@@ -117,6 +118,18 @@ const CLIENTS = [
 
 const CAPABILITIES = [
   {
+    id: "content",
+    title: "Content",
+    icon: Brain,
+    detail: "Brain documents, Media and hero images, Routines, Agent drafts, and Discover.",
+    prompt: "Show my Brain Media and set up a daily routine to prepare draft ideas.",
+    events: [
+      "Read your Brain and Media library",
+      "Review the routine settings",
+      "Save the routine for your approval",
+    ],
+  },
+  {
     id: "pages",
     title: "Pages & links",
     icon: Link2,
@@ -216,7 +229,7 @@ const FAQS = [
   {
     question: "What can my agent change?",
     answer:
-      "It can work across pages, Store, Calendar, Community, profile, analytics, referrals, social publishing, and Auto-DMs while respecting your plan and workspace permissions.",
+      "It can work across Content Brain, Media, Routines, Agent, Discover, pages, Store, Calendar, Community, profile, analytics, referrals, social publishing, and Auto-DMs while respecting your plan and workspace permissions.",
   },
   {
     question: "Can an agent publish or delete without asking?",

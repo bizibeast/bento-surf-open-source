@@ -32,7 +32,7 @@
     "PUBLIC_PAGE_CACHE_TTL_SECONDS": "30",
     "EMAIL_DELIVERY_MODE": "disabled",
   },
-  "triggers": { "crons": ["* * * * *", "0 9 * * *"] },
+  "triggers": { "crons": ["* * * * *", "*/5 * * * *", "0 9 * * *"] },
   "r2_buckets": [{ "binding": "MEDIA_BUCKET", "bucket_name": "bento-media" }],
   "ratelimits": [
     {
@@ -77,6 +77,7 @@
       { "binding": "EMAIL_QUEUE", "queue": "bento-email" },
       { "binding": "SOCIAL_PUBLISH_QUEUE", "queue": "bento-social-publish" },
       { "binding": "SOCIAL_INSIGHTS_QUEUE", "queue": "bento-social-insights" },
+      { "binding": "CONTENT_MEDIA_QUEUE", "queue": "bento-content-media" },
       { "binding": "REFERRAL_QUEUE", "queue": "bento-referral" },
       { "binding": "INSTAGRAM_DM_QUEUE", "queue": "bento-instagram-dm" },
       { "binding": "TWITTER_DM_QUEUE", "queue": "bento-twitter-dm" },
@@ -154,6 +155,14 @@
         "max_retries": 5,
         "max_concurrency": 2,
         "dead_letter_queue": "bento-social-insights-dlq",
+      },
+      {
+        "queue": "bento-content-media",
+        "max_batch_size": 1,
+        "max_batch_timeout": 2,
+        "max_retries": 5,
+        "max_concurrency": 8,
+        "dead_letter_queue": "bento-content-media-dlq",
       },
       {
         "queue": "bento-referral",

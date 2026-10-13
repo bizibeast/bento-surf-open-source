@@ -20,7 +20,7 @@ describe("authenticated WebMCP tools", () => {
 
   it("exposes every authenticated operation with unique names", () => {
     const tools = createAuthenticatedWebMcpTools(vi.fn());
-    expect(tools).toHaveLength(29);
+    expect(tools).toHaveLength(39);
     expect(new Set(tools.map((tool) => tool.name)).size).toBe(tools.length);
     expect(tools.map((tool) => tool.name)).toEqual(
       expect.arrayContaining([
@@ -31,6 +31,11 @@ describe("authenticated WebMCP tools", () => {
         "manage_calendar",
         "manage_community",
         "update_profile",
+        "manage_content_brain",
+        "manage_content_media",
+        "manage_content_routine",
+        "manage_content_agent",
+        "manage_content_discover",
       ]),
     );
   });

@@ -19,6 +19,11 @@ export const BENTO_WEBMCP_READ_OPERATIONS = [
   "get_analytics_workspace",
   "get_integration_workspace",
   "get_earn_workspace",
+  "get_content_brain",
+  "get_content_media",
+  "get_content_routines",
+  "get_content_agent",
+  "get_content_discover",
 ] as const;
 
 export const BENTO_WEBMCP_WRITE_OPERATIONS = [
@@ -37,6 +42,11 @@ export const BENTO_WEBMCP_WRITE_OPERATIONS = [
   "manage_community",
   "update_profile",
   "manage_earn",
+  "manage_content_brain",
+  "manage_content_media",
+  "manage_content_routine",
+  "manage_content_agent",
+  "manage_content_discover",
 ] as const;
 
 export type BentoWebMcpReadOperation = (typeof BENTO_WEBMCP_READ_OPERATIONS)[number];
@@ -84,6 +94,17 @@ const webMcpReadSchemas = {
     .strict(),
   get_integration_workspace: z.object({}).strict(),
   get_earn_workspace: z.object({}).strict(),
+  get_content_brain: z.object({}).strict(),
+  get_content_media: z
+    .object({
+      page: z.number().int().min(0).max(100).default(0),
+      query: z.string().trim().max(300).optional(),
+      previewOld: z.boolean().optional(),
+    })
+    .strict(),
+  get_content_routines: z.object({}).strict(),
+  get_content_agent: z.object({ threadId: z.string().uuid().optional() }).strict(),
+  get_content_discover: z.object({ creatorId: z.string().uuid().optional() }).strict(),
 } satisfies Record<BentoWebMcpReadOperation, z.ZodType<Record<string, unknown>>>;
 
 export function parseBentoWebMcpReadInput(
@@ -779,6 +800,25 @@ export const runBentoWebMcpRead = createServerFn({ method: "POST" })
           return defaultBentoMcpOperations.getIntegrationWorkspace(creatorContext);
         case "get_earn_workspace":
           return defaultBentoMcpOperations.getEarnWorkspace(creatorContext);
+        case "get_content_brain":
+          return defaultBentoMcpOperations.getMcpContentBrain(context.userId);
+        case "get_content_media":
+          return defaultBentoMcpOperations.getMcpContentMedia(
+            context.userId,
+            input as { page?: number; query?: string; previewOld?: boolean },
+          );
+        case "get_content_routines":
+          return defaultBentoMcpOperations.getMcpContentRoutines(context.userId);
+        case "get_content_agent":
+          return defaultBentoMcpOperations.getMcpContentAgent(
+            context.userId,
+            typeof input.threadId === "string" ? input.threadId : undefined,
+          );
+        case "get_content_discover":
+          return defaultBentoMcpOperations.getMcpContentDiscover(
+            context.userId,
+            typeof input.creatorId === "string" ? input.creatorId : undefined,
+          );
       }
     })();
     return sanitizeBentoWebMcpReadResult(data.operation, result) as JsonValue;
@@ -881,5 +921,15 @@ export const runBentoWebMcpWrite = createServerFn({ method: "POST" })
         return defaultBentoMcpOperations.updateCreatorProfile(creatorContext, input);
       case "manage_earn":
         return defaultBentoMcpOperations.mutateEarn(creatorContext, input);
+      case "manage_content_brain":
+        return defaultBentoMcpOperations.manageMcpContentBrain(context.userId, input);
+      case "manage_content_media":
+        return defaultBentoMcpOperations.manageMcpContentMedia(context.userId, input);
+      case "manage_content_routine":
+        return defaultBentoMcpOperations.manageMcpContentRoutine(context.userId, input);
+      case "manage_content_agent":
+        return defaultBentoMcpOperations.manageMcpContentAgent(context.userId, input);
+      case "manage_content_discover":
+        return defaultBentoMcpOperations.manageMcpContentDiscover(context.userId, input);
     }
   });

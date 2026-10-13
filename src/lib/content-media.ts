@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { parsePublicHttpUrl } from "./safe-url";
 
+export const AUTO_MEDIA_PER_PLATFORM = 10;
+export const MANUAL_MEDIA_LIMIT = 50;
+export const MEDIA_FOLDER_LIMIT = 20;
+export const HERO_IMAGE_LIMIT = 4;
+export const BRAIN_MEDIA_BUDGET_BYTES = 1024 * 1024 * 1024;
+
 export const contentMediaSourceSchema = z.object({
   id: z.string().trim().min(1).max(500),
   type: z.enum(["image", "video", "thumbnail"]),

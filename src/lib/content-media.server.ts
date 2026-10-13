@@ -1,14 +1,29 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Ingestion rows are normalized at this boundary. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { getMediaBucket, mediaObjectUrl, sumR2UserStorageBytes } from "./r2-storage.server";
+import { adjustCachedR2UserStorageBytes, cachedR2UserStorageBytes } from "./r2-usage-cache.server";
 import { getPlan, getStorageAllowanceMb } from "./plan.server";
 import { uploadLimitMb } from "./plans";
 import { readResponseBytes, readResponseText } from "./request-security.server";
 import { allowedSocialAssetUrl } from "./social-avatar.server";
 import { accessTokenForConnection, ProviderError } from "./social-publisher.server";
 import { parsePublicHttpUrl } from "./safe-url";
-import { contentMediaSources } from "./content-media";
+import { BRAIN_MEDIA_BUDGET_BYTES } from "./content-media";
 import type { SocialProvider } from "./social-scheduler";
+
+export type ContentMediaImportMessage = {
+  kind: "content_media_import";
+  id: string;
+  userId: string;
+  leaseId: string;
+};
+
+export async function processDueCreatorMediaRankRefreshes() {
+  const { error } = await (supabaseAdmin as any).rpc("process_due_creator_media_rank_refreshes", {
+    p_limit: 3,
+  });
+  if (error) throw new Error("Media rankings could not be refreshed.");
+}
 
 export function importedMediaType(bytes: Uint8Array, declared: string) {
   if (declared === "image/jpeg" && bytes[0] === 0xff && bytes[1] === 0xd8)
@@ -100,163 +115,172 @@ async function linkedInAssetUrl(connection: any, assetId: string) {
   return value.downloadUrl as string;
 }
 
-export async function indexMediaMetadata(userId: string, posts: any[]) {
+export async function enqueueDueContentMediaImports(
+  queue?: Queue<ContentMediaImportMessage>,
+  limit = 100,
+) {
+  if (!queue) return { queued: 0 };
   const db = supabaseAdmin as any;
-  const { data: existing, error } = await db
-    .from("creator_content_media")
-    .select("*")
-    .eq("user_id", userId);
-  if (error) throw new Error("Media index could not be loaded.");
-  const rows: any[] = [];
-  for (const post of posts) {
-    for (const media of contentMediaSources(post.media_sources)) {
-      const prior = (existing || []).find(
-        (row: any) =>
-          row.connection_id === post.connection_id &&
-          row.post_id === post.remote_post_id &&
-          row.asset_id === media.id,
-      );
-      const unchanged =
-        prior && (prior.status === "ready" || prior.remote_url === (media.url || null));
-      rows.push({
-        id: prior?.id || crypto.randomUUID(),
-        user_id: userId,
-        connection_id: post.connection_id,
-        post_id: post.remote_post_id,
-        asset_id: media.id,
-        provider: post.provider,
-        media_type: media.type,
-        remote_url: media.url || null,
-        source_url: parsePublicHttpUrl(post.remote_post_url, { requireHttps: true })
-          ? post.remote_post_url
-          : null,
-        caption: String(post.caption || "").slice(0, 10_000),
-        status: unchanged ? prior.status : "pending",
-        updated_at: new Date().toISOString(),
-      });
-    }
-  }
-  for (let offset = 0; offset < rows.length; offset += 100) {
-    const saved = await db
+  const { data: claimed, error } = await db.rpc("claim_creator_media_imports", {
+    p_limit: limit,
+  });
+  if (error) throw new Error("Media imports could not be claimed.");
+  if (!claimed?.length) return { queued: 0 };
+  const messages: ContentMediaImportMessage[] = claimed.map((row: any) => ({
+    kind: "content_media_import",
+    id: row.id,
+    userId: row.user_id,
+    leaseId: row.lease_id,
+  }));
+  try {
+    await queue.sendBatch(messages.map((body) => ({ body, contentType: "json" as const })));
+  } catch (cause) {
+    const released = await db
       .from("creator_content_media")
-      .upsert(rows.slice(offset, offset + 100), { onConflict: "connection_id,post_id,asset_id" });
-    if (saved.error) throw new Error("Media metadata could not be indexed.");
+      .update({ lease_id: null, lease_expires_at: null })
+      .in(
+        "id",
+        messages.map((message) => message.id),
+      );
+    if (released.error) throw new Error("Failed media queue leases could not be released.");
+    throw cause;
   }
-  return rows.length;
+  return { queued: messages.length };
 }
 
-export async function cachePendingContentMedia(userId: string, limit = 5) {
+export async function processContentMediaImportMessage(message: ContentMediaImportMessage) {
+  const userId = message.userId;
   const db = supabaseAdmin as any;
-  const { data: rows, error } = await db
+  const { data: row, error } = await db
     .from("creator_content_media")
     .select("*")
     .eq("user_id", userId)
+    .eq("id", message.id)
+    .eq("lease_id", message.leaseId)
     .eq("status", "pending")
-    .lte("next_attempt_at", new Date().toISOString())
-    .order("created_at")
-    .limit(limit);
-  if (error) throw new Error("Pending media could not be loaded.");
-  if (!rows?.length) return { processed: 0 };
+    .maybeSingle();
+  if (error) throw new Error("Claimed media could not be loaded.");
+  if (!row || !["automatic", "requested"].includes(row.import_origin)) return { processed: 0 };
   const bucket = getMediaBucket();
   const plan = await getPlan(userId);
   const allowance = (await getStorageAllowanceMb(userId)) * 1024 * 1024;
-  let used = await sumR2UserStorageBytes(bucket, userId);
-  const connections = new Map<string, any>();
+  const [used, brainUsage] = await Promise.all([
+    cachedR2UserStorageBytes(bucket, userId, sumR2UserStorageBytes),
+    db.rpc("creator_brain_media_used_bytes", { p_user_id: userId }),
+  ]);
+  if (brainUsage.error) throw new Error("Media library usage could not be checked.");
   let processed = 0;
-  for (const row of rows) {
-    let outcome: Record<string, unknown>;
-    try {
-      let url = row.remote_url;
-      if (!url && row.provider === "linkedin") {
-        if (!connections.has(row.connection_id)) {
-          const connection = await db
-            .from("social_connections")
-            .select("*")
-            .eq("id", row.connection_id)
-            .eq("user_id", userId)
-            .maybeSingle();
-          if (connection.error || !connection.data)
-            throw new Error("This connected account is unavailable.");
-          connections.set(row.connection_id, connection.data);
-        }
-        url = await linkedInAssetUrl(connections.get(row.connection_id), row.asset_id);
-      }
-      if (!url) throw new Error("The provider has not supplied downloadable media.");
-      // ponytail: buffer at most 100 MB per asset; stream larger videos if imports need that ceiling.
-      const maximum =
-        Math.min(100, uploadLimitMb(row.media_type === "video" ? "video" : "image", plan)) *
-        1024 *
-        1024;
-      let media = await downloadConnectedMedia(row.provider, url, maximum);
-      if (media.mimeType.startsWith("image/") && media.mimeType !== "image/gif") {
-        const images = globalThis.__env__?.IMAGES;
-        if (!images)
-          throw new ProviderError(
-            "Image normalization is temporarily unavailable.",
-            "image_normalization_unavailable",
-            true,
-            503,
-          );
+  let outcome: Record<string, unknown>;
+  try {
+    let url = row.remote_url;
+    if (!url && row.provider === "linkedin") {
+      const connection = await db
+        .from("social_connections")
+        .select("*")
+        .eq("id", row.connection_id)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (connection.error || !connection.data)
+        throw new Error("This connected account is unavailable.");
+      url = await linkedInAssetUrl(connection.data, row.asset_id);
+    }
+    if (!url) throw new Error("The provider has not supplied downloadable media.");
+    const allowedBytes =
+      uploadLimitMb(row.media_type === "video" ? "video" : "image", plan) * 1024 * 1024;
+    // Originals may be larger than the stored, resized image.
+    const downloadLimit = row.media_type === "video" ? allowedBytes : 20 * 1024 * 1024;
+    let media = await downloadConnectedMedia(row.provider, url, downloadLimit);
+    if (media.mimeType.startsWith("image/") && media.mimeType !== "image/gif") {
+      const images = globalThis.__env__?.IMAGES;
+      if (!images)
+        throw new ProviderError(
+          "Image normalization is temporarily unavailable.",
+          "image_normalization_unavailable",
+          true,
+          503,
+        );
+      let bytes: Uint8Array | null = null;
+      for (const [width, quality] of [
+        [1280, 80],
+        [960, 70],
+        [720, 65],
+      ] as const) {
         const transformed = await images
           .input(new Response(media.bytes).body!)
-          .output({ format: "image/jpeg", quality: 90 });
-        const bytes = await readResponseBytes(transformed.response(), maximum);
-        if (!importedMediaType(bytes, "image/jpeg"))
-          throw new Error("Image normalization did not return a valid image.");
-        media = { bytes, mimeType: "image/jpeg", extension: "jpg" };
+          .transform({ width, fit: "scale-down" })
+          .output({ format: "image/jpeg", quality });
+        try {
+          bytes = await readResponseBytes(transformed.response(), allowedBytes);
+          break;
+        } catch (error) {
+          if (width === 720) throw error;
+        }
       }
-      if ((row.media_type === "video") !== media.mimeType.startsWith("video/"))
-        throw new Error("This media does not match the provider's declared attachment type.");
-      if (used + media.bytes.byteLength > allowance)
-        throw new Error("Your storage is full. Free space before importing more media.");
-      const digest = await crypto.subtle.digest("SHA-256", media.bytes);
-      const hash = Array.from(new Uint8Array(digest), (byte) =>
-        byte.toString(16).padStart(2, "0"),
-      ).join("");
-      const key = `users/${userId}/content-media/${row.connection_id}/${hash}.${media.extension}`;
-      const present = await bucket.head(key);
-      if (!present) {
-        await bucket.put(key, media.bytes, {
-          httpMetadata: {
-            contentType: media.mimeType,
-            cacheControl: "public, max-age=31536000, immutable",
-          },
-        });
-        used += media.bytes.byteLength;
-      }
-      outcome = {
-        status: "ready",
-        storage_key: key,
-        public_url: mediaObjectUrl(key),
-        mime_type: media.mimeType,
-        byte_size: media.bytes.byteLength,
-        error_message: null,
-      };
-    } catch (cause) {
-      const transient =
-        cause instanceof ProviderError
-          ? cause.retryable
-          : cause instanceof TypeError ||
-            (cause instanceof DOMException && ["TimeoutError", "AbortError"].includes(cause.name));
-      const retry = transient && Number(row.attempts || 0) < 5;
-      outcome = {
-        status: retry ? "pending" : "unavailable",
-        attempts: Number(row.attempts || 0) + 1,
-        next_attempt_at: new Date(
-          Date.now() + 30_000 * 2 ** Math.min(Number(row.attempts || 0), 6),
-        ).toISOString(),
-        error_message:
-          cause instanceof Error ? cause.message.slice(0, 1000) : "Media import failed.",
-      };
+      if (!bytes) throw new Error("This image is too large for your plan.");
+      if (!importedMediaType(bytes, "image/jpeg"))
+        throw new Error("Image normalization did not return a valid image.");
+      media = { bytes: Uint8Array.from(bytes), mimeType: "image/jpeg", extension: "jpg" };
     }
-    const saved = await db
-      .from("creator_content_media")
-      .update(outcome)
-      .eq("id", row.id)
-      .eq("user_id", userId)
-      .eq("status", "pending");
-    if (saved.error) throw new Error("Imported media status could not be recorded.");
-    processed += 1;
+    if ((row.media_type === "video") !== media.mimeType.startsWith("video/"))
+      throw new Error("This media does not match the provider's declared attachment type.");
+    if (media.bytes.byteLength > allowedBytes)
+      throw new Error("This media exceeds your plan's upload size limit.");
+    const digest = await crypto.subtle.digest("SHA-256", media.bytes);
+    const hash = Array.from(new Uint8Array(digest), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+    const key = `users/${userId}/content-media/${row.connection_id}/${hash}.${media.extension}`;
+    const present = await bucket.head(key);
+    if (!present && used + media.bytes.byteLength > allowance)
+      throw new Error("Your storage is full. Free space before importing more media.");
+    if (
+      !present &&
+      Number(brainUsage.data || 0) + media.bytes.byteLength > BRAIN_MEDIA_BUDGET_BYTES
+    )
+      throw new Error("Your Brain Media library has reached its 1 GB limit.");
+    if (!present) {
+      await bucket.put(key, media.bytes, {
+        httpMetadata: {
+          contentType: media.mimeType,
+          cacheControl: "public, max-age=31536000, immutable",
+        },
+      });
+      await adjustCachedR2UserStorageBytes(userId, media.bytes.byteLength).catch((error) => {
+        console.error("[content-media] usage cache update failed", error);
+      });
+    }
+    outcome = {
+      status: "ready",
+      storage_key: key,
+      public_url: mediaObjectUrl(key),
+      mime_type: media.mimeType,
+      byte_size: media.bytes.byteLength,
+      error_message: null,
+    };
+  } catch (cause) {
+    const transient =
+      cause instanceof ProviderError
+        ? cause.retryable
+        : cause instanceof TypeError ||
+          (cause instanceof DOMException && ["TimeoutError", "AbortError"].includes(cause.name));
+    const retry = transient && Number(row.attempts || 0) < 5;
+    outcome = {
+      status: retry ? "pending" : "unavailable",
+      attempts: Number(row.attempts || 0) + 1,
+      next_attempt_at: new Date(
+        Date.now() + 30_000 * 2 ** Math.min(Number(row.attempts || 0), 6),
+      ).toISOString(),
+      error_message: cause instanceof Error ? cause.message.slice(0, 1000) : "Media import failed.",
+    };
   }
+  const saved = await db
+    .from("creator_content_media")
+    .update({ ...outcome, lease_id: null, lease_expires_at: null })
+    .eq("id", row.id)
+    .eq("user_id", userId)
+    .eq("lease_id", message.leaseId)
+    .eq("status", "pending");
+  if (saved.error) throw new Error("Imported media status could not be recorded.");
+  processed += 1;
   return { processed };
 }
