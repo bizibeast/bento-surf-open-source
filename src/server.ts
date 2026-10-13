@@ -1375,9 +1375,9 @@ export default {
           console.log("[social] queued native repost actions", socialRepostsDue);
         if (audienceCampaignResult.claimed > 0)
           console.log("[email] scheduled campaigns queued", audienceCampaignResult);
-        return;
+        if (new Date(controller.scheduledTime).getUTCMinutes() % 5 !== 0) return;
       }
-      if (controller.cron !== "*/5 * * * *") return;
+      if (controller.cron !== "*/5 * * * *" && controller.cron !== "* * * * *") return;
       const socialInsightsDue = await enqueueDueSocialInsightsRefreshes(env.SOCIAL_INSIGHTS_QUEUE);
       const socialInsightsRecovery = await requeueStaleSocialInsightsBackfills(
         env.SOCIAL_INSIGHTS_QUEUE,

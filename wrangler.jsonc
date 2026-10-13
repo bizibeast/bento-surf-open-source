@@ -32,7 +32,7 @@
     "PUBLIC_PAGE_CACHE_TTL_SECONDS": "30",
     "EMAIL_DELIVERY_MODE": "disabled",
   },
-  "triggers": { "crons": ["* * * * *", "*/5 * * * *", "0 9 * * *"] },
+  "triggers": { "crons": ["* * * * *", "0 9 * * *"] },
   "r2_buckets": [{ "binding": "MEDIA_BUCKET", "bucket_name": "bento-media" }],
   "ratelimits": [
     {
