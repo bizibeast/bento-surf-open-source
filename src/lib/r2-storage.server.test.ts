@@ -5,6 +5,7 @@ const planServerMocks = vi.hoisted(() => {
     profiles: { plan_id: "free", is_pro: false },
     complimentary_plan_grants: null,
     subscriptions: null,
+    creator_r2_usage_cache: null,
   };
   return {
     responses,
@@ -14,7 +15,10 @@ const planServerMocks = vi.hoisted(() => {
           maybeSingle: async () => ({ data: responses[table], error: null }),
         }),
       }),
+      upsert: async () => ({ error: null }),
+      delete: () => ({ eq: async () => ({ error: null }) }),
     })),
+    rpc: vi.fn(async () => ({ error: null })),
   };
 });
 
@@ -26,7 +30,7 @@ const storageAnalyticsMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/integrations/supabase/client.server", () => ({
-  supabaseAdmin: { from: planServerMocks.from },
+  supabaseAdmin: { from: planServerMocks.from, rpc: planServerMocks.rpc },
 }));
 
 vi.mock("./posthog.server", () => storageAnalyticsMocks);

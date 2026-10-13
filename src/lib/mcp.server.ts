@@ -66,12 +66,29 @@ import {
   updateCreatorProfile,
   type CreatorMcpContext,
 } from "./mcp.creator-ops.server";
+import {
+  agentMutationSchema,
+  brainMutationSchema,
+  discoverMutationSchema,
+  getMcpContentAgent,
+  getMcpContentBrain,
+  getMcpContentDiscover,
+  getMcpContentMedia,
+  getMcpContentRoutines,
+  manageMcpContentAgent,
+  manageMcpContentBrain,
+  manageMcpContentDiscover,
+  manageMcpContentMedia,
+  manageMcpContentRoutine,
+  mediaMutationSchema,
+  routineMutationSchema,
+} from "./mcp.content-ops.server";
 
 const MCP_PATH = "/mcp";
 const SKILL_URI = "skill://bento/bento/SKILL.md";
 const SKILL_TOOLS_URI = "skill://bento/bento/references/tools.md";
 const SKILL_DESCRIPTION =
-  "Operate a creator's Bento workspace through MCP, including pages and links, Store products and growth tools, Calendar sessions and availability, communities, social publishing, and Auto-DMs.";
+  "Operate a creator's Bento workspace through MCP, including Content Brain, Media, Routines, Agent, Discover, pages, Store, Calendar, communities, social publishing, and Auto-DMs.";
 const MAX_MCP_MEDIA_BYTES = 25 * 1024 * 1024;
 const OAUTH_SCOPES = ["openid", "email", "profile"];
 const AUTO_DM = {
@@ -126,6 +143,7 @@ function featureLinks(origin: string) {
     community: `${origin}/community`,
     settings: `${origin}/settings`,
     mcp: `${origin}/mcp`,
+    content: `${origin}/content`,
   };
 }
 
@@ -783,6 +801,16 @@ export const defaultBentoMcpOperations = {
   setPriorityDmClosed,
   getSchedulerWorkspace,
   manageScheduler,
+  getMcpContentBrain,
+  manageMcpContentBrain,
+  getMcpContentMedia,
+  manageMcpContentMedia,
+  getMcpContentRoutines,
+  manageMcpContentRoutine,
+  getMcpContentAgent,
+  manageMcpContentAgent,
+  getMcpContentDiscover,
+  manageMcpContentDiscover,
 };
 
 export type BentoMcpOperations = typeof defaultBentoMcpOperations;
@@ -1262,6 +1290,152 @@ export function createBentoMcpServer(
       const overview = await operations.getBentoOverview(userId, origin);
       return textResult("Loaded the Bento workspace overview.", { overview });
     },
+  );
+
+  server.registerTool(
+    "get_content_brain",
+    {
+      title: "Get Content Brain",
+      description: "Load the creator's Content profile, Brain documents, and indexing status.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+    },
+    async () =>
+      textResult("Loaded Content Brain.", { brain: await operations.getMcpContentBrain(userId) }),
+  );
+
+  server.registerTool(
+    "manage_content_brain",
+    {
+      title: "Manage Content Brain",
+      description:
+        "Save the Content profile or a Brain document, confirm, lock, delete, or refresh the index.",
+      inputSchema: brainMutationSchema,
+      annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
+    },
+    async (input) =>
+      textResult(`Completed Brain action: ${input.action}.`, {
+        result: await operations.manageMcpContentBrain(userId, input),
+      }),
+  );
+
+  server.registerTool(
+    "get_content_media",
+    {
+      title: "Get Brain Media",
+      description:
+        "List or search paginated Brain Media, folders, pending imports, and library limits.",
+      inputSchema: z.object({
+        page: z.number().int().min(0).max(100).default(0),
+        query: z.string().trim().max(300).optional(),
+        previewOld: z.boolean().optional(),
+      }),
+      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+    },
+    async (input) =>
+      textResult("Loaded Brain Media.", {
+        media: await operations.getMcpContentMedia(userId, input),
+      }),
+  );
+
+  server.registerTool(
+    "manage_content_media",
+    {
+      title: "Manage Brain Media",
+      description:
+        "Register an uploaded image or video, fetch media from a connected post, manage folders, move items, or set one of four hero images. Upload with upload_media first.",
+      inputSchema: mediaMutationSchema,
+      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+    },
+    async (input) =>
+      textResult(`Completed Media action: ${input.action}.`, {
+        result: await operations.manageMcpContentMedia(userId, input),
+      }),
+  );
+
+  server.registerTool(
+    "get_content_routines",
+    {
+      title: "Get Content Routines",
+      description: "Load routines, schedules, and recent activity for the signed-in creator.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+    },
+    async () =>
+      textResult("Loaded Content Routines.", {
+        routines: await operations.getMcpContentRoutines(userId),
+      }),
+  );
+
+  server.registerTool(
+    "manage_content_routine",
+    {
+      title: "Manage Content Routine",
+      description: "Create or edit a template or custom routine, or pause and resume a routine.",
+      inputSchema: routineMutationSchema,
+      annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
+    },
+    async (input) =>
+      textResult(`Completed Routine action: ${input.action}.`, {
+        result: await operations.manageMcpContentRoutine(userId, input),
+      }),
+  );
+
+  server.registerTool(
+    "get_content_agent",
+    {
+      title: "Get Content Agent",
+      description: "List Content Agent conversations or load one conversation and its cards.",
+      inputSchema: z.object({ threadId: z.uuid().optional() }),
+      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+    },
+    async ({ threadId }) =>
+      textResult("Loaded Content Agent.", {
+        agent: await operations.getMcpContentAgent(userId, threadId),
+      }),
+  );
+
+  server.registerTool(
+    "manage_content_agent",
+    {
+      title: "Manage Content Agent",
+      description:
+        "Send a message, edit/reject/regenerate a draft, or approve Brain and scheduling proposals. Schedule approval may create social posts.",
+      inputSchema: agentMutationSchema,
+      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
+    },
+    async (input) =>
+      textResult(`Completed Agent action: ${input.action}.`, {
+        result: await operations.manageMcpContentAgent(userId, input),
+      }),
+  );
+
+  server.registerTool(
+    "get_content_discover",
+    {
+      title: "Get Content Discover",
+      description: "Load personalized Discover recommendations and preferences.",
+      inputSchema: z.object({ creatorId: z.uuid().optional() }),
+      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+    },
+    async ({ creatorId }) =>
+      textResult("Loaded Content Discover.", {
+        discover: await operations.getMcpContentDiscover(userId, creatorId),
+      }),
+  );
+
+  server.registerTool(
+    "manage_content_discover",
+    {
+      title: "Manage Content Discover",
+      description: "Refresh recommendations, set feedback or bookmarks, and edit preferences.",
+      inputSchema: discoverMutationSchema,
+      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
+    },
+    async (input) =>
+      textResult(`Completed Discover action: ${input.action}.`, {
+        result: await operations.manageMcpContentDiscover(userId, input),
+      }),
   );
 
   server.registerTool(

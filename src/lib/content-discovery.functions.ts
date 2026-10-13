@@ -174,7 +174,7 @@ export function mergeDiscoverRefresh(
     : { ...refreshed, trends: current!.trends, ideas: current!.ideas };
 }
 
-async function readStoredDiscover(userId: string): Promise<ContentDiscoverData> {
+export async function readStoredDiscover(userId: string): Promise<ContentDiscoverData> {
   const db = supabaseAdmin as any;
   const { data: latest, error: latestError } = await db
     .from("creator_content_recommendations")
@@ -553,6 +553,11 @@ export const refreshContentDiscover = createServerFn({ method: "POST" })
     await requireContentWorkspace(context.userId);
     return buildCreatorDiscover(context.userId);
   });
+
+export async function refreshContentDiscoverForUser(userId: string) {
+  await requireContentWorkspace(userId);
+  return buildCreatorDiscover(userId);
+}
 
 const recommendationIdSchema = z.object({ id: z.string().uuid() });
 const feedbackSchema = recommendationIdSchema.extend({

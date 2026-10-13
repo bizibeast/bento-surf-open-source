@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -18,6 +18,7 @@ import {
   confirmBrainItem,
   deleteBrainItem,
   getContentBrain,
+  getContentBrainMedia,
   saveBrainItem,
   searchContentBrainMedia,
   saveContentProfile,
@@ -53,6 +54,18 @@ import {
   setContentRoutinePaused,
 } from "@/lib/content-routines.functions";
 import { uploadFileResult } from "@/lib/upload";
+import { optimizeImageUpload } from "@/lib/image-upload";
+import {
+  checkContentMediaUpload,
+  registerContentMediaUpload,
+  requestContentMediaFromPost,
+  createContentMediaFolder,
+  renameContentMediaFolder,
+  deleteContentMediaFolder,
+  moveContentMediaToFolder,
+  setContentHeroImage,
+  previewOldContentMedia,
+} from "@/lib/content-media.functions";
 
 type ContentTab = "discover" | "agent" | "brain";
 
@@ -143,6 +156,9 @@ export function ContentPage({
   onRoutinesChange?: (open: boolean) => void;
 }) {
   const [tab, setTab] = useState<ContentTab>(initialTab);
+  const [brainSection, setBrainSection] = useState<ContentBrainSection | undefined>(
+    initialBrainSection,
+  );
   const [mediaSearch, setMediaSearch] = useState("");
   const [settledMediaSearch, setSettledMediaSearch] = useState("");
   useEffect(() => {
@@ -158,16 +174,27 @@ export function ContentPage({
     setTab(initialTab);
     setShowRoutines(initialRoutines);
   }, [initialRoutines, initialTab]);
+  useEffect(() => setBrainSection(initialBrainSection), [initialBrainSection]);
   const brain = useQuery({
     queryKey: ["content-brain"],
     queryFn: () => getContentBrain(),
     refetchInterval: (query) =>
-      ["pending", "running"].includes(query.state.data?.indexing?.status || "") ? 5000 : false,
+      tab === "brain" && ["pending", "running"].includes(query.state.data?.indexing?.status || "")
+        ? 30000
+        : false,
+  });
+  const mediaOpen = tab === "brain" && brainSection === "photo";
+  const media = useInfiniteQuery({
+    queryKey: ["content-brain-media"],
+    queryFn: ({ pageParam }) => getContentBrainMedia({ data: { page: pageParam } }),
+    initialPageParam: 0,
+    getNextPageParam: (last, pages) => (last.hasMore ? pages.length : undefined),
+    enabled: mediaOpen,
   });
   const searchedMedia = useQuery({
     queryKey: ["content-media-search", settledMediaSearch],
     queryFn: () => searchContentBrainMedia({ data: { query: settledMediaSearch } }),
-    enabled: tab === "brain" && settledMediaSearch.length > 1,
+    enabled: mediaOpen && settledMediaSearch.length > 1,
   });
   const discover = useQuery({
     queryKey: ["content-discover"],
@@ -218,7 +245,12 @@ export function ContentPage({
     enabled: tab === "agent" && showRoutines,
   });
 
-  const refresh = () => queryClient.invalidateQueries({ queryKey: ["content-brain"] });
+  const refresh = () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["content-brain"] }),
+      queryClient.invalidateQueries({ queryKey: ["content-brain-media"] }),
+      queryClient.invalidateQueries({ queryKey: ["content-media-search"] }),
+    ]);
   const profileMutation = useContentMutation(
     (value: ContentProfile) => saveContentProfile({ data: value }),
     refresh,
@@ -348,8 +380,31 @@ export function ContentPage({
 
   const upload = async (file: File, kind: "file" | "photo") => {
     try {
-      const uploaded = await uploadFileResult(file, kind === "photo" ? "image" : "file");
+      if (kind === "photo" && !/^(image\/(jpeg|png|webp|gif)|video\/(mp4|webm))$/.test(file.type))
+        throw new Error("Use a JPG, PNG, WebP, GIF, MP4, or WebM file for Media.");
+      const prepared =
+        kind === "photo" && file.type.startsWith("image/")
+          ? await optimizeImageUpload(file, "image")
+          : file;
+      if (kind === "photo")
+        await checkContentMediaUpload({
+          data: {
+            bytes: prepared.size,
+            kind: prepared.type.startsWith("video/") ? "video" : "image",
+          },
+        });
+      const uploaded = await uploadFileResult(
+        prepared,
+        kind === "photo" ? (prepared.type.startsWith("video/") ? "video" : "image") : "file",
+        { optimize: false },
+      );
       if (!uploaded.publicUrl) throw new Error("Upload did not return a public URL.");
+      if (kind === "photo") {
+        await registerContentMediaUpload({ data: { key: uploaded.key, name: file.name } });
+        await refresh();
+        toast.success("Added to Media.");
+        return;
+      }
       await saveBrainItem({
         data: {
           kind,
@@ -370,6 +425,13 @@ export function ContentPage({
   };
 
   const data = brain.data;
+  const mediaPhotos = [
+    ...new Map(
+      (media.data?.pages.flatMap((page) => page.photos) || []).map(
+        (photo) => [photo.id, photo] as const,
+      ),
+    ).values(),
+  ];
   return (
     <main
       className={
@@ -476,19 +538,58 @@ export function ContentPage({
           {tab === "brain" &&
             (data ? (
               <ContentBrain
-                initialSection={initialBrainSection}
+                initialSection={brainSection}
                 initialItemId={initialBrainItem}
                 initialPlatform={initialBrainPlatform}
-                onNavigate={onBrainNavigate}
+                onNavigate={(section, item, platform) => {
+                  setBrainSection(section);
+                  onBrainNavigate?.(section, item, platform);
+                }}
                 profile={data.profile}
                 items={data.items}
                 sources={data.sources}
-                photos={
-                  settledMediaSearch.length > 1
-                    ? searchedMedia.data || data.photos || []
-                    : data.photos || []
+                photos={settledMediaSearch.length > 1 ? searchedMedia.data || [] : mediaPhotos}
+                folders={media.data?.pages[0]?.folders || []}
+                mediaPending={media.data?.pages[0]?.mediaPending || 0}
+                manualMediaCount={media.data?.pages[0]?.manualMediaCount || 0}
+                mediaUsedBytes={media.data?.pages[0]?.mediaUsedBytes || 0}
+                importBudget={media.data?.pages[0]?.importBudget || null}
+                mediaLoading={
+                  mediaOpen &&
+                  (media.isPending || (settledMediaSearch.length > 1 && searchedMedia.isPending))
                 }
+                mediaHasMore={settledMediaSearch.length <= 1 && media.hasNextPage}
+                onLoadMoreMedia={() => void media.fetchNextPage()}
+                onRefreshMedia={() =>
+                  void queryClient.invalidateQueries({ queryKey: ["content-brain-media"] })
+                }
+                onImportPost={async (url) => {
+                  await requestContentMediaFromPost({ data: { url } });
+                  toast.success("Connected post queued for Media.");
+                  await refresh();
+                }}
+                onCreateFolder={async (name) => {
+                  await createContentMediaFolder({ data: { name } });
+                  await refresh();
+                }}
+                onRenameFolder={async (id, name) => {
+                  await renameContentMediaFolder({ data: { id, name } });
+                  await refresh();
+                }}
+                onDeleteFolder={async (id) => {
+                  await deleteContentMediaFolder({ data: { id } });
+                  await refresh();
+                }}
+                onMoveMedia={async (id, folderId) => {
+                  await moveContentMediaToFolder({ data: { id, folderId } });
+                  await refresh();
+                }}
+                onSetHero={async (slot, id) => {
+                  await setContentHeroImage({ data: { slot, id } });
+                  await refresh();
+                }}
                 onMediaSearch={setMediaSearch}
+                onReviewOldMedia={() => previewOldContentMedia()}
                 indexing={data.indexing}
                 building={buildBrain.isPending}
                 onBuildBrain={() => buildBrain.mutate()}

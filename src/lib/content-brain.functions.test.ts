@@ -22,6 +22,7 @@ function resultFor(table: string) {
   }
   if (table === "creator_content_index_jobs") return { data: null, error: null };
   if (table === "creator_content_media") return { data: [], error: null };
+  if (table === "creator_media_folders") return { data: [], error: null };
   if (table === "social_content_insights") return { data: [], error: null };
   if (table === "creator_brain_items") return { data: [], error: null };
   if (table === "social_connections") {
@@ -77,6 +78,8 @@ function queryFor(table: string) {
     "in",
     "order",
     "limit",
+    "range",
+    "not",
     "upsert",
     "insert",
     "update",
@@ -113,7 +116,10 @@ vi.mock("@tanstack/react-start", () => ({
 
 vi.mock("@/integrations/supabase/auth-middleware", () => ({ requireSupabaseAuth: {} }));
 vi.mock("@/integrations/supabase/client.server", () => ({
-  supabaseAdmin: { from: (table: string) => queryFor(table) },
+  supabaseAdmin: {
+    from: (table: string) => queryFor(table),
+    rpc: vi.fn().mockResolvedValue({ data: 0, error: null }),
+  },
 }));
 vi.mock("./content-index.server", () => ({ requestContentIndex: mocks.requestIndex }));
 vi.mock("./content-access.server", () => ({
@@ -123,6 +129,7 @@ vi.mock("./content-access.server", () => ({
 import {
   deleteBrainItem,
   getContentBrain,
+  getContentBrainMedia,
   saveContentProfile,
   setBrainItemLocked,
 } from "./content-brain.functions";
@@ -155,6 +162,21 @@ describe("content Brain server functions", () => {
       ]),
     );
     expect(JSON.stringify(result)).not.toContain("access_token");
+    expect(mocks.calls.some((call) => call.table === "creator_content_media")).toBe(false);
+  });
+
+  it("loads Media in bounded pages only when requested", async () => {
+    await getContentBrainMedia({ data: { page: 2 } });
+    expect(mocks.calls).toContainEqual({
+      table: "creator_content_media",
+      method: "range",
+      args: [100, 150],
+    });
+    expect(mocks.calls).toContainEqual({
+      table: "creator_content_media",
+      method: "eq",
+      args: ["user_id", "owner"],
+    });
   });
 
   it("derives profile ownership from authenticated context", async () => {

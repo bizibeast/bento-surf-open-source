@@ -20,7 +20,7 @@ import { parsePublicHttpUrl } from "./safe-url";
 const brainItemIdSchema = z.object({ id: z.string().uuid() });
 const lockBrainItemSchema = brainItemIdSchema.extend({ locked: z.boolean() });
 
-async function loadContentBrain(userId: string) {
+export async function loadContentBrain(userId: string) {
   const db = supabaseAdmin as any;
   const [
     profileResult,
@@ -29,7 +29,6 @@ async function loadContentBrain(userId: string) {
     knowledgeSourcesResult,
     calendarSourcesResult,
     fathomSourcesResult,
-    photosResult,
     indexResult,
   ] = await Promise.all([
     db.from("creator_content_profiles").select("*").eq("user_id", userId).maybeSingle(),
@@ -60,14 +59,6 @@ async function loadContentBrain(userId: string) {
       .eq("user_id", userId)
       .order("created_at", { ascending: true }),
     db
-      .from("creator_content_media")
-      .select("id,connection_id,provider,caption,public_url,source_url,media_type,tags")
-      .eq("user_id", userId)
-      .eq("status", "ready")
-      .in("media_type", ["image", "video", "thumbnail"])
-      .order("created_at", { ascending: false })
-      .limit(300),
-    db
       .from("creator_content_index_jobs")
       .select("status,indexed_at,error_message,source_count,media_count")
       .eq("user_id", userId)
@@ -80,7 +71,6 @@ async function loadContentBrain(userId: string) {
     knowledgeSourcesResult.error ||
     calendarSourcesResult.error ||
     fathomSourcesResult.error ||
-    photosResult.error ||
     indexResult.error
   ) {
     throw new Error("The Content Brain could not be loaded.");
@@ -123,7 +113,6 @@ async function loadContentBrain(userId: string) {
     status: String(source.status || "error"),
   }));
   const sources = [...socialSources, ...knowledgeSources, ...calendarSources, ...fathomSources];
-  const photos = contentBrainMediaRows(photosResult.data || []);
   const indexing = indexResult.data
     ? {
         status: String(indexResult.data.status),
@@ -133,7 +122,12 @@ async function loadContentBrain(userId: string) {
         mediaCount: Number(indexResult.data.media_count || 0),
       }
     : null;
-  return { profile, items, sources, photos, indexing };
+  return {
+    profile,
+    items,
+    sources,
+    indexing,
+  };
 }
 
 function contentBrainMediaRows(rows: any[]) {
@@ -154,6 +148,8 @@ function contentBrainMediaRows(rows: any[]) {
       sourceUrl: parsePublicHttpUrl(photo.source_url, { requireHttps: true })
         ? String(photo.source_url)
         : null,
+      folderId: photo.folder_id ? String(photo.folder_id) : null,
+      heroSlot: photo.hero_slot ? Number(photo.hero_slot) : null,
     }));
 }
 
@@ -164,26 +160,121 @@ export const getContentBrain = createServerFn({ method: "GET" })
     return loadContentBrain(context.userId);
   });
 
+export const getContentBrainMedia = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .validator((input) => z.object({ page: z.number().int().min(0).max(100) }).parse(input))
+  .handler(async ({ context, data }) => {
+    return loadContentBrainMedia(context.userId, data.page);
+  });
+
+export async function loadContentBrainMedia(userId: string, page: number) {
+  await requireContentWorkspace(userId);
+  const db = supabaseAdmin as any;
+  const [media, hero, folders, pending, manual, usage, budget] = await Promise.all([
+    db
+      .from("creator_content_media")
+      .select(
+        "id,connection_id,provider,caption,public_url,source_url,media_type,tags,folder_id,hero_slot",
+      )
+      .eq("user_id", userId)
+      .eq("status", "ready")
+      .order("created_at", { ascending: false })
+      .range(page * 50, page * 50 + 50),
+    page === 0
+      ? db
+          .from("creator_content_media")
+          .select(
+            "id,connection_id,provider,caption,public_url,source_url,media_type,tags,folder_id,hero_slot",
+          )
+          .eq("user_id", userId)
+          .eq("status", "ready")
+          .not("hero_slot", "is", null)
+          .limit(4)
+      : Promise.resolve({ data: [], error: null }),
+    page === 0
+      ? db.from("creator_media_folders").select("id,name").eq("user_id", userId).order("name")
+      : Promise.resolve({ data: [], error: null }),
+    page === 0
+      ? db
+          .from("creator_content_media")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", userId)
+          .eq("status", "pending")
+          .in("import_origin", ["automatic", "requested"])
+      : Promise.resolve({ count: 0, error: null }),
+    page === 0
+      ? db
+          .from("creator_content_media")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", userId)
+          .in("import_origin", ["requested", "upload"])
+      : Promise.resolve({ count: 0, error: null }),
+    page === 0
+      ? db.rpc("creator_brain_media_used_bytes", { p_user_id: userId })
+      : Promise.resolve({ data: 0, error: null }),
+    page === 0
+      ? db
+          .from("creator_media_import_budget")
+          .select("paused,daily_limit,monthly_limit,day_start,day_used,month_start,month_used")
+          .eq("id", true)
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+  ]);
+  if (
+    media.error ||
+    hero.error ||
+    folders.error ||
+    pending.error ||
+    manual.error ||
+    usage.error ||
+    budget.error
+  )
+    throw new Error("Your Media library could not be loaded.");
+  const pageRows = (media.data || []).slice(0, 50);
+  const pageIds = new Set(pageRows.map((row: any) => row.id));
+  return {
+    photos: contentBrainMediaRows([
+      ...pageRows,
+      ...(hero.data || []).filter((row: any) => !pageIds.has(row.id)),
+    ]),
+    hasMore: (media.data || []).length > 50,
+    folders: (folders.data || []).map((folder: any) => ({
+      id: String(folder.id),
+      name: String(folder.name),
+    })),
+    mediaPending: Number(pending.count || 0),
+    manualMediaCount: Number(manual.count || 0),
+    mediaUsedBytes: Number(usage.data || 0),
+    importBudget: budget.data,
+  };
+}
+
 export const searchContentBrainMedia = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .validator((input) => z.object({ query: z.string().trim().max(300) }).parse(input))
   .handler(async ({ context, data }) => {
-    await requireContentWorkspace(context.userId);
-    const terms = contentMediaSearchTerms(data.query);
-    let query = (supabaseAdmin as any)
-      .from("creator_content_media")
-      .select("id,connection_id,provider,caption,public_url,source_url,media_type,tags")
-      .eq("user_id", context.userId)
-      .eq("status", "ready");
-    if (terms.length)
-      query = query.textSearch("search_document", terms.join(" OR "), {
-        type: "websearch",
-        config: "simple",
-      });
-    const { data: media, error } = await query.order("created_at", { ascending: false }).limit(100);
-    if (error) throw new Error("Your media library could not be searched.");
-    return contentBrainMediaRows(media || []);
+    return searchContentBrainMediaForUser(context.userId, data.query);
   });
+
+export async function searchContentBrainMediaForUser(userId: string, search: string) {
+  await requireContentWorkspace(userId);
+  const terms = contentMediaSearchTerms(search);
+  let query = (supabaseAdmin as any)
+    .from("creator_content_media")
+    .select(
+      "id,connection_id,provider,caption,public_url,source_url,media_type,tags,folder_id,hero_slot",
+    )
+    .eq("user_id", userId)
+    .eq("status", "ready");
+  if (terms.length)
+    query = query.textSearch("search_document", terms.join(" OR "), {
+      type: "websearch",
+      config: "simple",
+    });
+  const { data: media, error } = await query.order("created_at", { ascending: false }).limit(100);
+  if (error) throw new Error("Your media library could not be searched.");
+  return contentBrainMediaRows(media || []);
+}
 
 export const saveContentProfile = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])

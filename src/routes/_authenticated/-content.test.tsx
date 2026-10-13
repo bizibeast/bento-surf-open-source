@@ -1,13 +1,27 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ContentDiscoverData } from "@/lib/content-discovery.functions";
 
-const routeState = vi.hoisted(() => ({ tab: "discover" as "discover" | "agent" | "brain" }));
+const routeState = vi.hoisted(() => ({
+  tab: "discover" as "discover" | "agent" | "brain",
+  trends: [] as ContentDiscoverData["trends"],
+  send: vi.fn().mockResolvedValue({ threadId: "test-thread" }),
+  mediaEnabled: false,
+}));
+beforeEach(() => {
+  routeState.trends = [];
+  routeState.send.mockClear();
+});
 
 vi.mock("@tanstack/react-router", () => ({
   createFileRoute: () => (options: unknown) => options,
   useNavigate: () => vi.fn(),
 }));
 vi.mock("@tanstack/react-query", () => ({
+  useInfiniteQuery: ({ enabled }: { enabled: boolean }) => {
+    routeState.mediaEnabled = enabled;
+    return { data: undefined, isPending: false, hasNextPage: false, fetchNextPage: vi.fn() };
+  },
   useQuery: ({ queryKey }: { queryKey: string[] }) => ({
     data: ["content-routines", "content-routine-activity"].includes(queryKey[0])
       ? []
@@ -42,6 +56,7 @@ vi.mock("@tanstack/react-query", () => ({
 vi.mock("@/lib/upload", () => ({ uploadFileResult: vi.fn() }));
 vi.mock("@/lib/content-brain.functions", () => ({
   getContentBrain: vi.fn(),
+  getContentBrainMedia: vi.fn(),
   saveContentProfile: vi.fn(),
   saveBrainItem: vi.fn(),
   searchContentBrainMedia: vi.fn(),
@@ -79,6 +94,12 @@ describe("Content workspace", () => {
   it("renders the Brain destination selected by the sidebar route", () => {
     render(<ContentPage initialTab="brain" />);
     expect(screen.getByRole("heading", { name: "My Human" })).toBeVisible();
+    expect(routeState.mediaEnabled).toBe(false);
+  });
+
+  it("loads Media only when its Brain section opens", () => {
+    render(<ContentPage initialTab="brain" initialBrainSection="photo" />);
+    expect(routeState.mediaEnabled).toBe(true);
   });
 
   it("opens Routines directly from its sidebar destination", () => {

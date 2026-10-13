@@ -4,6 +4,7 @@ import { getPlan, getStorageAllowanceMb } from "./plan.server";
 import { captureServerEvent } from "./posthog.server";
 import { planName, uploadLimitMb, type PlanId } from "./plans";
 import { readRequestText, RequestBodyTooLargeError } from "./request-security.server";
+import { adjustCachedR2UserStorageBytes, cachedR2UserStorageBytes } from "./r2-usage-cache.server";
 
 export const R2_BUCKET_NAME = "bento-surf-media";
 export const MEDIA_CDN_PATH = "/cdn/";
@@ -539,7 +540,7 @@ async function assertUploadQuota(
     storageAllowanceMb >= 1024 ? `${storageAllowanceMb / 1024} GB` : `${storageAllowanceMb} MB`;
   try {
     const usedBytes = await Promise.race([
-      sumR2UserStorageBytes(env.MEDIA_BUCKET, userId),
+      cachedR2UserStorageBytes(env.MEDIA_BUCKET, userId, sumR2UserStorageBytes),
       new Promise<number>((_, reject) => {
         setTimeout(() => reject(new Error("storage-quota-timeout")), 4_000);
       }),
@@ -568,6 +569,7 @@ async function assertUploadQuota(
       userId,
       reason: error instanceof Error ? error.message : "unknown",
     });
+    return jsonError("Storage usage is temporarily unavailable. Please try again.", 503);
   }
   return null;
 }
@@ -823,6 +825,9 @@ async function completeMultipartUpload(
       await env.MEDIA_BUCKET.delete(key).catch(() => undefined);
       return jsonError("Completed upload size does not match the declared upload", 400);
     }
+    await adjustCachedR2UserStorageBytes(userId, object.size).catch((error) =>
+      console.error("[storage] usage cache update failed", error),
+    );
     const isPrivate = key.startsWith("private/");
     return Response.json(
       {
@@ -954,6 +959,10 @@ async function uploadMedia(
     await env.MEDIA_BUCKET.delete(key).catch(() => undefined);
     return jsonError("Upload size does not match the file size", 400);
   }
+
+  await adjustCachedR2UserStorageBytes(userId, object.size).catch((error) =>
+    console.error("[storage] usage cache update failed", error),
+  );
 
   return Response.json(
     {
@@ -1179,7 +1188,7 @@ async function manageStorage(
     try {
       const [page, usedBytes, allowanceMb] = await Promise.all([
         listManagedObjects(request, env.MEDIA_BUCKET, userId),
-        sumR2UserStorageBytes(env.MEDIA_BUCKET, userId),
+        cachedR2UserStorageBytes(env.MEDIA_BUCKET, userId, sumR2UserStorageBytes),
         resolveStorageAllowance(userId, dependencies),
       ]);
       if (!page) return jsonError("Invalid storage cursor", 400);
@@ -1238,6 +1247,10 @@ async function manageStorage(
     (total, result) => total + (result.deleted ? result.size : 0),
     0,
   );
+  if (freedBytes > 0)
+    await adjustCachedR2UserStorageBytes(userId, -freedBytes).catch((error) =>
+      console.error("[storage] usage cache update failed", error),
+    );
   context.waitUntil(
     captureServerEvent(
       userId,
