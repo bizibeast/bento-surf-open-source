@@ -384,6 +384,12 @@ function SignupPage() {
           </p>
         </div>
       )}
+      <p className="mt-8 text-center text-xs text-black/40">
+        Running your own instance?{" "}
+        <Link to="/self-hosted-setup" className="underline underline-offset-2 hover:text-black">
+          Set up your keys
+        </Link>
+      </p>
     </AuthShell>
   );
 }

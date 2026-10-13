@@ -8,6 +8,8 @@ The creator app includes Content Agent, Brain, discovery and routines; multiple 
 
 Install Bun and the Supabase CLI, then create a Supabase project you control.
 
+On a fresh local instance, open `/self-hosted-setup` to enter the required Supabase and instance keys before creator sign-up. The screen explains each setting and lets you add optional integration keys. It generates a configuration file locally in your browser; put that file at the repository root as `.env`. The app does not receive or store values typed on that screen. Restart the app after applying the file. On a hosted deployment, set the same variables in your host and rebuild so the `VITE_` public settings reach the browser. Keep the downloaded file private. You can revisit the screen later to prepare additional optional integrations, but it does not read your existing secrets back from the server.
+
 ```sh
 bun install
 cp .env.example .env

@@ -2,6 +2,8 @@
 
 Copy `.env.example` to `.env` and keep real values out of version control. Empty optional values leave related features unavailable; they do not provide simulated provider behavior. This document describes the current local foundation, not proof that a new project, provider, browser integration, or deployment has been verified.
 
+For a guided first-run setup, open `/self-hosted-setup`. Enter the required instance and Supabase settings, expand optional feature groups as needed, then download the generated configuration and install it as `.env`. The form runs in the browser and does not submit entered keys to the app. Rebuild or restart after changing configuration. The generated file fills the corresponding browser Supabase values and guarded migration confirmation; review the migration dry run before applying it. The screen does not retrieve existing secrets, so keep your original `.env` when adding integrations later.
+
 ## Core
 
 `APP_ENV`, `VITE_APP_ENV`, `VITE_APP_NAME`, `VITE_APP_URL`, `VITE_PUBLIC_URL`, `VITE_PREVIEW_IMAGE_URL`, `VITE_SUPPORT_EMAIL`, `VITE_PRIVACY_URL`, `VITE_TERMS_URL`, `VITE_SOURCE_URL`, `FOUNDER_ADMIN_EMAILS`, `SUPABASE_PROJECT_ID`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_DB_URL`, `MIGRATION_CONFIRMATION`, `DATABASE_URL`, `PRODUCTION_SUPABASE_PROJECT_ID`, `VITE_SUPABASE_PROJECT_ID`, `VITE_SUPABASE_PUBLISHABLE_KEY`, and `VITE_SUPABASE_URL` define the local application and database connection. Before running `scripts/migrate-supabase.ts`, set `MIGRATION_CONFIRMATION` to `MIGRATE:<SUPABASE_PROJECT_ID>`; the script verifies that the database URL identifies that same project without logging the reference. `VITE_SOURCE_URL` overrides the source-repository link for forks.
