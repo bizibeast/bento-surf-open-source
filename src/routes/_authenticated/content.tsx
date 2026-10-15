@@ -14,6 +14,8 @@ import { ContentBrain, type ContentBrainSection } from "@/components/content/Con
 import { ContentDiscover } from "@/components/content/ContentDiscover";
 import { ContentRoutines, type ContentRoutineView } from "@/components/content/ContentRoutines";
 import { MicroAppPanel } from "@/components/MicroAppPanel";
+import { createContentTabWebMcpTool } from "@/lib/content-webmcp";
+import { useWebMcpTools } from "@/lib/webmcp";
 import {
   confirmBrainItem,
   deleteBrainItem,
@@ -108,6 +110,9 @@ export const Route = createFileRoute("/_authenticated/content")({
 function ContentRoutePage() {
   const { tab = "discover", routines = false, section, item, platform } = Route.useSearch();
   const navigate = useNavigate();
+  useWebMcpTools([
+    createContentTabWebMcpTool((next) => navigate({ to: "/content", search: { tab: next } })),
+  ]);
   return (
     <ContentPage
       initialTab={tab}
