@@ -1,5 +1,11 @@
 # Verification status
 
+## October 15, 2026 Content WebMCP update
+
+This targeted update exposes the self-hosted Brain, Media, Routines, Agent, and Discover tools on `/content`, adds visible tab navigation, and bounds Content read results to omit private URLs and provider payloads. It does not change billing, migrations, provider credentials, or the self-hosted setup flow. Hosted subscription retention and founder billing metrics do not apply to this edition.
+
+Locally verified: open-source boundary and public-history checks, TypeScript, changed-file ESLint (zero errors), all 374 test files and 2,470 tests, the production build, and a Cloudflare Worker dry run. These checks establish source and packaging readiness; they do not verify a fresh self-hosted database, configured provider, or deployed operator instance. The upstream source snapshot below remains the earlier full-parity review; this is a scoped WebMCP port.
+
 ## October 4, 2026 local parity update
 
 The source snapshot in `upstream-source.json` includes reviewed working-tree changes. Content Agent, Brain, discovery, media indexing, custom routines and document editing; workspace ownership/isolation and signed workspace selection; Notion, Granola, GitHub, Slack and Telegram integrations; daily Social Insights refresh; Instagram Trial Reels; integration reconnect/storage fixes; and authenticated appearance changes are included.

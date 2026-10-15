@@ -165,6 +165,69 @@ function projectList(value: unknown, keys: readonly string[], limit = 50) {
   return Array.isArray(value) ? value.slice(0, limit).map((item) => project(item, keys)) : [];
 }
 
+function boundedTextList(value: unknown, limit = 10, maxLength = 300) {
+  return Array.isArray(value)
+    ? value
+        .filter((item): item is string => typeof item === "string")
+        .slice(0, limit)
+        .map((item) => item.slice(0, maxLength))
+    : [];
+}
+
+function projectAgentCard(value: unknown) {
+  const card = asRecord(value);
+  const shared = project(card, ["type", "cardId"]);
+  switch (card.type) {
+    case "source":
+      return { ...shared, ...project(card, ["title", "sourceName", "publishedAt", "summary"]) };
+    case "idea":
+      return {
+        ...shared,
+        ...project(card, ["title", "premise", "format", "takeaway"]),
+      };
+    case "draft":
+      return {
+        ...shared,
+        ...project(card, ["platform", "format", "title", "body", "visualBrief", "rationale"]),
+        mediaIds: boundedTextList(card.mediaIds, 10, 36),
+        slides: projectList(card.slides, ["heading", "body", "visualBrief", "mediaId"], 10),
+        editorial: project(card.editorial, ["angle", "whyNow", "validationState"]),
+      };
+    case "brain_proposal":
+      return { ...shared, ...project(card, ["kind", "title", "content"]) };
+    case "weekly_plan":
+      return { ...shared, days: projectList(card.days, ["date", "platform", "idea"], 21) };
+    case "schedule_proposal":
+      return { ...shared, ...project(card, ["draftCardId", "scheduledAt", "timezone"]) };
+    default:
+      return shared;
+  }
+}
+
+function projectRecommendation(value: unknown) {
+  const row = asRecord(value);
+  return {
+    ...project(row, [
+      "id",
+      "kind",
+      "title",
+      "summary",
+      "sourceName",
+      "sourcePublishedAt",
+      "reason",
+      "metricName",
+      "metricValue",
+      "outlierScore",
+      "feedback",
+      "saved",
+      "savedOnly",
+      "platform",
+      "author",
+    ]),
+    angles: boundedTextList(row.angles, 5),
+  };
+}
+
 const productFields = [
   "id",
   "slug",
@@ -719,6 +782,191 @@ export function sanitizeBentoWebMcpReadResult(
           "reach_cap",
         ]),
       };
+    case "get_content_brain":
+      return {
+        profile: project(data.profile, [
+          "goal",
+          "nicheKeywords",
+          "language",
+          "region",
+          "timezone",
+          "platformFrequencies",
+        ]),
+        items: projectList(
+          data.items,
+          [
+            "id",
+            "kind",
+            "title",
+            "content",
+            "provenance",
+            "status",
+            "locked",
+            "createdAt",
+            "updatedAt",
+          ],
+          50,
+        ),
+        sources: projectList(data.sources, ["id", "provider", "status"], 50),
+        indexing: project(data.indexing, ["status", "indexedAt", "sourceCount", "mediaCount"]),
+      };
+    case "get_content_media": {
+      const preview = asRecord(data.cleanupPreview);
+      if (data.cleanupPreview)
+        return {
+          cleanupPreview: {
+            ...project(preview, ["itemCount", "possibleBytes"]),
+            items: projectList(preview.items, ["id", "title", "provider", "byteSize"], 50),
+          },
+        };
+      return {
+        photos: Array.isArray(data.photos)
+          ? data.photos.slice(0, 54).map((photo) => ({
+              ...project(photo, [
+                "id",
+                "title",
+                "caption",
+                "provider",
+                "type",
+                "role",
+                "folderId",
+                "heroSlot",
+              ]),
+              tags: boundedTextList(asRecord(photo).tags, 8, 80),
+            }))
+          : [],
+        hasMore: data.hasMore === true,
+        folders: projectList(data.folders, ["id", "name"], 20),
+        ...project(data, ["mediaPending", "manualMediaCount", "mediaUsedBytes"]),
+        limits: project(data.limits, ["manualItems", "bytes", "folders", "heroImages"]),
+        importBudget: project(data.importBudget, [
+          "paused",
+          "daily_limit",
+          "monthly_limit",
+          "day_used",
+          "month_used",
+        ]),
+      };
+    }
+    case "get_content_routines":
+      return {
+        routines: Array.isArray(data.routines)
+          ? data.routines.slice(0, 50).map((routine) => ({
+              ...project(routine, [
+                "id",
+                "template",
+                "enabled",
+                "timezone",
+                "next_run_at",
+                "last_run_at",
+              ]),
+              platforms: boundedTextList(asRecord(routine).platforms, 10, 30),
+              schedule: project(asRecord(routine).schedule, [
+                "outputMode",
+                "intervalMinutes",
+                "time",
+                "name",
+                "instructions",
+                "catalogKey",
+              ]),
+            }))
+          : [],
+        activity: projectList(
+          data.activity,
+          ["id", "routine_id", "status", "result_count", "scheduled_for"],
+          30,
+        ),
+      };
+    case "get_content_agent":
+      if (data.threads)
+        return {
+          threads: projectList(data.threads, ["id", "title", "last_message_at", "created_at"], 50),
+        };
+      return {
+        thread: project(data.thread, ["id", "title", "last_message_at", "created_at"]),
+        messages: Array.isArray(data.messages)
+          ? data.messages
+              .filter((message) => ["user", "assistant"].includes(String(asRecord(message).role)))
+              .slice(-30)
+              .map((message) => {
+                const row = asRecord(message);
+                const payload = asRecord(row.payload);
+                return {
+                  ...project(row, ["id", "role", "content", "created_at"]),
+                  ...(row.role === "assistant"
+                    ? {
+                        result: {
+                          ...project(payload, ["action", "message"]),
+                          cards: Array.isArray(payload.cards)
+                            ? payload.cards.slice(0, 20).map(projectAgentCard)
+                            : [],
+                          mediaAssetCount: Array.isArray(payload.mediaAssets)
+                            ? Math.min(payload.mediaAssets.length, 20)
+                            : 0,
+                        },
+                      }
+                    : {}),
+                };
+              })
+          : [],
+      };
+    case "get_content_discover": {
+      if (data.recommendation) {
+        const recommendation = asRecord(data.recommendation);
+        return {
+          recommendation: projectRecommendation({
+            ...recommendation,
+            sourceName: recommendation.source_name,
+            sourcePublishedAt: recommendation.source_published_at,
+            metricName: recommendation.metric_name,
+            metricValue: recommendation.metric_value,
+            outlierScore: recommendation.outlier_score,
+          }),
+        };
+      }
+      const discover = asRecord(data.discover);
+      return {
+        discover: {
+          ...project(discover, ["status", "lastRefreshedAt"]),
+          winners: projectList(
+            discover.winners,
+            ["id", "provider", "contentType", "metric", "value", "outlierScore"],
+            20,
+          ),
+          patterns: projectList(
+            discover.patterns,
+            ["provider", "contentType", "metric", "posts", "averageValue"],
+            20,
+          ),
+          trends: Array.isArray(discover.trends)
+            ? discover.trends.slice(0, 30).map(projectRecommendation)
+            : [],
+          ideas: Array.isArray(discover.ideas)
+            ? discover.ideas.slice(0, 30).map(projectRecommendation)
+            : [],
+          warnings: boundedTextList(discover.warnings, 10, 300),
+          creators: projectList(
+            discover.creators,
+            ["id", "name", "platform", "topics", "postCount", "lastCheckedAt"],
+            25,
+          ),
+          suggestedCreators: projectList(
+            discover.suggestedCreators,
+            ["id", "name", "platform", "topics", "reason", "score"],
+            20,
+          ),
+        },
+        preferences: project(data.preferences, [
+          "goal",
+          "nicheKeywords",
+          "language",
+          "region",
+          "timezone",
+          "platformFrequencies",
+          "useBrainContext",
+        ]),
+      };
+    }
     default:
       return result;
   }

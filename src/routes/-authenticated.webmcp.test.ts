@@ -27,6 +27,7 @@ describe("authenticated WebMCP route coverage", () => {
         "bookings",
         "calendar",
         "community",
+        "content",
         "dashboard",
         "earn",
         "email-marketing",
@@ -59,6 +60,9 @@ describe("authenticated WebMCP route coverage", () => {
     expect(authenticatedWebMcpToolNames("/email-marketing")).toEqual(
       new Set(["get_bento_overview", "manage_audience"]),
     );
+    expect(authenticatedWebMcpToolNames("/content")).toEqual(
+      new Set(["get_bento_overview", ...WEBMCP_TOOLS_BY_ROUTE.content]),
+    );
     expect(authenticatedWebMcpToolNames("/admin")).toEqual(new Set(["get_bento_overview"]));
   });
 
@@ -84,5 +88,9 @@ describe("authenticated WebMCP route coverage", () => {
       tool.execute({ workspace: "store" }, { signal: new AbortController().signal }),
     ).resolves.toMatchObject({ structuredContent: { path: "/store" } });
     expect(openWorkspace).toHaveBeenCalledWith("/store");
+
+    await expect(
+      tool.execute({ workspace: "content" }, { signal: new AbortController().signal }),
+    ).resolves.toMatchObject({ structuredContent: { path: "/content" } });
   });
 });
