@@ -129,6 +129,7 @@ export type TwitterDmAutomation = {
   id: string;
   connectionId: string;
   connectionHandle: string;
+  sourcePostId?: string | null;
   connectionReady: boolean;
   connectionNeedsReconnect: boolean;
   connectionReadinessMessage: string | null;
@@ -192,6 +193,7 @@ export type TwitterWebhookEvent = {
   twitterUserId: string;
   eventType: TwitterEventType;
   sourceId: string;
+  replyToPostId?: string;
   senderId: string | null;
   senderUsername: string | null;
   text: string;
@@ -200,6 +202,7 @@ export type TwitterWebhookEvent = {
 
 export type MatchableTwitterAutomation = {
   id: string;
+  source_post_id?: string | null;
   trigger_type: TwitterDmTriggerType;
   keywords: string[];
   excluded_keywords: string[];
@@ -207,11 +210,25 @@ export type MatchableTwitterAutomation = {
 };
 
 export function matchTwitterAutomation<T extends MatchableTwitterAutomation>(
-  event: Pick<TwitterWebhookEvent, "eventType" | "text">,
+  event: Pick<TwitterWebhookEvent, "eventType" | "text"> &
+    Partial<Pick<TwitterWebhookEvent, "sourceId" | "replyToPostId">>,
   automations: T[],
 ) {
   const normalizedText = cleanKeyword(event.text);
-  for (const automation of automations) {
+  // A post-specific rule wins over an older account-wide rule for that post.
+  const ordered = [...automations].sort(
+    (a, b) => Number(Boolean(b.source_post_id)) - Number(Boolean(a.source_post_id)),
+  );
+  for (const automation of ordered) {
+    if (automation.source_post_id) {
+      const sourcePost =
+        event.eventType === "mention"
+          ? event.replyToPostId
+          : event.eventType === "like" || event.eventType === "retweet"
+            ? event.sourceId
+            : null;
+      if (sourcePost !== automation.source_post_id) continue;
+    }
     if (!triggerMatchesEvent(automation.trigger_type, event.eventType)) continue;
     if (
       (automation.excluded_keywords || []).some((keyword) =>
@@ -346,6 +363,19 @@ export function twitterEngagementEvent(input: {
     text: "",
     occurredAt: input.occurredAt || null,
   };
+}
+
+function twitterReplyToPostId(tweet: Record<string, unknown>) {
+  const references = Array.isArray(tweet.referenced_tweets) ? tweet.referenced_tweets : [];
+  const parent = references.map(record).find((ref) => ref?.type === "replied_to");
+  return (
+    firstId(tweet, [
+      "in_reply_to_status_id_str",
+      "in_reply_to_status_id",
+      "in_reply_to_tweet_id",
+      "reply_to_tweet_id",
+    ]) || stringValue(parent?.id, 255)
+  );
 }
 
 function parseActivityPayload(
@@ -529,6 +559,7 @@ export function parseTwitterWebhook(payload: unknown): TwitterWebhookEvent[] {
       continue;
     }
     events.push({
+      ...(twitterReplyToPostId(tweet) ? { replyToPostId: twitterReplyToPostId(tweet)! } : {}),
       externalEventId: `mention:${sourceId}`,
       twitterUserId: accountId,
       eventType: "mention",
@@ -600,6 +631,7 @@ export function twitterMentionEventFromApi(
   if (!sourceId) return null;
   if (senderId && senderId === accountId) return null;
   return {
+    ...(twitterReplyToPostId(tweet) ? { replyToPostId: twitterReplyToPostId(tweet)! } : {}),
     externalEventId: `mention:${sourceId}`,
     twitterUserId: accountId,
     eventType: "mention",

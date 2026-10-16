@@ -328,3 +328,70 @@ describe("X Auto-DM webhook parsing", () => {
     ]);
   });
 });
+
+it("matches scheduled X replies only to their parent post and prefers them over account-wide rules", () => {
+  const generic = {
+    id: "general",
+    trigger_type: "mention_keyword" as const,
+    keywords: ["link"],
+    excluded_keywords: [],
+    match_type: "contains" as const,
+  };
+  const scoped = { ...generic, id: "specific", source_post_id: "original-post" };
+  expect(
+    matchTwitterAutomation(
+      { eventType: "mention", text: "link", sourceId: "reply-id", replyToPostId: "original-post" },
+      [generic, scoped],
+    )?.automation.id,
+  ).toBe("specific");
+  expect(
+    matchTwitterAutomation({ eventType: "mention", text: "link", sourceId: "original-post" }, [
+      scoped,
+    ]),
+  ).toBeNull();
+  expect(
+    matchTwitterAutomation({ eventType: "mention", text: "link", replyToPostId: "other-post" }, [
+      scoped,
+    ]),
+  ).toBeNull();
+  expect(
+    matchTwitterAutomation({ eventType: "like", text: "", sourceId: "original-post" }, [
+      { ...scoped, trigger_type: "any_like" },
+    ])?.automation.id,
+  ).toBe("specific");
+  expect(
+    matchTwitterAutomation({ eventType: "retweet", text: "", sourceId: "other-post" }, [
+      { ...scoped, trigger_type: "any_retweet" },
+    ]),
+  ).toBeNull();
+});
+
+it("keeps reply parent IDs from official v1 and v2 webhook payloads without a lookup", () => {
+  const legacy = parseTwitterWebhook({
+    for_user_id: "owner",
+    tweet_create_events: [
+      {
+        id_str: "reply-id",
+        in_reply_to_status_id_str: "parent",
+        in_reply_to_user_id_str: "owner",
+        text: "link",
+        user: { id_str: "sender" },
+      },
+    ],
+  });
+  expect(legacy[0]).toMatchObject({ sourceId: "reply-id", replyToPostId: "parent" });
+  const modern = parseTwitterWebhook({
+    for_user_id: "owner",
+    event_type: "tweet.reply",
+    payload: {
+      id: "reply-id",
+      author_id: "sender",
+      text: "link",
+      referenced_tweets: [
+        { type: "quoted", id: "wrong" },
+        { type: "replied_to", id: "parent" },
+      ],
+    },
+  });
+  expect(modern[0]).toMatchObject({ sourceId: "reply-id", replyToPostId: "parent" });
+});

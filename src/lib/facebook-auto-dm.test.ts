@@ -208,6 +208,24 @@ describe("Facebook Auto-DM keyword matching", () => {
     },
   ];
 
+  it("prefers a matching post rule over account-wide rules without mutating their order", () => {
+    const global = { ...rules[0], id: "global", media_scope: "any" as const, media_ids: [] };
+    const ordered = [global, rules[0]];
+    expect(
+      matchFacebookAutomation(
+        { eventType: "comment", eventContext: "comment", text: "guide", mediaId: "page-1_post-1" },
+        ordered,
+      )?.automation.id,
+    ).toBe("one");
+    expect(
+      matchFacebookAutomation(
+        { eventType: "comment", eventContext: "comment", text: "guide", mediaId: "other-post" },
+        ordered,
+      )?.automation.id,
+    ).toBe("global");
+    expect(ordered[0].id).toBe("global");
+  });
+
   it("matches case-insensitively and respects media selection", () => {
     expect(
       matchFacebookAutomation(

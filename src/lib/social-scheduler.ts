@@ -1,3 +1,4 @@
+import { scheduledPostAutoDmSchemas } from "./scheduled-post-auto-dm";
 import { z } from "zod";
 import { socialMediaSizeError } from "./social-media-limits";
 import { SOCIAL_IMAGE_OPTIMIZATION_MAX_BYTES } from "./social-provider-media";
@@ -59,6 +60,7 @@ export type SchedulerConnection = {
   connectedAt: string;
   canPublish: boolean;
   publishBlockReason: string | null;
+  autoDmBlockReason?: string | null;
   xCapabilities?: XAccountCapabilities | null;
 };
 
@@ -1159,6 +1161,24 @@ export const socialPostInputSchema = z
         path: ["providerSettings", "instagram", "trialReel"],
       });
     }
+    if (!value.asDraft)
+      for (const provider of ["twitter", "facebook"] as const) {
+        const config = value.providerSettings[provider]?.scheduledAutoDm;
+        if (config == null) continue;
+        const automation = scheduledPostAutoDmSchemas[provider].safeParse(config);
+        if (!automation.success)
+          for (const issue of automation.error.issues)
+            context.addIssue({
+              ...issue,
+              path: ["providerSettings", provider, "scheduledAutoDm", ...issue.path],
+            });
+        if (provider === "twitter" && twitter.kind === "article")
+          context.addIssue({
+            code: "custom",
+            path: ["providerSettings", provider, "scheduledAutoDm"],
+            message: "X Auto DM requires a Post, not an Article.",
+          });
+      }
     if (!value.asDraft && instagram.scheduledAutoDm != null) {
       const automation = scheduledInstagramAutoDmSchema.safeParse(instagram.scheduledAutoDm);
       if (!automation.success) {

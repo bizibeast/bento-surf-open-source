@@ -87,6 +87,7 @@ const facebookAutoDmTabs = [
 
 type Draft = {
   id?: string;
+  scheduledPostId?: string | null;
   connectionId: string;
   name: string;
   triggerType: FacebookDmTriggerType;
@@ -338,6 +339,7 @@ function FacebookAutoDmPage() {
   function edit(automation: FacebookDmAutomation) {
     updateDraft({
       id: automation.id,
+      scheduledPostId: automation.scheduledPostId,
       connectionId: automation.connectionId,
       name: automation.name,
       triggerType: automation.triggerType,
@@ -1212,6 +1214,7 @@ function AutomationEditor({
         : canSave;
 
   function selectFamily(nextFamily: TriggerFamily) {
+    if (draft.scheduledPostId) return;
     const triggerType: FacebookDmTriggerType =
       nextFamily === "comment" ? "comment_keyword" : "dm_keyword";
     setDraft({
@@ -1273,9 +1276,13 @@ function AutomationEditor({
       <div className="p-4 sm:p-6">
         {step === 1 && (
           <div className="space-y-5">
-            <Field label="Facebook Page" hint="Switch any time">
+            <Field
+              label="Facebook Page"
+              hint={draft.scheduledPostId ? "Linked to this post" : "Switch any time"}
+            >
               <div className="relative">
                 <select
+                  disabled={Boolean(draft.scheduledPostId)}
                   value={draft.connectionId}
                   onChange={(event) =>
                     setDraft({ ...draft, connectionId: event.target.value, mediaIds: [] })
@@ -1297,7 +1304,9 @@ function AutomationEditor({
             <div>
               <p className={`mb-2 ${micro.eyebrowMuted}`}>Trigger Auto-DM when someone…</p>
               <div className="grid gap-2 sm:grid-cols-2">
-                {TRIGGER_FAMILIES.map((option) => (
+                {TRIGGER_FAMILIES.filter(
+                  (option) => !draft.scheduledPostId || option.id === "comment",
+                ).map((option) => (
                   <button
                     key={option.id}
                     type="button"
@@ -1315,7 +1324,12 @@ function AutomationEditor({
               </div>
             </div>
 
-            {supportsMedia && (
+            {draft.scheduledPostId && (
+              <p className="text-xs text-muted-foreground">
+                This automation applies only to its scheduled Facebook post.
+              </p>
+            )}
+            {supportsMedia && !draft.scheduledPostId && (
               <div className="space-y-3">
                 <div className={`${micro.soft} grid grid-cols-3 gap-2 rounded-2xl p-1`}>
                   {(["specific", "any", "future"] as const).map((mediaScope) => (
