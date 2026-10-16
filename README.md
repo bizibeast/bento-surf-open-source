@@ -8,6 +8,8 @@ The creator app includes Content Agent, Brain, discovery and routines; multiple 
 
 Install Bun and the Supabase CLI, then create a Supabase project you control.
 
+On a fresh local instance, open `/self-hosted-setup` to enter the required Supabase and instance keys before creator sign-up. The screen explains each setting and lets you add optional integration keys. It generates a configuration file locally in your browser; put that file at the repository root as `.env`. The app does not receive or store values typed on that screen. Restart the app after applying the file. On a hosted deployment, set the same variables in your host and rebuild so the `VITE_` public settings reach the browser. Keep the downloaded file private. You can revisit the screen later to prepare additional optional integrations, but it does not read your existing secrets back from the server.
+
 ```sh
 bun install
 cp .env.example .env
@@ -36,6 +38,8 @@ See [verification status](docs/verification.md) for the exact boundary between l
 ## Product coverage
 
 The public tree contains the complete self-hostable creator and customer product: Link, Store, Email Marketing, Priority DM, Calendar, Community, Post Scheduler, Social Insights, Auto-DMs, Earn, Settings, customer checkout/library flows, remote OAuth MCP, and page-scoped WebMCP. Provider-backed features remain disabled until the instance owner supplies their own credentials and approvals.
+
+On `/content`, WebMCP exposes the self-hosted Brain, Media, Routines, Agent, and Discover reads and actions with bounded responses that omit private media URLs and provider payloads. It also opens the visible Content tabs. Hosted subscription cancellation and founder retention metrics do not apply to a self-hosted instance. OAuth approval, credentials, and final payment-provider steps stay in the visible UI.
 
 The reviewed private-source snapshot is recorded in [`docs/upstream-source.json`](docs/upstream-source.json). Corporate marketing and Bento-only founder operations remain outside the public boundary.
 

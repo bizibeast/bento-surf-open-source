@@ -187,6 +187,12 @@ function LoginPage() {
           Create an account
         </Link>
       </p>
+      <p className="mt-3 text-center text-xs text-black/40">
+        Running your own instance?{" "}
+        <Link to="/self-hosted-setup" className="underline underline-offset-2 hover:text-black">
+          Set up your keys
+        </Link>
+      </p>
     </AuthShell>
   );
 }

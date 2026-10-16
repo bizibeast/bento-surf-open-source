@@ -338,4 +338,26 @@ describe("WebMCP read result projection", () => {
       /private\.example|owner@example|private-provider-error|webhookSecret|internalId|metadata/,
     );
   });
+
+  it("projects one self-hosted Discover recommendation without its source URL or metadata", () => {
+    const result = sanitizeBentoWebMcpReadResult("get_content_discover", {
+      recommendation: {
+        id: "recommendation-1",
+        kind: "trend",
+        title: "A useful trend",
+        source_name: "Public source",
+        source_published_at: "2026-10-15T00:00:00Z",
+        metric_name: "views",
+        metric_value: 100,
+        source_url: "https://private.example/source",
+        metadata: { providerToken: "secret" },
+      },
+    }) as { recommendation: Record<string, unknown> };
+    expect(result.recommendation).toMatchObject({
+      id: "recommendation-1",
+      sourceName: "Public source",
+      metricValue: 100,
+    });
+    expect(JSON.stringify(result)).not.toMatch(/private\.example|providerToken|metadata/);
+  });
 });

@@ -1,11 +1,11 @@
-export const SUPABASE_PROJECTS = {
-  staging: "pjraekywkqilhaqrxzpe",
-  production: "qefsatsrhpmgoahutkqu",
-} as const;
-
-export type SupabaseTarget = keyof typeof SUPABASE_PROJECTS;
-
-export function verifySupabaseDatabaseUrl(target: SupabaseTarget, rawUrl: string) {
+export function verifySupabaseDatabaseUrl(
+  projectId: string,
+  rawUrl: string,
+  confirmation: string | undefined,
+) {
+  if (!/^[a-z0-9-]+$/.test(projectId)) {
+    throw new Error("SUPABASE_PROJECT_ID must be a valid Supabase project reference.");
+  }
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
@@ -17,24 +17,23 @@ export function verifySupabaseDatabaseUrl(target: SupabaseTarget, rawUrl: string
     throw new Error("SUPABASE_DB_URL must use the postgres or postgresql protocol.");
   }
 
-  const expectedProject = SUPABASE_PROJECTS[target];
   const hostname = parsed.hostname.toLowerCase();
   const username = decodeURIComponent(parsed.username).toLowerCase();
-  const directHostMatches = hostname === `db.${expectedProject}.supabase.co`;
-  const poolerUserMatches = username === `postgres.${expectedProject}`;
+  const directHostMatches = hostname === `db.${projectId}.supabase.co`;
+  const poolerMatches =
+    /^[a-z0-9-]+\.pooler\.supabase\.com$/.test(hostname) && username === `postgres.${projectId}`;
 
-  if (!directHostMatches && !poolerUserMatches) {
+  if (!directHostMatches && !poolerMatches) {
     throw new Error(
-      `Database target mismatch: expected the ${target} Supabase project ${expectedProject}, but the URL identifies a different project.`,
+      "Database target mismatch: SUPABASE_DB_URL does not identify SUPABASE_PROJECT_ID.",
     );
   }
 
-  const expectedConfirmation = `${target.toUpperCase()}:${expectedProject}`;
-  if (process.env.MIGRATION_CONFIRMATION !== expectedConfirmation) {
+  if (confirmation !== `MIGRATE:${projectId}`) {
     throw new Error(
-      `Set MIGRATION_CONFIRMATION=${expectedConfirmation} to authorize this migration.`,
+      "Set MIGRATION_CONFIRMATION=MIGRATE:<SUPABASE_PROJECT_ID> to authorize this migration.",
     );
   }
 
-  return { expectedProject, hostname };
+  return { expectedProject: projectId, hostname };
 }

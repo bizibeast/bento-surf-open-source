@@ -18,7 +18,6 @@ import {
   handleInstagramDataRequest,
 } from "./integrations/meta/data-requests.server";
 import { handleR2StorageRequest } from "./lib/r2-storage.server";
-import { handleBentoMcpRequest } from "./lib/mcp.server";
 import { OPEN_GRAPH_IMAGE_PATH, handleOpenGraphImageRequest } from "./lib/open-graph-image.server";
 import { GOOGLE_MAP_EMBED_PATH, handleGoogleMapEmbedRequest } from "./lib/google-map.server";
 import {
@@ -925,8 +924,17 @@ export default {
       );
     }
 
-    const mcpResponse = await handleBentoMcpRequest(request, env?.VITE_APP_URL);
-    if (mcpResponse) return withDeploymentHeaders(mcpResponse, env, request);
+    if (
+      [
+        "/mcp",
+        "/.well-known/oauth-protected-resource",
+        "/.well-known/oauth-protected-resource/mcp",
+      ].includes(path)
+    ) {
+      const { handleBentoMcpRequest } = await import("./lib/mcp.server");
+      const mcpResponse = await handleBentoMcpRequest(request, env?.VITE_APP_URL);
+      if (mcpResponse) return withDeploymentHeaders(mcpResponse, env, request);
+    }
 
     const creatorRedirect = await guardCreatorDocument(request);
     if (creatorRedirect) return withDeploymentHeaders(creatorRedirect, env, request);

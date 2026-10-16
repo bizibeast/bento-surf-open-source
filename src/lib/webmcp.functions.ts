@@ -916,6 +916,19 @@ export function sanitizeBentoWebMcpReadResult(
       };
     case "get_content_discover": {
       if (data.creator) return { creator: projectRecommendation(data.creator) };
+      if (data.recommendation) {
+        const recommendation = asRecord(data.recommendation);
+        return {
+          recommendation: projectRecommendation({
+            ...recommendation,
+            sourceName: recommendation.source_name,
+            sourcePublishedAt: recommendation.source_published_at,
+            metricName: recommendation.metric_name,
+            metricValue: recommendation.metric_value,
+            outlierScore: recommendation.outlier_score,
+          }),
+        };
+      }
       const discover = asRecord(data.discover);
       return {
         discover: {

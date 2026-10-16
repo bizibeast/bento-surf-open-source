@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TermsRouteImport } from './routes/terms'
 import { Route as SignupRouteImport } from './routes/signup'
+import { Route as SelfHostedSetupRouteImport } from './routes/self-hosted-setup'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as LoginRouteImport } from './routes/login'
@@ -90,6 +91,11 @@ const TermsRoute = TermsRouteImport.update({
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
   path: '/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SelfHostedSetupRoute = SelfHostedSetupRouteImport.update({
+  id: '/self-hosted-setup',
+  path: '/self-hosted-setup',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ResetPasswordRoute = ResetPasswordRouteImport.update({
@@ -481,6 +487,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/privacy': typeof PrivacyRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/self-hosted-setup': typeof SelfHostedSetupRoute
   '/signup': typeof SignupRoute
   '/terms': typeof TermsRoute
   '/$username/$pageSlug': typeof UsernamePageSlugRoute
@@ -554,6 +561,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/privacy': typeof PrivacyRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/self-hosted-setup': typeof SelfHostedSetupRoute
   '/signup': typeof SignupRoute
   '/terms': typeof TermsRoute
   '/$username/$pageSlug': typeof UsernamePageSlugRoute
@@ -629,6 +637,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/privacy': typeof PrivacyRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/self-hosted-setup': typeof SelfHostedSetupRoute
   '/signup': typeof SignupRoute
   '/terms': typeof TermsRoute
   '/$username_/$pageSlug': typeof UsernamePageSlugRoute
@@ -704,6 +713,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/privacy'
     | '/reset-password'
+    | '/self-hosted-setup'
     | '/signup'
     | '/terms'
     | '/$username/$pageSlug'
@@ -777,6 +787,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/privacy'
     | '/reset-password'
+    | '/self-hosted-setup'
     | '/signup'
     | '/terms'
     | '/$username/$pageSlug'
@@ -851,6 +862,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/privacy'
     | '/reset-password'
+    | '/self-hosted-setup'
     | '/signup'
     | '/terms'
     | '/$username_/$pageSlug'
@@ -926,6 +938,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   PrivacyRoute: typeof PrivacyRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
+  SelfHostedSetupRoute: typeof SelfHostedSetupRoute
   SignupRoute: typeof SignupRoute
   TermsRoute: typeof TermsRoute
   UsernamePageSlugRoute: typeof UsernamePageSlugRoute
@@ -977,6 +990,13 @@ declare module '@tanstack/react-router' {
       path: '/signup'
       fullPath: '/signup'
       preLoaderRoute: typeof SignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/self-hosted-setup': {
+      id: '/self-hosted-setup'
+      path: '/self-hosted-setup'
+      fullPath: '/self-hosted-setup'
+      preLoaderRoute: typeof SelfHostedSetupRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/reset-password': {
@@ -1559,6 +1579,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   PrivacyRoute: PrivacyRoute,
   ResetPasswordRoute: ResetPasswordRoute,
+  SelfHostedSetupRoute: SelfHostedSetupRoute,
   SignupRoute: SignupRoute,
   TermsRoute: TermsRoute,
   UsernamePageSlugRoute: UsernamePageSlugRoute,

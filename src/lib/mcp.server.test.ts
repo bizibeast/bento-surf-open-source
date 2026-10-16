@@ -244,6 +244,16 @@ describe("Bento MCP tools", () => {
         "set_priority_dm_closed",
         "get_scheduler_workspace",
         "manage_scheduler",
+        "get_content_brain",
+        "manage_content_brain",
+        "get_content_media",
+        "manage_content_media",
+        "get_content_routines",
+        "manage_content_routine",
+        "get_content_agent",
+        "manage_content_agent",
+        "get_content_discover",
+        "manage_content_discover",
       ]),
     );
     const storeTool = toolsPayload.result.tools.find(
@@ -274,6 +284,84 @@ describe("Bento MCP tools", () => {
       frontmatter: { name: "bento" },
     });
     expect(skillsPayload.result.skills[0].resources[0].digest).toMatch(/^sha256:[a-f0-9]{64}$/);
+  });
+
+  it("routes Content reads and edits through the authorized creator ID", async () => {
+    const getMcpContentBrain = vi.fn(async () => ({
+      profile: {
+        goal: "consistent_publishing" as const,
+        nicheKeywords: [],
+        language: "en",
+        region: "global",
+        timezone: "UTC",
+        platformFrequencies: {},
+      },
+      items: [],
+      sources: [],
+      indexing: null,
+      humanSummary: "",
+    }));
+    const getMcpContentRoutines = vi.fn(async () => ({ routines: [], activity: [] }));
+    const manageMcpContentBrain = vi.fn(async () => ({ id: "brain-1" }));
+    const manageMcpContentMedia = vi.fn(async () => ({ id: "media-1" }));
+    const manageMcpContentRoutine = vi.fn(async () => ({ id: "routine-1", nextRunAt: null }));
+    const manageMcpContentDiscover = vi.fn(async () => ({ id: "recommendation-1", saved: true }));
+    const operations = {
+      ...defaultBentoMcpOperations,
+      getMcpContentBrain,
+      getMcpContentRoutines,
+      manageMcpContentBrain,
+      manageMcpContentMedia,
+      manageMcpContentRoutine,
+      manageMcpContentDiscover,
+    };
+    const handler = createMcpHandler(() =>
+      createBentoMcpServer(authInfo, "https://app.example.com", operations),
+    );
+    const calls = [
+      { name: "get_content_brain", arguments: {} },
+      { name: "get_content_routines", arguments: {} },
+      {
+        name: "manage_content_brain",
+        arguments: {
+          action: "lock_item",
+          id: "00000000-0000-4000-8000-000000000010",
+          locked: true,
+        },
+      },
+      { name: "manage_content_media", arguments: { action: "set_hero", id: null, slot: 1 } },
+      {
+        name: "manage_content_routine",
+        arguments: { action: "pause", id: "00000000-0000-4000-8000-000000000011", paused: true },
+      },
+      {
+        name: "manage_content_discover",
+        arguments: { action: "save_item", id: "00000000-0000-4000-8000-000000000012" },
+      },
+    ];
+    for (const [index, call] of calls.entries()) {
+      const response = await handler.fetch(
+        request({ jsonrpc: "2.0", id: index + 1, method: "tools/call", params: call }),
+        { authInfo },
+      );
+      expect(response.status).toBe(200);
+      expect((await payload(response)).result.isError).not.toBe(true);
+    }
+    for (const operation of [
+      getMcpContentBrain,
+      getMcpContentRoutines,
+      manageMcpContentBrain,
+      manageMcpContentMedia,
+      manageMcpContentRoutine,
+      manageMcpContentDiscover,
+    ]) {
+      expect(operation).toHaveBeenCalledWith(
+        authInfo.extra?.userId,
+        ...(operation === getMcpContentBrain || operation === getMcpContentRoutines
+          ? []
+          : [expect.any(Object)]),
+      );
+    }
   });
 
   it("maps publish-now and Auto-DM tool calls to the Bento operations", async () => {

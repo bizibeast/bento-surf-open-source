@@ -8,6 +8,7 @@ import {
   Asset,
   useTags,
   Scripts,
+  redirect,
 } from "@tanstack/react-router";
 import { useEffect, useMemo } from "react";
 import { ThemeProvider } from "next-themes";
@@ -135,6 +136,16 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
 }
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
+  beforeLoad: ({ location }) => {
+    // The browser cannot start sign-in or creator onboarding until these
+    // build-time public values exist. Keep setup available without Supabase.
+    if (
+      location.pathname !== "/self-hosted-setup" &&
+      (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY)
+    ) {
+      throw redirect({ to: "/self-hosted-setup" });
+    }
+  },
   head: ({ matches }) => {
     const publicOrigin = (import.meta.env.VITE_PUBLIC_URL || "http://localhost:8080").replace(
       /\/$/,
