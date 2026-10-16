@@ -40,6 +40,8 @@ export async function reserveImageGeneration(input: {
   requestKey: string;
   count: number;
   draftRef?: ImageDraftRef;
+  source?: "scheduler";
+  referencesConfirmed?: boolean;
   slideIndex?: number;
   prompt?: string;
   referenceIds?: string[];
@@ -48,7 +50,14 @@ export async function reserveImageGeneration(input: {
     p_user_id: input.userId,
     p_request_key: input.requestKey,
     p_count: input.count,
-    p_draft: input.draftRef ? { ...input.draftRef, slideIndex: input.slideIndex || 0 } : {},
+    p_draft: input.draftRef
+      ? { ...input.draftRef, slideIndex: input.slideIndex || 0 }
+      : {
+          source: input.source || "agent",
+          referencesConfirmed: input.referencesConfirmed === true,
+          cardId: "scheduler",
+          revision: 0,
+        },
     p_prompt: input.prompt || null,
     p_references: input.referenceIds || [],
   });
@@ -244,7 +253,7 @@ export async function submitApiMartImage(
   // Transport/unrecognized response failures are ambiguous; only documented rejections release. Never automatically POST again.
   const response = await fetcher("https://api.apimart.ai/v1/images/generations", {
     method: "POST",
-    redirect: "error",
+    redirect: "manual",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: APIMART_IMAGE_MODEL,
@@ -424,11 +433,12 @@ async function processImageJobScoped(userId: string, id: string) {
       if (!imageProviderAvailable(userId))
         throw new Error("Generation unavailable; enable again after service recovery.");
       await requireContentWorkspace(userId);
-      await currentDraft(userId, {
-        messageId: job.message_id,
-        cardId: job.card_id,
-        revision: job.draft_revision,
-      });
+      if (job.request_source !== "scheduler")
+        await currentDraft(userId, {
+          messageId: job.message_id,
+          cardId: job.card_id,
+          revision: job.draft_revision,
+        });
       const moderation = await runAiJson(
         {
           system:
@@ -443,7 +453,10 @@ async function processImageJobScoped(userId: string, id: string) {
       );
       if (!moderation.value.allowed)
         throw new Error("This visual brief is not allowed. Choose a different visual.");
-      await validateReferenceSelection(userId, job.reference_ids || [], true);
+      if (job.request_source !== "scheduler")
+        await validateReferenceSelection(userId, job.reference_ids || [], true);
+      else if (job.reference_ids?.length && !job.references_confirmed)
+        throw new Error("Reference permission is required.");
       const references = await Promise.all(
         (job.reference_ids || []).map((id: string) => ownedPhotoData(userId, id)),
       );
@@ -451,7 +464,8 @@ async function processImageJobScoped(userId: string, id: string) {
       const prefs = await getContentAgentPreferencesForWorkspace(userId);
       if (
         !prefs.generate_images ||
-        (references.length &&
+        (job.request_source !== "scheduler" &&
+          references.length &&
           (!prefs.use_face_references ||
             job.reference_ids.some((id: string) => !prefs.reference_photo_ids?.includes(id))))
       )
@@ -485,7 +499,7 @@ async function processImageJobScoped(userId: string, id: string) {
       `https://api.apimart.ai/v1/tasks/${encodeURIComponent(job.task_id)}?language=en`,
       {
         headers: { Authorization: `Bearer ${process.env.APIMART_API_KEY}` },
-        redirect: "error",
+        redirect: "manual",
         signal: AbortSignal.timeout(15000),
       },
     );

@@ -29,7 +29,14 @@ import {
 } from "@/lib/cancellation.functions";
 
 type Step = "reason" | "offer" | "loss" | "confirm" | "complete";
-type Outcome = "cancelled" | "paused" | "trial_extended" | "downgraded" | "discounted" | "resumed";
+type Outcome =
+  | "cancelled"
+  | "trial_cancelled"
+  | "paused"
+  | "trial_extended"
+  | "downgraded"
+  | "discounted"
+  | "resumed";
 type Intent = Awaited<ReturnType<typeof startMyCancellation>>;
 type Impact = Awaited<ReturnType<typeof getMyCancellationImpact>>;
 
@@ -207,11 +214,16 @@ export function RetentionCancellationDialog({
           intentId: intent?.intentId,
         },
       });
-      await queryClient.invalidateQueries({ queryKey: ["my-billing"] });
-      setOutcome("cancelled");
+      await queryClient.invalidateQueries();
+      const trialEnded = next.status === "canceled";
+      setOutcome(trialEnded ? "trial_cancelled" : "cancelled");
       setResultDate(next.currentPeriodEnd);
       setStep("complete");
-      toast.success("Renewal cancelled. Your paid access continues until the date shown.");
+      toast.success(
+        trialEnded
+          ? "Trial cancelled. Your trial access has ended and no renewal is scheduled."
+          : "Renewal cancelled. Your paid access continues until the date shown.",
+      );
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Renewal could not be cancelled.";
       setError(message);
@@ -265,17 +277,21 @@ export function RetentionCancellationDialog({
           <>
             <DialogHeader>
               <DialogTitle className="font-ui-display text-2xl">
-                Cancel {planLabel} renewal
+                {billing.status === "trialing"
+                  ? "Cancel your trial"
+                  : `Cancel ${planLabel} renewal`}
               </DialogTitle>
               <DialogDescription className="leading-6">
-                What is the main reason? Choose one, or skip this question. Your current access
-                continues until {date(billing.currentPeriodEnd)}.
+                What is the main reason? Choose one, or skip this question.{" "}
+                {billing.status === "trialing"
+                  ? "Confirming cancellation ends your trial access immediately."
+                  : `Your current access continues until ${date(billing.currentPeriodEnd)}.`}
               </DialogDescription>
             </DialogHeader>
             {billing.status === "trialing" && (
               <div className="rounded-2xl bg-[#dfeaff] p-4 text-sm leading-6">
-                You can use the rest of your trial before deciding. We will remind you before the
-                first charge, and you can cancel now without a charge.
+                Cancel before your first charge to avoid renewal. Your trial ends as soon as you
+                confirm cancellation. Your saved work remains available for export.
               </div>
             )}
             <div role="radiogroup" aria-label="Main cancellation reason" className="grid gap-2">
@@ -520,9 +536,10 @@ export function RetentionCancellationDialog({
                 Review your cancellation
               </DialogTitle>
               <DialogDescription className="leading-6">
-                Your plan will not renew. You keep {planLabel} until{" "}
-                {date(billing.currentPeriodEnd)}. After that, this workspace’s hosted page, store,
-                and creator tools pause. You can renew or export during the 90-day retention window.
+                {billing.status === "trialing"
+                  ? "Your trial ends immediately when you confirm. This workspace’s hosted page, store, and creator tools pause now, and no renewal is scheduled."
+                  : `Your plan will not renew. You keep ${planLabel} until ${date(billing.currentPeriodEnd)}. After that, this workspace’s hosted page, store, and creator tools pause.`}{" "}
+                You can renew or export during the 90-day retention window.
               </DialogDescription>
             </DialogHeader>
             <div className="rounded-2xl bg-[#f2f5fb] p-4 text-sm">
@@ -558,39 +575,43 @@ export function RetentionCancellationDialog({
               <div className={`${micro.iconWell} mb-2 size-12`}>
                 {outcome === "paused" ? (
                   <Pause className="size-6" />
-                ) : outcome === "cancelled" ? (
+                ) : outcome === "cancelled" || outcome === "trial_cancelled" ? (
                   <Heart className="size-6" />
                 ) : (
                   <Sparkles className="size-6" />
                 )}
               </div>
               <DialogTitle className="font-ui-display text-2xl">
-                {outcome === "cancelled"
-                  ? intent?.displayName
-                    ? `Thank you, ${intent.displayName}, for building with Bento`
-                    : "Thank you for building with Bento"
-                  : outcome === "paused"
-                    ? "Your Bento is paused"
-                    : outcome === "trial_extended"
-                      ? "You have more time"
-                      : outcome === "downgraded"
-                        ? "Your plan change is scheduled"
-                        : outcome === "resumed"
-                          ? "Welcome back"
-                          : "Your offer is active"}
+                {outcome === "trial_cancelled"
+                  ? "Your trial has ended"
+                  : outcome === "cancelled"
+                    ? intent?.displayName
+                      ? `Thank you, ${intent.displayName}, for building with Bento`
+                      : "Thank you for building with Bento"
+                    : outcome === "paused"
+                      ? "Your Bento is paused"
+                      : outcome === "trial_extended"
+                        ? "You have more time"
+                        : outcome === "downgraded"
+                          ? "Your plan change is scheduled"
+                          : outcome === "resumed"
+                            ? "Welcome back"
+                            : "Your offer is active"}
               </DialogTitle>
               <DialogDescription className="leading-6">
-                {outcome === "cancelled"
-                  ? `Renewal is cancelled. Your ${planLabel} access continues until ${date(resultDate)}. You can change your mind before then.`
-                  : outcome === "paused"
-                    ? `Billing is frozen and hosted access is offline now. Your pause is scheduled to end ${date(resultDate)}. Your work is saved.`
-                    : outcome === "trial_extended"
-                      ? `Your trial now ends ${date(resultDate)}. We will remind you before the first charge.`
-                      : outcome === "downgraded"
-                        ? `You keep ${planLabel} until ${date(resultDate)}, then your lower plan takes effect.`
-                        : outcome === "resumed"
-                          ? `Your plan will renew at ${date(resultDate)}.`
-                          : `Your next billing date is ${date(resultDate)}.`}
+                {outcome === "trial_cancelled"
+                  ? "Your trial is cancelled and access has ended. No renewal is scheduled. Your work is saved for 90 days; you can export it or choose a paid plan in Billing."
+                  : outcome === "cancelled"
+                    ? `Renewal is cancelled. Your ${planLabel} access continues until ${date(resultDate)}. You can change your mind before then.`
+                    : outcome === "paused"
+                      ? `Billing is frozen and hosted access is offline now. Your pause is scheduled to end ${date(resultDate)}. Your work is saved.`
+                      : outcome === "trial_extended"
+                        ? `Your trial now ends ${date(resultDate)}. We will remind you before the first charge.`
+                        : outcome === "downgraded"
+                          ? `You keep ${planLabel} until ${date(resultDate)}, then your lower plan takes effect.`
+                          : outcome === "resumed"
+                            ? `Your plan will renew at ${date(resultDate)}.`
+                            : `Your next billing date is ${date(resultDate)}.`}
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-2">

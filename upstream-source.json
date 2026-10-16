@@ -8,7 +8,12 @@
     "provider spending caps",
     "Telegram entities",
     "profile mention discovery",
-    "commerce access checks"
+    "commerce access checks",
+    "account-specific composer editing and previews",
+    "free stock photos and shared-quota AI image references",
+    "reviewed network-specific rewrites",
+    "browser session recovery",
+    "immediate trial cancellation where subscriptions are enabled"
   ],
   "editionDifferences": [
     "Configurable instance URLs and self-hosted setup",
@@ -16,5 +21,5 @@
     "No hosted credentials or customer data",
     "AGPL license and public release tooling retained"
   ],
-  "sharedSourceCommit": "44e5c81105853e03d9c2f8d798560e9252c6ddce"
+  "sharedSourceCommit": "29a771e15b7b0e572f9141deee19feefa3a2752a"
 }

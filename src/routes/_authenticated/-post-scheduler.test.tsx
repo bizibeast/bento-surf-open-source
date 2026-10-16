@@ -64,6 +64,20 @@ vi.mock("@/lib/social-scheduler.functions", () => ({
 }));
 
 vi.mock("@/lib/social-mentions.functions", () => ({ searchSocialMentions: vi.fn() }));
+vi.mock("@/lib/scheduler-assist.functions", () => ({
+  getSchedulerPhotoLibrary: vi.fn(async () => ({
+    photos: [],
+    cursor: null,
+    stockAvailable: true,
+    stockProvider: "commons",
+  })),
+  findSchedulerStockPhotos: vi.fn(),
+  addSchedulerStockPhoto: vi.fn(),
+  getSchedulerImageSettings: vi.fn(),
+  generateSchedulerImage: vi.fn(),
+  getSchedulerImageJob: vi.fn(),
+  rewriteSchedulerText: vi.fn(),
+}));
 
 vi.mock("@/lib/upload", () => ({ uploadFileResult: vi.fn() }));
 vi.mock("@/lib/video-upload", async (importOriginal) => ({
@@ -751,7 +765,7 @@ describe("scheduler compose close protection", () => {
     const previewScroll = within(compose).getByTestId("scheduler-preview-scroll");
     for (const [provider, label] of networks) {
       fireEvent.click(
-        within(compose).getByRole("button", { name: `Edit ${label}: ${provider} account` }),
+        within(compose).getByRole("button", { name: `Preview ${label}: ${provider} account` }),
       );
       expect(previewScroll).toHaveClass("overflow-y-auto");
       if (provider === "reddit") expect(previewScroll).toHaveTextContent("Paragraph 30");
@@ -869,12 +883,15 @@ describe("scheduler compose close protection", () => {
     expect(within(compose).getByRole("textbox")).toHaveValue("Working with @Acm");
     await waitFor(() => expect(saveSocialPost).toHaveBeenCalled(), { timeout: 4_000 });
     const saved = vi.mocked(saveSocialPost).mock.calls.at(-1)?.[0] as {
-      data: { providerSettings: Record<string, Record<string, unknown>> };
+      data: {
+        providerSettings: Record<string, Record<string, unknown>>;
+        connectionOverrides: Record<string, Record<string, unknown>>;
+      };
     };
-    expect(saved.data.providerSettings.facebook.mentions).toMatchObject([
+    expect(saved.data.connectionOverrides.facebook.mentions).toMatchObject([
       { id: "12345", name: "Acme Studio", text: "@Acme Studio", provider: "facebook" },
     ]);
-    expect(saved.data.providerSettings.twitter.bodyOverride).toBe("Working with @Acm");
+    expect(saved.data.connectionOverrides.twitter.bodyOverride).toBe("Working with @Acm");
   });
 
   it("shows X account suggestions after three letters, including when the platform is selected later", async () => {
@@ -1845,4 +1862,66 @@ it("opens the exact Agent handoff draft outside the first scheduler page without
   } finally {
     deepLink.postId = undefined;
   }
+});
+
+it("keeps two LinkedIn accounts' text separate while preview selection leaves the editor alone", async () => {
+  vi.mocked(saveSocialPost).mockClear();
+  const connections = ["personal", "company"].map((name) => ({
+    ...missingAvatar,
+    avatarUrl: "https://bento.surf/avatar.png",
+    id: name,
+    provider: "linkedin" as const,
+    displayName: name,
+    handle: name,
+  }));
+  renderScheduler({ ...schedulerData, connections });
+  const create = await screen.findByRole("button", { name: "Create new post" });
+  await waitFor(() => expect(create).toBeEnabled());
+  fireEvent.click(create);
+  const compose = await screen.findByRole("dialog", { name: "Create a post" });
+  for (const name of ["personal", "company"])
+    fireEvent.click(within(compose).getByRole("button", { name: `LinkedIn: ${name}` }));
+  fireEvent.change(within(compose).getByRole("textbox", { name: /Post text/ }), {
+    target: { value: "The shared starting text." },
+  });
+  fireEvent.click(within(compose).getByRole("switch", { name: "Sync" }));
+  fireEvent.change(within(compose).getByRole("textbox", { name: /Post text/ }), {
+    target: { value: "The company announcement." },
+  });
+  fireEvent.click(within(compose).getByRole("button", { name: "Edit LinkedIn: personal" }));
+  fireEvent.change(within(compose).getByRole("textbox", { name: /Post text/ }), {
+    target: { value: "My personal lesson." },
+  });
+  fireEvent.click(within(compose).getByRole("button", { name: "Preview LinkedIn: company" }));
+  expect(within(compose).getByRole("textbox", { name: /Post text/ })).toHaveValue(
+    "My personal lesson.",
+  );
+  expect(within(compose).getByTestId("scheduler-preview-pane")).toHaveTextContent(
+    "The company announcement.",
+  );
+  await waitFor(
+    () =>
+      expect(saveSocialPost).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          connectionOverrides: {
+            personal: { bodyOverride: "My personal lesson.", mentions: [] },
+            company: { bodyOverride: "The company announcement.", mentions: [] },
+          },
+        }),
+      }),
+    { timeout: 4000 },
+  );
+});
+
+it("opens media sources from Add media before opening a device upload", async () => {
+  renderScheduler();
+  const create = await screen.findByRole("button", { name: "Create new post" });
+  await waitFor(() => expect(create).toBeEnabled());
+  fireEvent.click(create);
+  const composer = await screen.findByRole("dialog", { name: "Create a post" });
+  fireEvent.click(within(composer).getByRole("button", { name: "Instagram: Bizibeast" }));
+  fireEvent.click(within(composer).getByRole("button", { name: "Add media" }));
+  const picker = await screen.findByRole("dialog", { name: "Pictures for your post" });
+  expect(within(picker).getByRole("button", { name: /Stock photos/ })).toBeVisible();
+  expect(within(picker).getByRole("button", { name: /Generate with AI/ })).toBeVisible();
 });

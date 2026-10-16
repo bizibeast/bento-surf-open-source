@@ -582,21 +582,32 @@ export async function saveSocialPostForUser(
       }
     }
   }
-  const xConnection = checkedConnections.find(
-    (connection: any) => connection.provider === "twitter",
-  );
-  const providerErrors = validatePostForProviders(
-    data.body,
-    data.media as SchedulerMedia[],
-    providers,
-    data.title,
-    data.providerSettings,
-    xCapabilitiesFromMetadata(xConnection?.metadata),
-    tiktokDirectPostAudited(),
-  );
-  if (!data.asDraft && Object.keys(providerErrors).length)
-    throw new Error(Object.values(providerErrors)[0]);
-
+  const settingsForConnection = (connection: { id: string; provider: SocialProvider }) => ({
+    ...data.providerSettings[connection.provider],
+    ...data.connectionOverrides?.[connection.id],
+  });
+  for (const connection of checkedConnections) {
+    const settings = {
+      ...data.providerSettings,
+      [connection.provider]: settingsForConnection(connection),
+    };
+    // Validate mention offsets and provider limits against each account's actual
+    // text, including two destinations on the same network.
+    socialPostInputSchema.parse({
+      ...data,
+      providerSettings: settings,
+    });
+    const errors = validatePostForProviders(
+      data.body,
+      data.media,
+      [connection.provider],
+      data.title,
+      settings,
+      xCapabilitiesFromMetadata(connection.metadata),
+      tiktokDirectPostAudited(),
+    );
+    if (!data.asDraft && Object.keys(errors).length) throw new Error(Object.values(errors)[0]);
+  }
   const redditSettings = data.providerSettings.reddit || {};
   const redditConnections = checkedConnections.filter(
     (connection: any) => connection.provider === "reddit",
@@ -643,7 +654,7 @@ export async function saveSocialPostForUser(
       p_targets: checkedConnections.map((connection: any) => ({
         connectionId: connection.id,
         provider: connection.provider,
-        providerSettings: data.providerSettings[connection.provider] || {},
+        providerSettings: settingsForConnection(connection),
       })),
       p_as_draft: Boolean(data.asDraft),
     },

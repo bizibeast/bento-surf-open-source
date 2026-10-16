@@ -10,6 +10,10 @@ import { redirectAuthenticatedVisitor } from "@/lib/auth-entry";
 import { handleWebMcpFormSubmit } from "@/lib/webmcp";
 
 export const Route = createFileRoute("/login")({
+  // Session refresh depends on browser storage. SSR cannot decide whether a
+  // returning visitor is signed out merely because the access cookie expired.
+  ssr: false,
+  pendingMs: 0,
   validateSearch: (s) => ({ redirect: sanitizeLocalRedirect(s.redirect) }),
   beforeLoad: async ({ search }) => {
     await redirectAuthenticatedVisitor(search.redirect);

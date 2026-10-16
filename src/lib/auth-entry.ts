@@ -38,6 +38,9 @@ export function readOnboardedCache(userId: string): boolean | null {
 async function readAuthenticatedUserId() {
   const { data, error } = await supabase.auth.getClaims();
   const userId = data?.claims?.sub;
+  // An offline browser or an auth outage must not look like a logout. The SDK
+  // retains refresh tokens for retryable errors and removes revoked sessions.
+  if (error && !isMissingSession(error)) throw error;
   if (error || typeof userId !== "string") {
     clearOnboardedCache();
     return null;
@@ -45,10 +48,21 @@ async function readAuthenticatedUserId() {
   return userId;
 }
 
+function isMissingSession(error: { name?: string; code?: string }) {
+  return (
+    error.name === "AuthSessionMissingError" ||
+    [
+      "session_not_found",
+      "session_expired",
+      "refresh_token_not_found",
+      "refresh_token_already_used",
+    ].includes(error.code ?? "")
+  );
+}
+
 function isInvalidSessionError(error: { code?: string; message?: string }) {
   return (
-    error.code === "PGRST301" ||
-    /(?:jwt|token).*(?:expired|invalid)/i.test(error.message ?? "")
+    error.code === "PGRST301" || /(?:jwt|token).*(?:expired|invalid)/i.test(error.message ?? "")
   );
 }
 
@@ -56,16 +70,24 @@ async function readOnboardedStatus(userId: string): Promise<boolean | null> {
   const cached = readOnboardedCache(userId);
   if (cached !== null) return cached;
 
-  const { data: profile, error } = await supabase
-    .from("profiles")
-    .select("onboarded")
-    .eq("id", userId)
-    .maybeSingle();
+  const readProfile = () =>
+    supabase.from("profiles").select("onboarded").eq("id", userId).maybeSingle();
+  let { data: profile, error } = await readProfile();
   if (error) {
     if (!isInvalidSessionError(error)) throw error;
     clearOnboardedCache();
-    await supabase.auth.signOut({ scope: "local" });
-    return null;
+    // The access token may expire between claims verification and this query.
+    // Refresh once instead of deleting a still-valid long-lived session.
+    const refreshed = await supabase.auth.refreshSession();
+    if (refreshed.error) {
+      if (isMissingSession(refreshed.error)) return null;
+      throw refreshed.error;
+    }
+    if (!refreshed.data.session) return null;
+    if (refreshed.data.session.user.id !== userId)
+      throw new Error("Your account changed in another tab. Reload to continue.");
+    ({ data: profile, error } = await readProfile());
+    if (error) throw error;
   }
   const onboarded = profile?.onboarded === true;
   rememberOnboarded(userId, onboarded);

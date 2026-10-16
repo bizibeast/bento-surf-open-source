@@ -7,7 +7,7 @@ import type { SchedulerMedia } from "./social-scheduler";
 export async function registerAgentMedia(
   userId: string,
   key: string,
-  source: "carousel_export" | "generated",
+  source: "carousel_export" | "generated" | "uploaded" | "stock",
   provenance: { messageId: string | null; cardId: string; revision: number; slideIndex: number },
 ) {
   if (!validateMediaObjectKey(key) || !key.startsWith(`users/${userId}/`))
@@ -16,11 +16,11 @@ export async function registerAgentMedia(
   const mime = object?.httpMetadata?.contentType;
   if (
     !object ||
-    !["image/jpeg", "image/png"].includes(mime || "") ||
+    !["image/jpeg", "image/png", "image/webp"].includes(mime || "") ||
     object.size <= 0 ||
     object.size > 8 * 1024 * 1024
   )
-    throw new Error("Upload a complete JPEG or PNG image under 8 MB.");
+    throw new Error("Upload a complete JPEG, PNG or WebP image under 8 MB.");
   const { data, error } = await (supabaseAdmin as any)
     .from("content_agent_media")
     .upsert(

@@ -16,6 +16,8 @@ import { handleWebMcpFormSubmit } from "@/lib/webmcp";
 const lookupUsername = (username: string) => checkUsername({ data: { username } });
 
 export const Route = createFileRoute("/signup")({
+  ssr: false,
+  pendingMs: 0,
   beforeLoad: async () => {
     await redirectAuthenticatedVisitor();
   },

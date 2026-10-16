@@ -1,3 +1,4 @@
+import { getAgentPreviewAccounts } from "@/lib/scheduler-assist.functions";
 import type { AgentDraftEdit } from "@/lib/content-carousel";
 import { ProactiveMessageFeedback } from "@/components/content/ProactiveMessageFeedback";
 import { DiscoverPreferences } from "@/components/content/DiscoverPreferences";
@@ -282,6 +283,13 @@ export function ContentPage({
     loadMore: loadMoreDiscoverPosts,
     availablePlatforms: discoverPlatforms,
   } = useDiscoverFeed(tab === "discover");
+  const previewAccounts = useQuery({
+    queryKey: ["agent-preview-accounts"],
+    queryFn: () => getAgentPreviewAccounts(),
+    enabled: tab === "agent",
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
   const agentIdentity = useQuery({
     queryKey: ["content-agent-identity"],
     queryFn: () => getOrCreateNamedAgentThread(),
@@ -701,6 +709,7 @@ export function ContentPage({
               />
             ) : (
               <ContentAgent
+                previewAccounts={previewAccounts.data || []}
                 threads={sidebarThreads as ContentAgentThread[]}
                 agentName={agentIdentity.data?.preferences.display_name || "Bento"}
                 agentThreadId={agentIdentity.data?.thread.id || null}

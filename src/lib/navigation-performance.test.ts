@@ -55,11 +55,13 @@ describe("authenticated navigation performance", () => {
     expect(source).toContain("pendingMs: 0");
   });
 
-  it("does not client-only render public auth pages so refresh can SSR the form", async () => {
+  it("lets auth pages recover the browser refresh session before showing a login form", async () => {
     const login = await readFile(resolve(process.cwd(), "src/routes/login.tsx"), "utf8");
     const signup = await readFile(resolve(process.cwd(), "src/routes/signup.tsx"), "utf8");
-    expect(login).not.toContain("ssr: false");
-    expect(signup).not.toContain("ssr: false");
+    expect(login).toContain("ssr: false");
+    expect(signup).toContain("ssr: false");
+    expect(login).toContain("pendingMs: 0");
+    expect(signup).toContain("pendingMs: 0");
   });
 
   it("does not treat a recovered stale session as a fresh login", async () => {

@@ -194,3 +194,6 @@ GITHUB_CONTENT_APP_PRIVATE_KEY=
 SLACK_CONTENT_CLIENT_ID=
 SLACK_CONTENT_CLIENT_SECRET=
 SLACK_CONTENT_REDIRECT_URI=
+# Optional server-only stock photo provider. Without a key, stock search uses
+# free Wikimedia Commons public-domain/CC0 photos. Never expose this to VITE_*.
+PEXELS_API_KEY=

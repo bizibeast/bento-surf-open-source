@@ -1,5 +1,21 @@
 # Verification status
 
+## October 16, 2026 creator workflow update
+
+The shared app adds separate posting, editing and preview account controls,
+per-network AI rewrite proposals, saved photos, free public-domain/CC0 stock
+photos, and AI images with up to four owned reference images. Composer and Agent
+images share the existing quota and provider budget. Native Agent draft previews
+show the attached publishing media. Auth pages recover refresh sessions before
+showing the sign-in form and transient errors do not clear sessions.
+
+Apply `20261016101500_scheduler_image_requests.sql` before deploying this code.
+Wikimedia Commons needs no key; Pexels remains an optional `PEXELS_API_KEY` secret.
+The stock client identifies the configured public instance origin. Corporate
+landing changes are excluded; public setup, legal pages and WebMCP remain intact.
+The shared billing cancellation handler ends verified trials immediately where
+an operator enables subscriptions; self-hosted entitlement behavior is unchanged.
+
 ## October 15, 2026 Content WebMCP update
 
 This targeted update exposes the self-hosted Brain, Media, Routines, Agent, and Discover tools on `/content`, adds visible tab navigation, and bounds Content read results to omit private URLs and provider payloads. It does not change billing, migrations, provider credentials, or the self-hosted setup flow. Hosted subscription retention and founder billing metrics do not apply to this edition.

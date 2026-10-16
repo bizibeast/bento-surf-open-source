@@ -156,6 +156,7 @@ describe("optional image provider contract", () => {
       Response.json({ code: 200, data: [{ status: "submitted", task_id: "task-1" }] }),
     );
     expect(await submitApiMartImage("key", "A tree", [], m.fetch)).toBe("task-1");
+    expect(m.fetch.mock.calls[0][1].redirect).toBe("manual");
     const body = JSON.parse(m.fetch.mock.calls[0][1].body);
     expect(body).toMatchObject({ n: 1, model: "gemini-3.1-flash-image-preview", resolution: "1K" });
     expect(body.image_urls).toBeUndefined();
@@ -865,4 +866,50 @@ it("still requires a retained owned message and current revision to read attachm
   );
   expect(m.resolve).not.toHaveBeenCalled();
   expect(m.from).not.toHaveBeenCalled();
+});
+
+it("reserves composer images against the same atomic monthly quota", async () => {
+  await reserveImageGeneration({
+    userId: "owner",
+    count: 1,
+    requestKey: "scheduler:stable",
+    source: "scheduler",
+    referenceIds: ["owned"],
+    referencesConfirmed: true,
+  });
+  expect(m.rpc).toHaveBeenCalledWith(
+    "reserve_content_agent_image",
+    expect.objectContaining({
+      p_user_id: "owner",
+      p_count: 1,
+      p_draft: expect.objectContaining({ source: "scheduler", referencesConfirmed: true }),
+      p_references: ["owned"],
+    }),
+  );
+});
+it("rejects composer references without per-request permission before provider transfer", async () => {
+  m.rpc.mockResolvedValue({
+    data: {
+      ...baseJob,
+      request_source: "scheduler",
+      message_id: null,
+      reference_ids: ["owned"],
+      references_confirmed: false,
+    },
+    error: null,
+  });
+  await processImageJob("owner", "job");
+  expect(m.fetch).not.toHaveBeenCalled();
+  expect(m.load).not.toHaveBeenCalled();
+  expect(updates.at(-1)).toMatchObject({ status: "failed" });
+});
+it("honors image opt-out for composer requests even after a job has been queued", async () => {
+  m.rpc.mockResolvedValue({
+    data: { ...baseJob, request_source: "scheduler", message_id: null },
+    error: null,
+  });
+  m.prefs.mockResolvedValue({ ...prefs, generate_images: false });
+  await processImageJob("owner", "job");
+  expect(m.fetch).not.toHaveBeenCalled();
+  expect(updates.at(-1)).toMatchObject({ status: "failed" });
 });
