@@ -3,6 +3,11 @@ import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { ContentAgent } from "./ContentAgent";
+const attachmentMocks = vi.hoisted(() => ({ upload: vi.fn(), prepare: vi.fn() }));
+vi.mock("@/lib/upload", () => ({ uploadFileResult: attachmentMocks.upload }));
+vi.mock("@/lib/content-agent.functions", () => ({
+  prepareContentAgentAttachment: attachmentMocks.prepare,
+}));
 
 function props(): ComponentProps<typeof ContentAgent> {
   return {
@@ -31,6 +36,51 @@ function props(): ComponentProps<typeof ContentAgent> {
 }
 
 describe("ContentAgent", () => {
+  it("uploads a private reference, retains it after failed send, and clears it on chat switch", async () => {
+    const values = props();
+    values.onSend = vi.fn().mockRejectedValue(new Error("Temporary failure"));
+    const attachment = {
+      id: "00000000-0000-4000-8000-000000000001",
+      name: "brief.txt",
+      key: "private/users/me/agent/brief.txt",
+      mimeType: "text/plain",
+      size: 5,
+      url: null,
+      mediaId: null,
+    };
+    attachmentMocks.upload.mockResolvedValue({ key: attachment.key, publicUrl: null });
+    attachmentMocks.prepare.mockResolvedValue(attachment);
+    const view = render(<ContentAgent {...values} />);
+    fireEvent.change(screen.getByLabelText("Attach files"), {
+      target: { files: [new File(["brief"], "brief.txt", { type: "text/plain" })] },
+    });
+    await screen.findByRole("button", { name: "Remove brief.txt" });
+    fireEvent.change(screen.getByLabelText("Message Agent"), {
+      target: { value: "Schedule from this brief" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await screen.findByText("Temporary failure");
+    expect(values.onSend).toHaveBeenCalledWith("Schedule from this brief", [attachment]);
+    expect(screen.getByRole("button", { name: "Remove brief.txt" })).toBeVisible();
+    view.rerender(<ContentAgent {...values} activeThreadId="another-chat" />);
+    expect(screen.queryByRole("button", { name: "Remove brief.txt" })).not.toBeInTheDocument();
+  });
+  it("blocks send during file preparation and ignores an upload completed after switching chats", async () => {
+    const values = props();
+    let resolve!: (value: unknown) => void;
+    attachmentMocks.upload.mockReturnValue(new Promise((r) => (resolve = r)));
+    const view = render(<ContentAgent {...values} />);
+    fireEvent.change(screen.getByLabelText("Message Agent"), { target: { value: "Use this" } });
+    fireEvent.change(screen.getByLabelText("Attach files"), {
+      target: { files: [new File(["brief"], "brief.txt", { type: "text/plain" })] },
+    });
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    view.rerender(<ContentAgent {...values} activeThreadId="another-chat" />);
+    resolve({ key: "private/users/me/agent/brief.txt" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled());
+    expect(screen.queryByRole("button", { name: "Remove brief.txt" })).not.toBeInTheDocument();
+  });
+
   it("shows the submitted first message and progress while New chat is waiting", async () => {
     const values = props();
     let finish!: () => void;
@@ -245,7 +295,7 @@ describe("ContentAgent", () => {
     fireEvent.keyDown(composer, { key: "Enter", shiftKey: true });
     expect(values.onSend).not.toHaveBeenCalled();
     fireEvent.keyDown(composer, { key: "Enter" });
-    await waitFor(() => expect(values.onSend).toHaveBeenCalledWith("A request"));
+    await waitFor(() => expect(values.onSend).toHaveBeenCalledWith("A request", []));
     expect(composer).toHaveValue("");
   });
 
@@ -279,6 +329,7 @@ describe("ContentAgent", () => {
     fireEvent.click(screen.getByRole("button", { name: "Analyze my recent posts" }));
     expect(values.onSend).toHaveBeenCalledWith(
       "Analyze my recent posts and tell me what to repeat next.",
+      [],
     );
   });
 

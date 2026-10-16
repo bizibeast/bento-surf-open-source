@@ -204,7 +204,7 @@ describe("Content workspace", () => {
     await user.type(screen.getByLabelText("Message Agent"), "Keep working");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     expect(routeState.send).toHaveBeenCalledWith({
-      data: { threadId: "old-chat", text: "Keep working" },
+      data: { threadId: "old-chat", text: "Keep working", attachmentIds: [] },
     });
     expect(routeState.markRead).toHaveBeenCalledWith({
       data: { threadId: "old-chat", throughMessageId: "old-reply" },
@@ -223,7 +223,7 @@ describe("Content workspace", () => {
     await user.type(screen.getByLabelText("Message Agent"), "A fresh request");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     expect(routeState.send).toHaveBeenCalledWith({
-      data: { threadId: null, text: "A fresh request" },
+      data: { threadId: null, text: "A fresh request", attachmentIds: [] },
     });
   });
 
@@ -237,7 +237,7 @@ describe("Content workspace", () => {
     await user.type(screen.getByLabelText("Message Agent"), "A fresh chat");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     expect(routeState.send).toHaveBeenCalledWith({
-      data: { threadId: null, text: "A fresh chat" },
+      data: { threadId: null, text: "A fresh chat", attachmentIds: [] },
     });
     expect(onThreadChange).toHaveBeenCalledWith("test-thread");
   });
@@ -253,7 +253,7 @@ describe("Content workspace", () => {
     await user.type(screen.getByLabelText("Message Agent"), "Hello");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     expect(routeState.send).toHaveBeenCalledWith({
-      data: { threadId: "named-agent", text: "Hello" },
+      data: { threadId: "named-agent", text: "Hello", attachmentIds: [] },
     });
   });
 
@@ -267,7 +267,7 @@ describe("Content workspace", () => {
     await user.type(screen.getByLabelText("Message Agent"), "Unsent ordinary chat");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     expect(routeState.send).toHaveBeenCalledWith({
-      data: { threadId: null, text: "Unsent ordinary chat" },
+      data: { threadId: null, text: "Unsent ordinary chat", attachmentIds: [] },
     });
     view.rerender(<ContentPage initialTab="agent" />);
     expect(screen.getByRole("button", { name: "Milo" })).toHaveAttribute("aria-current", "page");

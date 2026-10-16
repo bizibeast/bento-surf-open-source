@@ -16,6 +16,19 @@ const video = () => new File([new Uint8Array(9 * 1024 ** 2)], "camera.mp4", { ty
 const key = "users/user/video/camera-mpu-9437184.mp4";
 
 describe("multipart media upload recovery", () => {
+  it("accepts private Agent uploads without requiring a public URL", async () => {
+    const privateKey = "private/users/user/agent/brief.txt";
+    vi.stubGlobal("fetch", async () =>
+      Response.json({ key: privateKey, publicUrl: null, size: 5 }),
+    );
+    const result = await uploadFileResult(
+      new File(["brief"], "brief.txt", { type: "text/plain" }),
+      "agent_file",
+    );
+    expect(result.key).toBe(privateKey);
+    expect(result.publicUrl).toBeNull();
+  });
+
   it("retries the interrupted segment while retaining the upload and reporting progress", async () => {
     const calls: string[] = [],
       parts: number[] = [],

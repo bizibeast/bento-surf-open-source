@@ -91,7 +91,14 @@ vi.mock("@tanstack/react-start", () => ({
     fn.handler =
       (handler: (input: { context: { userId: string }; data: unknown }) => unknown) =>
       (input?: { data?: unknown }) =>
-        handler({ context: { userId: "owner" }, data: validate(input?.data) });
+        handler({
+          context: {
+            userId: "owner",
+            supabase: { scope: "authenticated" },
+            accessToken: "user-jwt",
+          } as any,
+          data: validate(input?.data),
+        });
     return fn;
   },
 }));
@@ -160,6 +167,12 @@ describe("content Agent authenticated functions", () => {
       userId: "owner",
       threadId: ids.thread,
       text: "Plan my week",
+      attachmentIds: [],
+      toolContext: {
+        userId: "owner",
+        supabase: { scope: "authenticated" },
+        accessToken: "user-jwt",
+      },
     });
     expect(mocks.enforceRateLimit).toHaveBeenCalledWith(
       "EXPENSIVE_API_RATE_LIMITER",

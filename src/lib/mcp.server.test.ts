@@ -26,6 +26,7 @@ vi.mock("./request-security.server", async () => ({
 import { RequestHttpError } from "./request-security.server";
 import {
   createBentoMcpServer,
+  createBentoAppTools,
   defaultBentoMcpOperations,
   handleBentoMcpRequest,
 } from "./mcp.server";
@@ -504,6 +505,18 @@ describe("Bento MCP tools", () => {
         "manage_content_discover",
       ]),
     );
+    const appTools = createBentoAppTools(
+      { userId: String(authInfo.extra!.userId), accessToken: authInfo.token, supabase: {} as any },
+      "https://app.bento.surf",
+    );
+    expect([...appTools.keys()].sort()).toEqual(
+      toolsPayload.result.tools
+        .map((tool: { name: string }) => tool.name)
+        .filter((name: string) => !["upload_media", "manage_content_agent"].includes(name))
+        .sort(),
+    );
+    expect(appTools.get("create_social_post")?.readOnly).toBe(false);
+    expect(appTools.get("list_social_accounts")?.readOnly).toBe(true);
     const storeTool = toolsPayload.result.tools.find(
       (tool: { name: string }) => tool.name === "get_store_workspace",
     );

@@ -1,3 +1,4 @@
+import type { AgentAttachment } from "@/lib/content-agent-attachments";
 import { getAgentPreviewAccounts } from "@/lib/scheduler-assist.functions";
 import type { AgentDraftEdit } from "@/lib/content-carousel";
 import { ProactiveMessageFeedback } from "@/components/content/ProactiveMessageFeedback";
@@ -476,8 +477,14 @@ export function ContentPage({
     discoverRefresh,
   );
   const sendAgentMessage = useMutation({
-    mutationFn: (text: string) =>
-      sendContentAgentMessage({ data: { threadId: resolvedThreadId, text } }),
+    mutationFn: ({ text, attachments }: { text: string; attachments: AgentAttachment[] }) =>
+      sendContentAgentMessage({
+        data: {
+          threadId: resolvedThreadId,
+          text,
+          attachmentIds: attachments.map((item) => item.id),
+        },
+      }),
     onSuccess: async (result) => {
       setActiveThreadId(result.threadId);
       onThreadChange?.(result.threadId);
@@ -790,8 +797,8 @@ export function ContentPage({
                   setAgentSeed("");
                   onThreadChange?.(id);
                 }}
-                onSend={async (text) => {
-                  await sendAgentMessage.mutateAsync(text);
+                onSend={async (text, attachments = []) => {
+                  await sendAgentMessage.mutateAsync({ text, attachments });
                 }}
                 onDraftChanged={refreshAgent}
                 onSaveDraft={async (messageId, cardId, edit) => {

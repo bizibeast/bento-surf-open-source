@@ -1,8 +1,24 @@
+import {
+  AGENT_ATTACHMENT_LIMIT,
+  AGENT_ATTACHMENT_ACCEPT,
+  agentAttachmentKind,
+  agentAttachmentSchema,
+  type AgentAttachment,
+} from "@/lib/content-agent-attachments";
+import { prepareContentAgentAttachment } from "@/lib/content-agent.functions";
+import { uploadFileResult } from "@/lib/upload";
+import { ContentAgentAppActions } from "./ContentAgentAppActions";
+import { SchedulerMediaPicker } from "@/components/scheduler/SchedulerMediaPicker";
 import type { SchedulerConnection } from "@/lib/social-scheduler";
 import type { AgentDraftEdit } from "@/lib/content-carousel";
 import { storedContentAgentResultSchema } from "@/lib/content-agent-proactive";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+  Paperclip,
+  FileText,
+  Images,
+  X,
+  LoaderCircle,
   Bot,
   PanelLeftClose,
   PanelLeftOpen,
@@ -142,7 +158,7 @@ export function ContentAgent({
   onSaveDraft?: (messageId: string, cardId: string, edit: AgentDraftEdit) => void | Promise<void>;
   onNewThread: () => void;
   onSelectThread: (threadId: string) => void;
-  onSend: (text: string) => void | Promise<void>;
+  onSend: (text: string, attachments?: AgentAttachment[]) => void | Promise<void>;
   onBuildBrain: () => void | Promise<void>;
   onApproveBrain: (messageId: string, cardId: string) => void | Promise<void>;
   onRejectDraft: (messageId: string, cardId: string, reason: string) => void | Promise<void>;
@@ -155,6 +171,84 @@ export function ContentAgent({
   ) => void | Promise<void>;
 }) {
   const [text, setText] = useState(seed);
+  const [attachments, setAttachments] = useState<AgentAttachment[]>([]);
+  const [attachmentBusy, setAttachmentBusy] = useState(false);
+  const [attachmentProgress, setAttachmentProgress] = useState("");
+  const [mediaOpen, setMediaOpen] = useState(false);
+  const attachmentInput = useRef<HTMLInputElement>(null);
+  const uploadController = useRef<AbortController | null>(null);
+  const attachmentVersion = useRef(0);
+  useEffect(() => {
+    attachmentVersion.current++;
+    uploadController.current?.abort();
+    setAttachments([]);
+    setAttachmentBusy(false);
+    setAttachmentProgress("");
+    setMediaOpen(false);
+    return () => {
+      attachmentVersion.current++;
+      uploadController.current?.abort();
+    };
+  }, [activeThreadId]);
+  async function addFiles(files: File[]) {
+    if (sending || attachmentBusy || !files.length) return;
+    if (files.length + attachments.length > AGENT_ATTACHMENT_LIMIT) {
+      setSendError("Attach up to four files per message.");
+      return;
+    }
+    const version = attachmentVersion.current;
+    const controller = new AbortController();
+    uploadController.current = controller;
+    setAttachmentBusy(true);
+    setSendError("");
+    try {
+      for (const file of files) {
+        const kind = agentAttachmentKind(file);
+        setAttachmentProgress(`Uploading ${file.name}…`);
+        const uploaded = await uploadFileResult(file, kind, { signal: controller.signal });
+        controller.signal.throwIfAborted();
+        setAttachmentProgress(`Preparing ${file.name}…`);
+        const attachment = await prepareContentAgentAttachment({
+          data: { key: uploaded.key, name: file.name.slice(0, 160) },
+        });
+        if (attachmentVersion.current !== version) return;
+        setAttachments((current) => [...current, attachment]);
+      }
+    } catch (error) {
+      if (!controller.signal.aborted && attachmentVersion.current === version)
+        setSendError(
+          error instanceof Error ? error.message : "The attachment could not be added. Try again.",
+        );
+    } finally {
+      if (attachmentVersion.current === version) {
+        setAttachmentBusy(false);
+        setAttachmentProgress("");
+      }
+    }
+  }
+  async function addSavedPhoto(key: string, name: string) {
+    if (sending || attachmentBusy) return;
+    if (attachments.length >= AGENT_ATTACHMENT_LIMIT) {
+      setSendError("Attach up to four files per message.");
+      return;
+    }
+    const version = attachmentVersion.current;
+    setAttachmentBusy(true);
+    setSendError("");
+    setMediaOpen(false);
+    try {
+      const item = await prepareContentAgentAttachment({ data: { key, name: name.slice(0, 160) } });
+      if (version === attachmentVersion.current)
+        setAttachments((current) =>
+          current.some((a) => a.id === item.id) ? current : [...current, item],
+        );
+    } catch (error) {
+      if (version === attachmentVersion.current)
+        setSendError(error instanceof Error ? error.message : "The image could not be attached.");
+    } finally {
+      if (version === attachmentVersion.current) setAttachmentBusy(false);
+    }
+  }
   const [search, setSearch] = useState("");
   const [conversationsCollapsed, setConversationsCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -415,13 +509,18 @@ export function ContentAgent({
   );
 
   const send = async (value = text) => {
-    const message = value.trim();
-    if (!message || sending || loading || loadError) return;
+    const message =
+      value.trim() ||
+      (attachments.length
+        ? "Use these attached files as references. Ask me what I would like to create or schedule."
+        : "");
+    if (!message || sending || loading || loadError || attachmentBusy) return;
     setSendError("");
     setPendingText(message);
     try {
-      await onSend(message);
+      await onSend(message, attachments);
       setText("");
+      setAttachments([]);
     } catch (error) {
       setSendError(
         error instanceof Error ? error.message : "Could not send. Your message is still here.",
@@ -434,16 +533,117 @@ export function ContentAgent({
   const composer = (
     <form
       className="agent-composer mx-auto w-full max-w-3xl"
+      onDragOver={(event) => {
+        if (event.dataTransfer.types.includes("Files")) event.preventDefault();
+      }}
+      onDrop={(event) => {
+        if (event.dataTransfer.files.length) {
+          event.preventDefault();
+          void addFiles(Array.from(event.dataTransfer.files));
+        }
+      }}
       onSubmit={(event) => {
         event.preventDefault();
         send();
       }}
     >
+      {attachments.length > 0 && (
+        <div
+          className="mb-2 flex max-h-36 flex-wrap gap-2 overflow-y-auto"
+          aria-label="Attached files"
+        >
+          {attachments.map((item) => (
+            <div
+              key={item.id}
+              className="flex min-w-0 max-w-full items-center gap-2 rounded-xl border border-border bg-card p-2"
+            >
+              {item.url && item.mimeType.startsWith("image/") ? (
+                <img src={item.url} alt="" className="size-10 rounded-lg object-cover" />
+              ) : (
+                <FileText className="size-5 shrink-0" />
+              )}
+              <div className="min-w-0">
+                <p className="max-w-52 truncate text-xs font-medium" title={item.name}>
+                  {item.name}
+                </p>
+                {item.note && (
+                  <p
+                    className="max-w-52 whitespace-normal text-[11px] text-muted-foreground"
+                    title={item.note}
+                  >
+                    {item.note}
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                title={`Remove ${item.name}`}
+                aria-label={`Remove ${item.name}`}
+                disabled={sending}
+                onClick={() => setAttachments((current) => current.filter((a) => a.id !== item.id))}
+                className="flex size-9 shrink-0 items-center justify-center rounded-full hover:bg-muted"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {attachmentBusy && (
+        <p role="status" className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+          <LoaderCircle className="size-3 animate-spin" />
+          {attachmentProgress || "Preparing attachment…"}
+        </p>
+      )}
       <div className="agent-composer-field">
+        <input
+          ref={attachmentInput}
+          type="file"
+          multiple
+          accept={AGENT_ATTACHMENT_ACCEPT}
+          className="hidden"
+          aria-label="Attach files"
+          onChange={(event) => {
+            const files = Array.from(event.currentTarget.files || []);
+            event.currentTarget.value = "";
+            void addFiles(files);
+          }}
+        />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label="Add attachments"
+              title="Attach files or choose media"
+              disabled={sending || attachmentBusy || attachments.length >= AGENT_ATTACHMENT_LIMIT}
+              className="flex size-11 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-background disabled:opacity-40"
+            >
+              <Paperclip className="size-5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" side="top">
+            <DropdownMenuItem onSelect={() => attachmentInput.current?.click()}>
+              <Paperclip />
+              Upload files
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setMediaOpen(true)}>
+              <Images />
+              Photos, stock & AI images
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <textarea
           aria-label="Message Agent"
           value={text}
+          disabled={sending}
           onChange={(event) => setText(event.target.value.slice(0, 20_000))}
+          onPaste={(event) => {
+            const files = Array.from(event.clipboardData.files);
+            if (files.length) {
+              event.preventDefault();
+              void addFiles(files);
+            }
+          }}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
@@ -457,12 +657,30 @@ export function ContentAgent({
         <button
           type="submit"
           aria-label="Send message"
-          disabled={!text.trim() || sending || loading || !!loadError}
+          disabled={
+            (!text.trim() && !attachments.length) ||
+            sending ||
+            attachmentBusy ||
+            loading ||
+            !!loadError
+          }
           className="agent-send"
         >
           <Send className="size-4" />
         </button>
       </div>
+      <SchedulerMediaPicker
+        open={mediaOpen}
+        onOpenChange={setMediaOpen}
+        initialPrompt={text}
+        onUpload={() => {
+          setMediaOpen(false);
+          attachmentInput.current?.click();
+        }}
+        onSelect={(media) => {
+          void addSavedPhoto(media.key, media.name);
+        }}
+      />
     </form>
   );
 
@@ -599,8 +817,8 @@ export function ContentAgent({
               <h2 className="mt-2 text-3xl font-semibold tracking-tight">Ask {agentName}</h2>
               <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">
                 Turn your ideas into content and your audience into a business. {agentName} uses
-                your Brain, social insights, and store results to help you decide what to create and
-                sell next.
+                your Brain, social insights, and store results. Attach files or references, ask for
+                a post, scheduling or Auto DMs, then review and approve the prepared action here.
               </p>
               <div className="mt-5 flex flex-wrap justify-center gap-2">
                 {starters.map(([label, prompt]) => (
@@ -625,6 +843,7 @@ export function ContentAgent({
                       className="ml-auto max-w-[85%] break-words whitespace-pre-wrap rounded-3xl bg-muted px-5 py-3 text-[15px] leading-7 text-foreground"
                     >
                       {message.content}
+                      <MessageAttachments payload={message.payload} />
                     </div>
                   );
                 }
@@ -681,6 +900,13 @@ export function ContentAgent({
                           }
                         />
                       ))}
+                    {parsed.success && !!parsed.data.appActions?.length && (
+                      <ContentAgentAppActions
+                        messageId={message.id}
+                        actions={parsed.data.appActions}
+                        accounts={previewAccounts}
+                      />
+                    )}
                     {renderMessageFooter?.(message)}
                   </div>
                 );
@@ -810,4 +1036,46 @@ export function ContentAgent({
 
 function threadTitle(thread: ContentAgentThread) {
   return thread.title?.trim() || "New conversation";
+}
+
+function MessageAttachments({ payload }: { payload: unknown }) {
+  const raw =
+    payload && typeof payload === "object" && "attachments" in payload ? payload.attachments : [];
+  const items = Array.isArray(raw)
+    ? raw.flatMap((value) => {
+        const item = agentAttachmentSchema.safeParse(value);
+        return item.success ? [item.data] : [];
+      })
+    : [];
+  if (!items.length) return null;
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      {items.map((item) => (
+        <div
+          key={item.id}
+          className="min-w-0 max-w-full rounded-xl border border-border bg-background/60 p-2"
+        >
+          {item.url && item.mimeType.startsWith("image/") && (
+            <img
+              src={item.url}
+              alt={item.name}
+              className="mb-2 max-h-48 max-w-full rounded-lg object-contain"
+            />
+          )}
+          {item.url && item.mimeType.startsWith("video/") && (
+            <video
+              src={item.url}
+              controls
+              preload="metadata"
+              className="mb-2 max-h-48 max-w-full rounded-lg"
+            />
+          )}
+          <p className="flex items-center gap-2 text-xs">
+            <FileText className="size-3 shrink-0" />
+            <span className="break-all">{item.name}</span>
+          </p>
+        </div>
+      ))}
+    </div>
+  );
 }

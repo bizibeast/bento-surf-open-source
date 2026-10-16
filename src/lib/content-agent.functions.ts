@@ -1,3 +1,5 @@
+import { agentAppActionStateSchema, type AgentAppActionState } from "./content-agent-app-actions";
+import { AGENT_ATTACHMENT_LIMIT } from "./content-agent-attachments";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Agent rows are validated before use. */
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
@@ -28,6 +30,7 @@ const uuid = z.string().uuid();
 const sendMessageSchema = z.object({
   threadId: uuid.nullable().optional(),
   text: z.string().trim().min(1).max(20_000),
+  attachmentIds: z.array(uuid).max(AGENT_ATTACHMENT_LIMIT).default([]),
 });
 const cardActionSchema = agentCardActionSchema;
 const rejectDraftSchema = cardActionSchema.extend({ reason: z.string().trim().min(1).max(1_000) });
@@ -181,6 +184,12 @@ export const sendContentAgentMessage = createServerFn({ method: "POST" })
       userId: context.userId,
       threadId: data.threadId,
       text: data.text,
+      attachmentIds: data.attachmentIds,
+      toolContext: {
+        userId: context.userId,
+        supabase: context.supabase,
+        accessToken: context.accessToken,
+      },
     });
     void recordContentEvent(context.userId, "content_agent_turn", {
       action: result.result.action,
@@ -391,4 +400,54 @@ export const giveContentAgentFeedback = createServerFn({ method: "POST" })
       count: 1,
     });
     return { saved: true };
+  });
+
+export const prepareContentAgentAttachment = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input) =>
+    z
+      .object({ key: z.string().min(1).max(500), name: z.string().trim().min(1).max(160) })
+      .parse(input),
+  )
+  .handler(async ({ context, data }) => {
+    await requireContentWorkspace(context.userId);
+    await enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "agent-attachment", context.userId);
+    const { prepareAgentAttachmentForUser } = await import("./content-agent-attachments.server");
+    return prepareAgentAttachmentForUser(context.userId, data);
+  });
+
+export const reviewContentAgentAction = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input) => z.object({ id: uuid, dismiss: z.boolean().default(false) }).parse(input))
+  .handler(async ({ context, data }) => {
+    await requireContentWorkspace(context.userId);
+    await enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "agent-app-action", context.userId);
+    const { approveAgentAppAction } = await import("./content-agent-tools.server");
+    return approveAgentAppAction(
+      { userId: context.userId, supabase: context.supabase, accessToken: context.accessToken },
+      data.id,
+      data.dismiss,
+    );
+  });
+
+export const getContentAgentActionStates = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .validator((input) => z.object({ messageId: uuid }).parse(input))
+  .handler(async ({ context, data }) => {
+    await requireContentWorkspace(context.userId);
+    const { data: rows, error } = await (supabaseAdmin as any)
+      .from("content_agent_app_actions")
+      .select("id,status,result,error_message")
+      .eq("user_id", context.userId)
+      .eq("message_id", data.messageId)
+      .limit(3);
+    if (error)
+      throw new Error("Action status could not be loaded. Refresh to check before approving.");
+    return (rows || []).map((row: any) =>
+      agentAppActionStateSchema.parse({
+        id: row.id,
+        status: row.status,
+        message: row.error_message || row.result?.message || null,
+      }),
+    ) as AgentAppActionState[];
   });
