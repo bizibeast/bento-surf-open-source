@@ -1,4 +1,8 @@
 import {
+  activateScheduledPostAutoDm,
+  reconcileScheduledPostAutoDms,
+} from "./scheduled-post-auto-dm.server";
+import {
   reserveProviderUsage,
   withProviderBudgetWorkspace,
   ProviderBudgetError,
@@ -2145,8 +2149,14 @@ export async function processSocialPublishMessage(message: SocialPublishMessage)
         remote_post_id: result.id,
         published_at: publishedAt,
       });
+      await activateScheduledPostAutoDm({
+        ...target,
+        status: "published",
+        remote_post_id: result.id,
+        published_at: publishedAt,
+      });
     } catch (activationError) {
-      // The periodic reconciliation retries activation without republishing the video.
+      // Reconciliation retries activation without republishing the post.
       console.error("[scheduled-auto-dm] activation failed", activationError);
     }
     await db.from("social_publish_attempts").insert({
@@ -2451,6 +2461,11 @@ export async function enqueueDueSocialPosts(queue?: Queue<SocialPublishMessage>,
     await reconcileScheduledInstagramAutoDms();
   } catch (error) {
     console.error("[scheduled-auto-dm] reconciliation failed", error);
+  }
+  try {
+    await reconcileScheduledPostAutoDms();
+  } catch (error) {
+    console.error("[scheduled-post-auto-dm] reconciliation failed", error);
   }
   const outbox = await relaySocialOutbox(runtimeEnv);
   const bindings = (runtimeEnv || {}) as Record<string, Queue<SocialPublishMessage> | undefined>;

@@ -168,6 +168,7 @@ async function dashboard(userId: string, plan?: PlanId) {
         connectionLastVerifiedAt: connection?.last_verified_at || null,
         metrics: metrics.get(row.id),
         name: row.name,
+        scheduledPostId: row.scheduled_post_id || null,
         triggerType: row.trigger_type,
         keywords: row.keywords || [],
         excludedKeywords: row.excluded_keywords || [],
@@ -254,6 +255,26 @@ export const saveFacebookAutoDmAutomation = createServerFn({ method: "POST" })
           ? "Reconnect Facebook to approve comments and messages before enabling this."
           : "Repair and verify this Facebook connection before enabling the automation.",
       );
+    }
+    if (data.id) {
+      const { data: existing, error } = await (supabaseAdmin as any)
+        .from("facebook_dm_automations")
+        .select("scheduled_post_id,connection_id,media_ids")
+        .eq("id", data.id)
+        .eq("user_id", context.userId)
+        .maybeSingle();
+      if (error || !existing) throw new Error("This Facebook automation no longer exists.");
+      if (
+        existing.scheduled_post_id &&
+        (data.connectionId !== existing.connection_id ||
+          data.mediaScope !== "specific" ||
+          JSON.stringify(data.mediaIds) !== JSON.stringify(existing.media_ids) ||
+          data.triggerType === "dm_keyword" ||
+          data.triggerType === "any_dm")
+      )
+        throw new Error(
+          "This automation belongs to its scheduled Facebook post and Page. You can edit its messages and comment keywords.",
+        );
     }
     const row = {
       user_id: context.userId,

@@ -614,7 +614,7 @@ async function processTwitterDmReconciliation(
 
   const { data: automationRows, error: automationError } = await (supabaseAdmin as any)
     .from("twitter_dm_automations")
-    .select("id,trigger_type,keywords,excluded_keywords,match_type,created_at")
+    .select("id,trigger_type,keywords,excluded_keywords,match_type,created_at,source_post_id")
     .eq("connection_id", connectionId)
     .eq("enabled", true)
     .order("created_at", { ascending: true });
@@ -680,7 +680,7 @@ async function processTwitterDmReconciliation(
       }
 
       const mentionResult = await xRequest(
-        `https://api.x.com/2/users/${encodeURIComponent(connection.provider_user_id)}/mentions?tweet.fields=created_at,author_id,text&expansions=author_id&user.fields=username&max_results=50`,
+        `https://api.x.com/2/users/${encodeURIComponent(connection.provider_user_id)}/mentions?tweet.fields=created_at,author_id,text,referenced_tweets&expansions=author_id&user.fields=username&max_results=50`,
         token,
       );
       if (twitterRequestFailed(mentionResult.status, mentionResult.data)) {

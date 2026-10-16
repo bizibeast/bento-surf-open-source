@@ -1,3 +1,9 @@
+import { SchedulerPostAutoDm } from "@/components/scheduler/SchedulerPostAutoDm";
+import {
+  scheduledPostAutoDmDraft,
+  scheduledPostAutoDmSettings,
+  scheduledPostAutoDmSchemas,
+} from "@/lib/scheduled-post-auto-dm";
 import { InstagramPublicRepliesEditor } from "@/components/InstagramPublicRepliesEditor";
 import { INSTAGRAM_AUTO_DM_DEFAULTS as autoDmDefaults } from "@/lib/instagram-auto-dm-defaults";
 import { SchedulerMediaPicker } from "@/components/scheduler/SchedulerMediaPicker";
@@ -698,6 +704,10 @@ function SchedulerPage() {
   const coverCaptureSequence = useRef(0);
   const [instagramTrialReel, setInstagramTrialReel] = useState(false);
   const [autoDmEnabled, setAutoDmEnabled] = useState(false);
+  const [postAutoDms, setPostAutoDms] = useState(() => ({
+    twitter: scheduledPostAutoDmDraft("twitter"),
+    facebook: scheduledPostAutoDmDraft("facebook"),
+  }));
   const [autoDmTrigger, setAutoDmTrigger] = useState<"comment_keyword" | "any_comment">(
     "comment_keyword",
   );
@@ -886,6 +896,10 @@ function SchedulerPage() {
     setInstagramFrameMs(1_000);
     setInstagramTrialReel(instagram.trialReel === true);
     setAutoDmEnabled(savedAutoDm.success);
+    setPostAutoDms({
+      twitter: scheduledPostAutoDmDraft("twitter", preferences.twitter?.scheduledAutoDm),
+      facebook: scheduledPostAutoDmDraft("facebook", preferences.facebook?.scheduledAutoDm),
+    });
     setAutoDmTrigger(savedAutoDm.success ? savedAutoDm.data.triggerType : "comment_keyword");
     setAutoDmKeyword(savedAutoDm.success ? savedAutoDm.data.keyword : autoDmDefaults.keyword);
     setAutoDmExcludedKeywords(
@@ -1447,7 +1461,6 @@ function SchedulerPage() {
   });
   const providerSettings = useMemo(() => {
     const settings: SocialProviderSettings = {
-      facebook: { ...savedProviderSettings.facebook },
       threads: { ...savedProviderSettings.threads },
       tiktok: {
         ...savedProviderSettings.tiktok,
@@ -1521,6 +1534,17 @@ function SchedulerPage() {
         kind: xPostKind,
         article: xPostKind === "article" ? xArticle : undefined,
         autoRepost: repostSettings(reposts.twitter),
+        scheduledAutoDm: selectedConnections.some((connection) => connection.provider === "twitter")
+          ? scheduledPostAutoDmSettings("twitter", postAutoDms.twitter)
+          : null,
+      },
+      facebook: {
+        ...savedProviderSettings.facebook,
+        scheduledAutoDm: selectedConnections.some(
+          (connection) => connection.provider === "facebook",
+        )
+          ? scheduledPostAutoDmSettings("facebook", postAutoDms.facebook)
+          : null,
       },
       linkedin: {
         ...savedProviderSettings.linkedin,
@@ -1545,6 +1569,7 @@ function SchedulerPage() {
     }
     return settings;
   }, [
+    postAutoDms,
     autoDmEnabled,
     autoDmTrigger,
     autoDmKeyword,
@@ -2611,6 +2636,32 @@ function SchedulerPage() {
           connectionId: selectedConnections.find((c) => c.provider === "instagram")?.id,
         });
     }
+  }
+  for (const provider of ["twitter", "facebook"] as const) {
+    const connections = selectedConnections.filter(
+      (connection) => connection.provider === provider,
+    );
+    if (!connections.length || !postAutoDms[provider].enabled) continue;
+    const result = scheduledPostAutoDmSchemas[provider].safeParse(
+      providerSettings[provider]?.scheduledAutoDm,
+    );
+    if (!result.success)
+      for (const issue of result.error.issues)
+        postingBlockers.push({
+          message: `${SOCIAL_PROVIDER_DEFINITIONS[provider].name} Auto DM: ${issue.message}`,
+          connectionId: connections[0].id,
+        });
+    for (const connection of connections)
+      if (connection.autoDmBlockReason)
+        postingBlockers.push({
+          message: `${SOCIAL_PROVIDER_DEFINITIONS[provider].name} Auto DM: ${connection.autoDmBlockReason}`,
+          connectionId: connection.id,
+        });
+    if (provider === "twitter" && xPostKind === "article")
+      postingBlockers.push({
+        message: "X Auto DM: switch from Article to Post to attach an automation.",
+        connectionId: connections[0].id,
+      });
   }
   for (const provider of ["twitter", "linkedin"] as const) {
     const connection = selectedConnections.find((c) => c.provider === provider);
@@ -3835,32 +3886,18 @@ function SchedulerPage() {
                             </label>
                           )}
 
-                          {(activeProvider === "instagram" ||
-                            activeProvider === "twitter" ||
-                            activeProvider === "facebook") && (
-                            <section
-                              className="mt-5 rounded-2xl border border-border/70 bg-white/70 p-4"
-                              aria-label="Auto DM settings"
-                            >
-                              <p className="text-sm font-semibold">
-                                {SOCIAL_PROVIDER_DEFINITIONS[activeProvider].name} Auto DM
-                              </p>
-                              <p className="mt-1 text-xs text-muted-foreground">
-                                Manage comment, reply and message automations. For X and Facebook,
-                                select a specific post after it is published, or use an account-wide
-                                rule.
-                              </p>
-                              <a
-                                href={`/auto-dms/${activeProvider}`}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="mt-2 inline-flex items-center gap-2 text-sm font-semibold text-primary"
-                                title="Open Auto DM settings in a new tab; your draft stays here"
-                              >
-                                Manage {SOCIAL_PROVIDER_DEFINITIONS[activeProvider].name} Auto DM{" "}
-                                <ExternalLink className="size-3.5" />
-                              </a>
-                            </section>
+                          {(activeProvider === "twitter" || activeProvider === "facebook") && (
+                            <SchedulerPostAutoDm
+                              provider={activeProvider}
+                              value={postAutoDms[activeProvider]}
+                              onChange={(value) =>
+                                setPostAutoDms((current) => ({
+                                  ...current,
+                                  [activeProvider]: value,
+                                }))
+                              }
+                              blockReason={activeConnection?.autoDmBlockReason}
+                            />
                           )}
 
                           {activeProvider === "instagram" && (

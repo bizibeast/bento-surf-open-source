@@ -2247,7 +2247,7 @@ it("keeps publish now available for a past schedule and retains server rejection
 });
 
 it.each(["instagram", "twitter", "facebook"] as const)(
-  "offers %s Auto DM settings without navigating away from the draft",
+  "configures %s Auto DM inline without a manage link",
   async (provider) => {
     const connection = { ...missingAvatar, avatarUrl: "https://bento.surf/avatar.png", provider };
     renderScheduler({
@@ -2256,11 +2256,112 @@ it.each(["instagram", "twitter", "facebook"] as const)(
       posts: [feedbackDraft([connection])],
     });
     const compose = await openFeedbackDraft();
-    const link = within(compose).getByRole("link", { name: /Manage .* Auto DM/ });
-    expect(link).toHaveAttribute("href", `/auto-dms/${provider}`);
-    expect(link).toHaveAttribute("target", "_blank");
+    expect(
+      within(compose).queryByRole("link", { name: /Manage .* Auto DM/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(compose).getByRole("checkbox", { name: /Auto DM after this .* post goes live/ }),
+    ).toBeVisible();
   },
 );
+
+it("keeps X and Facebook Auto DM configuration separate across tabs and saves both with the draft", async () => {
+  const connections = ["twitter", "facebook"].map((provider, i) => ({
+    ...missingAvatar,
+    id: `11111111-1111-4111-8111-11111111117${i}`,
+    provider: provider as "twitter" | "facebook",
+    displayName: provider,
+    avatarUrl: "https://bento.surf/avatar.png",
+  }));
+  const data = { ...schedulerData, connections, posts: [feedbackDraft(connections)] };
+  renderScheduler(data);
+  vi.mocked(saveSocialPost).mockResolvedValue(data as never);
+  const compose = await openFeedbackDraft();
+  fireEvent.click(
+    within(compose).getByRole("checkbox", { name: "Auto DM after this X post goes live" }),
+  );
+  fireEvent.change(within(compose).getByLabelText("Keywords (comma separated)"), {
+    target: { value: "guide, details" },
+  });
+  fireEvent.change(within(compose).getByLabelText("DM reply"), {
+    target: { value: "Your X resource" },
+  });
+  fireEvent.click(within(compose).getByRole("button", { name: "Edit Facebook: facebook" }));
+  fireEvent.click(
+    within(compose).getByRole("checkbox", { name: "Auto DM after this Facebook post goes live" }),
+  );
+  expect(within(compose).getByLabelText("Keywords (comma separated)")).toHaveValue("link");
+  fireEvent.change(within(compose).getByLabelText("DM after they tap Send it"), {
+    target: { value: "Your Facebook resource" },
+  });
+  fireEvent.click(
+    within(compose).getByRole("checkbox", { name: "Reply publicly to matching comments" }),
+  );
+  fireEvent.click(within(compose).getByRole("button", { name: "Edit X: twitter" }));
+  expect(within(compose).getByLabelText("DM reply")).toHaveValue("Your X resource");
+  await waitFor(
+    () =>
+      expect(saveSocialPost).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          providerSettings: expect.objectContaining({
+            twitter: expect.objectContaining({
+              scheduledAutoDm: expect.objectContaining({
+                keywords: ["guide", "details"],
+                replyMessage: "Your X resource",
+              }),
+            }),
+            facebook: expect.objectContaining({
+              scheduledAutoDm: expect.objectContaining({
+                keywords: ["link"],
+                replyMessage: "Your Facebook resource",
+                publicReplyEnabled: true,
+                publicReplyMessages: autoDmDefaults.publicReplyMessages,
+              }),
+            }),
+          }),
+        }),
+      }),
+    { timeout: 3000 },
+  );
+});
+
+it("restores an incomplete Auto DM draft and explains missing access without blocking draft edits", async () => {
+  const connection = {
+    ...missingAvatar,
+    provider: "twitter" as const,
+    avatarUrl: "https://bento.surf/avatar.png",
+    autoDmBlockReason: "Reconnect X and approve Direct Message access.",
+  };
+  const data = {
+    ...schedulerData,
+    connections: [connection],
+    posts: [
+      feedbackDraft([connection], {
+        twitter: {
+          scheduledAutoDm: {
+            triggerType: "mention_keyword",
+            keywords: ["draft-keyword"],
+            replyMessage: "",
+          },
+        },
+      }),
+    ],
+  };
+  renderScheduler(data);
+  vi.mocked(saveSocialPost).mockResolvedValue(data as never);
+  const compose = await openFeedbackDraft();
+  expect(
+    within(compose).getByRole("checkbox", { name: "Auto DM after this X post goes live" }),
+  ).toBeChecked();
+  expect(within(compose).getByLabelText("Keywords (comma separated)")).toHaveValue("draft-keyword");
+  expect(within(compose).getByLabelText("DM reply")).toHaveValue("");
+  expect(compose.querySelector("#scheduler-posting-feedback")).toHaveTextContent("Reconnect X");
+  expect(within(compose).getByRole("button", { name: "Schedule" })).toBeDisabled();
+  fireEvent.click(
+    within(compose).getByRole("checkbox", { name: "Auto DM after this X post goes live" }),
+  );
+  expect(within(compose).getByRole("button", { name: "Schedule" })).toBeEnabled();
+});
 
 it("keeps the autosave failure reason visible until the next successful save", async () => {
   const connection = {

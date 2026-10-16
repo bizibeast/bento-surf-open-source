@@ -121,6 +121,7 @@ export type FacebookDmAutomation = {
   id: string;
   connectionId: string;
   connectionHandle: string;
+  scheduledPostId?: string | null;
   connectionReady: boolean;
   connectionNeedsReconnect: boolean;
   connectionReadinessMessage: string | null;
@@ -337,7 +338,10 @@ export function matchFacebookAutomation(
   automations: MatchableFacebookAutomation[],
 ) {
   const normalizedText = cleanKeyword(event.text);
-  for (const automation of automations) {
+  const ordered = [...automations].sort(
+    (a, b) => Number(b.media_scope === "specific") - Number(a.media_scope === "specific"),
+  );
+  for (const automation of ordered) {
     if (!triggerMatchesEvent(automation.trigger_type, event.eventContext)) continue;
     if (
       (automation.excluded_keywords || []).some((keyword) =>

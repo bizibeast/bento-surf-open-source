@@ -82,6 +82,7 @@ const twitterAutoDmTabs = [
 
 type Draft = {
   id?: string;
+  sourcePostId?: string | null;
   connectionId: string;
   name: string;
   triggerType: TwitterDmTriggerType;
@@ -251,6 +252,7 @@ function TwitterAutoDmPage() {
   function edit(automation: TwitterDmAutomation) {
     updateDraft({
       id: automation.id,
+      sourcePostId: automation.sourcePostId,
       connectionId: automation.connectionId,
       name: automation.name,
       triggerType: automation.triggerType,
@@ -775,8 +777,14 @@ function AutomationEditor({
             className={micro.input}
           />
         </Field>
+        {draft.sourcePostId && (
+          <p className="text-xs text-muted-foreground">
+            This automation applies only to its scheduled X post.
+          </p>
+        )}
         <Field label="Account">
           <select
+            disabled={Boolean(draft.sourcePostId)}
             value={draft.connectionId}
             onChange={(event) => setDraft({ ...draft, connectionId: event.target.value })}
             className={micro.input}
@@ -811,12 +819,14 @@ function AutomationEditor({
               label="Reposts your post"
               onClick={() => selectFamily("retweet")}
             />
-            <TriggerChoice
-              selected={family === "dm"}
-              icon={<MessagesSquare className="size-4" />}
-              label="Sends you a DM"
-              onClick={() => selectFamily("dm")}
-            />
+            {!draft.sourcePostId && (
+              <TriggerChoice
+                selected={family === "dm"}
+                icon={<MessagesSquare className="size-4" />}
+                label="Sends you a DM"
+                onClick={() => selectFamily("dm")}
+              />
+            )}
           </div>
         </div>
         {family === "like" || family === "retweet" ? (
@@ -978,6 +988,16 @@ function AutomationRow({
             </span>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">@{automation.connectionHandle}</p>
+          {automation.sourcePostId && (
+            <a
+              className="mt-1 inline-block text-xs text-primary underline"
+              href={`https://x.com/i/status/${encodeURIComponent(automation.sourcePostId)}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Only for this scheduled post
+            </a>
+          )}
           {automation.keywords.length > 0 && (
             <div className="mt-3 flex flex-wrap gap-1.5">
               {automation.keywords.map((keyword) => (

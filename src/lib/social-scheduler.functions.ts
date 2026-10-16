@@ -1,3 +1,7 @@
+import {
+  scheduledPostAutoDmBlockReason,
+  validateScheduledPostAutoDms,
+} from "./scheduled-post-auto-dm.server";
 import { xBackgroundReadsEnabled } from "./provider-budget.server";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Scheduler tables land with the paired migration. */
 import { createServerFn } from "@tanstack/react-start";
@@ -69,6 +73,10 @@ function connectionFromRow(row: any): SchedulerConnection {
     handle: row.provider_handle,
     displayName: row.provider_display_name || row.provider_handle,
     avatarUrl: row.provider_avatar_url || null,
+    autoDmBlockReason:
+      row.provider === "twitter" || row.provider === "facebook"
+        ? scheduledPostAutoDmBlockReason(row.provider, row)
+        : null,
     status: row.status,
     connectedAt: row.created_at,
     canPublish,
@@ -216,7 +224,7 @@ async function schedulerData(userId: string, plan?: PlanId) {
     db
       .from("social_connections")
       .select(
-        "id, provider, provider_handle, provider_display_name, provider_avatar_url, status, scopes, reauth_required, created_at, metadata, access_token, refresh_token, token_expires_at",
+        "id, provider, provider_handle, provider_display_name, provider_avatar_url, status, scopes, reauth_required, created_at, metadata, access_token, refresh_token, token_expires_at, connection_health, webhook_fields, last_verified_at",
       )
       .eq("user_id", userId)
       .order("created_at", { ascending: true }),
@@ -507,6 +515,7 @@ export async function saveSocialPostForUser(
   if (checkedConnections.some((connection: any) => !isPublicSocialProvider(connection.provider))) {
     throw new Error("One or more selected accounts are no longer supported.");
   }
+  if (!data.asDraft) await validateScheduledPostAutoDms(userId, data.providerSettings, connections);
   if (!data.asDraft && data.providerSettings.instagram?.scheduledAutoDm != null) {
     scheduledInstagramAutoDmSchema.parse(data.providerSettings.instagram.scheduledAutoDm);
     const instagramConnections = connections.filter(

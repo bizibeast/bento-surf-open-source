@@ -137,6 +137,7 @@ async function dashboard(userId: string, plan?: PlanId) {
         connectionLastVerifiedAt: connection?.last_verified_at || null,
         metrics: metrics.get(row.id),
         name: row.name,
+        sourcePostId: row.source_post_id || null,
         triggerType: row.trigger_type,
         keywords: row.keywords || [],
         excludedKeywords: row.excluded_keywords || [],
@@ -196,6 +197,24 @@ export const saveTwitterAutoDmAutomation = createServerFn({ method: "POST" })
           ? "Reconnect X to approve Direct Messages before enabling this."
           : "Repair and verify this X connection before enabling the automation.",
       );
+    }
+    if (data.id) {
+      const { data: existing, error } = await (supabaseAdmin as any)
+        .from("twitter_dm_automations")
+        .select("source_post_id,connection_id")
+        .eq("id", data.id)
+        .eq("user_id", context.userId)
+        .maybeSingle();
+      if (error || !existing) throw new Error("This X automation no longer exists.");
+      if (
+        existing.source_post_id &&
+        (data.connectionId !== existing.connection_id ||
+          data.triggerType === "dm_keyword" ||
+          data.triggerType === "any_dm")
+      )
+        throw new Error(
+          "This automation belongs to its scheduled post and account. Choose replies, likes or reposts as its trigger.",
+        );
     }
     const row = {
       user_id: context.userId,
