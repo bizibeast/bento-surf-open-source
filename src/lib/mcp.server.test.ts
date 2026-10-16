@@ -23,6 +23,7 @@ vi.mock("./request-security.server", async () => ({
   enforceRequestRateLimit: mcpMocks.enforceRequestRateLimit,
 }));
 
+import { socialPostInputSchema } from "./social-scheduler";
 import { RequestHttpError } from "./request-security.server";
 import {
   createBentoMcpServer,
@@ -268,7 +269,6 @@ describe("Bento MCP HTTP surface", () => {
     const body = await payload(response!);
     expect(body.result.tools.length).toBeGreaterThan(0);
   });
-
 });
 
 const readOnlyAnnotations = {
@@ -354,7 +354,6 @@ describe("Bento MCP tools", () => {
     );
     expect(actual).toEqual(bentoMcpToolAnnotations);
   });
-
 
   it("preserves advanced Auto-DM configuration and rejects unowned partial updates", async () => {
     const automationId = "00000000-0000-4000-8000-000000000020";
@@ -574,7 +573,11 @@ describe("Bento MCP tools", () => {
       upload_media: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
       list_social_posts: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
       create_social_post: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      list_auto_dm_automations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      list_auto_dm_automations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+      },
       save_auto_dm_automation: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
       set_auto_dm_enabled: {
         readOnlyHint: false,
@@ -582,7 +585,11 @@ describe("Bento MCP tools", () => {
         destructiveHint: false,
         idempotentHint: true,
       },
-      delete_auto_dm_automation: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      delete_auto_dm_automation: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: true,
+      },
       list_pages: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
       list_products: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
       list_bookings: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
@@ -700,6 +707,38 @@ describe("Bento MCP tools", () => {
           : [expect.any(Object)]),
       );
     }
+  });
+
+  it("passes draft and immediate-publish actions through the real scheduler schema without a schedule time", async () => {
+    const save = vi.fn(async (_userId: string, input: unknown) => ({
+      id: "saved",
+      input: socialPostInputSchema.parse(input),
+    }));
+    const tools = createBentoAppTools(
+      { userId: String(authInfo.extra!.userId), accessToken: authInfo.token, supabase: {} as any },
+      "https://app.bento.surf",
+      { ...defaultBentoMcpOperations, saveSocialPostForUser: save },
+    );
+    for (const mode of ["draft", "publish_now"]) {
+      await tools
+        .get("create_social_post")!
+        .execute({
+          body: "Review this post",
+          mode,
+          connectionIds: mode === "draft" ? [] : ["00000000-0000-4000-8000-000000000001"],
+        });
+    }
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save).toHaveBeenNthCalledWith(
+      1,
+      authInfo.extra!.userId,
+      expect.objectContaining({ scheduledAt: null, asDraft: true, publishNow: false }),
+    );
+    expect(save).toHaveBeenNthCalledWith(
+      2,
+      authInfo.extra!.userId,
+      expect.objectContaining({ scheduledAt: null, asDraft: false, publishNow: true }),
+    );
   });
 
   it("maps publish-now and Auto-DM tool calls to the Bento operations", async () => {

@@ -240,6 +240,29 @@ export async function saveAgentAppActions(
       "The action review could not be saved. Ask the Agent to prepare it again; nothing was executed.",
     );
 }
+export function agentActionErrorMessage(error: unknown) {
+  if (error && typeof error === "object" && "issues" in error && Array.isArray(error.issues)) {
+    return error.issues
+      .slice(0, 8)
+      .map((issue: any) => {
+        const field = (Array.isArray(issue.path) ? issue.path.join(" · ") : "Details").replace(
+          /([a-z])([A-Z])/g,
+          "$1 $2",
+        );
+        const detail =
+          typeof issue.message === "string" && issue.message !== "Invalid input"
+            ? issue.message
+            : "Check this value before trying again.";
+        return `${field || "Details"}: ${detail}`;
+      })
+      .join("\n")
+      .slice(0, 1500);
+  }
+  return error instanceof Error
+    ? error.message.slice(0, 1500)
+    : "The action could not be completed.";
+}
+
 export async function approveAgentAppAction(
   context: AgentToolContext,
   id: string,
@@ -322,8 +345,7 @@ export async function approveAgentAppAction(
       };
     return { id, status: "completed", message };
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message.slice(0, 1500) : "The action could not be completed.";
+    const message = agentActionErrorMessage(error);
     await db
       .from("content_agent_app_actions")
       .update({ status: "failed", error_message: message, updated_at: new Date().toISOString() })

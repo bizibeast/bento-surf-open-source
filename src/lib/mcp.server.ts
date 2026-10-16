@@ -1564,6 +1564,7 @@ function registerBentoTools(
         throw new Error("scheduledAt is required in schedule mode.");
       const post = await operations.saveSocialPostForUser(userId, {
         ...input,
+        scheduledAt: input.scheduledAt || null,
         asDraft: mode === "draft",
         publishNow: mode === "publish_now",
       });

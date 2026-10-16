@@ -11,6 +11,7 @@ vi.mock("./ai-json.server", () => ({
 import {
   generateAgentWithTools,
   approveAgentAppAction,
+  agentActionErrorMessage,
   AGENT_TOOL_STEP_LIMIT,
 } from "./content-agent-tools.server";
 import type { BentoAppTool } from "./mcp.server";
@@ -152,6 +153,13 @@ function database(row: any, messageExists = true) {
   });
 }
 describe("Agent action approvals", () => {
+  it("formats field errors without raw validator JSON", () => {
+    const parsed = z
+      .object({ replyText: z.string().min(1, "Add the DM reply") })
+      .safeParse({ replyText: "" });
+    expect(agentActionErrorMessage(parsed.error)).toBe("reply Text: Add the DM reply");
+  });
+
   it("claims a pending action once even with simultaneous approvals", async () => {
     const write = tool("save", false);
     mocks.tools.mockReturnValue(new Map([["save", write]]));
