@@ -46,6 +46,11 @@ describe("MCP setup guide", () => {
       "claude mcp add --transport http bento",
     );
 
+    fireEvent.click(screen.getByRole("tab", { name: "Grok" }));
+    expect(screen.getByRole("tabpanel", { name: "Grok setup" })).toHaveTextContent(
+      "grok.com/connectors",
+    );
+
     fireEvent.click(screen.getByRole("tab", { name: /^Store/ }));
     expect(screen.getByRole("tabpanel", { name: "Store" })).toHaveTextContent(
       "Create a $29 digital product",

@@ -7,6 +7,8 @@ import { BookingAccountsConnect, type BookingConnectAccount } from "./BookingAcc
 import { SocialAccountsConnect, type SocialConnectAccount } from "./SocialAccountsConnect";
 import { TelegramIntegrationCard, type TelegramConnectionView } from "./TelegramIntegrationCard";
 import { KnowledgeIntegrationCard, type KnowledgeConnectionView } from "./KnowledgeIntegrationCard";
+import { AgentClientIntegrationCard } from "./AgentClientIntegrationCard";
+import { AGENT_CLIENT_SETUP, type AgentMcpClient } from "@/lib/agent-client-setup";
 import { getIntegrationOverview } from "@/lib/integrations.functions";
 import type { ContentProvider } from "@/lib/content-connections";
 import { micro } from "@/lib/micro-app-ui";
@@ -67,9 +69,11 @@ type SocialConnection = {
 export function IntegrationsOverview({
   target,
   query = "",
+  mcpUrl,
 }: {
   target?: IntegrationTarget;
   query?: string;
+  mcpUrl?: string;
 }) {
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
@@ -134,7 +138,19 @@ export function IntegrationsOverview({
     knowledgeProviders.some((provider) =>
       matches("knowledge", provider, provider === "github" ? "git hub" : provider),
     ) || matches("knowledge", "fathom");
-  const showChannels = matches("agent channels", "agent", "telegram");
+  const showTelegram = matches("agent channels", "agent", "telegram");
+  const shownClients = (Object.keys(AGENT_CLIENT_SETUP) as AgentMcpClient[]).filter(
+    (client) =>
+      mcpUrl &&
+      matches(
+        "agent channels",
+        "agent",
+        "mcp",
+        AGENT_CLIENT_SETUP[client].name,
+        client === "grok" ? "grokbot grok bot" : "",
+      ),
+  );
+  const showChannels = showTelegram || shownClients.length > 0;
   const shownAutomations = AUTOMATIONS.filter((automation) =>
     matches("automations", automation.label),
   );
@@ -222,18 +238,23 @@ export function IntegrationsOverview({
         <IntegrationPanel
           id="integration-channels"
           title="Agent channels"
-          description="Talk to your Bento Agent and receive content-ready notifications."
+          description="Work with Bento from your favorite AI app. Connect Telegram for proactive Agent messages and draft notifications."
         >
           {isLoading ? (
-            <TileSkeleton count={1} />
+            <TileSkeleton count={1 + shownClients.length} />
           ) : (
             <div className="grid grid-cols-3 gap-x-4 gap-y-6 sm:grid-cols-5 lg:grid-cols-8">
-              <TelegramIntegrationCard
-                connection={telegramConnection || null}
-                ready={Boolean(contentReadiness.telegram)}
-                botUsername={contentProviderMetadata.telegramUsername || null}
-                onChanged={refreshOverview}
-              />
+              {showTelegram && (
+                <TelegramIntegrationCard
+                  connection={telegramConnection || null}
+                  ready={Boolean(contentReadiness.telegram)}
+                  botUsername={contentProviderMetadata.telegramUsername || null}
+                  onChanged={refreshOverview}
+                />
+              )}
+              {shownClients.map((client) => (
+                <AgentClientIntegrationCard key={client} client={client} mcpUrl={mcpUrl!} />
+              ))}
             </div>
           )}
         </IntegrationPanel>

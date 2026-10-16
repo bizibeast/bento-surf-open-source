@@ -40,6 +40,35 @@ describe("IntegrationsOverview", () => {
     Element.prototype.scrollIntoView = vi.fn();
   });
 
+  it.each(["ChatGPT", "Claude", "Cursor", "grokbot", "grok bot"])(
+    "finds the requested AI integration when searching for %s",
+    async (query) => {
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <IntegrationsOverview query={query} mcpUrl="https://workspace.example/mcp" />
+        </QueryClientProvider>,
+      );
+      const name = query.startsWith("grok") ? "Grok / Grok Bot" : query;
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: `Set up ${name} integration` })).toBeVisible(),
+      );
+      expect(
+        screen.queryByRole("button", { name: /Manage Telegram integration/ }),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText("No integrations found")).not.toBeInTheDocument();
+    },
+  );
+
+  it("shows Telegram and all four AI setup cards under Agent channels", async () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <IntegrationsOverview query="agent" mcpUrl="https://workspace.example/mcp" />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /^Set up/ })).toHaveLength(4));
+    expect(screen.getByRole("button", { name: /Manage Telegram integration/ })).toBeVisible();
+  });
+
   it.each(["social", "bookings", "automation", "knowledge", "channels", "payments"] as const)(
     "scrolls to the %s integration when deep linked",
     async (target) => {
