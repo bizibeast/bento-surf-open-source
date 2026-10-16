@@ -129,6 +129,63 @@ describe("Bento MCP HTTP surface", () => {
       "/.well-known/oauth-protected-resource",
     );
   });
+  it("returns 401 invalid_token when the bearer is not a JWT", async () => {
+    // Real getClaims throws Error "Invalid UTF-8 sequence" for this token.
+    // AuthError is returned as { error }; this one is not an AuthError and used to crash the worker.
+    const response = await handleBrowserMcpRequest(
+      new Request("http://localhost:8080/mcp", {
+        method: "POST",
+        headers: {
+          accept: "application/json, text/event-stream",
+          authorization: "Bearer aaaaaaaa.bbbbbbbb.cccccccc",
+          "content-type": "application/json",
+          "mcp-protocol-version": "2025-06-18",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-06-18",
+            capabilities: {},
+            clientInfo: { name: "probe", version: "1.0.0" },
+          },
+        }),
+      }),
+    );
+    expect(response?.status).toBe(401);
+    const header = response?.headers.get("www-authenticate") ?? "";
+    expect(header).toContain('error="invalid_token"');
+    expect(header).toContain('error_description="Authorization required"');
+    expect(header).toContain(
+      'resource_metadata="http://localhost:8080/.well-known/oauth-protected-resource"',
+    );
+    await expect(response?.json()).resolves.toMatchObject({ error: "unauthorized" });
+  });
+
+  it("turns unexpected MCP failures into JSON-RPC or HTTP errors", async () => {
+    mcpMocks.enforceRequestRateLimit.mockRejectedValueOnce(new Error("limiter down"));
+    const rpc = await handleBrowserMcpRequest(
+      request({ jsonrpc: "2.0", id: 7, method: "tools/list", params: {} }),
+      async () => authInfo,
+    );
+    expect(rpc?.status).toBe(500);
+    expect(await payload(rpc!)).toMatchObject({
+      jsonrpc: "2.0",
+      id: 7,
+      error: { code: -32603, message: "Internal error" },
+    });
+
+    const plain = await handleBrowserMcpRequest(
+      new Request("http://localhost:8080/mcp", { method: "POST", body: "not-json" }),
+      async () => {
+        throw new Error("supabase down");
+      },
+    );
+    expect(plain?.status).toBe(500);
+    await expect(plain?.json()).resolves.toEqual({ error: "internal_error" });
+  });
+
   it("rejects other browser origins before the token is checked", async () => {
     const authenticate = vi.fn(async () => authInfo);
     for (const origin of ["https://evil.example", "https://chatgpt.com.evil.example", "null"]) {
@@ -1008,20 +1065,18 @@ it("imports the selected free photo only at execution and schedules all tailored
     },
   );
   const ids = ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"];
-  await tools
-    .get("create_social_post")!
-    .execute({
-      body: "Shared",
-      mode: "schedule",
-      scheduledAt: "2099-10-22T18:00:00Z",
-      timezone: "Asia/Kolkata",
-      connectionIds: ids,
-      connectionOverrides: {
-        [ids[0]]: { bodyOverride: "LinkedIn version" },
-        [ids[1]]: { bodyOverride: "X version" },
-      },
-      stockPhoto: { id: 42, provider: "pixabay" },
-    });
+  await tools.get("create_social_post")!.execute({
+    body: "Shared",
+    mode: "schedule",
+    scheduledAt: "2099-10-22T18:00:00Z",
+    timezone: "Asia/Kolkata",
+    connectionIds: ids,
+    connectionOverrides: {
+      [ids[0]]: { bodyOverride: "LinkedIn version" },
+      [ids[1]]: { bodyOverride: "X version" },
+    },
+    stockPhoto: { id: 42, provider: "pixabay" },
+  });
   expect(importPhoto).toHaveBeenCalledWith(authInfo.extra!.userId, 42, "pixabay");
   expect(save).toHaveBeenCalledOnce();
   expect(save.mock.calls[0][1]).toMatchObject({

@@ -933,9 +933,21 @@ export default {
         "/.well-known/oauth-protected-resource/mcp",
       ].includes(path)
     ) {
-      const { handleBentoMcpRequest } = await import("./lib/mcp.server");
-      const mcpResponse = await handleBentoMcpRequest(request, env?.VITE_APP_URL);
-      if (mcpResponse) return withDeploymentHeaders(mcpResponse, env, request);
+      try {
+        const { handleBentoMcpRequest } = await import("./lib/mcp.server");
+        const mcpResponse = await handleBentoMcpRequest(request, env?.VITE_APP_URL);
+        if (mcpResponse) return withDeploymentHeaders(mcpResponse, env, request);
+      } catch (error) {
+        console.error("MCP request failed", error instanceof Error ? error.name : "unknown");
+        return withDeploymentHeaders(
+          Response.json(
+            { jsonrpc: "2.0", id: null, error: { code: -32603, message: "Internal error" } },
+            { status: 500, headers: { "cache-control": "no-store" } },
+          ),
+          env,
+          request,
+        );
+      }
     }
 
     const creatorRedirect = await guardCreatorDocument(request);
