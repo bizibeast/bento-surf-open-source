@@ -1,3 +1,4 @@
+import { SchedulerActionButton } from "@/components/scheduler/SchedulerActionButton";
 import { SchedulerPostAutoDm } from "@/components/scheduler/SchedulerPostAutoDm";
 import {
   scheduledPostAutoDmDraft,
@@ -2688,13 +2689,14 @@ function SchedulerPage() {
         ? "TikTok account settings could not be loaded. Reconnect TikTok or remove it from this post."
         : "Waiting for TikTok to provide your posting permissions and visibility options.",
     });
-  const canSubmit = postingBlockers.length === 0;
   const scheduleIso = zonedDateTimeInputToIso(scheduledAt, schedulerTimeZone);
   const scheduleError =
     !scheduleIso || new Date(scheduleIso).getTime() < Date.now() + 60_000
       ? "To schedule, choose a time at least one minute in the future. You can still publish now."
       : null;
-  const postingBlockerText = postingBlockers.map((issue) => issue.message).join("\n");
+  const schedulingBlockers = scheduleError
+    ? [...postingBlockers, { message: scheduleError }]
+    : postingBlockers;
   const canSaveDraft =
     !uploading &&
     hasPostContent &&
@@ -4206,38 +4208,6 @@ function SchedulerPage() {
                     </div>
 
                     <div className="shrink-0 border-t border-border/70 bg-[#f7f8fc] px-4 py-2 sm:px-5">
-                      {(postingBlockers.length > 0 || scheduleError) && (
-                        <div
-                          id="scheduler-posting-feedback"
-                          role="status"
-                          aria-live="polite"
-                          className="mb-2 max-h-24 overflow-y-auto rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950"
-                        >
-                          <p className="font-semibold">
-                            {postingBlockers.length
-                              ? "Before you can post"
-                              : "Choose a schedule time"}
-                          </p>
-                          <ul className="mt-1 space-y-1">
-                            {postingBlockers.map((issue, index) => (
-                              <li key={`${issue.message}-${index}`}>
-                                {issue.connectionId ? (
-                                  <button
-                                    type="button"
-                                    className="text-left underline underline-offset-2"
-                                    onClick={() => setEditorConnectionId(issue.connectionId!)}
-                                  >
-                                    {issue.message}
-                                  </button>
-                                ) : (
-                                  issue.message
-                                )}
-                              </li>
-                            ))}
-                            {scheduleError && <li>{scheduleError}</li>}
-                          </ul>
-                        </div>
-                      )}
                       {(submitError || autosaveError) && (
                         <div
                           role="alert"
@@ -4401,36 +4371,32 @@ function SchedulerPage() {
                             onChange={(event) => setScheduledAt(event.target.value)}
                             className={`${micro.input} h-9 w-full px-2 py-1 text-xs lg:w-[172px]`}
                           />
-                          <div className="flex flex-1 overflow-hidden rounded-lg bg-[#ff922b] text-white shadow-sm lg:flex-none">
-                            <button
-                              type="button"
-                              disabled={!canSubmit || Boolean(scheduleError)}
-                              title={postingBlockerText || scheduleError || "Schedule this post"}
-                              aria-describedby="scheduler-posting-feedback"
-                              onClick={() => save.mutate({ publishNow: false })}
-                              className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 px-3 text-xs font-semibold transition-colors hover:bg-[#f58218] disabled:opacity-45"
+                          <div className="flex flex-1 overflow-hidden rounded-lg shadow-sm lg:flex-none">
+                            <SchedulerActionButton
+                              label="Schedule"
+                              issues={schedulingBlockers}
+                              onAction={() => save.mutate({ publishNow: false })}
+                              onOpenConnection={setEditorConnectionId}
+                              className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 bg-[#ff922b] px-3 text-xs font-semibold text-white transition-colors hover:bg-[#f58218]"
                             >
                               <CalendarClock className="size-4" /> Schedule
-                            </button>
-                            <button
-                              type="button"
-                              disabled={!canSubmit}
-                              title={postingBlockerText || "Schedule at the next posting slot"}
-                              aria-describedby="scheduler-posting-feedback"
-                              onClick={scheduleAtNextSlot}
-                              aria-label="Schedule at the next posting slot"
-                              className="inline-flex h-9 items-center border-l border-white/25 px-2 transition-colors hover:bg-[#f58218] disabled:opacity-45"
+                            </SchedulerActionButton>
+                            <SchedulerActionButton
+                              label="Schedule at the next posting slot"
+                              issues={postingBlockers}
+                              onAction={scheduleAtNextSlot}
+                              onOpenConnection={setEditorConnectionId}
+                              className="inline-flex h-9 items-center border-l border-border/50 bg-[#ff922b] px-2 text-white transition-colors hover:bg-[#f58218]"
                             >
                               <ChevronRight className="size-4" />
-                            </button>
+                            </SchedulerActionButton>
                           </div>
-                          <button
-                            type="button"
-                            disabled={!canSubmit}
-                            title={postingBlockerText || "Publish this post now"}
-                            aria-describedby="scheduler-posting-feedback"
-                            onClick={() => save.mutate({ publishNow: true })}
-                            aria-busy={publishingNow}
+                          <SchedulerActionButton
+                            label="Publish now"
+                            issues={postingBlockers}
+                            onAction={() => save.mutate({ publishNow: true })}
+                            onOpenConnection={setEditorConnectionId}
+                            busy={publishingNow}
                             className={`${micro.btnPrimary} h-9 min-w-0 flex-1 px-3 text-xs lg:flex-none`}
                           >
                             {publishingNow ? (
@@ -4439,7 +4405,7 @@ function SchedulerPage() {
                               <Send className="size-4" />
                             )}
                             {publishingNow ? "Publishing…" : "Publish now"}
-                          </button>
+                          </SchedulerActionButton>
                         </div>
                       </div>
                     </div>
