@@ -68,8 +68,8 @@ function NotFoundComponent() {
 // A failed dynamic import after a deploy (hashed chunk 404s because the manifest
 // changed) throws here rather than firing vite:preloadError. Reload once to fetch
 // the current manifest instead of stranding the user on the error screen.
-function isChunkLoadError(error: Error) {
-  const msg = error?.message ?? "";
+function isChunkLoadError(error: unknown) {
+  const msg = error instanceof Error ? error.message : "";
   return (
     /Failed to fetch dynamically imported module/i.test(msg) ||
     /error loading dynamically imported module/i.test(msg) ||
@@ -77,11 +77,11 @@ function isChunkLoadError(error: Error) {
   );
 }
 
-function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
+function ErrorComponent({ error, reset }: { error: unknown; reset: () => void }) {
   console.error(error);
   const router = useRouter();
   const publicMessage =
-    import.meta.env.DEV && error?.message
+    import.meta.env.DEV && error instanceof Error && error.message
       ? error.message
       : "This page could not load. Please try again.";
 
@@ -159,7 +159,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         { name: "viewport", content: "width=device-width, initial-scale=1" },
         { name: "theme-color", content: "#f7f8fc" },
         {
-          title: matches.some((match) => match.status === "notFound" || match.globalNotFound)
+          title: matches.some((match) => match.status === "notFound" || match._notFound)
             ? "Page not found | bento.surf"
             : "bento.surf - the creator business operating system",
         },
@@ -238,7 +238,7 @@ function RouteHeadContent() {
   const nonce = useRouter().options.ssr?.nonce;
   const notFound = useRouterState({
     select: (state) =>
-      state.matches.some((match) => match.status === "notFound" || match.globalNotFound),
+      state.matches.some((match) => match.status === "notFound" || match._notFound),
   });
   return (
     <>
