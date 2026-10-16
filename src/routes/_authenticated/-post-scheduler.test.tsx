@@ -1914,6 +1914,121 @@ it("keeps two LinkedIn accounts' text separate while preview selection leaves th
   );
 });
 
+it("keeps community choices per X account while text stays synced and previews follow their account", async () => {
+  vi.mocked(saveSocialPost).mockClear();
+  const connections = ["personal", "company"].map((name) => ({
+    ...missingAvatar,
+    avatarUrl: "https://bento.surf/avatar.png",
+    id: name,
+    provider: "twitter" as const,
+    displayName: name,
+    handle: name,
+  }));
+  const data = { ...schedulerData, connections };
+  renderScheduler(data);
+  vi.mocked(saveSocialPost).mockResolvedValue(data as never);
+  const create = await screen.findByRole("button", { name: "Create new post" });
+  await waitFor(() => expect(create).toBeEnabled());
+  fireEvent.click(create);
+  const compose = await screen.findByRole("dialog", { name: "Create a post" });
+  for (const name of ["personal", "company"])
+    fireEvent.click(within(compose).getByRole("button", { name: `X: ${name}` }));
+  fireEvent.click(within(compose).getByRole("button", { name: "Community" }));
+  fireEvent.change(within(compose).getByLabelText("Community link or ID"), {
+    target: { value: "https://x.com/i/communities/1234567890123456789" },
+  });
+  fireEvent.change(within(compose).getByLabelText("Community name (optional)"), {
+    target: { value: "Builders" },
+  });
+  fireEvent.change(within(compose).getByRole("textbox", { name: "Post" }), {
+    target: { value: "One useful idea" },
+  });
+  fireEvent.click(within(compose).getByRole("button", { name: "Preview X: company" }));
+  expect(within(compose).getByTestId("scheduler-preview-pane")).toHaveTextContent("Builders");
+  fireEvent.click(within(compose).getByRole("button", { name: "Edit X: personal" }));
+  expect(within(compose).getByRole("button", { name: "Everyone" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  expect(within(compose).getByRole("switch", { name: "Sync" })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+  fireEvent.click(within(compose).getByRole("button", { name: "Preview X: personal" }));
+  expect(within(compose).getByTestId("scheduler-preview-pane")).not.toHaveTextContent("Builders");
+  await waitFor(
+    () =>
+      expect(saveSocialPost).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          connectionOverrides: {
+            personal: { xCommunity: null },
+            company: {
+              xCommunity: {
+                id: "https://x.com/i/communities/1234567890123456789",
+                name: "Builders",
+              },
+            },
+          },
+        }),
+      }),
+    { timeout: 4000 },
+  );
+});
+
+it("restores a saved community when editing but defaults new posts to Everyone", async () => {
+  const connection = {
+    ...missingAvatar,
+    avatarUrl: "https://bento.surf/avatar.png",
+    id: "twitter",
+    provider: "twitter" as const,
+    displayName: "Creator",
+  };
+  const post: SchedulerPost = {
+    id: "11111111-1111-4111-8111-111111111113",
+    status: "draft",
+    title: "Community draft",
+    body: "Saved community post",
+    scheduledAt: null,
+    createdAt: new Date().toISOString(),
+    timezone: "UTC",
+    media: [],
+    targets: [
+      {
+        id: "target-x",
+        connectionId: "twitter",
+        provider: "twitter",
+        status: "pending",
+        remotePostUrl: null,
+        errorMessage: null,
+        publishedAt: null,
+        providerSettings: { xCommunity: { id: "123", name: "Builders" } },
+      },
+    ],
+  };
+  renderScheduler({ ...schedulerData, connections: [connection], posts: [post] });
+  const drafts = await screen.findByRole("region", { name: "Drafts drop area" });
+  fireEvent.click(within(drafts).getByRole("button", { name: "Edit draft" }));
+  const compose = await screen.findByRole("dialog", { name: "Edit post" });
+  expect(within(compose).getByLabelText("Community link or ID")).toHaveValue("123");
+  expect(within(compose).getByLabelText("Community name (optional)")).toHaveValue("Builders");
+  fireEvent.keyDown(compose, { key: "Escape" });
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Edit post" })).not.toBeInTheDocument(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Create new post" }));
+  const next = await screen.findByRole("dialog", { name: "Create a post" });
+  fireEvent.click(within(next).getByRole("button", { name: "X: Creator" }));
+  expect(within(next).getByRole("button", { name: "Everyone" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  fireEvent.click(within(next).getByRole("button", { name: "Community" }));
+  fireEvent.change(within(next).getByLabelText("Recent X communities"), {
+    target: { value: "123" },
+  });
+  expect(within(next).getByLabelText("Community link or ID")).toHaveValue("123");
+});
+
 it("opens media sources from Add media before opening a device upload", async () => {
   renderScheduler();
   const create = await screen.findByRole("button", { name: "Create new post" });

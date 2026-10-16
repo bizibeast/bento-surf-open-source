@@ -52,6 +52,7 @@ import {
   xArticleDocumentError,
 } from "./x-account";
 import { fetchXAccountCapabilities } from "./x-account.server";
+import { xCommunityError, xCommunityFromSettings, xCommunityId } from "./x-community";
 import {
   activateScheduledInstagramAutoDm,
   reconcileScheduledInstagramAutoDms,
@@ -1119,7 +1120,7 @@ async function publishXArticle(
   }
 }
 
-async function publishX(
+export async function publishX(
   token: string,
   body: string,
   media: SchedulerMedia[],
@@ -1127,6 +1128,9 @@ async function publishX(
   settings: Record<string, unknown>,
   target: any,
 ) {
+  const communityError = xCommunityError(settings);
+  if (communityError) throw new ProviderError(communityError, "community_invalid", false);
+  const community = xCommunityFromSettings(settings);
   const article = settings.kind === "article";
   if (body.length > X_LONG_POST_LIMIT) {
     throw new ProviderError("X allows up to 25,000 characters.", "text_limit", false);
@@ -1211,6 +1215,7 @@ async function publishX(
 
   const payload: Record<string, unknown> = { text: body };
   if (mediaIds.length) payload.media = { media_ids: mediaIds };
+  if (community) payload.community_id = xCommunityId(community.id);
 
   const result = await providerJson(
     "https://api.x.com/2/tweets",

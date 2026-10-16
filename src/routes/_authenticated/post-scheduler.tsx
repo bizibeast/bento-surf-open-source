@@ -1,4 +1,6 @@
 import { SchedulerMediaPicker } from "@/components/scheduler/SchedulerMediaPicker";
+import { XCommunityPicker } from "@/components/scheduler/XCommunityPicker";
+import { xCommunityFromSettings, recentXCommunities, type XCommunity } from "@/lib/x-community";
 import { SchedulerRewrite } from "@/components/scheduler/SchedulerRewrite";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -526,7 +528,10 @@ type SchedulerComposeFingerprintInput = {
   selected: string[];
   media: SchedulerMedia[];
   providerSettings: SocialProviderSettings;
-  connectionOverrides?: Record<string, { bodyOverride: string; mentions?: unknown[] }>;
+  connectionOverrides?: Record<
+    string,
+    { bodyOverride?: string; mentions?: unknown[]; xCommunity?: XCommunity | null }
+  >;
 };
 
 type PendingThumbnail = {
@@ -723,6 +728,7 @@ function SchedulerPage() {
   const [tiktokCoverMs, setTiktokCoverMs] = useState(1_000);
   const [redditCommunity, setRedditCommunity] = useState("");
   const [redditKind, setRedditKind] = useState<"self" | "link">("self");
+  const [xCommunities, setXCommunities] = useState<Record<string, XCommunity | null>>({});
   const [xPostKind, setXPostKind] = useState<"post" | "article">("post");
   const [xArticle, setXArticle] = useState<XArticleDocument>({
     cover: null,
@@ -851,6 +857,7 @@ function SchedulerPage() {
     setMediaPickerOpen(false);
     setEditorConnectionId("");
     setAccountMentions({});
+    setXCommunities({});
     setSelected([]);
     setScheduledAt(defaultScheduleInput(schedulerTimeZone));
     const tiktok = lastUsedSettings.tiktok || {};
@@ -1031,6 +1038,16 @@ function SchedulerPage() {
     setComposeWasOpenedForEdit(true);
     setEditingPostStatus(post.status);
     setSavedProviderSettings(settings);
+    setXCommunities(
+      Object.fromEntries(
+        post.targets
+          .filter((target) => target.provider === "twitter")
+          .map((target) => [
+            target.connectionId,
+            xCommunityFromSettings(target.providerSettings || {}),
+          ]),
+      ),
+    );
     setBody(post.body);
     setTitle(post.title || "");
     const savedBodyOverrides = Object.fromEntries(
@@ -1302,9 +1319,10 @@ function SchedulerPage() {
         (activeProvider === "youtube" ? syncedYoutubeTitle : title))
     : title;
   const connectedProviders = selectedConnections.map((connection) => connection.provider);
-  const selectedXConnection = selectedConnections.find(
-    (connection) => connection.provider === "twitter",
-  );
+  const selectedXConnection =
+    activeConnection?.provider === "twitter"
+      ? activeConnection
+      : selectedConnections.find((connection) => connection.provider === "twitter");
   const isXArticle = Boolean(activeProvider === "twitter" && xPostKind === "article");
   const instagramSelected = connectedProviders.includes("instagram");
   const repostProviders = useMemo(
@@ -1514,6 +1532,7 @@ function SchedulerPage() {
       },
       twitter: {
         ...savedProviderSettings.twitter,
+        xCommunity: null,
         kind: xPostKind,
         article: xPostKind === "article" ? xArticle : undefined,
         autoRepost:
@@ -1640,18 +1659,25 @@ function SchedulerPage() {
   const selectedProviderSettings = postSettingsForTargets(null, null);
   const connectionOverrides = useMemo(
     () =>
-      sync
-        ? undefined
-        : Object.fromEntries(
-            selectedConnections.map((connection) => [
-              connection.id,
-              {
-                bodyOverride: bodyOverrides[connection.id] ?? body,
-                mentions: accountMentions[connection.id] || [],
-              },
-            ]),
-          ),
-    [sync, selectedConnections, bodyOverrides, accountMentions, body],
+      Object.fromEntries(
+        selectedConnections
+          .filter((connection) => !sync || connection.provider === "twitter")
+          .map((connection) => [
+            connection.id,
+            {
+              ...(!sync
+                ? {
+                    bodyOverride: bodyOverrides[connection.id] ?? body,
+                    mentions: accountMentions[connection.id] || [],
+                  }
+                : {}),
+              ...(connection.provider === "twitter"
+                ? { xCommunity: xCommunities[connection.id] || null }
+                : {}),
+            },
+          ]),
+      ),
+    [sync, selectedConnections, bodyOverrides, accountMentions, body, xCommunities],
   );
   const youtubeThumbnailMedia = pendingThumbnailMedia(youtubeThumbnail);
   const instagramCoverMedia = pendingThumbnailMedia(instagramCover);
@@ -3009,6 +3035,7 @@ function SchedulerPage() {
                                   aria-pressed={xPostKind === "article"}
                                   onClick={() => {
                                     setXPostKind("article");
+                                    setXCommunities({});
                                     setSync(true);
                                     setBody(editorBody);
                                     setBodyOverrides({});
@@ -3039,6 +3066,21 @@ function SchedulerPage() {
                                   ? " Articles can include a cover, formatted text, inline images, and embedded X posts when X is the only destination."
                                   : " Articles require X Premium, Premium+, or an eligible organization account."}
                               </p>
+                              {xPostKind === "post" && (
+                                <XCommunityPicker
+                                  value={xCommunities[selectedXConnection.id] || null}
+                                  recent={recentXCommunities(
+                                    data?.posts || [],
+                                    selectedXConnection.id,
+                                  )}
+                                  onChange={(value) =>
+                                    setXCommunities((current) => ({
+                                      ...current,
+                                      [selectedXConnection.id]: value,
+                                    }))
+                                  }
+                                />
+                              )}
                             </div>
                           )}
 
@@ -4150,6 +4192,9 @@ function SchedulerPage() {
                           onSelect={setPreviewConnectionId}
                           xPostKind={xPostKind}
                           xArticle={xArticle}
+                          xCommunity={
+                            previewConnection ? xCommunities[previewConnection.id] || null : null
+                          }
                           media={media}
                           youtubeThumbnail={youtubeThumbnailMedia}
                           youtubeFormat={youtubeFormat}
@@ -4421,6 +4466,7 @@ function PlatformPostPreview({
   title,
   xPostKind,
   xArticle,
+  xCommunity,
   media,
   youtubeThumbnail,
   youtubeFormat,
@@ -4439,6 +4485,7 @@ function PlatformPostPreview({
   title: string;
   xPostKind: "post" | "article";
   xArticle: XArticleDocument;
+  xCommunity: XCommunity | null;
   media: SchedulerMedia[];
   youtubeThumbnail: SchedulerMedia | null;
   youtubeFormat: YouTubePostFormat | null;
@@ -4518,6 +4565,7 @@ function PlatformPostPreview({
                 <ProviderPostPreview
                   connection={activeConnection}
                   body={body}
+                  xCommunity={xCommunity}
                   title={title}
                   media={media}
                   youtubeThumbnail={youtubeThumbnail}

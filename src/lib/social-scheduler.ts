@@ -4,6 +4,7 @@ import { SOCIAL_IMAGE_OPTIMIZATION_MAX_BYTES } from "./social-provider-media";
 import { zonedDateTimeInputToIso } from "./local-datetime";
 import { isValidTimeZone } from "./timezones";
 import { validSocialMentions } from "./social-mentions";
+import { xCommunityDraftSchema, xCommunityError } from "./x-community";
 import {
   X_LONG_POST_LIMIT,
   X_STANDARD_POST_LIMIT,
@@ -1014,8 +1015,9 @@ export const socialPostInputSchema = z
         z.string().uuid(),
         z
           .object({
-            bodyOverride: z.string().max(X_LONG_POST_LIMIT),
+            bodyOverride: z.string().max(X_LONG_POST_LIMIT).optional(),
             mentions: z.array(z.unknown()).max(20).optional(),
+            xCommunity: xCommunityDraftSchema.nullable().optional(),
           })
           .strict(),
       )
@@ -1084,6 +1086,31 @@ export const socialPostInputSchema = z
     const reddit = value.providerSettings.reddit || {};
     const instagram = value.providerSettings.instagram || {};
     const twitter = value.providerSettings.twitter || {};
+    if (twitter.xCommunity != null) {
+      const shape = xCommunityDraftSchema.safeParse(twitter.xCommunity);
+      const error = !shape.success
+        ? "Add a valid X community link or ID, or choose Everyone."
+        : !value.asDraft
+          ? xCommunityError(twitter)
+          : null;
+      if (error)
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: error,
+          path: ["providerSettings", "twitter", "xCommunity"],
+        });
+    }
+    if (!value.asDraft) {
+      for (const [id, override] of Object.entries(value.connectionOverrides || {})) {
+        const error = xCommunityError({ ...twitter, ...override });
+        if (error)
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: error,
+            path: ["connectionOverrides", id, "xCommunity"],
+          });
+      }
+    }
     for (const provider of ["twitter", "linkedin"] as const) {
       const autoRepost = value.providerSettings[provider]?.autoRepost;
       if (autoRepost != null) {
@@ -1163,7 +1190,7 @@ export const socialPostInputSchema = z
     if (
       !value.body &&
       !Object.values(value.connectionOverrides || {}).some((settings) =>
-        settings.bodyOverride.trim(),
+        settings.bodyOverride?.trim(),
       ) &&
       !Object.values(value.providerSettings).some(
         (settings) => typeof settings.bodyOverride === "string" && settings.bodyOverride.trim(),
@@ -1218,6 +1245,13 @@ export function validatePostForProviders(
   for (const provider of providers) {
     const definition = SOCIAL_PROVIDER_DEFINITIONS[provider];
     const settings = providerSettings[provider] || {};
+    if (provider === "twitter") {
+      const communityError = xCommunityError(settings);
+      if (communityError) {
+        errors.twitter = communityError;
+        continue;
+      }
+    }
     const sizeError = media.map((item) => socialMediaSizeError(provider, item)).find(Boolean);
     if (sizeError) {
       errors[provider] = sizeError;

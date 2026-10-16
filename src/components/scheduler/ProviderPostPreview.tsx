@@ -10,7 +10,9 @@ import {
   Send,
   Share2,
   ThumbsUp,
+  Users,
 } from "lucide-react";
+import { xCommunityId, type XCommunity } from "@/lib/x-community";
 import { FaLinkedinIn } from "react-icons/fa";
 import {
   SiFacebook,
@@ -54,6 +56,7 @@ export function ProviderPostPreview({
   redditCommunity,
   redditKind,
   redditUrl,
+  xCommunity,
   onAvatarError,
 }: {
   connection: SchedulerConnection;
@@ -68,6 +71,7 @@ export function ProviderPostPreview({
   redditCommunity: string;
   redditKind: "self" | "link";
   redditUrl: string;
+  xCommunity?: XCommunity | null;
   onAvatarError?: () => void;
 }) {
   const provider = connection.provider;
@@ -313,6 +317,20 @@ export function ProviderPostPreview({
   if (provider === "twitter") {
     return (
       <div className="mx-auto max-w-lg rounded-2xl border border-border bg-card p-4 shadow-sm">
+        {xCommunity && (
+          <p
+            className="mb-3 flex min-w-0 items-center gap-2 text-xs font-medium text-muted-foreground"
+            aria-label="X community destination"
+          >
+            <Users className="size-4 shrink-0" />
+            <span className="min-w-0 break-words">
+              {xCommunity.name?.trim() ||
+                (xCommunityId(xCommunity.id)
+                  ? `Community ${xCommunityId(xCommunity.id)}`
+                  : "Choose a community")}
+            </span>
+          </p>
+        )}
         <div className="flex gap-3">
           <PreviewAvatar connection={connection} onError={onAvatarError} />
           <div className="min-w-0 flex-1">
