@@ -4,7 +4,8 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { dodo } from "@/integrations/dodo/client.server";
 import { deleteCloudflareHostname } from "./cloudflare-custom-hostnames.server";
-import { getMediaBucket } from "./r2-storage.server";
+import { deleteWorkspaceMedia } from "./workspace-media-cleanup.server";
+export { deleteR2Prefix } from "./workspace-media-cleanup.server";
 import { enforceRequestRateLimit, RequestHttpError } from "./request-security.server";
 
 const deleteAccountSchema = z.object({ confirmation: z.literal("DELETE") });
@@ -30,25 +31,6 @@ export function hasRecentAuthenticationMethod(
         now - timestamp <= RECENT_AUTH_SECONDS
       );
     })
-  );
-}
-
-export async function deleteR2Prefix(bucket: R2Bucket, prefix: string) {
-  let cursor: string | undefined;
-  do {
-    const page = await bucket.list({ prefix, limit: 1_000, cursor });
-    const keys = page.objects.map((object) => object.key);
-    if (keys.length > 0) await bucket.delete(keys);
-    cursor = page.truncated ? page.cursor : undefined;
-  } while (cursor);
-}
-
-async function deleteUserMedia(userId: string) {
-  const bucket = getMediaBucket();
-  await Promise.all(
-    [`avatars/${userId}`, `users/${userId}/`, `private/users/${userId}/`, `og/v2/${userId}/`].map(
-      (prefix) => deleteR2Prefix(bucket, prefix),
-    ),
   );
 }
 
@@ -90,7 +72,7 @@ export const deleteMyAccount = createServerFn({ method: "POST" })
     }
 
     // Delete private blobs before the auth row cascades away so no user-owned files are orphaned.
-    await deleteUserMedia(context.userId);
+    await deleteWorkspaceMedia(context.userId);
 
     // Revoke refresh-token sessions globally, then hard-delete the auth user. Existing short-lived
     // access JWTs may remain valid until expiry, but their user row and RLS-owned data are gone.

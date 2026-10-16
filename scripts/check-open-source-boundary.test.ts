@@ -70,6 +70,8 @@ describe("open-source boundary", () => {
       join(root, "src/config.ts"),
       [
         "const origin = configuredPublicOrigin(env.VITE_PUBLIC_URL);",
+        "const owner = await resolvePublicUsername(name);",
+        'const author = typeof value.author === "string" ? value.author : null;',
         "const originTrialToken = resolveWebMcpOriginTrialToken(env, request);",
         "const applyGlobalTokens = true;",
         'const secret = "test-secret";',

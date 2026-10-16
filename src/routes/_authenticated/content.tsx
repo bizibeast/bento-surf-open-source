@@ -1,5 +1,15 @@
-import { useEffect, useRef, useState } from "react";
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { AgentDraftEdit } from "@/lib/content-carousel";
+import { ProactiveMessageFeedback } from "@/components/content/ProactiveMessageFeedback";
+import { DiscoverPreferences } from "@/components/content/DiscoverPreferences";
+import { STRATEGY_PLATFORMS, type StrategyPlatform } from "@/lib/content-brain";
+import { useCallback, useEffect, useState } from "react";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type InfiniteData,
+} from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -10,17 +20,31 @@ import {
   type ContentAgentMessage,
   type ContentAgentThread,
 } from "@/components/content/ContentAgent";
+import { ContentAgentSettings } from "@/components/content/ContentAgentSettings";
+import { createContentAgentWebMcpTools } from "@/lib/content-agent-webmcp";
+import { useWebMcpTools } from "@/lib/webmcp";
+import type {
+  ContentAgentThreadPage,
+  ContentAgentThreadCursor,
+} from "@/lib/content-agent-identity.server";
+import {
+  getOrCreateNamedAgentThread,
+  updateContentAgentPreferences,
+  type ContentAgentPreferencesInput,
+} from "@/lib/content-agent-preferences.functions";
 import { ContentBrain, type ContentBrainSection } from "@/components/content/ContentBrain";
 import { ContentDiscover } from "@/components/content/ContentDiscover";
+import { DiscoverLoading } from "@/components/content/DiscoverLoading";
+import { useDiscoverFeed } from "@/hooks/use-discover-feed";
+import { discoverAgentPrompt, type DiscoverBoostAction } from "@/components/content/discover-utils";
 import { ContentRoutines, type ContentRoutineView } from "@/components/content/ContentRoutines";
 import { MicroAppPanel } from "@/components/MicroAppPanel";
-import { createContentTabWebMcpTool } from "@/lib/content-webmcp";
-import { useWebMcpTools } from "@/lib/webmcp";
 import {
   confirmBrainItem,
   deleteBrainItem,
   getContentBrain,
   getContentBrainMedia,
+  recordContentBrainVisit,
   saveBrainItem,
   searchContentBrainMedia,
   saveContentProfile,
@@ -32,19 +56,24 @@ import {
   approveAgentScheduleProposal,
   generateInitialBrainSuggestions,
   getContentAgentThread,
-  listContentAgentThreads,
+  listContentAgentThreadsPage,
+  setContentAgentThreadPinned,
+  renameContentAgentChat,
+  deleteContentAgentChat,
+  markContentAgentThreadRead,
   regenerateAgentDraft,
   rejectAgentDraft,
   sendContentAgentMessage,
   saveAgentDraft,
+  giveContentAgentFeedback,
 } from "@/lib/content-agent.functions";
 import {
-  getContentDiscover,
-  mergeDiscoverRefresh,
-  refreshContentDiscover,
+  getDiscoverCreator,
   saveDiscoverItem,
+  unsaveDiscoverItem,
+  trackDiscoverCreator,
+  untrackDiscoverCreator,
   setDiscoverFeedback,
-  type ContentDiscoverData,
   type DiscoverRecommendation,
 } from "@/lib/content-discovery.functions";
 import { micro } from "@/lib/micro-app-ui";
@@ -87,7 +116,9 @@ const contentSearchSchema = z.object({
     ])
     .optional(),
   item: z.string().uuid().optional(),
-  platform: z.enum(["twitter", "linkedin"]).optional(),
+  thread: z.string().uuid().optional(),
+  chat: z.literal("new").optional(),
+  platform: z.enum(STRATEGY_PLATFORMS).optional(),
   routines: z
     .union([z.literal(true), z.literal("true")])
     .transform(() => true)
@@ -98,23 +129,40 @@ const contentSearchSchema = z.object({
 export const Route = createFileRoute("/_authenticated/content")({
   validateSearch: contentSearchSchema,
   loaderDeps: ({ search }) => ({ tab: search.tab }),
-  loader: ({ context }) =>
-    context.queryClient.prefetchQuery({
-      queryKey: ["content-brain"],
-      queryFn: () => getContentBrain(),
-    }),
+  loader: ({ context, deps }) =>
+    deps.tab && deps.tab !== "discover"
+      ? context.queryClient.prefetchQuery({
+          queryKey: ["content-brain"],
+          queryFn: () => getContentBrain(),
+          staleTime: 5 * 60_000,
+        })
+      : undefined,
   head: () => ({ meta: [{ title: "Content | bento.surf" }] }),
   component: ContentRoutePage,
 });
 
 function ContentRoutePage() {
-  const { tab = "discover", routines = false, section, item, platform } = Route.useSearch();
+  const {
+    tab = "discover",
+    routines = false,
+    section,
+    item,
+    platform,
+    thread: requestedThread,
+    chat,
+  } = Route.useSearch();
   const navigate = useNavigate();
-  useWebMcpTools([
-    createContentTabWebMcpTool((next) => navigate({ to: "/content", search: { tab: next } })),
-  ]);
+  const queryClient = useQueryClient();
+  useWebMcpTools(
+    createContentAgentWebMcpTools({
+      refresh: () => queryClient.invalidateQueries(),
+      openTab: (next) => navigate({ to: "/content", search: { tab: next } }),
+    }),
+  );
   return (
     <ContentPage
+      initialThread={requestedThread}
+      initialNewChat={chat === "new"}
       initialTab={tab}
       initialRoutines={routines}
       initialBrainSection={section}
@@ -124,6 +172,12 @@ function ContentRoutePage() {
         void navigate({
           to: "/content",
           search: { tab: "brain", section, item: item || undefined, platform },
+        })
+      }
+      onThreadChange={(thread) =>
+        void navigate({
+          to: "/content",
+          search: thread ? { tab: "agent", thread } : { tab: "agent", chat: "new" },
         })
       }
       onTabChange={(next) => void navigate({ to: "/content", search: { tab: next } })}
@@ -138,6 +192,8 @@ function ContentRoutePage() {
 }
 
 export function ContentPage({
+  initialThread,
+  initialNewChat = false,
   initialTab = "discover",
   initialRoutines = false,
   initialBrainSection,
@@ -146,19 +202,23 @@ export function ContentPage({
   onBrainNavigate,
   onTabChange,
   onRoutinesChange,
+  onThreadChange,
 }: {
+  initialThread?: string;
+  initialNewChat?: boolean;
   initialTab?: ContentTab;
   initialRoutines?: boolean;
   initialBrainSection?: ContentBrainSection;
   initialBrainItem?: string;
-  initialBrainPlatform?: "twitter" | "linkedin";
+  initialBrainPlatform?: StrategyPlatform;
   onBrainNavigate?: (
     section: ContentBrainSection,
     item: string | null,
-    platform: "twitter" | "linkedin",
+    platform: StrategyPlatform,
   ) => void;
   onTabChange?: (tab: ContentTab) => void;
   onRoutinesChange?: (open: boolean) => void;
+  onThreadChange?: (threadId: string | null) => void;
 }) {
   const [tab, setTab] = useState<ContentTab>(initialTab);
   const [brainSection, setBrainSection] = useState<ContentBrainSection | undefined>(
@@ -171,7 +231,13 @@ export function ContentPage({
     return () => clearTimeout(timer);
   }, [mediaSearch]);
   const [agentSeed, setAgentSeed] = useState("");
-  const [activeThreadId, setActiveThreadId] = useState<string | null | undefined>(undefined);
+  const [activeThreadId, setActiveThreadId] = useState<string | null | undefined>(
+    initialNewChat ? null : initialThread,
+  );
+  const [agentSettingsOpen, setAgentSettingsOpen] = useState(false);
+  useEffect(() => {
+    setActiveThreadId(initialNewChat ? null : initialThread);
+  }, [initialNewChat, initialThread]);
   const [showRoutines, setShowRoutines] = useState(initialRoutines);
   const queryClient = useQueryClient();
 
@@ -180,9 +246,13 @@ export function ContentPage({
     setShowRoutines(initialRoutines);
   }, [initialRoutines, initialTab]);
   useEffect(() => setBrainSection(initialBrainSection), [initialBrainSection]);
+  useEffect(() => {
+    if (tab === "brain") void recordContentBrainVisit().catch(() => undefined);
+  }, [tab]);
   const brain = useQuery({
     queryKey: ["content-brain"],
     queryFn: () => getContentBrain(),
+    enabled: tab !== "discover",
     refetchInterval: (query) =>
       tab === "brain" && ["pending", "running"].includes(query.state.data?.indexing?.status || "")
         ? 30000
@@ -201,42 +271,127 @@ export function ContentPage({
     queryFn: () => searchContentBrainMedia({ data: { query: settledMediaSearch } }),
     enabled: mediaOpen && settledMediaSearch.length > 1,
   });
-  const discover = useQuery({
-    queryKey: ["content-discover"],
-    queryFn: () => getContentDiscover(),
-    enabled: tab === "discover",
+  const {
+    discover,
+    refresh: researchDiscover,
+    refreshing: discoverRefreshing,
+    refreshStatus: discoverRefreshStatus,
+    refreshError: discoverRefreshError,
+    loadingStatus: discoverLoadingStatus,
+    pagination: discoverPagination,
+    loadMore: loadMoreDiscoverPosts,
+    availablePlatforms: discoverPlatforms,
+  } = useDiscoverFeed(tab === "discover");
+  const agentIdentity = useQuery({
+    queryKey: ["content-agent-identity"],
+    queryFn: () => getOrCreateNamedAgentThread(),
+    enabled: tab === "agent" && !showRoutines,
   });
-  const discoverRefreshRequested = useRef(false);
-  const researchDiscover = useMutation({
-    mutationFn: () => refreshContentDiscover(),
-    onSuccess: (result) =>
-      queryClient.setQueryData<ContentDiscoverData>(["content-discover"], (current) =>
-        mergeDiscoverRefresh(current, result),
-      ),
-  });
-  useEffect(() => {
-    if (
-      tab !== "discover" ||
-      !discover.data ||
-      !["missing", "stale"].includes(discover.data.status) ||
-      discoverRefreshRequested.current
-    ) {
-      return;
-    }
-    discoverRefreshRequested.current = true;
-    researchDiscover.mutate();
-  }, [discover.data, researchDiscover, tab]);
-  const threads = useQuery({
+  const threads = useInfiniteQuery({
     queryKey: ["content-agent-threads"],
-    queryFn: () => listContentAgentThreads(),
-    enabled: tab === "agent",
+    queryFn: ({ pageParam }) => listContentAgentThreadsPage({ data: { cursor: pageParam } }),
+    initialPageParam: null as ContentAgentThreadCursor | null,
+    getNextPageParam: (page) => page.nextCursor ?? undefined,
+    enabled: tab === "agent" && !showRoutines,
+    refetchInterval: 60_000,
   });
+  // Undefined means the default named agent. Null is an intentional new ordinary chat.
   const resolvedThreadId =
-    activeThreadId === undefined ? threads.data?.[0]?.id || null : activeThreadId;
+    activeThreadId === undefined ? agentIdentity.data?.thread.id || null : activeThreadId;
   const thread = useQuery({
     queryKey: ["content-agent-thread", resolvedThreadId],
-    queryFn: () => getContentAgentThread({ data: { threadId: resolvedThreadId as string } }),
-    enabled: tab === "agent" && Boolean(resolvedThreadId),
+    queryFn: async () => {
+      const previous = queryClient.getQueryData<Awaited<ReturnType<typeof getContentAgentThread>>>([
+        "content-agent-thread",
+        resolvedThreadId,
+      ]);
+      const result = await getContentAgentThread({
+        data: {
+          threadId: resolvedThreadId as string,
+          knownRevision: previous?.thread.content_revision,
+        },
+      });
+      return result.unchanged && previous ? { ...result, messages: previous.messages } : result;
+    },
+    enabled: tab === "agent" && !showRoutines && Boolean(resolvedThreadId),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+  const sidebarThreads = [
+    ...new Map(
+      [...(threads.data?.pages.flatMap((page) => [page.agent, ...page.chats]) || [])].map(
+        (item) => [item.id, item],
+      ),
+    ).values(),
+  ];
+  if (
+    !sidebarThreads.some((item) => item.id === agentIdentity.data?.thread.id) &&
+    agentIdentity.data
+  )
+    sidebarThreads.unshift(agentIdentity.data.thread);
+  const refreshThreads = () =>
+    queryClient.invalidateQueries({ queryKey: ["content-agent-threads"] });
+  const pinThread = useContentMutation(
+    (value: { threadId: string; pinned: boolean }) => setContentAgentThreadPinned({ data: value }),
+    refreshThreads,
+  );
+  const renameChat = useMutation({
+    mutationFn: (value: { threadId: string; title: string }) =>
+      renameContentAgentChat({ data: value }),
+    onSuccess: async (saved) => {
+      await Promise.all([
+        refreshThreads(),
+        queryClient.invalidateQueries({ queryKey: ["content-agent-thread", saved.id] }),
+      ]);
+    },
+  });
+  const deleteChat = useMutation({
+    mutationFn: (threadId: string) => deleteContentAgentChat({ data: { threadId } }),
+    onSuccess: async (saved) => {
+      queryClient.removeQueries({ queryKey: ["content-agent-thread", saved.id] });
+      if (resolvedThreadId === saved.id) {
+        const agentId = agentIdentity.data?.thread.id;
+        setActiveThreadId(agentId);
+        onThreadChange?.(agentId || null);
+      }
+      await refreshThreads();
+    },
+  });
+  const markRead = useMutation({
+    mutationFn: (value: { threadId: string; throughMessageId: string }) =>
+      markContentAgentThreadRead({ data: value }),
+    onSuccess: (saved) => {
+      queryClient.setQueryData<InfiniteData<ContentAgentThreadPage>>(
+        ["content-agent-threads"],
+        (current) =>
+          current && {
+            ...current,
+            pages: current.pages.map((page) => ({
+              ...page,
+              agent: page.agent.id === saved.id ? saved : page.agent,
+              chats: page.chats.map((item) => (item.id === saved.id ? saved : item)),
+            })),
+          },
+      );
+    },
+  });
+  const markThreadRead = markRead.mutate;
+  const onMarkRead = useCallback(
+    (threadId: string, throughMessageId: string) => {
+      markThreadRead({ threadId, throughMessageId });
+    },
+    [markThreadRead],
+  );
+  const savePreferences = useMutation({
+    mutationFn: (value: ContentAgentPreferencesInput) =>
+      updateContentAgentPreferences({ data: value }),
+    onSuccess: async (identity) => {
+      queryClient.setQueryData(["content-agent-identity"], identity);
+      await Promise.all([
+        refreshThreads(),
+        queryClient.invalidateQueries({ queryKey: ["content-agent-thread", identity.thread.id] }),
+      ]);
+    },
   });
   const routines = useQuery({
     queryKey: ["content-routines"],
@@ -282,8 +437,22 @@ export function ContentPage({
       queryClient.invalidateQueries({ queryKey: ["content-discover"] }),
       queryClient.invalidateQueries({ queryKey: ["content-brain"] }),
     ]);
+  const resolveDiscoverCreator = useCallback(
+    (item: DiscoverRecommendation) =>
+      queryClient.fetchQuery({
+        queryKey: ["discover-creator", item.sourceUrl || item.id],
+        queryFn: () => getDiscoverCreator({ data: { id: item.id } }),
+        staleTime: 5 * 60_000,
+        retry: 1,
+      }),
+    [queryClient],
+  );
   const saveRecommendation = useContentMutation(
     (id: string) => saveDiscoverItem({ data: { id } }),
+    discoverRefresh,
+  );
+  const unsaveRecommendation = useContentMutation(
+    (id: string) => unsaveDiscoverItem({ data: { id } }),
     discoverRefresh,
   );
   const likeRecommendation = useContentMutation(
@@ -294,11 +463,16 @@ export function ContentPage({
     (id: string) => setDiscoverFeedback({ data: { id, feedback: "not_relevant" } }),
     discoverRefresh,
   );
+  const clearRecommendationFeedback = useContentMutation(
+    (id: string) => setDiscoverFeedback({ data: { id, feedback: "pending" } }),
+    discoverRefresh,
+  );
   const sendAgentMessage = useMutation({
     mutationFn: (text: string) =>
       sendContentAgentMessage({ data: { threadId: resolvedThreadId, text } }),
     onSuccess: async (result) => {
       setActiveThreadId(result.threadId);
+      onThreadChange?.(result.threadId);
       setAgentSeed("");
       if (result.memoriesSaved) toast.success("Memory saved to My Human.");
       if (result.memoryWarning) toast.error(result.memoryWarning);
@@ -343,11 +517,12 @@ export function ContentPage({
       toast.error(error instanceof Error ? error.message : "Draft could not be regenerated."),
   });
   const saveDraft = useContentMutation(
-    (value: { messageId: string; cardId: string; body: string }) => saveAgentDraft({ data: value }),
+    (value: { messageId: string; cardId: string } & AgentDraftEdit) =>
+      saveAgentDraft({ data: value }),
     refreshAgent,
   );
   const approveSchedule = useContentMutation(
-    (value: { messageId: string; draftCardId: string; scheduleCardId: string }) =>
+    (value: { messageId: string; draftCardId: string; scheduleCardId: string; revision: number }) =>
       approveAgentScheduleProposal({ data: value }),
     refreshAgent,
   );
@@ -373,14 +548,11 @@ export function ContentPage({
     onRoutinesChange?.(open);
   };
 
-  const openAgent = (item: DiscoverRecommendation, createDraft: boolean) => {
+  const openAgent = (item: DiscoverRecommendation, action: DiscoverBoostAction) => {
     setActiveThreadId(null);
-    setAgentSeed(
-      createDraft
-        ? `Create a platform-native draft from this source: ${item.title}\n${item.sourceUrl || ""}`
-        : `Help me explore this idea: ${item.title}\n${item.sourceUrl || ""}`,
-    );
+    setAgentSeed(discoverAgentPrompt(item, action));
     changeTab("agent");
+    onThreadChange?.(null);
   };
 
   const upload = async (file: File, kind: "file" | "photo") => {
@@ -441,55 +613,74 @@ export function ContentPage({
     <main
       className={
         tab === "discover"
-          ? micro.shell
+          ? "discover-shell"
           : "content-workspace min-h-[calc(100dvh-3.5rem)] lg:min-h-screen"
       }
     >
-      <AppHeader
-        title={
-          tab === "brain"
-            ? "Brain"
-            : tab === "agent"
-              ? showRoutines
-                ? "Routines"
-                : "Agent"
-              : "Content"
-        }
-      />
-      <div className={tab === "discover" ? micro.main : ""}>
+      {(tab !== "agent" || showRoutines) && (
+        <AppHeader
+          title={
+            tab === "brain"
+              ? "Brain"
+              : tab === "agent"
+                ? showRoutines
+                  ? "Routines"
+                  : "Agent"
+                : "Content"
+          }
+        />
+      )}
+      <div className={tab === "discover" ? "discover-shell-main" : ""}>
         <div>
+          {tab === "discover" && <DiscoverPreferences onSaved={() => researchDiscover(true)} />}
           {tab === "discover" &&
-            (discover.isError ? (
+            (discover.isError && !discover.data ? (
               <EmptyWorkspace
                 eyebrow="Discover"
                 title="Discover could not load."
-                description="Your saved recommendations are safe. Try loading them again."
+                description="We couldn't open your board. Your saved recommendations are safe."
                 onRetry={() => void discover.refetch()}
               />
             ) : discover.data ? (
               <ContentDiscover
                 data={discover.data}
-                refreshing={researchDiscover.isPending}
-                refreshError={
-                  researchDiscover.error
-                    ? researchDiscover.error instanceof Error
-                      ? researchDiscover.error.message
-                      : "Recommendations could not be refreshed."
-                    : null
-                }
-                onRefresh={() => researchDiscover.mutate()}
-                onLike={(id) => likeRecommendation.mutate(id)}
-                onSave={(id) => saveRecommendation.mutate(id)}
-                onReject={(id) => rejectRecommendation.mutate(id)}
-                onAskAgent={(item) => openAgent(item, false)}
-                onCreateDraft={(item) => openAgent(item, true)}
+                onResolveCreator={resolveDiscoverCreator}
+                refreshing={discoverRefreshing}
+                refreshStatus={discoverRefreshStatus}
+                refreshError={discoverRefreshError}
+                onRefresh={() => researchDiscover(true)}
+                pagination={discoverPagination}
+                onLoadMore={loadMoreDiscoverPosts}
+                availablePlatforms={discoverPlatforms}
+                onTrackCreator={async (input) => {
+                  await trackDiscoverCreator({ data: input });
+                  await discoverRefresh();
+                  researchDiscover();
+                }}
+                onUntrackCreator={async (id) => {
+                  await untrackDiscoverCreator({ data: { id } });
+                  await discoverRefresh();
+                }}
+                onLike={async (id) => {
+                  await likeRecommendation.mutateAsync(id);
+                }}
+                onClearFeedback={async (id) => {
+                  await clearRecommendationFeedback.mutateAsync(id);
+                }}
+                onSave={async (id) => {
+                  await saveRecommendation.mutateAsync(id);
+                }}
+                onUnsave={async (id) => {
+                  await unsaveRecommendation.mutateAsync(id);
+                }}
+                onReject={async (id) => {
+                  await rejectRecommendation.mutateAsync(id);
+                }}
+                onAskAgent={(item, action = "chat") => openAgent(item, action)}
+                onCreateDraft={(item) => openAgent(item, "replicate")}
               />
             ) : (
-              <EmptyWorkspace
-                eyebrow="Discover"
-                title="Finding ideas grounded in what works."
-                description="Bento is checking your winners and current niche sources."
-              />
+              <DiscoverLoading status={discoverLoadingStatus} />
             ))}
           {tab === "agent" &&
             (showRoutines ? (
@@ -510,36 +701,105 @@ export function ContentPage({
               />
             ) : (
               <ContentAgent
-                threads={(threads.data || []) as ContentAgentThread[]}
+                threads={sidebarThreads as ContentAgentThread[]}
+                agentName={agentIdentity.data?.preferences.display_name || "Bento"}
+                agentThreadId={agentIdentity.data?.thread.id || null}
+                activeThreadTitle={thread.data?.thread?.title || undefined}
+                onPinThread={(threadId, pinned) => pinThread.mutate({ threadId, pinned })}
+                onRenameThread={(threadId, title) =>
+                  renameChat.mutateAsync({ threadId, title }).then(() => undefined)
+                }
+                onDeleteThread={(threadId) =>
+                  deleteChat.mutateAsync(threadId).then(() => undefined)
+                }
+                onMarkRead={onMarkRead}
+                readEnabled={!agentSettingsOpen}
+                onOpenSettings={() => setAgentSettingsOpen(true)}
+                identityUnavailable={
+                  activeThreadId !== undefined && agentIdentity.isError && !agentIdentity.data
+                }
+                onRetryIdentity={() => void agentIdentity.refetch()}
+                pinningThreadId={pinThread.isPending ? pinThread.variables?.threadId : undefined}
+                loadingThreads={threads.isPending}
+                threadListError={
+                  threads.isError ? "Chats could not load. Your conversations are safe." : undefined
+                }
+                onRetryThreads={() => {
+                  if (threads.isFetchNextPageError) void threads.fetchNextPage();
+                  else void threads.refetch();
+                }}
+                hasMoreThreads={threads.hasNextPage}
+                loadingMoreThreads={threads.isFetchingNextPage}
+                onLoadMore={() => void threads.fetchNextPage()}
+                loading={
+                  (activeThreadId === undefined && agentIdentity.isPending) ||
+                  (Boolean(resolvedThreadId) && thread.isPending)
+                }
+                loadError={
+                  activeThreadId === undefined && agentIdentity.isError && !agentIdentity.data
+                    ? "Your agent could not load."
+                    : thread.isError && !thread.data
+                      ? "This conversation could not load."
+                      : undefined
+                }
+                onRetry={() => {
+                  void agentIdentity.refetch();
+                  void threads.refetch();
+                  if (resolvedThreadId) void thread.refetch();
+                }}
                 activeThreadId={resolvedThreadId}
                 messages={(thread.data?.messages || []) as ContentAgentMessage[]}
+                renderMessageFooter={(message) => (
+                  <ProactiveMessageFeedback
+                    payload={message.payload}
+                    onFeedback={async (feedback) => {
+                      await giveContentAgentFeedback({ data: { messageId: message.id, feedback } });
+                      await refreshAgent();
+                    }}
+                  />
+                )}
                 seed={agentSeed}
                 brainEmpty={!brain.data?.items.length}
                 sending={sendAgentMessage.isPending}
                 onNewThread={() => {
                   setActiveThreadId(null);
                   setAgentSeed("");
+                  onThreadChange?.(null);
                 }}
-                onSelectThread={setActiveThreadId}
+                onSelectThread={(id) => {
+                  setActiveThreadId(id);
+                  setAgentSeed("");
+                  onThreadChange?.(id);
+                }}
                 onSend={async (text) => {
                   await sendAgentMessage.mutateAsync(text);
                 }}
-                onSaveDraft={async (messageId, cardId, body) => {
-                  await saveDraft.mutateAsync({ messageId, cardId, body });
+                onDraftChanged={refreshAgent}
+                onSaveDraft={async (messageId, cardId, edit) => {
+                  await saveDraft.mutateAsync({ messageId, cardId, ...edit });
                 }}
                 onBuildBrain={() => buildBrain.mutate()}
                 onApproveBrain={(messageId, cardId) => approveBrain.mutate({ messageId, cardId })}
                 onRejectDraft={(messageId, cardId, reason) =>
-                  rejectDraft.mutate({ messageId, cardId, reason })
+                  rejectDraft.mutateAsync({ messageId, cardId, reason }).then(() => undefined)
                 }
                 onRegenerateDraft={(messageId, cardId, reason) =>
-                  regenerateDraft.mutate({ messageId, cardId, reason })
+                  regenerateDraft.mutateAsync({ messageId, cardId, reason }).then(() => undefined)
                 }
-                onApproveSchedule={(messageId, draftCardId, scheduleCardId) =>
-                  approveSchedule.mutate({ messageId, draftCardId, scheduleCardId })
+                onApproveSchedule={(messageId, draftCardId, scheduleCardId, revision) =>
+                  approveSchedule
+                    .mutateAsync({ messageId, draftCardId, scheduleCardId, revision })
+                    .then(() => undefined)
                 }
               />
             ))}
+          {tab === "agent" && !showRoutines && agentSettingsOpen && agentIdentity.data && (
+            <ContentAgentSettings
+              preferences={agentIdentity.data.preferences}
+              onClose={() => setAgentSettingsOpen(false)}
+              onSave={(value) => savePreferences.mutateAsync(value)}
+            />
+          )}
           {tab === "brain" &&
             (data ? (
               <ContentBrain
@@ -551,6 +811,7 @@ export function ContentPage({
                   onBrainNavigate?.(section, item, platform);
                 }}
                 profile={data.profile}
+                humanSummary={data.humanSummary}
                 items={data.items}
                 sources={data.sources}
                 photos={settledMediaSearch.length > 1 ? searchedMedia.data || [] : mediaPhotos}

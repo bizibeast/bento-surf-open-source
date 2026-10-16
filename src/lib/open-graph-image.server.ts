@@ -1,3 +1,4 @@
+import { reserveProviderUsage } from "./provider-budget.server";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { getPlan } from "./plan.server";
 import { commerceEntitlement, planHasEntitlement } from "./plans";
@@ -163,7 +164,12 @@ async function renderPreview(
   options: BrowserRunScreenshotOptions,
   parsed: ParsedOpenGraphPath,
 ) {
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
+  for (let attempt = 1; attempt <= 1; attempt += 1) {
+    try {
+      await reserveProviderUsage("browser_milliseconds", 60000);
+    } catch {
+      return null;
+    }
     const response = await browser.quickAction("screenshot", options);
     if (response.ok) {
       const bytes = await readResponseBytes(response, MAX_SCREENSHOT_BYTES).catch(() => null);

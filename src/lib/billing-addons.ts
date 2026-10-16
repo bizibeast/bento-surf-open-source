@@ -80,7 +80,11 @@ export function desiredDodoAddonCart(input: {
   if (!isContactTier(input.contactTier)) throw new Error("Unsupported contact tier.");
   if (!validStorageUnits(input.storageUnits))
     throw new Error("Storage add-on units must be between 0 and 100.");
-  if (input.plan !== "creator" && input.contactTier !== BASE_MARKETING_CONTACTS) {
+  if (
+    input.plan !== "creator" &&
+    input.plan !== "creator_plus" &&
+    input.contactTier !== BASE_MARKETING_CONTACTS
+  ) {
     throw new Error("Contact tiers require Creator");
   }
 

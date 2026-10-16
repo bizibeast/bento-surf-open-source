@@ -34,7 +34,16 @@ import {
   approveAgentScheduleProposalForUser,
   loadAssistantResult,
 } from "./content-agent.actions";
-import { readStoredDiscover, refreshContentDiscoverForUser } from "./content-discovery.functions";
+import { listContentAgentThreadsForWorkspace } from "./content-agent-identity.server";
+import {
+  getDiscoverCreatorForUser,
+  loadMoreDiscoverForUser,
+  loadMoreDiscoverInputSchema,
+  readStoredDiscover,
+  refreshContentDiscoverForUser,
+} from "./content-discovery.functions";
+import { trackDiscoverCreatorSchema } from "./content-discover-creators";
+import { readDiscoverFollows } from "./content-discover-follows.server";
 
 const db = () => supabaseAdmin as any;
 const uuid = z.string().uuid();
@@ -98,7 +107,8 @@ export const agentMutationSchema = z.discriminatedUnion("action", [
 ]);
 
 export const discoverMutationSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("refresh") }),
+  z.object({ action: z.literal("refresh"), force: z.boolean().default(false) }),
+  loadMoreDiscoverInputSchema.extend({ action: z.literal("load_more") }),
   z.object({
     action: z.literal("feedback"),
     id: uuid,
@@ -109,9 +119,12 @@ export const discoverMutationSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("save_preferences"),
     nicheKeywords: z.array(z.string().trim().min(1).max(80)).max(20),
+    useBrainContext: z.boolean().default(true),
     language: z.string().trim().min(2).max(12),
     region: z.string().trim().min(2).max(80),
   }),
+  trackDiscoverCreatorSchema.extend({ action: z.literal("track_creator") }),
+  z.object({ action: z.literal("untrack_creator"), id: uuid }),
 ]);
 
 async function ownedMutation(query: any, message: string) {
@@ -418,6 +431,7 @@ export async function manageMcpContentRoutine(userId: string, input: unknown) {
   if (data.action === "save") {
     const routine = data.routine;
     const schedule = {
+      outputMode: routine.outputMode || "draft",
       intervalMinutes: routine.intervalMinutes,
       time: routine.time,
       ...(routine.name ? { name: routine.name } : {}),
@@ -471,14 +485,8 @@ export async function manageMcpContentRoutine(userId: string, input: unknown) {
 export async function getMcpContentAgent(userId: string, threadId?: string) {
   await requireContentWorkspace(userId);
   if (!threadId) {
-    const { data, error } = await db()
-      .from("content_agent_threads")
-      .select("id,title,last_message_at,created_at")
-      .eq("user_id", userId)
-      .order("last_message_at", { ascending: false })
-      .limit(50);
-    if (error) throw new Error("Agent conversations could not be loaded.");
-    return { threads: data || [] };
+    const page = await listContentAgentThreadsForWorkspace(userId, { limit: 49 });
+    return { threads: [page.agent, ...page.chats].slice(0, 50) };
   }
   uuid.parse(threadId);
   const [thread, messages] = await Promise.all([
@@ -555,17 +563,8 @@ export async function manageMcpContentAgent(userId: string, input: unknown) {
 }
 
 export async function getMcpContentDiscover(userId: string, creatorId?: string) {
-  await requireContentWorkspace(userId);
-  if (creatorId) {
-    const { data, error } = await db()
-      .from("creator_content_recommendations")
-      .select("*")
-      .eq("id", uuid.parse(creatorId))
-      .eq("user_id", userId)
-      .maybeSingle();
-    if (error || !data) throw new Error("This Discover recommendation is unavailable.");
-    return { recommendation: data };
-  }
+  await requireContentWorkspace(userId, "discover");
+  if (creatorId) return { creator: await getDiscoverCreatorForUser(userId, uuid.parse(creatorId)) };
   const [discover, profile] = await Promise.all([
     readStoredDiscover(userId),
     db().from("creator_content_profiles").select("*").eq("user_id", userId).maybeSingle(),
@@ -575,19 +574,22 @@ export async function getMcpContentDiscover(userId: string, creatorId?: string) 
     discover,
     preferences: {
       ...(profile.data ? contentProfileFromRow(profile.data) : contentProfileSchema.parse({})),
+      useBrainContext: profile.data?.discover_use_brain !== false,
     },
   };
 }
 
 export async function manageMcpContentDiscover(userId: string, input: unknown) {
   const data = discoverMutationSchema.parse(input);
-  await requireContentWorkspace(userId);
-  if (data.action === "refresh") return refreshContentDiscoverForUser(userId);
+  await requireContentWorkspace(userId, "discover");
+  if (data.action === "refresh") return refreshContentDiscoverForUser(userId, data.force);
+  if (data.action === "load_more") return loadMoreDiscoverForUser(userId, data);
   if (data.action === "save_preferences") {
     const { error } = await db().from("creator_content_profiles").upsert(
       {
         user_id: userId,
         niche_keywords: data.nicheKeywords,
+        discover_use_brain: data.useBrainContext,
         language: data.language,
         region: data.region,
       },
@@ -596,6 +598,41 @@ export async function manageMcpContentDiscover(userId: string, input: unknown) {
     if (error) throw new Error("Your Discover preferences could not be saved.");
     return { saved: true };
   }
+  if (data.action === "track_creator") {
+    await enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "discover-track", userId);
+    const creators = await readDiscoverFollows(userId);
+    if (
+      creators.length >= 25 &&
+      !creators.some((creator) => creator.profileUrl === data.profileUrl.profileUrl)
+    )
+      throw new Error("You can track up to 25 creators. Untrack one to add another.");
+    const { data: row, error } = await db()
+      .from("creator_discover_follows")
+      .upsert(
+        {
+          user_id: userId,
+          profile_url: data.profileUrl.profileUrl,
+          platform: data.profileUrl.platform,
+          name: data.name || data.profileUrl.name,
+          topics: data.topics,
+          active: true,
+        },
+        { onConflict: "user_id,profile_url" },
+      )
+      .select("id")
+      .single();
+    if (error || !row) throw new Error("This creator could not be tracked.");
+    return { id: String(row.id) };
+  }
+  if (data.action === "untrack_creator")
+    return ownedMutation(
+      db()
+        .from("creator_discover_follows")
+        .update({ active: false })
+        .eq("id", data.id)
+        .eq("user_id", userId),
+      "This creator could not be untracked.",
+    );
   const { data: current, error: readError } = await db()
     .from("creator_content_recommendations")
     .select("feedback,metadata")

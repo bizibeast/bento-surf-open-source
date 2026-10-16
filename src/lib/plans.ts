@@ -1,9 +1,12 @@
 // The single source of truth for pricing, entitlements, limits, and upgrade copy.
 // Keep this file framework-agnostic so client UI and server enforcement cannot drift.
 
-export type PlanId = "free" | "store" | "creator";
+export type PlanId = "free" | "store" | "creator" | "creator_plus";
 export type PaidPlanId = Exclude<PlanId, "free">;
 export type BillingPeriod = "monthly" | "yearly";
+export type BillingCatalog = "legacy" | "2026-10";
+export const CURRENT_BILLING_CATALOG: BillingCatalog = "2026-10";
+export const NEW_BILLING_PERIODS: readonly BillingPeriod[] = ["monthly", "yearly"];
 
 export type EntitlementKey =
   | "advancedAnalytics"
@@ -29,7 +32,13 @@ export type EntitlementKey =
   | "emailMarketing"
   | "discountCodes"
   | "orderBumps"
-  | "verifiedBadge";
+  | "verifiedBadge"
+  | "discover"
+  | "brain"
+  | "contentAgent"
+  | "contentRoutines"
+  | "weeklyStrategyReview"
+  | "mcpSocialAutomation";
 
 export type PlanLimits = {
   analyticsHistoryDays: number | null;
@@ -47,6 +56,7 @@ export type PlanPrice = {
   cadence: string;
   sublabel?: string;
   badge?: string;
+  available?: boolean;
 };
 
 type PlanDefinition = {
@@ -59,7 +69,8 @@ type PlanDefinition = {
   pricing?: Record<BillingPeriod, PlanPrice>;
 };
 
-export const TRIAL_DAYS = 7;
+export const TRIAL_DAYS = 3;
+export const EXTENDED_TRIAL_DAYS = 7;
 const GB = 1024;
 
 export const BASE_MARKETING_CONTACTS = 500;
@@ -108,12 +119,18 @@ const freeEntitlements: Record<EntitlementKey, boolean> = {
   discountCodes: false,
   orderBumps: false,
   verifiedBadge: false,
+  discover: false,
+  brain: false,
+  contentAgent: false,
+  contentRoutines: false,
+  weeklyStrategyReview: false,
+  mcpSocialAutomation: false,
 };
 
 const storeEntitlements: Record<EntitlementKey, boolean> = {
   ...freeEntitlements,
   liveSocialPreviews: true,
-  advancedAutoDM: true,
+  advancedAutoDM: false,
   calendarBookings: true,
   storeCards: true,
   courses: true,
@@ -127,11 +144,26 @@ const storeEntitlements: Record<EntitlementKey, boolean> = {
   orderBumps: true,
 };
 
+const creatorEntitlements: Record<EntitlementKey, boolean> = {
+  ...storeEntitlements,
+  advancedAnalytics: true,
+  advancedAutoDM: true,
+  socialConnections: true,
+  socialAnalytics: true,
+  customDomain: true,
+  postScheduler: true,
+  emailListBuilder: true,
+  emailMarketing: true,
+  verifiedBadge: true,
+  discover: true,
+  mcpSocialAutomation: true,
+};
+
 export const PLAN_CONFIG: Record<PlanId, PlanDefinition> = {
   free: {
     id: "free",
     name: "Free",
-    description: "A beautiful link in bio, free forever.",
+    description: "Legacy hosted access. New hosted accounts require a paid plan.",
     entitlements: freeEntitlements,
     limits: {
       analyticsHistoryDays: 7,
@@ -159,30 +191,30 @@ export const PLAN_CONFIG: Record<PlanId, PlanDefinition> = {
     limits: {
       analyticsHistoryDays: 7,
       maxPages: null,
-      storageMb: 5 * GB,
+      storageMb: 10 * GB,
       maxLinksAndBlocks: null,
       imageUploadMb: 15,
       videoUploadMb: 250,
       productAssetUploadMb: 1024,
     },
     pricing: {
-      monthly: { amount: 15, label: "$15", cadence: "/month" },
+      monthly: { amount: 19, label: "$19", cadence: "/month" },
       yearly: {
-        amount: 150,
-        label: "$150",
+        amount: 190,
+        label: "$190",
         cadence: "/year",
-        sublabel: "$12.50/month - 2 months free",
+        sublabel: "$15.83/month, billed yearly · save $38",
         badge: "2 months free",
       },
     },
     highlights: [
-      "Everything in Free",
+      "Your link in bio and complete creator store",
       "Unlimited pages and blocks",
-      "5 GB file storage",
+      "10 GB file storage",
       "Bento Store and one-tap checkout",
       "0% Bento platform fee on sales",
       "Calendar bookings with Google Meet",
-      "Advanced Auto DMs and lead capture",
+      "Basic Auto DMs",
       "Courses, communities and memberships",
       `Email capture up to ${BASE_MARKETING_CONTACTS} contacts`,
     ],
@@ -191,58 +223,100 @@ export const PLAN_CONFIG: Record<PlanId, PlanDefinition> = {
     id: "creator",
     name: "Creator",
     description: "Build, monetize, automate and grow.",
-    entitlements: Object.fromEntries(
-      (Object.keys(freeEntitlements) as EntitlementKey[]).map((key) => [key, true]),
-    ) as Record<EntitlementKey, boolean>,
+    entitlements: creatorEntitlements,
     limits: {
       analyticsHistoryDays: null,
       maxPages: null,
-      storageMb: 5 * GB,
+      storageMb: 50 * GB,
       maxLinksAndBlocks: null,
       imageUploadMb: 15,
       videoUploadMb: 250,
       productAssetUploadMb: 1024,
     },
     pricing: {
-      monthly: { amount: 30, label: "$30", cadence: "/month" },
+      monthly: { amount: 39, label: "$39", cadence: "/month" },
       yearly: {
-        amount: 300,
-        label: "$300",
+        amount: 390,
+        label: "$390",
         cadence: "/year",
-        sublabel: "$25/month - 2 months free",
+        sublabel: "$32.50/month, billed yearly · save $78",
         badge: "2 months free",
       },
     },
     highlights: [
       "Everything in Store",
-      "Creator-only social account features",
+      "50 GB file storage",
+      "Discover ideas for your next post",
       "Follower counts on social cards",
       "Post scheduler",
       "In-depth social media analytics",
-      "Advanced social performance insights",
-      `Email Marketing ${BASE_MARKETING_CONTACTS} contacts, unlimited sends`,
+      "Advanced Auto DMs with follow and email capture",
+      "MCP access for posting and Auto DMs",
+      `Newsletter: ${BASE_MARKETING_CONTACTS} contacts, unlimited sends`,
+    ],
+  },
+  creator_plus: {
+    id: "creator_plus",
+    name: "Creator Plus",
+    description: "A Brain that knows your business and helps you build it.",
+    entitlements: {
+      ...creatorEntitlements,
+      brain: true,
+      contentAgent: true,
+      contentRoutines: true,
+      weeklyStrategyReview: true,
+    },
+    limits: {
+      analyticsHistoryDays: null,
+      maxPages: null,
+      storageMb: 100 * GB,
+      maxLinksAndBlocks: null,
+      imageUploadMb: 15,
+      videoUploadMb: 250,
+      productAssetUploadMb: 1024,
+    },
+    pricing: {
+      monthly: { amount: 49, label: "$49", cadence: "/month" },
+      yearly: {
+        amount: 490,
+        label: "$490",
+        cadence: "/year",
+        sublabel: "$40.83/month, billed yearly · save $98",
+        badge: "2 months free",
+      },
+    },
+    highlights: [
+      "Everything in Creator",
+      "100 GB file storage",
+      "Brain: your voice, audience and strategy",
+      "Agent for content and business guidance",
+      "Routines that keep work moving",
+      "Weekly strategy reviews",
     ],
   },
 };
 
-export const PLAN_ORDER: readonly PlanId[] = ["free", "store", "creator"];
-export const PAID_PLAN_IDS: readonly PaidPlanId[] = ["store", "creator"];
+export const PLAN_ORDER: readonly PlanId[] = ["free", "store", "creator", "creator_plus"];
+export const PAID_PLAN_IDS: readonly PaidPlanId[] = ["store", "creator", "creator_plus"];
 
 export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
   free: PLAN_CONFIG.free.limits,
   store: PLAN_CONFIG.store.limits,
   creator: PLAN_CONFIG.creator.limits,
+  creator_plus: PLAN_CONFIG.creator_plus.limits,
 };
 
 export const PLAN_PRICING: Record<PaidPlanId, Record<BillingPeriod, PlanPrice>> = {
   store: PLAN_CONFIG.store.pricing!,
   creator: PLAN_CONFIG.creator.pricing!,
+  creator_plus: PLAN_CONFIG.creator_plus.pricing!,
 };
 
 export const PLAN_HIGHLIGHTS: Record<PlanId, readonly string[]> = {
   free: PLAN_CONFIG.free.highlights,
   store: PLAN_CONFIG.store.highlights,
   creator: PLAN_CONFIG.creator.highlights,
+  creator_plus: PLAN_CONFIG.creator_plus.highlights,
 };
 
 export const DODO_PRODUCT_ENV: Record<PaidPlanId, Record<BillingPeriod, string>> = {
@@ -253,6 +327,26 @@ export const DODO_PRODUCT_ENV: Record<PaidPlanId, Record<BillingPeriod, string>>
   creator: {
     monthly: "DODO_CREATOR_MONTHLY_PRODUCT_ID",
     yearly: "DODO_CREATOR_YEARLY_PRODUCT_ID",
+  },
+  creator_plus: {
+    monthly: "DODO_CREATOR_PLUS_MONTHLY_PRODUCT_ID",
+    yearly: "DODO_CREATOR_PLUS_YEARLY_PRODUCT_ID",
+  },
+};
+
+/** New products must not reuse any product IDs of existing contracts. */
+export const CURRENT_DODO_PRODUCT_ENV: Record<PaidPlanId, Record<BillingPeriod, string>> = {
+  store: {
+    monthly: "DODO_STORE_19_MONTHLY_PRODUCT_ID",
+    yearly: "DODO_STORE_190_YEARLY_PRODUCT_ID",
+  },
+  creator: {
+    monthly: "DODO_CREATOR_39_MONTHLY_PRODUCT_ID",
+    yearly: "DODO_CREATOR_390_YEARLY_PRODUCT_ID",
+  },
+  creator_plus: {
+    monthly: "DODO_CREATOR_PLUS_MONTHLY_PRODUCT_ID",
+    yearly: "DODO_CREATOR_PLUS_490_YEARLY_PRODUCT_ID",
   },
 };
 
@@ -277,45 +371,77 @@ export const ENTITLEMENT_LABELS: Record<EntitlementKey, string> = {
   oneTapCheckout: "One-tap checkout",
   emailCollection: "Email collection",
   emailListBuilder: "Email list builder",
-  emailMarketing: "Email marketing",
+  emailMarketing: "Newsletter",
   discountCodes: "Discount codes",
   orderBumps: "Order bumps",
   verifiedBadge: "Verified blue badge",
+  discover: "Discover",
+  brain: "Brain",
+  contentAgent: "Agent",
+  contentRoutines: "Routines",
+  weeklyStrategyReview: "Weekly strategy reviews",
+  mcpSocialAutomation: "MCP posting and Auto DMs",
 };
 
-export const PLAN_FEATURES: Array<Record<PlanId, string> & { label: string }> = [
-  { label: "Pages", free: "5 pages", store: "Unlimited", creator: "Unlimited" },
-  { label: "Links and blocks", free: "Unlimited", store: "Unlimited", creator: "Unlimited" },
-  { label: "Storage", free: "1 GB", store: "5 GB", creator: "5 GB" },
-  { label: "Bento analytics", free: "Last 7 days", store: "Last 7 days", creator: "Full history" },
-  { label: "Themes and custom fonts", free: "All", store: "All", creator: "All" },
-  {
-    label: "Follower counts on social cards",
-    free: "-",
-    store: "-",
-    creator: "Included",
-  },
-  { label: "Basic Auto DMs", free: "Unlimited", store: "Unlimited", creator: "Unlimited" },
-  { label: "Advanced Auto DMs", free: "-", store: "Included", creator: "Included" },
-  { label: "Post scheduler", free: "-", store: "-", creator: "Included" },
-  { label: "Social analytics", free: "-", store: "-", creator: "Included" },
-  { label: "Calendar bookings", free: "-", store: "Included", creator: "Included" },
-  { label: "Bento Store", free: "-", store: "Included", creator: "Included" },
-  { label: "Courses and communities", free: "-", store: "Included", creator: "Included" },
-  {
-    label: "Email marketing",
-    free: "-",
-    store: `Capture up to ${BASE_MARKETING_CONTACTS}`,
-    creator: `${BASE_MARKETING_CONTACTS} contacts, unlimited sends; larger tiers available`,
-  },
-];
+export const PLAN_FEATURES: Array<Record<PlanId, string> & { label: string }> = (
+  [
+    { label: "Pages", free: "5 pages", store: "Unlimited", creator: "Unlimited" },
+    { label: "Links and blocks", free: "Unlimited", store: "Unlimited", creator: "Unlimited" },
+    { label: "Storage", free: "1 GB", store: "10 GB", creator: "50 GB" },
+    {
+      label: "Bento analytics",
+      free: "Last 7 days",
+      store: "Last 7 days",
+      creator: "Full history",
+    },
+    { label: "Themes and custom fonts", free: "All", store: "All", creator: "All" },
+    {
+      label: "Follower counts on social cards",
+      free: "-",
+      store: "-",
+      creator: "Included",
+    },
+    { label: "Basic Auto DMs", free: "Unlimited", store: "Unlimited", creator: "Unlimited" },
+    { label: "Advanced Auto DMs", free: "-", store: "-", creator: "Included" },
+    { label: "Post scheduler", free: "-", store: "-", creator: "Included" },
+    { label: "Social analytics", free: "-", store: "-", creator: "Included" },
+    { label: "Calendar bookings", free: "-", store: "Included", creator: "Included" },
+    { label: "Bento Store", free: "-", store: "Included", creator: "Included" },
+    { label: "Courses and communities", free: "-", store: "Included", creator: "Included" },
+    {
+      label: "Newsletter",
+      free: "-",
+      store: `Capture up to ${BASE_MARKETING_CONTACTS}`,
+      creator: `${BASE_MARKETING_CONTACTS} contacts, unlimited sends; larger tiers available`,
+    },
+  ] as Array<Record<Exclude<PlanId, "creator_plus">, string> & { label: string }>
+)
+  .map((row) => ({ ...row, creator_plus: row.label === "Storage" ? "100 GB" : row.creator }))
+  .concat([
+    { label: "Discover", free: "-", store: "-", creator: "Included", creator_plus: "Included" },
+    {
+      label: "MCP posting and Auto DMs",
+      free: "-",
+      store: "-",
+      creator: "Included",
+      creator_plus: "Included",
+    },
+    ...["Brain", "Agent", "Routines", "Weekly strategy reviews"].map((label) => ({
+      label,
+      free: "-",
+      store: "-",
+      creator: "-",
+      creator_plus: "Included",
+    })),
+  ]);
 
 export const FREE_HIGHLIGHTS = PLAN_HIGHLIGHTS.free;
 export const PRO_HIGHLIGHTS = PLAN_HIGHLIGHTS.store;
 
 /** Maps legacy database/billing values without taking access away during rollout. */
 export function normalizePlan(value: unknown, legacyIsPro = false): PlanId {
-  if (value === "creator" || value === "store" || value === "free") return value;
+  if (value === "creator_plus" || value === "creator" || value === "store" || value === "free")
+    return value;
   if (value === "max") return "creator";
   if (value === "pro" || value === "link") return "store";
   return legacyIsPro ? "store" : "free";
@@ -338,12 +464,21 @@ export function planLimits(plan: PlanId | boolean | null | undefined): PlanLimit
   return PLAN_LIMITS[plan ?? "free"];
 }
 
-export function planHasEntitlement(plan: PlanId | string, entitlement: EntitlementKey): boolean {
-  return PLAN_CONFIG[normalizePlan(plan)].entitlements[entitlement];
+export function planHasEntitlement(
+  plan: PlanId | string,
+  entitlement: EntitlementKey,
+  catalog: BillingCatalog = CURRENT_BILLING_CATALOG,
+): boolean {
+  const normalized = normalizePlan(plan);
+  if (catalog === "legacy") {
+    if (normalized === "store" && entitlement === "advancedAutoDM") return true;
+    if (normalized === "creator") return PLAN_CONFIG.creator_plus.entitlements[entitlement];
+  }
+  return PLAN_CONFIG[normalized].entitlements[entitlement] === true;
 }
 
 export function minimumPlanForEntitlement(entitlement: EntitlementKey): PaidPlanId {
-  return planHasEntitlement("store", entitlement) ? "store" : "creator";
+  return PAID_PLAN_IDS.find((plan) => planHasEntitlement(plan, entitlement)) ?? "creator_plus";
 }
 
 export function planName(plan: PlanId): string {

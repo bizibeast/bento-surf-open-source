@@ -143,7 +143,7 @@ describe("BillingAddonsCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirm update" }));
 
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Dodo is unavailable"));
-    expect(screen.getByText(/verified allowance is 500 contacts and 5 GB storage/)).toBeVisible();
+    expect(screen.getByText(/verified allowance is 500 contacts and 50 GB storage/)).toBeVisible();
     expect(screen.getByText(/Estimated add-ons: \$208\/month/)).toBeVisible();
   });
 

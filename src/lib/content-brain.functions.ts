@@ -30,13 +30,15 @@ export async function loadContentBrain(userId: string) {
     calendarSourcesResult,
     fathomSourcesResult,
     indexResult,
+    identityResult,
   ] = await Promise.all([
     db.from("creator_content_profiles").select("*").eq("user_id", userId).maybeSingle(),
     db
       .from("creator_brain_items")
       .select("*")
       .eq("user_id", userId)
-      .order("updated_at", { ascending: false }),
+      .order("updated_at", { ascending: false })
+      .limit(1000),
     db
       .from("social_connections")
       .select("id,provider,provider_handle,provider_display_name,status,reauth_required,created_at")
@@ -60,9 +62,10 @@ export async function loadContentBrain(userId: string) {
       .order("created_at", { ascending: true }),
     db
       .from("creator_content_index_jobs")
-      .select("status,indexed_at,error_message,source_count,media_count")
+      .select("status,indexed_at,error_message,source_count,media_count,lease_expires_at")
       .eq("user_id", userId)
       .maybeSingle(),
+    db.from("profiles").select("display_name,bio").eq("id", userId).maybeSingle(),
   ]);
   if (
     profileResult.error ||
@@ -113,11 +116,17 @@ export async function loadContentBrain(userId: string) {
     status: String(source.status || "error"),
   }));
   const sources = [...socialSources, ...knowledgeSources, ...calendarSources, ...fathomSources];
+  const interrupted =
+    indexResult.data?.status === "running" &&
+    indexResult.data.lease_expires_at &&
+    Date.parse(indexResult.data.lease_expires_at) <= Date.now();
   const indexing = indexResult.data
     ? {
-        status: String(indexResult.data.status),
+        status: interrupted ? "error" : String(indexResult.data.status),
         indexedAt: indexResult.data.indexed_at || null,
-        error: indexResult.data.error_message || null,
+        error: interrupted
+          ? "Indexing was interrupted. Your posts and imported media are safe; Bento will retry automatically."
+          : indexResult.data.error_message || null,
         sourceCount: Number(indexResult.data.source_count || 0),
         mediaCount: Number(indexResult.data.media_count || 0),
       }
@@ -127,6 +136,9 @@ export async function loadContentBrain(userId: string) {
     items,
     sources,
     indexing,
+    humanSummary: [identityResult.data?.display_name, identityResult.data?.bio]
+      .filter(Boolean)
+      .join("\n\n"),
   };
 }
 
@@ -152,6 +164,22 @@ function contentBrainMediaRows(rows: any[]) {
       heroSlot: photo.hero_slot ? Number(photo.hero_slot) : null,
     }));
 }
+
+export const recordContentBrainVisit = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    await requireContentWorkspace(context.userId);
+    const { error } = await (supabaseAdmin as any).from("founder_brain_daily_usage").upsert(
+      {
+        user_id: context.userId,
+        day: new Date().toISOString().slice(0, 10),
+        last_seen_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id,day" },
+    );
+    if (error) throw new Error("Brain usage could not be recorded.");
+    return { recorded: true };
+  });
 
 export const getContentBrain = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -287,7 +315,7 @@ export const saveContentProfile = createServerFn({ method: "POST" })
       updated_at: new Date().toISOString(),
     });
     if (error) throw new Error("The Content profile could not be saved.");
-    await requestContentIndex(context.userId, true);
+    await requestContentIndex(context.userId);
     return loadContentBrain(context.userId);
   });
 
@@ -310,11 +338,30 @@ export const saveBrainItem = createServerFn({ method: "POST" })
       ...(data.tags ? { tags: data.tags } : {}),
       updated_at: new Date().toISOString(),
     };
-    const result = data.id
+    let itemId = data.id;
+    if (
+      !itemId &&
+      ["My Human", "Bento Memories", "Writing voice", "X Strategy", "LinkedIn Strategy"].includes(
+        data.title,
+      )
+    ) {
+      const { data: prior, error } = await db
+        .from("creator_brain_items")
+        .select("id")
+        .eq("user_id", context.userId)
+        .eq("kind", data.kind)
+        .eq("title", data.title)
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw new Error("The Brain document could not be loaded for saving.");
+      itemId = prior?.id;
+    }
+    const result = itemId
       ? await db
           .from("creator_brain_items")
           .update(row)
-          .eq("id", data.id)
+          .eq("id", itemId)
           .eq("user_id", context.userId)
           .select("id")
           .maybeSingle()

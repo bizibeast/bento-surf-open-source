@@ -880,7 +880,11 @@ export function sanitizeBentoWebMcpReadResult(
     case "get_content_agent":
       if (data.threads)
         return {
-          threads: projectList(data.threads, ["id", "title", "last_message_at", "created_at"], 50),
+          threads: projectList(
+            data.threads,
+            ["id", "title", "kind", "pinned_at", "unread_count", "last_message_at", "created_at"],
+            50,
+          ),
         };
       return {
         thread: project(data.thread, ["id", "title", "last_message_at", "created_at"]),
@@ -911,6 +915,7 @@ export function sanitizeBentoWebMcpReadResult(
           : [],
       };
     case "get_content_discover": {
+      if (data.creator) return { creator: projectRecommendation(data.creator) };
       if (data.recommendation) {
         const recommendation = asRecord(data.recommendation);
         return {

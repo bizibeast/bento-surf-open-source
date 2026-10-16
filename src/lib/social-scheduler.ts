@@ -1,6 +1,9 @@
 import { z } from "zod";
+import { socialMediaSizeError } from "./social-media-limits";
+import { SOCIAL_IMAGE_OPTIMIZATION_MAX_BYTES } from "./social-provider-media";
 import { zonedDateTimeInputToIso } from "./local-datetime";
 import { isValidTimeZone } from "./timezones";
+import { validSocialMentions } from "./social-mentions";
 import {
   X_LONG_POST_LIMIT,
   X_STANDARD_POST_LIMIT,
@@ -549,6 +552,7 @@ export function deriveSocialPostStatus(
 }
 
 export type SchedulerPost = {
+  agentDraft?: boolean;
   automationNote?: string;
   id: string;
   body: string;
@@ -858,8 +862,8 @@ function invalidVideoCover(
     if (!image.mimeType.startsWith("image/") || image.mimeType !== "image/jpeg") {
       return `${name} needs a JPEG thumbnail. Upload it again so Bento can convert it.`;
     }
-    if (provider === "youtube" && image.size > YOUTUBE_THUMBNAIL_MAX_BYTES) {
-      return "YouTube thumbnails must be 2 MB or smaller.";
+    if (image.size > SOCIAL_IMAGE_OPTIMIZATION_MAX_BYTES) {
+      return `${name} needs a smaller thumbnail. Upload it again so Bento can optimize it before scheduling.`;
     }
   }
   if (
@@ -998,7 +1002,7 @@ export const schedulerMediaSchema = z.object({
 export const socialPostInputSchema = z
   .object({
     id: z.string().uuid().optional(),
-    body: z.string().trim().max(X_LONG_POST_LIMIT),
+    body: z.string().max(X_LONG_POST_LIMIT),
     title: z.string().trim().max(300).optional().default(""),
     scheduledAt: z.string().datetime({ offset: true }).nullable(),
     timezone: z.string().min(1).max(100).default("UTC"),
@@ -1010,6 +1014,26 @@ export const socialPostInputSchema = z
   })
   .superRefine((value, context) => {
     for (const [provider, settings] of Object.entries(value.providerSettings)) {
+      if (settings.mentions !== undefined) {
+        const mentionBody =
+          provider === "youtube" && typeof settings.description === "string"
+            ? settings.description
+            : typeof settings.bodyOverride === "string"
+              ? settings.bodyOverride
+              : value.body;
+        if (
+          !isPublicSocialProvider(provider) ||
+          !Array.isArray(settings.mentions) ||
+          settings.mentions.length > 20 ||
+          validSocialMentions(mentionBody, provider as SocialProvider, settings.mentions).length !==
+            settings.mentions.length
+        )
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "A selected mention no longer matches this platform's text. Choose it again.",
+            path: ["providerSettings", provider, "mentions"],
+          });
+      }
       if (
         settings.bodyOverride !== undefined &&
         (typeof settings.bodyOverride !== "string" ||
@@ -1166,11 +1190,18 @@ export function validatePostForProviders(
   title = "",
   providerSettings: SocialProviderSettings = {},
   xCapabilities?: XAccountCapabilities | null,
+  tiktokDirectPostAudited = false,
+  validationStage: "publish" | "draft_handoff" = "publish",
 ) {
   const errors: Partial<Record<SocialProvider, string>> = {};
   for (const provider of providers) {
     const definition = SOCIAL_PROVIDER_DEFINITIONS[provider];
     const settings = providerSettings[provider] || {};
+    const sizeError = media.map((item) => socialMediaSizeError(provider, item)).find(Boolean);
+    if (sizeError) {
+      errors[provider] = sizeError;
+      continue;
+    }
     const providerBody = typeof settings.bodyOverride === "string" ? settings.bodyOverride : body;
     const providerTitle =
       typeof settings.titleOverride === "string" ? settings.titleOverride : title;
@@ -1213,7 +1244,9 @@ export function validatePostForProviders(
     const textForLimit =
       provider === "youtube" ? youtubeDescriptionFrom(providerBody, settings) : providerBody;
     const maxText =
-      provider === "twitter" && xCapabilities?.canPostLong ? X_LONG_POST_LIMIT : definition.maxText;
+      provider === "twitter" && (xCapabilities?.canPostLong || validationStage === "draft_handoff")
+        ? X_LONG_POST_LIMIT
+        : definition.maxText;
     if (textForLimit.length > maxText) {
       errors[provider] = `${definition.name} allows ${maxText.toLocaleString()} characters.`;
       continue;
@@ -1357,6 +1390,11 @@ export function validatePostForProviders(
       const privacy = String(settings.privacyLevel || "");
       if (!privacy) {
         errors.tiktok = "Choose a TikTok privacy setting.";
+        continue;
+      }
+      if (!tiktokDirectPostAudited && privacy !== "SELF_ONLY") {
+        errors.tiktok =
+          "Public TikTok publishing requires the separate Content Posting API Direct Post audit. Until it is approved, use a private TikTok account and Only me (SELF_ONLY).";
         continue;
       }
       if (

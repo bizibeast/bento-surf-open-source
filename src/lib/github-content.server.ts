@@ -14,14 +14,22 @@ const GITHUB_API_VERSION = "2022-11-28";
 function githubCredentials() {
   const appId = process.env.GITHUB_CONTENT_APP_ID?.trim() || "";
   const appSlug = process.env.GITHUB_CONTENT_APP_SLUG?.trim() || "";
+  const clientId = process.env.GITHUB_CONTENT_APP_CLIENT_ID?.trim() || "";
+  const clientSecret = process.env.GITHUB_CONTENT_APP_CLIENT_SECRET?.trim() || "";
   const privateKey = (process.env.GITHUB_CONTENT_APP_PRIVATE_KEY?.trim() || "").replace(
     /\\n/g,
     "\n",
   );
-  if (!appId || !/^[0-9]+$/.test(appId) || !/^[a-z0-9-]+$/.test(appSlug) || !privateKey) {
+  if (
+    !/^[0-9]+$/.test(appId) ||
+    !/^[a-z0-9-]+$/.test(appSlug) ||
+    !clientId ||
+    !clientSecret ||
+    !privateKey
+  ) {
     throw new Error("GitHub Content App is not configured.");
   }
-  return { appId, appSlug, privateKey };
+  return { appId, appSlug, clientId, clientSecret, privateKey };
 }
 
 export function githubReady() {
@@ -171,6 +179,32 @@ async function githubInstallationInfo(installationId: string, fetcher: typeof fe
   };
 }
 
+export async function verifyGitHubInstallationForUser(
+  installationId: string,
+  code: string,
+  fetcher: typeof fetch = fetch,
+) {
+  const { clientId, clientSecret } = githubCredentials();
+  const response = await fetcher("https://github.com/login/oauth/access_token", {
+    method: "POST",
+    headers: { accept: "application/json" },
+    body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, code }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw new Error("GitHub authorization failed. Start again.");
+  const token = z.object({ access_token: z.string().min(1) }).safeParse(await response.json());
+  if (!token.success) throw new Error("GitHub authorization failed. Start again.");
+  try {
+    await githubRequest(
+      token.data.access_token,
+      `/user/installations/${encodeURIComponent(installationId)}/repositories?per_page=1`,
+      fetcher,
+    );
+  } catch {
+    throw new Error("This GitHub installation is not accessible to the authorized account.");
+  }
+}
+
 type GitHubInstallationIdentity = {
   installationId: string;
   accountId: string;
@@ -210,9 +244,10 @@ async function saveGitHubConnection(userId: string, identity: GitHubInstallation
 
 export async function completeGitHubConnectionForUser(
   userId: string,
-  input: { installationId: string; state: string },
+  input: { installationId: string; code: string; state: string },
   dependencies: {
     consumeState: typeof consumeContentOAuthState;
+    verifyInstallation: (installationId: string, code: string) => Promise<unknown>;
     installationInfo: (installationId: string) => Promise<{
       accountId: string;
       displayName: string;
@@ -221,6 +256,7 @@ export async function completeGitHubConnectionForUser(
     save: (userId: string, identity: GitHubInstallationIdentity) => Promise<unknown>;
   } = {
     consumeState: consumeContentOAuthState,
+    verifyInstallation: verifyGitHubInstallationForUser,
     installationInfo: githubInstallationInfo,
     save: saveGitHubConnection,
   },
@@ -231,6 +267,7 @@ export async function completeGitHubConnectionForUser(
     .parse(input.installationId);
   const state = await dependencies.consumeState({ userId, provider: "github", state: input.state });
   if (!state) throw new Error("This GitHub connection expired. Start again.");
+  await dependencies.verifyInstallation(installationId, input.code);
   const account = await dependencies.installationInfo(installationId);
   const identity = { installationId, ...account };
   await dependencies.save(userId, identity);

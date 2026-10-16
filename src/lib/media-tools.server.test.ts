@@ -937,7 +937,7 @@ describe("free URL media endpoint", () => {
     }
   });
 
-  it("uses the shared Workers AI transcription path and falls back to Groq", async () => {
+  it("uses one paid transcription provider per request", async () => {
     const ai = { run: vi.fn().mockRejectedValue(new Error("workers unavailable")) };
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
       const url = String(input);
@@ -971,16 +971,9 @@ describe("free URL media endpoint", () => {
       { fetcher },
     );
 
-    expect(response?.status).toBe(200);
+    expect(response?.status).toBe(502);
     expect(ai.run).toHaveBeenCalledOnce();
-    expect(fetcher).toHaveBeenCalledWith(
-      "https://api.groq.com/openai/v1/audio/transcriptions",
-      expect.objectContaining({ method: "POST" }),
-    );
-    expect(await response?.json()).toMatchObject({
-      kind: "transcript",
-      transcript: "Hello from Bento.",
-    });
+    expect(fetcher.mock.calls.some(([url]) => String(url).includes("api.groq.com"))).toBe(false);
   });
 
   it("uses Workers AI directly when it returns a valid URL transcript", async () => {

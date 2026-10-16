@@ -280,7 +280,7 @@ describe("Open Graph image requests", () => {
     expect(browser.quickAction).toHaveBeenCalledTimes(1);
   });
 
-  it("retries one transient cold-render failure before serving an error", async () => {
+  it("serves the static fallback without paying for another render", async () => {
     const data = previewData();
     const version = publicPagePreviewVersion(data);
     const browser = {
@@ -297,9 +297,9 @@ describe("Open Graph image requests", () => {
       { loadProfile: vi.fn(async () => data) },
     );
 
-    expect(response?.status).toBe(200);
-    expect(response?.headers.get("x-bento-og")).toBe("MISS");
-    expect(browser.quickAction).toHaveBeenCalledTimes(2);
+    expect(response?.status).toBe(302);
+    expect(response?.headers.get("x-bento-og")).toBe("FALLBACK");
+    expect(browser.quickAction).toHaveBeenCalledTimes(1);
   });
 
   it("requires the exact hydrated block count before taking the screenshot", async () => {

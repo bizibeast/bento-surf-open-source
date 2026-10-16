@@ -24,6 +24,7 @@ vi.mock("@tanstack/react-start/server", () => ({ getRequestHost: () => state.hos
 vi.mock("@/integrations/supabase/auth-middleware", () => ({ requireSupabaseAuth: {} }));
 vi.mock("./request-security.server", () => ({ enforceRequestRateLimit: vi.fn() }));
 vi.mock("./plan.server", () => ({
+  isSelfHostedEdition: () => true,
   getPlan: async () => "creator",
   requirePlanEntitlement: vi.fn(),
 }));
@@ -63,6 +64,10 @@ vi.mock("@/integrations/supabase/client.server", () => ({
           rows = rows.slice(0, limit);
           return query;
         },
+        single: () => {
+          single = true;
+          return query;
+        },
         maybeSingle: () => {
           single = true;
           return query;
@@ -85,7 +90,7 @@ vi.mock("@/integrations/supabase/client.server", () => ({
 }));
 
 import { getPublicBookingCalendar } from "./booking.functions";
-import { getPublicCommerceStore } from "./commerce.functions";
+import { getPublicCommerceProduct, getPublicCommerceStore } from "./commerce.functions";
 import { getPublicNewsletterPublications } from "./newsletter.functions";
 
 const pageId = "11111111-1111-4111-8111-111111111111";
@@ -298,4 +303,10 @@ it("keeps the legacy Store tab visible when enabled without a dedicated page", a
   const store = await getPublicCommerceStore({ data: { username: "bizibeast" } });
   expect(store?.isStandalone).toBe(true);
   expect(store?.chrome.pages.find((page) => page.system === "store")?.id).toBe("store-catalog");
+});
+
+it("returns not found for a product on an unpublished creator page", async () => {
+  state.tables.profiles[0].page_published = false;
+  state.tables.commerce_products[1].kind = "digital_product";
+  await expect(getPublicCommerceProduct({ data: { username: "bizibeast", publicSlug: "guide" } })).resolves.toBeNull();
 });

@@ -1,3 +1,10 @@
+import { reserveProviderUsage } from "./provider-budget.server";
+import {
+  resolveWorkspace,
+  verifyWorkspaceCookie,
+  workspaceCookieSigningKey,
+  WORKSPACE_COOKIE,
+} from "./workspace-session.server";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 import { getPlan, getStorageAllowanceMb } from "./plan.server";
@@ -28,6 +35,7 @@ const UPLOAD_KINDS = [
 export type UploadKind = (typeof UPLOAD_KINDS)[number];
 
 type StorageEnv = Pick<Env, "MEDIA_BUCKET"> & {
+  IMAGES?: ImagesBinding;
   APP_ENV?: string;
   UPLOAD_RATE_LIMITER?: { limit(options: { key: string }): Promise<{ success: boolean }> };
 };
@@ -109,7 +117,7 @@ export function getMediaBucket() {
   return bucket;
 }
 
-async function authenticateUpload(request: Request, _env: StorageEnv) {
+export async function authenticateUpload(request: Request, _env: StorageEnv) {
   const authorization = request.headers.get("authorization");
   if (!authorization?.startsWith("Bearer ")) throw new Error("Unauthorized");
   const token = authorization.slice("Bearer ".length).trim();
@@ -124,7 +132,15 @@ async function authenticateUpload(request: Request, _env: StorageEnv) {
   const { data, error } = await supabase.auth.getClaims(token);
   const userId = data?.claims?.sub;
   if (error || typeof userId !== "string" || !userId) throw new Error("Unauthorized");
-  return userId;
+  const cookie = request.headers
+    .get("cookie")
+    ?.split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${WORKSPACE_COOKIE}=`))
+    ?.slice(WORKSPACE_COOKIE.length + 1);
+  const selected = cookie ? await verifyWorkspaceCookie(cookie, workspaceCookieSigningKey()) : null;
+  const workspace = await resolveWorkspace(userId, selected);
+  return workspace.workspaceId;
 }
 
 const ACTIVE_CONTENT_TYPES = new Set([
@@ -560,7 +576,7 @@ async function assertUploadQuota(
         ),
       );
       return jsonError(
-        `You've reached your ${storageLabel} of storage.${plan === "free" ? " Upgrade to Store for 5 GB." : " Manage storage or add capacity in Billing."}`,
+        `You've reached your ${storageLabel} of storage.${plan === "free" ? " Upgrade to Store for 10 GB." : " Manage storage or add capacity in Billing."}`,
         413,
       );
     }
@@ -767,6 +783,30 @@ async function uploadMultipartPart(
       return jsonError("Upload part size does not match the declared upload", 400);
     }
     return jsonError("Upload part could not be stored. Please try again.", 500);
+  }
+}
+
+async function abortMultipartUpload(
+  request: Request,
+  env: StorageEnv,
+  dependencies: StorageDependencies,
+) {
+  const url = new URL(request.url);
+  const key = validateMediaObjectKey(url.searchParams.get("key") ?? "");
+  const uploadId = url.searchParams.get("uploadId")?.trim();
+  if (!key || !multipartUploadMetadata(key) || !uploadId || uploadId.length > 1024)
+    return jsonError("Invalid multipart upload", 400);
+  const userId = await resolveUploadUser(request, env, dependencies);
+  if (!userId || !userOwnsObjectKey(userId, key)) return jsonError("Unauthorized", 401);
+  if (env.UPLOAD_RATE_LIMITER) {
+    const outcome = await env.UPLOAD_RATE_LIMITER.limit({ key: `${userId}:abort` });
+    if (!outcome.success) return jsonError("Upload rate limit exceeded", 429);
+  }
+  try {
+    await env.MEDIA_BUCKET.resumeMultipartUpload(key, uploadId).abort();
+    return Response.json({ aborted: true });
+  } catch {
+    return jsonError("The unfinished upload could not be canceled", 500);
   }
 }
 
@@ -980,6 +1020,7 @@ function mediaHeaders(object: R2Object) {
   object.writeHttpMetadata(headers);
   headers.set("etag", object.httpEtag);
   headers.set("content-length", String(object.size));
+  headers.set("accept-ranges", "bytes");
   headers.set("cache-control", IMMUTABLE_CACHE_CONTROL);
   headers.set("access-control-allow-origin", "*");
   headers.set("x-content-type-options", "nosniff");
@@ -990,9 +1031,10 @@ function mediaHeaders(object: R2Object) {
 }
 
 async function serveMedia(request: Request, env: StorageEnv, context: StorageContext) {
+  const url = new URL(request.url);
   let decodedKey: string;
   try {
-    decodedKey = decodeURIComponent(new URL(request.url).pathname.slice(MEDIA_CDN_PATH.length));
+    decodedKey = decodeURIComponent(url.pathname.slice(MEDIA_CDN_PATH.length));
   } catch {
     return new Response("Invalid media path", { status: 400 });
   }
@@ -1007,8 +1049,47 @@ async function serveMedia(request: Request, env: StorageEnv, context: StorageCon
       : new Response("Not found", { status: 404 });
   }
 
+  // Video previews and playback request small byte ranges. Serving the entire file here
+  // would download large videos just to show a frame in Settings.
+  const requestedRange = request.headers.get("range");
+  if (requestedRange) {
+    const head = await env.MEDIA_BUCKET.head(key);
+    if (!head) return new Response("Not found", { status: 404 });
+    const match = /^bytes=(\d*)-(\d*)$/.exec(requestedRange);
+    const start = match?.[1]
+      ? Number(match[1])
+      : match?.[2]
+        ? Math.max(0, head.size - Number(match[2]))
+        : NaN;
+    const requestedEnd = match?.[1] && match[2] ? Number(match[2]) : head.size - 1;
+    if (
+      !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(requestedEnd) ||
+      start < 0 ||
+      start >= head.size ||
+      requestedEnd < start
+    ) {
+      return new Response(null, {
+        status: 416,
+        headers: { "content-range": `bytes */${head.size}` },
+      });
+    }
+    const end = Math.min(requestedEnd, head.size - 1, start + 1024 * 1024 - 1);
+    const object = await env.MEDIA_BUCKET.get(key, {
+      range: { offset: start, length: end - start + 1 },
+    });
+    if (!object) return new Response("Not found", { status: 404 });
+    const headers = mediaHeaders(object);
+    headers.set("content-length", String(end - start + 1));
+    headers.set("content-range", `bytes ${start}-${end}/${head.size}`);
+    return new Response(object.body, { status: 206, headers });
+  }
+
+  const requestedWidth = Number(url.searchParams.get("w"));
+  const variantWidth =
+    env.IMAGES && [320, 640, 1280].includes(requestedWidth) ? requestedWidth : null;
   const cacheUrl = new URL(request.url);
-  cacheUrl.search = "";
+  cacheUrl.search = variantWidth ? `?w=${variantWidth}` : "";
   const cacheKey = new Request(cacheUrl.toString(), { method: "GET" });
   const cache = typeof caches === "undefined" ? null : await caches.open("bento-media-v2");
   const cached = await cache?.match(cacheKey);
@@ -1016,7 +1097,31 @@ async function serveMedia(request: Request, env: StorageEnv, context: StorageCon
 
   const object = await env.MEDIA_BUCKET.get(key);
   if (!object) return new Response("Not found", { status: 404 });
-  const response = new Response(object.body, { headers: mediaHeaders(object) });
+  const headers = mediaHeaders(object);
+  if (variantWidth && /^image\/(?:png|jpeg|webp)$/i.test(headers.get("content-type") ?? "")) {
+    try {
+      await reserveProviderUsage("image_transformations");
+      const transformed = await env
+        .IMAGES!.input(object.body)
+        .transform({ width: variantWidth, fit: "scale-down" })
+        .output({ format: "image/webp", quality: 82 });
+      const transformedResponse = transformed.response();
+      if (!transformedResponse.ok || !transformedResponse.body)
+        throw new Error("Image resize failed");
+      headers.delete("content-length");
+      headers.delete("etag");
+      headers.set("content-type", "image/webp");
+      const response = new Response(transformedResponse.body, { headers });
+      if (cache) context.waitUntil(cache.put(cacheKey, response.clone()));
+      return response;
+    } catch (error) {
+      console.warn("[media] Image resize failed; serving original", error);
+      const original = await env.MEDIA_BUCKET.get(key);
+      if (!original) return new Response("Not found", { status: 404 });
+      return new Response(original.body, { headers: mediaHeaders(original) });
+    }
+  }
+  const response = new Response(object.body, { headers });
   if (cache) context.waitUntil(cache.put(cacheKey, response.clone()));
   return response;
 }
@@ -1299,6 +1404,9 @@ export async function handleR2StorageRequest(
     }
     if (request.method === "POST" && action === "mpu-complete") {
       return completeMultipartUpload(request, env, dependencies);
+    }
+    if (request.method === "POST" && action === "mpu-abort") {
+      return abortMultipartUpload(request, env, dependencies);
     }
     if (request.method === "PUT" && !action) {
       return uploadMedia(request, env, context, dependencies);

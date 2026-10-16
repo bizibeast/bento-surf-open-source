@@ -7,7 +7,7 @@
 - `get_content_media`, `manage_content_media`: list/search Brain Media and its limits; register an uploaded image/video, fetch a connected post, manage folders, move items, and set or clear four hero-image slots. Use `upload_media` first and pass its `key` to `register_upload`.
 - `get_content_routines`, `manage_content_routine`: inspect routine schedules and recent activity; save template/custom routines or pause/resume them.
 - `get_content_agent`, `manage_content_agent`: inspect Agent conversations, send a message, edit/reject/regenerate a draft, or approve Brain/scheduling proposals.
-- `get_content_discover`, `manage_content_discover`: inspect recommendations and preferences or open a recommendation; refresh, set feedback, and save or unsave items.
+- `get_content_discover`, `manage_content_discover`: inspect recommendations and preferences or open a creator recommendation; refresh, load more, set feedback, save/unsave items, or track/untrack creators.
 - `list_social_posts`: recent drafts, scheduled posts, publishing outcomes, and stable IDs.
 - `create_social_post`: create or edit a draft, schedule, or publish to connected accounts. Use `providerSettings` for YouTube title, description, privacy, and thumbnail; Instagram Trial Reels and scheduled Auto DM; TikTok privacy and interactions; and X repost timing.
 - `get_scheduler_workspace`, `manage_scheduler`: inspect posting times and lifecycle state, then save posting times or reschedule, move to draft, duplicate, cancel, or delete owned posts.

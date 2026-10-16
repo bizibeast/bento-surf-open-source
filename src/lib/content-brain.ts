@@ -1,6 +1,18 @@
 import { z } from "zod";
 import { SOCIAL_PROVIDERS, type SocialProvider } from "./social-scheduler";
 import { isValidTimeZone } from "./timezones";
+import { parsePublicHttpUrl } from "./safe-url";
+
+export const STRATEGY_PLATFORMS = [
+  "twitter",
+  "linkedin",
+  "instagram",
+  "facebook",
+  "threads",
+  "tiktok",
+  "youtube",
+] as const;
+export type StrategyPlatform = (typeof STRATEGY_PLATFORMS)[number];
 
 export const CONTENT_BRAIN_KINDS = [
   "profile",
@@ -93,8 +105,52 @@ export type BrainSuggestion = Omit<
   evidence?: Array<{ sourceRef: string; quote: string }>;
 };
 
+export function sourceBackedBrainItems(
+  posts: Array<Record<string, unknown>>,
+  generated: BrainSuggestion[],
+) {
+  const byRef = new Map(posts.map((post) => [`${post.provider}:${post.remote_post_id}`, post]));
+  return generated.flatMap((item) => {
+    const post = byRef.get(item.sourceRef || "");
+    if (
+      !post ||
+      !item.evidence?.length ||
+      item.evidence.some(
+        (evidence) =>
+          !byRef.has(evidence.sourceRef) ||
+          !String(byRef.get(evidence.sourceRef)?.caption || "").includes(evidence.quote),
+      )
+    )
+      return [];
+    const sourceUrl = parsePublicHttpUrl(post.remote_post_url, { requireHttps: true })
+      ? String(post.remote_post_url)
+      : null;
+    return [{ ...item, sourceUrl, provenance: "social_post" as const }];
+  });
+}
+
+export function completeContentStrategy(content: string) {
+  const sections = [
+    "Strategic Goal",
+    "Target Audience",
+    "Content Pillars",
+    "Posting Rhythm",
+    "Notes",
+  ];
+  if (!sections.every((section) => new RegExp(`^#{1,3} ${section}\\s*$`, "mi").test(content)))
+    return false;
+  const pillars = [...content.matchAll(/^###\s+(\d{1,3})%\s+.+$/gm)];
+  return (
+    pillars.length >= 2 &&
+    pillars.reduce((sum, match) => sum + Number(match[1]), 0) === 100 &&
+    ["Core Message", "What I Share", "Why It Matters"].every(
+      (label) => content.split(label).length - 1 >= pillars.length,
+    )
+  );
+}
+
 export function buildContentStrategy(
-  platform: "twitter" | "linkedin",
+  platform: StrategyPlatform,
   profile: ContentProfile,
   items: readonly BrainItem[],
 ) {
@@ -103,8 +159,8 @@ export function buildContentStrategy(
   const confirmed = items.filter((item) => item.status === "confirmed");
   const rules = confirmed
     .filter((item) => item.kind === "instruction")
-    .map((item) => `- ${item.content}`)
-    .join("\n");
+    .map((item) => item.content)
+    .join("\n\n");
   const stories = confirmed
     .filter((item) => item.kind === "story")
     .slice(0, 8)
@@ -162,6 +218,7 @@ ${profile.goal === "reach_growth" ? "Grow qualified reach and build trust with t
 **What I Lean Into:**
 - Story-first structure: open with a moment or tension before the lesson.
 - Concrete proof and direct, specific language.
+
 ${rules}
 
 **What I Avoid:**
@@ -169,6 +226,29 @@ ${rules}
 - Generic advice, corporate language, and repeating the same hook.
 
 ${stories ? `**Stories to Draw From:**\n${stories}` : "Build your Brain from your posts to add source-backed stories."}`;
+}
+
+export function profileDocuments(items: readonly BrainItem[]) {
+  const profiles = items.filter((item) => item.kind === "profile");
+  const isHuman = (item: BrainItem) =>
+    /^(my human(?: profile)?|human profile|about me|my profile)$/i.test(item.title.trim());
+  const canonical = profiles
+    .filter(isHuman)
+    .sort(
+      (a, b) =>
+        Number(b.provenance === "creator") - Number(a.provenance === "creator") ||
+        b.updatedAt.localeCompare(a.updatedAt),
+    );
+  const human = canonical[0] || profiles.find((item) => item.provenance === "social_post");
+  const body = (item: BrainItem) =>
+    item.content.replace(/^#{1,3}\s+(?:my human(?: profile)?|human profile)\s*\n+/i, "").trim();
+  const seen = new Set(human ? [body(human)] : []);
+  const memories = profiles.filter((item) => {
+    if (item.id === human?.id || seen.has(body(item))) return false;
+    seen.add(body(item));
+    return true;
+  });
+  return { human, humanContent: human ? body(human) : "", memories };
 }
 
 export function groupBrainItems(items: readonly BrainItem[]) {

@@ -1,3 +1,4 @@
+import { AUTOMATIC_ROUTINE_PLATFORMS, routineReviewReason } from "@/lib/content-routines";
 import { useState, type ComponentType } from "react";
 import {
   ArrowLeft,
@@ -72,8 +73,8 @@ const presets: Preset[] = [
   },
   {
     key: "morning_ready_email",
-    label: "Morning ready email",
-    description: "Email when a new draft batch is ready",
+    label: "Morning draft check-in",
+    description: "Checks ready drafts for your in-app update",
     group: "Daily rhythm",
     template: "morning_ready_email",
     time: "07:00",
@@ -94,7 +95,7 @@ const presets: Preset[] = [
   },
   {
     key: "granola-x",
-    label: "Granola Posts",
+    label: "Granola / Fathom Posts",
     description: "Turns meetings into X drafts",
     group: "X / Twitter",
     provider: "granola",
@@ -102,7 +103,7 @@ const presets: Preset[] = [
     color: "#f7e9df",
     icon: Sparkles,
     instructions:
-      "Use my connected Granola meeting notes to find a useful insight and prepare an X draft in my voice. Exclude private third-party details and cite the source. If no relevant notes exist, say so.",
+      "Use my connected Granola or Fathom meeting notes to find a useful insight and prepare an X draft in my voice. Exclude private third-party details and cite the source. If no relevant notes exist, say so.",
   },
   {
     key: "outliers-x",
@@ -129,7 +130,7 @@ const presets: Preset[] = [
   },
   {
     key: "granola-linkedin",
-    label: "Meeting to Post",
+    label: "Granola / Fathom to LinkedIn",
     description: "Turns meeting lessons into drafts",
     group: "LinkedIn",
     provider: "granola",
@@ -137,7 +138,7 @@ const presets: Preset[] = [
     color: "#f8e8e1",
     icon: Sparkles,
     instructions:
-      "Find a directly supported lesson in my connected Granola meeting notes and prepare a LinkedIn draft. Follow my strategy, cite the note, and exclude private third-party information.",
+      "Find a directly supported lesson in my connected Granola or Fathom meeting notes and prepare a LinkedIn draft. Follow my strategy, cite the note, and exclude private third-party information.",
   },
   {
     key: "photo-carousel",
@@ -193,8 +194,8 @@ const presets: Preset[] = [
   },
   {
     key: "weekly_performance_review",
-    label: "Weekly performance review",
-    description: "Reviews your week against strategy",
+    label: "Weekly strategy review",
+    description: "Content, sales, and your next business move",
     group: "Cross-platform",
     template: "weekly_performance_review",
     time: "09:00",
@@ -236,6 +237,7 @@ export function ContentRoutines({
     routine?: ContentRoutineView;
   } | null>(null);
   const [error, setError] = useState("");
+  const [starting, setStarting] = useState(false);
   const custom = routines.filter(
     (routine) => routine.template.startsWith("custom:") && !routine.schedule.catalogKey,
   );
@@ -269,7 +271,7 @@ export function ContentRoutines({
           <div>
             <h2 className="text-[28px] font-semibold tracking-tight">Set Bento's rhythm.</h2>
             <p className="mt-1 text-sm text-neutral-500">
-              Things Bento does when you're not looking.
+              Your head of content and monetization, working to your schedule.
             </p>
           </div>
           <div className="flex gap-2">
@@ -292,6 +294,49 @@ export function ContentRoutines({
             </button>
           </div>
         </header>
+        {!routines.length && (
+          <div className="mb-8 border-b border-neutral-200 pb-6">
+            <h3 className="font-medium">Let Bento get started</h3>
+            <p className="mt-2 text-sm leading-6 text-neutral-500">
+              A daily research brief, daily post drafts, and a weekly content and business review.
+              Every post stays a draft until you review it and choose when to schedule.
+            </p>
+            <button
+              type="button"
+              className="content-action content-action-primary mt-4"
+              disabled={starting}
+              onClick={async () => {
+                setStarting(true);
+                setError("");
+                try {
+                  for (const [template, time, intervalMinutes] of [
+                    ["nightly_niche_brief", "07:00", 1440],
+                    ["fill_schedule", "08:00", 1440],
+                    ["weekly_performance_review", "09:00", 10080],
+                  ] as const) {
+                    await onSave({
+                      template,
+                      time,
+                      intervalMinutes,
+                      enabled: true,
+                      timezone,
+                      platforms: AUTOMATIC_ROUTINE_PLATFORMS.filter((provider) =>
+                        connectedProviders.includes(provider),
+                      ),
+                      outputMode: "draft",
+                    });
+                  }
+                } catch (cause) {
+                  setError(cause instanceof Error ? cause.message : "Could not start routines.");
+                } finally {
+                  setStarting(false);
+                }
+              }}
+            >
+              {starting ? "Setting up…" : "Start with daily drafts"}
+            </button>
+          </div>
+        )}
         {error && (
           <p role="alert" className="mb-5 text-sm text-red-700">
             {error}
@@ -310,7 +355,9 @@ export function ContentRoutines({
                       : value.schedule.catalogKey === preset.key,
                   );
                   const available =
-                    !preset.provider || connectedProviders.includes(preset.provider);
+                    !preset.provider ||
+                    connectedProviders.includes(preset.provider) ||
+                    (preset.provider === "granola" && connectedProviders.includes("fathom"));
                   const Icon = preset.icon;
                   return (
                     <div key={preset.key} className="relative">
@@ -325,7 +372,7 @@ export function ContentRoutines({
                         <p className="mt-1 text-xs leading-5 text-neutral-500">
                           {available
                             ? preset.description
-                            : `Connect ${preset.provider} to use this`}
+                            : `Connect ${preset.provider === "granola" ? "Granola or Fathom" : preset.provider} to use this`}
                         </p>
                         {routine?.enabled && (
                           <span
@@ -345,7 +392,7 @@ export function ContentRoutines({
                           onClick={() => void toggle(routine)}
                           className={`mt-2 text-xs ${routine.enabled ? "text-green-700" : "text-neutral-400"}`}
                         >
-                          {routine.enabled ? "On" : "Paused"}
+                          {routineReviewReason(routine) || (routine.enabled ? "On" : "Paused")}
                         </button>
                       )}
                     </div>
@@ -377,7 +424,7 @@ export function ContentRoutines({
                   className="content-action"
                   aria-label={`${routine.enabled ? "Pause" : "Resume"} ${routine.schedule.name || "Routine"}`}
                 >
-                  {routine.enabled ? "On" : "Paused"}
+                  {routineReviewReason(routine) || (routine.enabled ? "On" : "Paused")}
                 </button>
               </div>
             ))
@@ -421,8 +468,11 @@ function RoutineEditor({
   const [interval, setInterval] = useState<1440 | 10080>(
     routine?.schedule.intervalMinutes === 10_080 || preset?.weekly ? 10_080 : 1_440,
   );
-  const [platforms, setPlatforms] = useState<SocialProvider[]>(
-    routine?.platforms || preset?.platforms || [],
+  const [platforms, setPlatforms] = useState<Array<(typeof AUTOMATIC_ROUTINE_PLATFORMS)[number]>>(
+    (routine?.platforms || preset?.platforms || []).filter(
+      (platform): platform is (typeof AUTOMATIC_ROUTINE_PLATFORMS)[number] =>
+        (AUTOMATIC_ROUTINE_PLATFORMS as readonly string[]).includes(platform),
+    ),
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -437,6 +487,7 @@ function RoutineEditor({
         time,
         timezone: zone,
         platforms,
+        outputMode: "draft",
         ...(!preset?.template
           ? { name, instructions, ...(preset ? { catalogKey: preset.key } : {}) }
           : {}),
@@ -530,31 +581,46 @@ function RoutineEditor({
               onChange={(event) => setZone(event.target.value)}
             />
           </label>
+          <label className="block text-sm">
+            When posts are ready
+            <p className="mt-2 text-xs leading-5 text-neutral-500">
+              Bento saves drafts for your review. Each post needs your approval before scheduling.
+            </p>
+            {routine && routineReviewReason(routine) && (
+              <p role="status" className="mt-2 text-sm">
+                {routineReviewReason(routine)}
+              </p>
+            )}
+            <a href="/post-scheduler" className="mt-2 inline-block text-xs underline">
+              View drafts and posting schedule
+            </a>
+          </label>
           <fieldset>
             <legend className="text-sm">Platforms</legend>
+            <p className="mt-1 text-xs text-neutral-500">
+              X and LinkedIn text posts, or Instagram static carousels. Leave empty to use X.
+            </p>
             <div className="mt-3 flex flex-wrap gap-4">
-              {(["twitter", "linkedin", "instagram", "threads", "youtube"] as const).map(
-                (platform) => (
-                  <label key={platform} className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={platforms.includes(platform)}
-                      onChange={(event) =>
-                        setPlatforms((current) =>
-                          event.target.checked
-                            ? [...current, platform]
-                            : current.filter((value) => value !== platform),
-                        )
-                      }
-                    />
-                    {platform === "twitter"
-                      ? "X"
-                      : platform === "linkedin"
-                        ? "LinkedIn"
-                        : platform[0].toUpperCase() + platform.slice(1)}
-                  </label>
-                ),
-              )}
+              {AUTOMATIC_ROUTINE_PLATFORMS.map((platform) => (
+                <label key={platform} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={platforms.includes(platform)}
+                    onChange={(event) =>
+                      setPlatforms((current) =>
+                        event.target.checked
+                          ? [...current, platform]
+                          : current.filter((value) => value !== platform),
+                      )
+                    }
+                  />
+                  {platform === "twitter"
+                    ? "X"
+                    : platform === "linkedin"
+                      ? "LinkedIn"
+                      : platform[0].toUpperCase() + platform.slice(1)}
+                </label>
+              ))}
             </div>
           </fieldset>
           {routine && (

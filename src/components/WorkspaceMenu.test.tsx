@@ -107,8 +107,8 @@ describe("WorkspaceMenu", () => {
     expect(screen.getByText("Current")).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /Second Studio/ })).toBeEnabled();
     expect(
-      screen.getByRole("menuitem", { name: /Pending Studio.*Awaiting payment/ }),
-    ).toHaveAttribute("data-disabled");
+      screen.getByRole("menuitem", { name: /Pending Studio.*Resume setup/ }),
+    ).not.toHaveAttribute("data-disabled");
     expect(screen.getByRole("menuitem", { name: "Add another profile" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Turn dark mode on" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Billing" })).toBeInTheDocument();

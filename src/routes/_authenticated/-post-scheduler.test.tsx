@@ -5,20 +5,27 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SchedulerConnection, SchedulerPost } from "@/lib/social-scheduler";
 import { xAccountCapabilities } from "@/lib/x-account";
 import { uploadFileResult } from "@/lib/upload";
+import { prepareSchedulerVideoUpload } from "@/lib/video-upload";
 import {
   cancelSocialPost,
   deleteSocialPost,
   getRedditCommunities,
   getSocialScheduler,
+  getSocialDraftById,
   moveSocialPostToDraft,
   rescheduleSocialPost,
   retryFailedSocialPost,
   savePostingSchedule,
   saveSocialPost,
 } from "@/lib/social-scheduler.functions";
+import { searchSocialMentions } from "@/lib/social-mentions.functions";
 
+const deepLink = vi.hoisted(() => ({ postId: undefined as string | undefined }));
 vi.mock("@tanstack/react-router", () => ({
-  createFileRoute: () => (options: unknown) => options,
+  createFileRoute: () => (options: Record<string, unknown>) => ({
+    ...options,
+    useSearch: () => deepLink,
+  }),
   Link: ({
     to,
     children,
@@ -36,6 +43,7 @@ vi.mock("@/lib/social-scheduler.functions", () => ({
   duplicateSocialPost: vi.fn(),
   getRedditCommunities: vi.fn(),
   getSocialScheduler: vi.fn(),
+  getSocialDraftById: vi.fn(),
   getTikTokCreatorInfo: vi.fn(),
   moveSocialPostToDraft: vi.fn(),
   refreshSocialConnectionAvatar: vi.fn(),
@@ -45,7 +53,13 @@ vi.mock("@/lib/social-scheduler.functions", () => ({
   saveSocialPost: vi.fn(),
 }));
 
+vi.mock("@/lib/social-mentions.functions", () => ({ searchSocialMentions: vi.fn() }));
+
 vi.mock("@/lib/upload", () => ({ uploadFileResult: vi.fn() }));
+vi.mock("@/lib/video-upload", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/video-upload")>()),
+  prepareSchedulerVideoUpload: vi.fn(async (file: File) => file),
+}));
 
 import {
   captureVideoFrame,
@@ -788,6 +802,188 @@ describe("scheduler compose close protection", () => {
     expect(within(compose).getByRole("textbox")).toHaveValue("LinkedIn version");
   });
 
+  it("selects a Facebook Page mention without changing the X copy", async () => {
+    vi.mocked(searchSocialMentions).mockResolvedValue({
+      provider: "facebook",
+      items: [
+        {
+          provider: "facebook",
+          id: "12345",
+          name: "Acme Studio",
+          handle: null,
+          kind: "page",
+          verified: true,
+        },
+      ],
+      detail: null,
+    });
+    const connections = [
+      {
+        ...missingAvatar,
+        id: "facebook",
+        provider: "facebook" as const,
+        displayName: "Facebook account",
+        avatarUrl: "https://bento.surf/avatar.png",
+      },
+      {
+        ...missingAvatar,
+        id: "twitter",
+        provider: "twitter" as const,
+        displayName: "X account",
+        avatarUrl: "https://bento.surf/avatar.png",
+      },
+    ];
+    renderScheduler({ ...schedulerData, connections });
+    const create = await screen.findByRole("button", { name: "Create new post" });
+    await waitFor(() => expect(create).toBeEnabled());
+    fireEvent.click(create);
+    const compose = await screen.findByRole("dialog", { name: "Create a post" });
+    fireEvent.click(within(compose).getByRole("button", { name: "Facebook: Facebook account" }));
+    fireEvent.click(within(compose).getByRole("button", { name: "X: X account" }));
+    fireEvent.click(
+      within(compose).getByRole("button", { name: "Edit Facebook: Facebook account" }),
+    );
+    fireEvent.change(within(compose).getByRole("textbox", { name: /Post text/i }), {
+      target: { value: "Working with @Acm" },
+    });
+    const found = await within(compose).findByRole("option", { name: /Acme Studio/ });
+    fireEvent.click(found);
+    expect(within(compose).getByRole("textbox", { name: /Post text/i })).toHaveValue(
+      "Working with @Acme Studio",
+    );
+    expect(within(compose).getByRole("switch", { name: "Sync" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    fireEvent.click(within(compose).getByRole("button", { name: "Edit X: X account" }));
+    expect(within(compose).getByRole("textbox")).toHaveValue("Working with @Acm");
+    await waitFor(() => expect(saveSocialPost).toHaveBeenCalled(), { timeout: 4_000 });
+    const saved = vi.mocked(saveSocialPost).mock.calls.at(-1)?.[0] as {
+      data: { providerSettings: Record<string, Record<string, unknown>> };
+    };
+    expect(saved.data.providerSettings.facebook.mentions).toMatchObject([
+      { id: "12345", name: "Acme Studio", text: "@Acme Studio", provider: "facebook" },
+    ]);
+    expect(saved.data.providerSettings.twitter.bodyOverride).toBe("Working with @Acm");
+  });
+
+  it("shows X account suggestions after three letters, including when the platform is selected later", async () => {
+    vi.mocked(searchSocialMentions).mockResolvedValue({
+      provider: "twitter",
+      items: [
+        {
+          provider: "twitter",
+          id: "42",
+          name: "Y Combinator",
+          handle: "ycombinator",
+          kind: "person",
+          verified: true,
+        },
+      ],
+      detail: null,
+    });
+    renderScheduler({
+      ...schedulerData,
+      connections: [
+        {
+          ...missingAvatar,
+          provider: "twitter",
+          displayName: "X account",
+          avatarUrl: "https://bento.surf/avatar.png",
+        },
+      ],
+    });
+    const create = await screen.findByRole("button", { name: "Create new post" });
+    await waitFor(() => expect(create).toBeEnabled());
+    fireEvent.click(create);
+    const compose = await screen.findByRole("dialog", { name: "Create a post" });
+    const editor = within(compose).getByRole("textbox", { name: /Post text/i });
+    fireEvent.change(editor, { target: { value: "@yc", selectionStart: 3, selectionEnd: 3 } });
+    const listbox = within(compose).getByRole("listbox", { name: "Accounts to mention" });
+    expect(listbox).toBeVisible();
+    expect(listbox.parentElement).toBe(compose);
+    expect(within(compose).getByText("Select a platform above to find accounts")).toBeVisible();
+    fireEvent.click(within(compose).getByRole("button", { name: "X: X account" }));
+    expect(within(compose).getByText("Type at least 3 letters to search")).toBeVisible();
+    expect(searchSocialMentions).not.toHaveBeenCalled();
+    fireEvent.change(editor, { target: { value: "@yco", selectionStart: 4, selectionEnd: 4 } });
+    const found = await within(compose).findByRole("option", { name: /Y Combinator/ });
+    await waitFor(() =>
+      expect(searchSocialMentions).toHaveBeenCalledWith({
+        data: { connectionId: missingAvatar.id, query: "yco" },
+      }),
+    );
+    fireEvent.click(found);
+    expect(editor).toHaveValue("@ycombinator");
+  });
+
+  it("shows the handle and source for a suggestion from indexed posts", async () => {
+    vi.mocked(searchSocialMentions).mockResolvedValue({
+      provider: "twitter",
+      items: [
+        {
+          provider: "twitter",
+          id: "ycombinator",
+          name: "ycombinator",
+          handle: "ycombinator",
+          kind: "handle",
+          verified: false,
+          detail: "Seen in your past posts. Check the account before publishing.",
+        },
+      ],
+      detail: null,
+    });
+    renderScheduler({
+      ...schedulerData,
+      connections: [
+        {
+          ...missingAvatar,
+          provider: "twitter",
+          displayName: "X account",
+          avatarUrl: "https://bento.surf/avatar.png",
+        },
+      ],
+    });
+    const create = await screen.findByRole("button", { name: "Create new post" });
+    await waitFor(() => expect(create).toBeEnabled());
+    fireEvent.click(create);
+    const compose = await screen.findByRole("dialog", { name: "Create a post" });
+    fireEvent.click(within(compose).getByRole("button", { name: "X: X account" }));
+    fireEvent.change(within(compose).getByRole("textbox"), {
+      target: { value: "@yco", selectionStart: 4, selectionEnd: 4 },
+    });
+
+    const found = await within(compose).findByRole("option", { name: /ycombinator/ });
+    expect(within(found).getByText("@ycombinator")).toBeVisible();
+    expect(within(found).getByText(/Seen in your past posts/)).toBeVisible();
+  });
+
+  it("keeps a manual text option while platform lookup is loading", async () => {
+    vi.mocked(searchSocialMentions).mockImplementation(() => new Promise(() => undefined));
+    renderScheduler({
+      ...schedulerData,
+      connections: [
+        {
+          ...missingAvatar,
+          provider: "twitter",
+          displayName: "X account",
+          avatarUrl: "https://bento.surf/avatar.png",
+        },
+      ],
+    });
+    const create = await screen.findByRole("button", { name: "Create new post" });
+    await waitFor(() => expect(create).toBeEnabled());
+    fireEvent.click(create);
+    const compose = await screen.findByRole("dialog", { name: "Create a post" });
+    fireEvent.click(within(compose).getByRole("button", { name: "X: X account" }));
+    fireEvent.change(within(compose).getByRole("textbox"), {
+      target: { value: "@yco", selectionStart: 4, selectionEnd: 4 },
+    });
+
+    expect(await within(compose).findByRole("option", { name: /@yco/ })).toBeVisible();
+    expect(within(compose).getByText("Looking up accounts…")).toBeVisible();
+  });
+
   it("shows video settings only for the active platform", async () => {
     vi.mocked(uploadFileResult).mockResolvedValue({
       key: "users/creator/video/post.mp4",
@@ -1073,13 +1269,75 @@ describe("scheduler compose close protection", () => {
     const image = new File(["image"], "screenshot.jpg", { type: "image/jpeg" });
     expect(paste([{ kind: "file", getAsFile: () => image }]).defaultPrevented).toBe(true);
     await within(compose).findByRole("button", { name: "Remove screenshot.jpg" });
-    expect(uploadFileResult).toHaveBeenCalledWith(image, "image", { optimize: false });
+    expect(uploadFileResult).toHaveBeenCalledWith(
+      image,
+      "image",
+      expect.objectContaining({ optimize: false }),
+    );
 
     fireEvent.click(within(compose).getByRole("button", { name: "Remove screenshot.jpg" }));
     const video = new File(["video"], "clip.mp4", { type: "video/mp4" });
     expect(paste([], [video]).defaultPrevented).toBe(true);
     await within(compose).findByRole("button", { name: "Remove clip.mp4" });
-    expect(uploadFileResult).toHaveBeenCalledWith(video, "video", { optimize: false });
+    expect(prepareSchedulerVideoUpload).toHaveBeenCalledWith(
+      video,
+      expect.objectContaining({ providers: ["linkedin"], maxBytes: 250 * 1024 ** 2 }),
+    );
+    expect(uploadFileResult).toHaveBeenCalledWith(
+      video,
+      "video",
+      expect.objectContaining({ optimize: false, onProgress: expect.any(Function) }),
+    );
+  });
+
+  it("prepares an oversized video before enforcing the uploaded file allowance and shows progress", async () => {
+    const original = new File(["source"], "large.mp4", { type: "video/mp4" });
+    Object.defineProperty(original, "size", { value: 300 * 1024 ** 2 });
+    const prepared = new File(["prepared"], "large.mp4", { type: "video/mp4" });
+    let finish: (() => void) | undefined;
+    vi.mocked(prepareSchedulerVideoUpload).mockImplementationOnce(async (_file, options) => {
+      options.onProgress?.({ stage: "compressing", fraction: 0.5 });
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      return prepared;
+    });
+    vi.mocked(uploadFileResult)
+      .mockReset()
+      .mockImplementation(async (file) => ({
+        key: `users/creator/video/${file.name}`,
+        publicUrl: `https://bento.surf/cdn/${file.name}`,
+        size: file.size,
+        name: file.name,
+        mimeType: file.type,
+      }));
+    renderScheduler({
+      ...schedulerData,
+      connections: [
+        { ...missingAvatar, provider: "linkedin", avatarUrl: "https://bento.surf/avatar.png" },
+      ],
+    });
+    const create = await screen.findByRole("button", { name: "Create new post" });
+    await waitFor(() => expect(create).toBeEnabled());
+    fireEvent.click(create);
+    const compose = await screen.findByRole("dialog", { name: "Create a post" });
+    fireEvent.click(within(compose).getByRole("button", { name: /Bizibeast/ }));
+    const input = compose.querySelector('input[type="file"]')!;
+    fireEvent.change(input, { target: { files: [original] } });
+    const progress = await within(compose).findByRole("progressbar", {
+      name: "Preparing a high-quality video",
+    });
+    expect(progress).toHaveAttribute("aria-valuenow", "33");
+    expect(within(compose).getByRole("button", { name: "Publish now" })).toBeDisabled();
+    expect(uploadFileResult).not.toHaveBeenCalled();
+    finish?.();
+    await within(compose).findByRole("button", { name: "Remove large.mp4" });
+    expect(uploadFileResult).toHaveBeenCalledWith(
+      prepared,
+      "video",
+      expect.objectContaining({ optimize: false }),
+    );
+    expect(within(compose).queryByRole("progressbar")).not.toBeInTheDocument();
   });
 
   it("keeps incomplete edits until the creator explicitly discards them", async () => {
@@ -1551,4 +1809,30 @@ describe("VideoCoverFramePicker", () => {
     await capture;
     expect(drawImage).toHaveBeenCalledOnce();
   });
+});
+
+it("opens the exact Agent handoff draft outside the first scheduler page without scheduling", async () => {
+  const post = {
+    id: "80000000-0000-4000-8000-000000000099",
+    status: "draft",
+    scheduledAt: null,
+    createdAt: new Date().toISOString(),
+    timezone: "UTC",
+    targets: [],
+    media: [],
+    title: "Agent handoff",
+    body: "Exact Agent handoff caption",
+  };
+  deepLink.postId = post.id;
+  vi.mocked(getSocialDraftById).mockResolvedValue({ post: JSON.stringify(post) } as never);
+  vi.mocked(saveSocialPost).mockClear();
+  try {
+    renderScheduler();
+    await screen.findByRole("dialog");
+    expect(getSocialDraftById).toHaveBeenCalledWith({ data: { postId: post.id } });
+    expect(screen.getAllByText("Exact Agent handoff caption").length).toBeGreaterThan(0);
+    expect(saveSocialPost).not.toHaveBeenCalled();
+  } finally {
+    deepLink.postId = undefined;
+  }
 });

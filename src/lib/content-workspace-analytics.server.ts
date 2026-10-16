@@ -1,6 +1,12 @@
 import { captureServerEvent } from "./posthog.server";
 
 export type ContentWorkspaceEvent =
+  | "content_agent_delivery"
+  | "content_agent_dismissal"
+  | "content_agent_image"
+  | "content_agent_image_quota"
+  | "content_agent_draft_review"
+  | "content_agent_novelty_rejection"
   | "content_brain_confirmed"
   | "content_recommendation_feedback"
   | "content_agent_turn"
@@ -14,12 +20,56 @@ function text(value: unknown, max = 100) {
 }
 
 function count(value: unknown) {
-  const number = Number(value);
+  const number = typeof value === "number" ? value : NaN;
   return Number.isFinite(number) ? Math.max(0, Math.trunc(number)) : 0;
 }
 
+function choice(value: unknown, allowed: readonly string[]) {
+  return typeof value === "string" && allowed.includes(value) ? value : undefined;
+}
 function safeProperties(event: ContentWorkspaceEvent, properties: Record<string, unknown>) {
   switch (event) {
+    case "content_agent_delivery":
+      return {
+        status: choice(properties.status, ["delivered", "skipped", "failed"]),
+        count: count(properties.count),
+      };
+    case "content_agent_dismissal":
+      return {
+        action: choice(properties.action, ["useful", "not_relevant", "less_like_this"]),
+        count: count(properties.count),
+      };
+    case "content_agent_image":
+      return {
+        status: choice(properties.status, [
+          "submitted",
+          "ambiguous",
+          "failed",
+          "ready",
+          "storage_pending",
+        ]),
+        count: count(properties.count),
+      };
+    case "content_agent_image_quota":
+      return { successful: count(properties.successful), pending: count(properties.pending) };
+    case "content_agent_draft_review":
+      return {
+        status: choice(properties.status, [
+          "ready",
+          "needs_input",
+          "retry",
+          "approved",
+          "edited",
+          "rejected",
+          "handoff",
+        ]),
+        count: count(properties.count),
+      };
+    case "content_agent_novelty_rejection":
+      return {
+        issue: choice(properties.issue, ["repeated_argument", "novelty"]),
+        count: count(properties.count),
+      };
     case "content_brain_confirmed":
       return { kind: text(properties.kind) };
     case "content_recommendation_feedback":

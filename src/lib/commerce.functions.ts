@@ -1382,7 +1382,7 @@ export const getPublicCommerceStore = createServerFn({ method: "GET" })
           .eq("creator_id", resolved.userId)
           .eq("status", "published")
           .order("published_at", { ascending: false }),
-        getPlan(resolved.userId),
+        getPlan(resolved.userId, "public"),
       ]);
     if (profileError) throw new Error(profileError.message);
     if (productsError) throw new Error(productsError.message);
@@ -1454,7 +1454,12 @@ export const getPublicCommerceProduct = createServerFn({ method: "GET" })
     const { data: product, error } = await productQuery.maybeSingle();
     if (error) throw new Error(error.message);
     if (!product) return null;
-    if (!planHasEntitlement(await getPlan(product.creator_id), commerceEntitlement(product.kind)))
+    if (
+      !planHasEntitlement(
+        await getPlan(product.creator_id, "public"),
+        commerceEntitlement(product.kind),
+      )
+    )
       return null;
     if (commerceProductKindPricingError(product.kind, product.pricing_type)) return null;
     const [
@@ -1501,7 +1506,7 @@ export const getPublicCommerceProduct = createServerFn({ method: "GET" })
     ]);
     if (creatorError) throw new Error(creatorError.message);
     if (!creatorWithProvider) throw new Error("Creator not found.");
-    if (!chrome) throw new Error("Creator not found.");
+    if (!chrome) return null;
     if (lessonError) throw new Error(lessonError.message);
     if (bumpRuleError) throw new Error(bumpRuleError.message);
     if (bundleProductsError) throw new Error(bundleProductsError.message);
@@ -1724,7 +1729,10 @@ export const previewCommerceCheckout = createServerFn({ method: "POST" })
       .eq("status", "published")
       .maybeSingle();
     if (error) throw new Error(error.message);
-    if (!product || !planHasEntitlement(await getPlan(product.creator_id), "oneTapCheckout")) {
+    if (
+      !product ||
+      !planHasEntitlement(await getPlan(product.creator_id, "public"), "oneTapCheckout")
+    ) {
       throw new Error("This product is not available.");
     }
     const publishabilityError = commerceProductPublishabilityError(product);
@@ -1816,7 +1824,10 @@ export const submitCommerceLead = createServerFn({ method: "POST" })
       .eq("status", "published")
       .maybeSingle();
     if (error) throw new Error(error.message);
-    if (!product || !planHasEntitlement(await getPlan(product.creator_id), "emailCollection")) {
+    if (
+      !product ||
+      !planHasEntitlement(await getPlan(product.creator_id, "public"), "emailCollection")
+    ) {
       throw new Error("This form is not available.");
     }
     const configuredFields: CommerceFormField[] = Array.isArray(product.settings?.fields)
@@ -1964,7 +1975,10 @@ export const createCommerceCheckout = createServerFn({ method: "POST" })
       .eq("status", "published")
       .maybeSingle();
     if (error) throw new Error(error.message);
-    if (!product || !planHasEntitlement(await getPlan(product.creator_id), "oneTapCheckout")) {
+    if (
+      !product ||
+      !planHasEntitlement(await getPlan(product.creator_id, "public"), "oneTapCheckout")
+    ) {
       throw new Error("This product is not available.");
     }
     if (
@@ -3011,7 +3025,10 @@ export const recordCommerceAffiliateClick = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     if (
       !product ||
-      !planHasEntitlement(await getPlan(product.creator_id), commerceEntitlement(product.kind))
+      !planHasEntitlement(
+        await getPlan(product.creator_id, "public"),
+        commerceEntitlement(product.kind),
+      )
     ) {
       throw new Error("This affiliate link is not available.");
     }

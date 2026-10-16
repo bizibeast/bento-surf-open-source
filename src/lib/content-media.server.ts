@@ -1,3 +1,4 @@
+import { reserveProviderUsage } from "./provider-budget.server";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Ingestion rows are normalized at this boundary. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { getMediaBucket, mediaObjectUrl, sumR2UserStorageBytes } from "./r2-storage.server";
@@ -205,6 +206,7 @@ export async function processContentMediaImportMessage(message: ContentMediaImpo
         [960, 70],
         [720, 65],
       ] as const) {
+        await reserveProviderUsage("image_transformations", 1, { workspaceId: userId });
         const transformed = await images
           .input(new Response(media.bytes).body!)
           .transform({ width, fit: "scale-down" })
@@ -283,4 +285,36 @@ export async function processContentMediaImportMessage(message: ContentMediaImpo
   if (saved.error) throw new Error("Imported media status could not be recorded.");
   processed += 1;
   return { processed };
+}
+
+/** Generated output uses the same image normalization, owned namespace and storage allowance as imports. */
+export async function storeGeneratedContentMedia(userId: string, key: string, input: Uint8Array) {
+  if (
+    !key.startsWith(`users/${userId}/content-agent-images/`) ||
+    !/^users\/[a-f0-9-]+\/content-agent-images\/[a-f0-9-]+\.jpg$/.test(key)
+  )
+    throw new Error("Invalid generated image key.");
+  const bucket = getMediaBucket();
+  if (await bucket.head(key)) return key;
+  const images = globalThis.__env__?.IMAGES;
+  if (!images)
+    throw new Error("Image storage is temporarily unavailable. Try saving the image again.");
+  await reserveProviderUsage("image_transformations", 1, { workspaceId: userId });
+  const transformed = await images
+    .input(new Response(new Uint8Array(input)).body!)
+    .output({ format: "image/jpeg", quality: 90 });
+  const bytes = await readResponseBytes(transformed.response(), 8 * 1024 * 1024);
+  if (!importedMediaType(bytes, "image/jpeg")) throw new Error("Invalid normalized image.");
+  const allowance = (await getStorageAllowanceMb(userId)) * 1024 * 1024;
+  if ((await sumR2UserStorageBytes(bucket, userId)) + bytes.byteLength > allowance)
+    throw new Error(
+      "Storage full. Free space to save this completed image; no new generation is needed.",
+    );
+  await bucket.put(key, bytes, {
+    httpMetadata: {
+      contentType: "image/jpeg",
+      cacheControl: "public, max-age=31536000, immutable",
+    },
+  });
+  return key;
 }

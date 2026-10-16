@@ -106,7 +106,7 @@ const searchSchema = z
   }));
 
 export const Route = createFileRoute("/_authenticated/email-marketing")({
-  head: () => ({ meta: [{ title: "Email Marketing | bento.surf" }] }),
+  head: () => ({ meta: [{ title: "Newsletter | bento.surf" }] }),
   validateSearch: searchSchema,
   loaderDeps: ({ search }) => ({ publication: search.publication }),
   loader: ({ context, deps }) =>
@@ -354,7 +354,7 @@ function EmailMarketingPage() {
       {section !== "write" ? (
         <>
           <AppHeader
-            title="Email Marketing"
+            title="Newsletter"
             afterTitle={
               <div aria-label="Publication controls" className="min-w-0 flex-1">
                 <PublicationPicker
@@ -397,7 +397,7 @@ function EmailMarketingPage() {
               <label className="flex min-h-14 items-center gap-3 text-xs font-semibold text-[#17213a]/55 sm:hidden">
                 <span className="shrink-0">Section</span>
                 <select
-                  aria-label="Email Marketing destination"
+                  aria-label="Newsletter destination"
                   value={section}
                   onChange={(event) => navigateSection(event.target.value as EmailMarketingSection)}
                   className="min-w-0 flex-1 rounded-lg border border-black/[0.08] bg-white px-3 py-2.5 text-sm font-semibold text-[#17213a] outline-none focus:border-[#3478f6]/45"

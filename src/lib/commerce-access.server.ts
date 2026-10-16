@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Commerce access tables are managed by additive migrations and queried through the service-role client. */
+import { isWorkspacePublicBillingAvailable } from "./billing-public.server";
 
 export function randomCommerceToken(bytes = 32) {
   const value = crypto.getRandomValues(new Uint8Array(bytes));
@@ -18,6 +19,12 @@ export function plausibleCommerceToken(value: unknown) {
 
 export async function resolveCommerceGrantByToken(client: any, token: string, select = "*") {
   if (!plausibleCommerceToken(token)) return null;
+  // Authorization fields are mandatory even when a caller requests a small projection.
+  const fields = select.split(",").map((field) => field.trim());
+  if (!fields.includes("*")) {
+    for (const field of ["creator_id", "expires_at"])
+      if (!fields.includes(field)) select += `,${field}`;
+  }
   const hash = await commerceTokenHash(token);
   const now = new Date().toISOString();
   const { data: permanent, error: permanentError } = await client
@@ -31,7 +38,9 @@ export async function resolveCommerceGrantByToken(client: any, token: string, se
     permanent &&
     (!permanent.expires_at || new Date(permanent.expires_at).getTime() > Date.now())
   ) {
-    return permanent;
+    return permanent.creator_id && (await isWorkspacePublicBillingAvailable(permanent.creator_id))
+      ? permanent
+      : null;
   }
 
   const { data: capability, error: capabilityError } = await client
@@ -53,5 +62,7 @@ export async function resolveCommerceGrantByToken(client: any, token: string, se
   if (!grant || (grant.expires_at && new Date(grant.expires_at).getTime() <= Date.now())) {
     return null;
   }
-  return grant;
+  return grant.creator_id && (await isWorkspacePublicBillingAvailable(grant.creator_id))
+    ? grant
+    : null;
 }

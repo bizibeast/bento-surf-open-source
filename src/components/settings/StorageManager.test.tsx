@@ -74,14 +74,47 @@ describe("StorageManager", () => {
     expect(screen.getByText("image")).toBeVisible();
     expect(screen.getByText("Aug 31, 2026")).toBeVisible();
     expect(screen.getByText("1 KB")).toBeVisible();
+    expect(screen.getByRole("columnheader", { name: "Preview" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Preview Campaign image.jpg" }).querySelector("img")?.src,
+    ).toContain("?w=320");
+    fireEvent.click(screen.getByRole("button", { name: "Preview Campaign image.jpg" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("Campaign image.jpg");
+    expect(screen.getByRole("dialog").querySelector("img")?.getAttribute("src")).toBe(
+      firstPage.objects[0].publicUrl,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
     expect(await screen.findByText("Guide.pdf")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Preview Guide.pdf" })).not.toBeInTheDocument();
     expect(fetchMock).toHaveBeenLastCalledWith(
       "/api/storage/manage?sort=uploaded&direction=desc&cursor=private%3Anext",
       expect.objectContaining({ headers: { Authorization: "Bearer token" } }),
     );
     expect(screen.getByRole("button", { name: "Previous page" })).toBeEnabled();
+  });
+
+  it("shows a playable preview for stored video", async () => {
+    const video = {
+      ...firstPage.objects[0],
+      key: "users/11111111-1111-4111-8111-111111111111/video/clip.mp4",
+      name: "Clip.mp4",
+      type: "video",
+      publicUrl: "https://bento.surf/cdn/users/example/video/clip.mp4",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ ...firstPage, objects: [video] })),
+    );
+    renderManager();
+
+    const button = await screen.findByRole("button", { name: "Preview Clip.mp4" });
+    expect(button.querySelector("video")?.getAttribute("src")).toBe(`${video.publicUrl}#t=0.1`);
+    fireEvent.click(button);
+    const player = screen.getByRole("dialog").querySelector("video");
+    expect(player?.getAttribute("src")).toBe(video.publicUrl);
+    expect(player).toHaveAttribute("controls");
   });
 
   it("confirms destructive deletion, refreshes, and exposes partial failures", async () => {

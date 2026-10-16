@@ -1,5 +1,11 @@
+import {
+  reserveProviderUsage,
+  withProviderBudgetWorkspace,
+  ProviderBudgetError,
+} from "./provider-budget.server";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Scheduler tables land with the paired migration. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { renderSocialMentions } from "./social-mentions";
 import { decryptServerSecret, encryptServerSecret } from "./secret-crypto.server";
 import {
   deriveSocialPostStatus,
@@ -18,9 +24,14 @@ import {
   type YouTubePostFormat,
 } from "./social-scheduler";
 import { getPlan } from "./plan.server";
+import { prepareSocialImageUrl } from "./social-image-variants.server";
+import { socialMediaByteLimit } from "./social-media-limits";
+import { validateMediaObjectKey } from "./r2-storage.server";
 import { planHasEntitlement } from "./plans";
 import {
   downloadProviderMedia,
+  openProviderMedia,
+  providerMediaChunks,
   LINKEDIN_DOCUMENT_MAX_BYTES,
   LINKEDIN_IMAGE_MAX_BYTES,
   LINKEDIN_VIDEO_MAX_BYTES,
@@ -28,6 +39,7 @@ import {
   X_GIF_MAX_BYTES,
   X_IMAGE_MAX_BYTES,
   X_MEDIA_CHUNK_BYTES,
+  LINKEDIN_VIDEO_PART_BYTES,
   X_VIDEO_MAX_BYTES,
 } from "./social-provider-media";
 import { socialProviderUsesMock } from "./social-provider-mode";
@@ -76,6 +88,19 @@ export class ProviderError extends Error {
 }
 
 export async function providerJson(url: string, init: RequestInit, provider: SocialProvider) {
+  if (
+    provider === "twitter" &&
+    init.method === "POST" &&
+    /^\/2\/(tweets|articles)(\/|$)/.test(new URL(url).pathname)
+  ) {
+    try {
+      await reserveProviderUsage("x_write_actions");
+    } catch (error) {
+      if (error instanceof ProviderBudgetError)
+        throw new ProviderError(error.message, "budget_exhausted", false);
+      throw error;
+    }
+  }
   const response = await fetch(url, { ...init, signal: AbortSignal.timeout(120_000) });
   const text = await response.text();
   let data: any = {};
@@ -129,6 +154,7 @@ async function providerBinaryPut(url: string, body: Uint8Array, contentType: str
       String(response.status),
       response.status === 429 || response.status >= 500,
       response.status,
+      parseRetryAfterSeconds(response.headers.get("retry-after")),
     );
   }
   return {
@@ -493,6 +519,16 @@ async function downloadLinkedInMedia(
       maxBytes,
       allowedMimeTypes,
       timeoutMs,
+      fetcher: schedulerMediaFetcher(item),
+      ...(item.mimeType.startsWith("image/") && item.mimeType !== "image/gif"
+        ? {
+            optimizeImage: {
+              beforeTransform: () => reserveProviderUsage("image_transformations"),
+              images: globalThis.__env__?.IMAGES,
+              mimeType: item.mimeType,
+            },
+          }
+        : {}),
     });
   } catch (error) {
     if (error instanceof ProviderMediaDownloadError) {
@@ -507,6 +543,25 @@ async function downloadLinkedInMedia(
     }
     throw error;
   }
+}
+
+function schedulerMediaFetcher(item: SchedulerMedia): typeof fetch {
+  const bucket = globalThis.__env__?.MEDIA_BUCKET;
+  const key = validateMediaObjectKey(item.key);
+  if (!bucket || !key || !/^users\/[^/]+\//.test(key)) return fetch;
+  // Read the immutable original directly. Avoid CDN cache tees and HTTP body
+  // timeouts while slowly sending a video to the destination one segment at a time.
+  return async () => {
+    const object = await bucket.get(key);
+    return object
+      ? new Response(object.body, {
+          headers: {
+            "content-type": object.httpMetadata?.contentType || item.mimeType,
+            "content-length": String(object.size),
+          },
+        })
+      : new Response(null, { status: 404 });
+  };
 }
 
 async function uploadLinkedInImage(
@@ -573,77 +628,114 @@ async function uploadLinkedInVideo(
   video: SchedulerMedia,
   linkedInHeaders: Record<string, string>,
 ) {
-  const downloaded = await downloadLinkedInMedia(
-    video,
-    LINKEDIN_VIDEO_MAX_BYTES,
-    ["video/mp4", "video/quicktime"],
-    180_000,
-  );
-  const initialized = await providerJson(
-    "https://api.linkedin.com/rest/videos?action=initializeUpload",
-    {
-      method: "POST",
-      headers: linkedInHeaders,
-      body: JSON.stringify({
-        initializeUploadRequest: {
-          owner: author,
-          fileSizeBytes: downloaded.bytes.byteLength,
-          uploadCaptions: false,
-          uploadThumbnail: false,
-        },
-      }),
-    },
-    "linkedin",
-  );
-  const value = initialized.data.value || {};
-  const videoUrn = String(value.video || "");
-  const uploadToken = String(value.uploadToken || "");
-  const instructions = Array.isArray(value.uploadInstructions) ? value.uploadInstructions : [];
-  if (!videoUrn || !instructions.length) {
-    throw new ProviderError("LinkedIn did not open a video upload.", "invalid_response", false);
-  }
+  const downloaded = await openProviderMedia(video.url, {
+    maxBytes: LINKEDIN_VIDEO_MAX_BYTES,
+    allowedMimeTypes: ["video/mp4", "video/quicktime"],
+    timeoutMs: 30 * 60_000,
+    fetcher: schedulerMediaFetcher(video),
+  });
+  try {
+    const initialized = await providerJson(
+      "https://api.linkedin.com/rest/videos?action=initializeUpload",
+      {
+        method: "POST",
+        headers: linkedInHeaders,
+        body: JSON.stringify({
+          initializeUploadRequest: {
+            owner: author,
+            fileSizeBytes: downloaded.totalBytes,
+            uploadCaptions: false,
+            uploadThumbnail: false,
+          },
+        }),
+      },
+      "linkedin",
+    );
+    const value = initialized.data.value || {};
+    const videoUrn = String(value.video || "");
+    const uploadToken = String(value.uploadToken || "");
+    const instructions = Array.isArray(value.uploadInstructions) ? value.uploadInstructions : [];
+    if (!videoUrn || !instructions.length) {
+      throw new ProviderError("LinkedIn did not open a video upload.", "invalid_response", false);
+    }
 
-  const uploadedPartIds: string[] = [];
-  for (const instruction of instructions) {
-    const firstByte = Number(instruction.firstByte);
-    const lastByte = Number(instruction.lastByte);
-    const uploadUrl = String(instruction.uploadUrl || "");
-    if (!uploadUrl || !Number.isFinite(firstByte) || !Number.isFinite(lastByte)) {
+    const uploadedPartIds: string[] = [];
+    // Validate the complete provider upload plan before sending any bytes.
+    let expectedOffset = 0;
+    for (const instruction of instructions) {
+      const firstByte = Number(instruction.firstByte);
+      const lastByte = Number(instruction.lastByte);
+      const uploadUrl = String(instruction.uploadUrl || "");
+      if (
+        !uploadUrl ||
+        !Number.isSafeInteger(firstByte) ||
+        !Number.isSafeInteger(lastByte) ||
+        firstByte !== expectedOffset ||
+        lastByte < firstByte ||
+        lastByte >= downloaded.totalBytes ||
+        lastByte - firstByte + 1 > LINKEDIN_VIDEO_PART_BYTES
+      ) {
+        throw new ProviderError(
+          "LinkedIn returned an invalid video upload plan.",
+          "invalid_response",
+          false,
+        );
+      }
+      expectedOffset = lastByte + 1;
+    }
+    if (expectedOffset !== downloaded.totalBytes)
       throw new ProviderError(
-        "LinkedIn returned an invalid video upload plan.",
+        "LinkedIn returned an incomplete video upload plan.",
         "invalid_response",
         false,
       );
+    let partIndex = 0;
+    for await (const part of providerMediaChunks(
+      downloaded.body,
+      downloaded.totalBytes,
+      instructions.map(
+        (instruction: any) => Number(instruction.lastByte) - Number(instruction.firstByte) + 1,
+      ),
+    )) {
+      const instruction = instructions[partIndex++];
+      if (part.byteLength !== Number(instruction.lastByte) - Number(instruction.firstByte) + 1)
+        throw new ProviderError(
+          "LinkedIn returned an unsupported video upload plan.",
+          "invalid_response",
+          false,
+        );
+      const uploadUrl = String(instruction.uploadUrl);
+      const uploaded = await providerBinaryPut(uploadUrl, part, "application/octet-stream");
+      if (!uploaded.etag) {
+        throw new ProviderError(
+          "LinkedIn did not acknowledge a video upload part.",
+          "invalid_response",
+          true,
+        );
+      }
+      uploadedPartIds.push(uploaded.etag);
     }
-    const part = downloaded.bytes.slice(firstByte, lastByte + 1);
-    const uploaded = await providerBinaryPut(uploadUrl, part, "application/octet-stream");
-    if (!uploaded.etag) {
-      throw new ProviderError(
-        "LinkedIn did not acknowledge a video upload part.",
-        "invalid_response",
-        true,
-      );
-    }
-    uploadedPartIds.push(uploaded.etag);
-  }
 
-  await providerJson(
-    "https://api.linkedin.com/rest/videos?action=finalizeUpload",
-    {
-      method: "POST",
-      headers: linkedInHeaders,
-      body: JSON.stringify({
-        finalizeUploadRequest: {
-          video: videoUrn,
-          uploadToken,
-          uploadedPartIds,
-        },
-      }),
-    },
-    "linkedin",
-  );
-  await waitForLinkedInAsset("videos", videoUrn, linkedInHeaders);
-  return videoUrn;
+    await providerJson(
+      "https://api.linkedin.com/rest/videos?action=finalizeUpload",
+      {
+        method: "POST",
+        headers: linkedInHeaders,
+        body: JSON.stringify({
+          finalizeUploadRequest: {
+            video: videoUrn,
+            uploadToken,
+            uploadedPartIds,
+          },
+        }),
+      },
+      "linkedin",
+    );
+    await waitForLinkedInAsset("videos", videoUrn, linkedInHeaders);
+    return videoUrn;
+  } finally {
+    await downloaded.cancel();
+  }
 }
 
 async function uploadLinkedInDocument(
@@ -697,6 +789,16 @@ async function downloadXMedia(
       maxBytes,
       allowedMimeTypes,
       timeoutMs,
+      fetcher: schedulerMediaFetcher(item),
+      ...(item.mimeType.startsWith("image/") && item.mimeType !== "image/gif"
+        ? {
+            optimizeImage: {
+              beforeTransform: () => reserveProviderUsage("image_transformations"),
+              images: globalThis.__env__?.IMAGES,
+              mimeType: item.mimeType,
+            },
+          }
+        : {}),
     });
   } catch (error) {
     if (error instanceof ProviderMediaDownloadError) {
@@ -708,7 +810,11 @@ async function downloadXMedia(
         );
       }
       if (error.code === "too_large") {
-        throw new ProviderError("This media is too large for X.", "media_too_large", false);
+        throw new ProviderError(
+          `This media could not fit X's ${Math.round(maxBytes / 1024 / 1024)} MB limit at high quality. Choose a smaller file.`,
+          "media_too_large",
+          false,
+        );
       }
       throw new ProviderError(error.message, `media_${error.code}`, error.retryable);
     }
@@ -720,6 +826,7 @@ async function xMediaFormPost(
   token: string,
   fields: Record<string, string>,
   file?: { bytes: Uint8Array; mimeType: string; filename: string; fieldName?: string },
+  url = "https://api.x.com/2/media/upload",
 ) {
   const form = new FormData();
   for (const [name, value] of Object.entries(fields)) form.append(name, value);
@@ -730,7 +837,7 @@ async function xMediaFormPost(
       file.filename,
     );
   }
-  const response = await fetch("https://api.x.com/2/media/upload", {
+  const response = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
     body: form,
@@ -756,6 +863,7 @@ async function xMediaFormPost(
       String(data.errors?.[0]?.type || data.type || response.status),
       response.status === 429 || response.status >= 500,
       response.status,
+      parseRetryAfterSeconds(response.headers.get("retry-after")),
     );
   }
   return data;
@@ -834,57 +942,104 @@ async function uploadXMediaSimple(
   return mediaId;
 }
 
-async function uploadXMediaChunked(
+export async function uploadXMediaChunked(
   token: string,
   item: SchedulerMedia,
   category: "tweet_video" | "tweet_gif",
 ) {
   const isGif = category === "tweet_gif";
-  const downloaded = await downloadXMedia(
-    item,
-    isGif ? X_GIF_MAX_BYTES : X_VIDEO_MAX_BYTES,
-    isGif ? ["image/gif"] : ["video/mp4", "video/quicktime"],
-    isGif ? 60_000 : 180_000,
-  );
-  const mimeType = downloaded.mimeType || item.mimeType;
-  const totalBytes = downloaded.bytes.byteLength;
-  const init = await xMediaFormPost(token, {
-    command: "INIT",
-    media_type: mimeType,
-    total_bytes: String(totalBytes),
-    media_category: category,
-  });
-  const mediaId = String(init.data?.id || init.id || init.media_id_string || "");
-  if (!mediaId)
-    throw new ProviderError("X did not open a media upload.", "invalid_response", false);
-
-  let segmentIndex = 0;
-  for (let offset = 0; offset < totalBytes; offset += X_MEDIA_CHUNK_BYTES) {
-    const chunk = downloaded.bytes.slice(offset, offset + X_MEDIA_CHUNK_BYTES);
-    await xMediaFormPost(
-      token,
-      {
-        command: "APPEND",
-        media_id: mediaId,
-        segment_index: String(segmentIndex),
-      },
-      {
-        bytes: chunk,
-        mimeType: "application/octet-stream",
-        filename: `chunk-${segmentIndex}`,
-        fieldName: "media",
-      },
-    );
-    segmentIndex += 1;
+  let downloaded: Awaited<ReturnType<typeof openProviderMedia>>;
+  try {
+    downloaded = await openProviderMedia(item.url, {
+      maxBytes: isGif ? X_GIF_MAX_BYTES : X_VIDEO_MAX_BYTES,
+      allowedMimeTypes: isGif ? ["image/gif"] : ["video/mp4", "video/quicktime"],
+      timeoutMs: 30 * 60_000,
+      fetcher: schedulerMediaFetcher(item),
+    });
+  } catch (error) {
+    if (error instanceof ProviderMediaDownloadError)
+      throw new ProviderError(error.message, `media_${error.code}`, error.retryable);
+    throw error;
   }
+  try {
+    const { mimeType, totalBytes } = downloaded;
+    const { data: init } = await providerJson(
+      "https://api.x.com/2/media/upload/initialize",
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          media_type: mimeType,
+          total_bytes: totalBytes,
+          media_category: category,
+        }),
+      },
+      "twitter",
+    );
+    const mediaId = String(init.data?.id || init.id || init.media_id_string || "");
+    if (!mediaId)
+      throw new ProviderError("X did not open a media upload.", "invalid_response", false);
 
-  const finalized = await xMediaFormPost(token, {
-    command: "FINALIZE",
-    media_id: mediaId,
-  });
-  const processing = finalized.data?.processing_info || finalized.processing_info;
-  if (processing) await waitForXMediaProcessing(token, mediaId);
-  return mediaId;
+    let segmentIndex = 0;
+    for await (const chunk of providerMediaChunks(
+      downloaded.body,
+      totalBytes,
+      X_MEDIA_CHUNK_BYTES,
+    )) {
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          await xMediaFormPost(
+            token,
+            {
+              segment_index: String(segmentIndex),
+            },
+            {
+              bytes: chunk,
+              mimeType: "application/octet-stream",
+              filename: `chunk-${segmentIndex}`,
+              fieldName: "media",
+            },
+            `https://api.x.com/2/media/upload/${encodeURIComponent(mediaId)}/append`,
+          );
+          break;
+        } catch (error) {
+          // Re-sending a segment is safe; creating the final post is never retried here.
+          const retryable =
+            error instanceof ProviderError
+              ? error.retryable
+              : error instanceof TypeError ||
+                (error instanceof DOMException &&
+                  ["AbortError", "TimeoutError"].includes(error.name));
+          if (!retryable || attempt >= 2) throw error;
+          const delay =
+            error instanceof ProviderError && error.retryAfterSeconds
+              ? error.retryAfterSeconds * 1000
+              : 250 * 2 ** attempt;
+          if (delay > 30_000) throw error;
+          await sleep(delay);
+        }
+      }
+      segmentIndex += 1;
+    }
+
+    const { data: finalized } = await providerJson(
+      `https://api.x.com/2/media/upload/${encodeURIComponent(mediaId)}/finalize`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      },
+      "twitter",
+    );
+    const processing = finalized.data?.processing_info || finalized.processing_info;
+    if (processing) await waitForXMediaProcessing(token, mediaId);
+    return mediaId;
+  } catch (error) {
+    if (error instanceof ProviderMediaDownloadError)
+      throw new ProviderError(error.message, `media_${error.code}`, error.retryable);
+    throw error;
+  } finally {
+    await downloaded.cancel();
+  }
 }
 
 async function publishXArticle(
@@ -977,7 +1132,7 @@ async function publishX(
     throw new ProviderError("X allows up to 25,000 characters.", "text_limit", false);
   }
   if (article || body.length > X_STANDARD_POST_LIMIT) {
-    const capabilities = await fetchXAccountCapabilities(token);
+    const capabilities = await fetchXAccountCapabilities(token, target.connection);
     if (article && !capabilities.canPublishArticles) {
       throw new ProviderError(
         "This X account is not eligible to publish Articles.",
@@ -1135,6 +1290,12 @@ async function setYouTubeThumbnail(
     downloaded = await downloadProviderMedia(thumbnail.url, {
       maxBytes: YOUTUBE_THUMBNAIL_MAX_BYTES,
       allowedMimeTypes: ["image/jpeg"],
+      fetcher: schedulerMediaFetcher(thumbnail),
+      optimizeImage: {
+        beforeTransform: () => reserveProviderUsage("image_transformations"),
+        images: globalThis.__env__?.IMAGES,
+        mimeType: thumbnail.mimeType,
+      },
     });
   } catch (error) {
     if (error instanceof ProviderMediaDownloadError) {
@@ -1170,7 +1331,7 @@ async function setYouTubeThumbnail(
   }
 }
 
-async function publishYouTube(
+export async function publishYouTube(
   token: string,
   title: string,
   body: string,
@@ -1193,123 +1354,183 @@ async function publishYouTube(
   const description = youtubeDescriptionForUpload(body, settings);
   const db = supabaseAdmin as any;
   const chunkSize = 256 * 1024 * 8; // 2 MiB, multiple of 256 KiB
+  const downloaded = await openProviderMedia(video.url, {
+    maxBytes: socialMediaByteLimit("youtube", video.mimeType)!,
+    allowedMimeTypes: SOCIAL_PROVIDER_DEFINITIONS.youtube.videoMimeTypes!,
+    fetcher: schedulerMediaFetcher(video),
+  }).catch((error) => {
+    if (error instanceof ProviderMediaDownloadError)
+      throw new ProviderError(error.message, `media_${error.code}`, error.retryable);
+    throw error;
+  });
+  const total = downloaded.totalBytes;
   let location = String(target.upload_session_url || "");
-  let offset = Math.max(0, Number(target.upload_byte_offset || 0));
-
-  if (!location) {
-    const init = await fetch(
-      "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json; charset=UTF-8",
-          "X-Upload-Content-Length": String(video.size),
-          "X-Upload-Content-Type": video.mimeType,
-        },
-        body: JSON.stringify({
-          snippet: {
-            title: title.trim() || description.slice(0, 100) || "Untitled video",
-            description,
-            categoryId: "22",
-          },
-          status: { privacyStatus, selfDeclaredMadeForKids: false },
-        }),
-        signal: AbortSignal.timeout(30_000),
-      },
-    );
-    if (!init.ok)
+  let offset = 0;
+  const checkpoint = async (values: Record<string, unknown>) => {
+    const saved = await db.from("social_post_targets").update(values).eq("id", target.id);
+    if (saved?.error)
       throw new ProviderError(
-        "YouTube rejected the upload session.",
-        String(init.status),
-        init.status >= 500,
-        init.status,
+        "YouTube's upload progress could not be saved. Bento will retry.",
+        "upload_checkpoint_failed",
+        true,
       );
-    location = init.headers.get("location") || "";
-    if (!location)
-      throw new ProviderError("YouTube did not open an upload session.", "missing_location", false);
-    offset = 0;
-    await db
-      .from("social_post_targets")
-      .update({ upload_session_url: location, upload_byte_offset: 0 })
-      .eq("id", target.id);
-  }
-
-  const source = await fetch(video.url, { signal: AbortSignal.timeout(60_000) });
-  if (!source.ok || !source.body)
-    throw new ProviderError("The scheduled video is unavailable.", "media_unavailable", true);
-  const bytes = new Uint8Array(await source.arrayBuffer());
-  if (bytes.byteLength !== video.size && video.size > 0) {
-    // Prefer the actual downloaded size when the stored metadata drifted.
-  }
-  const total = bytes.byteLength;
-
-  while (offset < total) {
-    const end = Math.min(offset + chunkSize, total);
-    const chunk = bytes.subarray(offset, end);
-    const isFinal = end >= total;
-    const uploaded = await fetch(location, {
-      method: "PUT",
-      headers: {
-        "Content-Length": String(chunk.byteLength),
-        "Content-Type": video.mimeType,
-        "Content-Range": `bytes ${offset}-${end - 1}/${total}`,
-      },
-      body: chunk,
-      signal: AbortSignal.timeout(120_000),
+  };
+  const finish = async (response: Response) => {
+    const result = (await response.json().catch(() => null)) as { id?: string } | null;
+    const id = String(result?.id || "");
+    if (!id)
+      throw new ProviderError(
+        "YouTube has not confirmed the completed video. Bento will check again.",
+        "upload_incomplete",
+        true,
+      );
+    await checkpoint({
+      upload_session_url: null,
+      upload_byte_offset: total,
+      remote_post_id: id,
+      remote_post_url: youtubePublishedUrl(id, format),
     });
-
-    if (uploaded.status === 308) {
-      const range = uploaded.headers.get("range");
-      const matched = range?.match(/bytes=0-(\d+)/);
-      offset = matched ? Number(matched[1]) + 1 : end;
-      await db
-        .from("social_post_targets")
-        .update({ upload_session_url: location, upload_byte_offset: offset })
-        .eq("id", target.id);
-      continue;
-    }
-
-    if (!uploaded.ok) {
-      const retryable = uploaded.status === 429 || uploaded.status >= 500;
-      throw new ProviderError(
-        "YouTube rejected a resumable upload chunk.",
-        String(uploaded.status),
-        retryable,
-        uploaded.status,
-      );
-    }
-
-    const text = await uploaded.text();
-    let data: any = {};
+    await setYouTubeThumbnail(token, id, settings, format);
+    return { id, url: youtubePublishedUrl(id, format) };
+  };
+  const validSessionUrl = (value: string) => {
     try {
-      data = text ? JSON.parse(text) : {};
+      const url = new URL(value);
+      return (
+        url.protocol === "https:" &&
+        (url.hostname === "googleapis.com" || url.hostname.endsWith(".googleapis.com")) &&
+        !url.username &&
+        !url.password
+      );
     } catch {
-      data = {};
+      return false;
     }
-    const id = String(data.id || "");
-    await db
-      .from("social_post_targets")
-      .update({
-        upload_session_url: null,
-        upload_byte_offset: total,
-        ...(id
-          ? {
-              remote_post_id: id,
-              remote_post_url: youtubePublishedUrl(id, format),
-            }
-          : {}),
-      })
-      .eq("id", target.id);
-    if (!id && !isFinal) {
-      offset = end;
-      continue;
+  };
+  const acknowledgedOffset = (response: Response) => {
+    const range = response.headers.get("range");
+    if (!range) return 0;
+    const match = range.match(/^bytes=0-(\d+)$/);
+    const acknowledged = match ? Number(match[1]) + 1 : NaN;
+    if (!Number.isSafeInteger(acknowledged) || acknowledged < 0 || acknowledged > total)
+      throw new ProviderError(
+        "YouTube returned invalid upload progress.",
+        "upload_progress_invalid",
+        true,
+      );
+    return acknowledged;
+  };
+  const rejectUpload = (response: Response) =>
+    new ProviderError(
+      "YouTube temporarily rejected the video upload. Bento will retry if the destination is available.",
+      String(response.status),
+      response.status === 408 || response.status === 429 || response.status >= 500,
+      response.status,
+      parseRetryAfterSeconds(response.headers.get("retry-after")),
+    );
+  try {
+    if (location) {
+      if (!validSessionUrl(location))
+        throw new ProviderError(
+          "YouTube's saved upload session is invalid.",
+          "upload_session_invalid",
+          false,
+        );
+      // The last chunk may have succeeded even when its response timed out.
+      // Ask Google before resuming, including recovery of an already-created video.
+      const status = await fetch(location, {
+        method: "PUT",
+        headers: { "Content-Length": "0", "Content-Range": `bytes */${total}` },
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (status.ok) return await finish(status);
+      if (status.status === 308) offset = acknowledgedOffset(status);
+      else if (status.status === 404 || status.status === 410) location = "";
+      else throw rejectUpload(status);
     }
-    if (id) await setYouTubeThumbnail(token, id, settings, format);
-    return { id, url: id ? youtubePublishedUrl(id, format) : undefined };
+    if (!location) {
+      const initialized = await fetch(
+        "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json; charset=UTF-8",
+            "X-Upload-Content-Length": String(total),
+            "X-Upload-Content-Type": downloaded.mimeType,
+          },
+          body: JSON.stringify({
+            snippet: {
+              title: title.trim() || description.slice(0, 100) || "Untitled video",
+              description,
+              categoryId: "22",
+            },
+            status: { privacyStatus, selfDeclaredMadeForKids: false },
+          }),
+          signal: AbortSignal.timeout(30_000),
+        },
+      );
+      if (!initialized.ok) throw rejectUpload(initialized);
+      location = initialized.headers.get("location") || "";
+      if (!validSessionUrl(location))
+        throw new ProviderError(
+          "YouTube did not open a valid upload session.",
+          "missing_location",
+          false,
+        );
+      offset = 0;
+      await checkpoint({ upload_session_url: location, upload_byte_offset: 0 });
+    }
+    if (offset >= total)
+      throw new ProviderError(
+        "YouTube is still confirming this video. Bento will check again.",
+        "upload_incomplete",
+        true,
+      );
+    for await (const chunk of providerMediaChunks(downloaded.body, total, chunkSize, offset)) {
+      const end = offset + chunk.byteLength;
+      const uploaded = await fetch(location, {
+        method: "PUT",
+        headers: {
+          "Content-Length": String(chunk.byteLength),
+          "Content-Type": downloaded.mimeType,
+          "Content-Range": `bytes ${offset}-${end - 1}/${total}`,
+        },
+        body: chunk,
+        signal: AbortSignal.timeout(120_000),
+      });
+      if (uploaded.status === 308) {
+        const acknowledged = acknowledgedOffset(uploaded);
+        if (acknowledged > end)
+          throw new ProviderError(
+            "YouTube returned invalid upload progress.",
+            "upload_progress_invalid",
+            true,
+          );
+        await checkpoint({ upload_session_url: location, upload_byte_offset: acknowledged });
+        if (acknowledged !== end)
+          throw new ProviderError(
+            "YouTube did not receive the full segment. Bento will resume automatically.",
+            "upload_interrupted",
+            true,
+          );
+        offset = acknowledged;
+        continue;
+      }
+      if (!uploaded.ok) throw rejectUpload(uploaded);
+      return await finish(uploaded);
+    }
+    throw new ProviderError(
+      "YouTube upload did not complete. Bento will check again.",
+      "upload_incomplete",
+      true,
+    );
+  } catch (error) {
+    if (error instanceof ProviderMediaDownloadError)
+      throw new ProviderError(error.message, `media_${error.code}`, error.retryable);
+    throw error;
+  } finally {
+    await downloaded.cancel();
   }
-
-  throw new ProviderError("YouTube upload did not complete.", "upload_incomplete", true);
 }
 
 async function fetchTikTokCreatorInfo(token: string) {
@@ -1340,10 +1561,25 @@ async function fetchTikTokCreatorInfo(token: string) {
   };
 }
 
+export function tiktokDirectPostAudited() {
+  return process.env.TIKTOK_DIRECT_POST_AUDITED === "true";
+}
+
+export function tiktokPrivacyOptionsForAudit(options: string[], audited: boolean) {
+  return audited ? options : options.filter((option) => option === "SELF_ONLY");
+}
+
 export async function loadTikTokCreatorInfo(connection: any) {
+  const creator = await fetchTikTokCreatorInfo(await accessTokenForConnection(connection));
+  const directPostAudited = tiktokDirectPostAudited();
   return {
     connectionId: String(connection.id),
-    ...(await fetchTikTokCreatorInfo(await accessTokenForConnection(connection))),
+    ...creator,
+    directPostAudited,
+    privacyLevelOptions: tiktokPrivacyOptionsForAudit(
+      creator.privacyLevelOptions,
+      directPostAudited,
+    ),
   };
 }
 
@@ -1373,6 +1609,13 @@ async function publishTikTok(token: string, body: string, media: SchedulerMedia[
   const creator = await fetchTikTokCreatorInfo(token);
   const allowed = creator.privacyLevelOptions;
   const requested = String(settings?.privacyLevel || "");
+  if (!tiktokDirectPostAudited() && requested && requested !== "SELF_ONLY") {
+    throw new ProviderError(
+      "Public TikTok publishing requires the separate Content Posting API Direct Post audit. Until it is approved, use a private TikTok account and Only me (SELF_ONLY).",
+      "tiktok_direct_post_audit_required",
+      false,
+    );
+  }
   if (!requested || !allowed.includes(requested)) {
     throw new ProviderError(
       allowed.length
@@ -1695,18 +1938,38 @@ async function publish(
     return { id: `staging-${target.id}` };
   }
   const token = await accessTokenForConnection(connection);
-  const media = (Array.isArray(post.media) ? post.media : []) as SchedulerMedia[];
-  const { body, title } = targetPostCopy(post, target.provider_settings || {});
+  let media = (Array.isArray(post.media) ? post.media : []) as SchedulerMedia[];
+  let settings = target.provider_settings || {};
+  if (["instagram", "facebook", "threads"].includes(provider)) {
+    try {
+      // Prepare sequentially so carousels never buffer several originals at once.
+      const prepared: SchedulerMedia[] = [];
+      for (const item of media)
+        prepared.push(
+          item.mimeType.startsWith("image/")
+            ? await prepareSocialImageUrl(item, socialMediaByteLimit(provider, item.mimeType)!, [
+                "image/jpeg",
+              ])
+            : item,
+        );
+      media = prepared;
+      const cover = parseSchedulerMediaSetting(settings.cover);
+      if (provider === "instagram" && cover)
+        settings = {
+          ...settings,
+          cover: await prepareSocialImageUrl(cover, 8 * 1024 * 1024, ["image/jpeg"]),
+        };
+    } catch (error) {
+      if (error instanceof ProviderMediaDownloadError)
+        throw new ProviderError(error.message, `media_${error.code}`, error.retryable);
+      throw error;
+    }
+  }
+  const { body, title } = targetPostCopy(post, target.provider_settings || {}, provider, media);
   if (provider === "threads")
     return publishThreads(connection.provider_user_id, token, body, media);
   if (provider === "instagram")
-    return publishInstagram(
-      connection.provider_user_id,
-      token,
-      body,
-      media,
-      target.provider_settings || {},
-    );
+    return publishInstagram(connection.provider_user_id, token, body, media, settings);
   if (provider === "facebook")
     return publishFacebook(connection.provider_user_id, token, body, media);
   if (provider === "linkedin")
@@ -1724,9 +1987,15 @@ async function publish(
 export function targetPostCopy(
   post: { body: string; title?: string | null },
   settings: Record<string, unknown>,
+  provider?: SocialProvider,
+  media: SchedulerMedia[] = [],
 ) {
+  const source = typeof settings.bodyOverride === "string" ? settings.bodyOverride : post.body;
   return {
-    body: typeof settings.bodyOverride === "string" ? settings.bodyOverride : post.body,
+    body:
+      provider && !(provider === "facebook" && media.length)
+        ? renderSocialMentions(source, provider, settings.mentions)
+        : source,
     title: typeof settings.titleOverride === "string" ? settings.titleOverride : post.title,
   };
 }
@@ -1827,7 +2096,9 @@ export async function processSocialPublishMessage(message: SocialPublishMessage)
   try {
     const result = isStatusCheck
       ? await finishPendingPublish(target.provider, target.connection, target)
-      : await publish(target.provider, target.connection, target.post, target);
+      : await withProviderBudgetWorkspace(target.connection.user_id, () =>
+          publish(target.provider, target.connection, target.post, target),
+        );
     if (result.pending) {
       await db
         .from("social_post_targets")

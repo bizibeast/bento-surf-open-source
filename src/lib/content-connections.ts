@@ -19,7 +19,7 @@ const sourceInputSchema = z.object({
   title: z.string().trim().min(1),
   text: z.string(),
   sourceUrl: z.string().trim().nullable().optional(),
-  occurredAt: z.string().datetime().nullable().optional(),
+  occurredAt: z.string().datetime({ offset: true }).nullable().optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 

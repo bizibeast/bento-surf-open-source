@@ -132,7 +132,8 @@ it("keeps LinkedIn visible while analytics access is coming soon", () => {
   expect(screen.queryByRole("heading", { name: "Growth" })).not.toBeInTheDocument();
 });
 
-it("shows daily freshness without offering a manual provider refresh", () => {
+it("shows daily freshness and offers a manual provider refresh", () => {
+  const onRefresh = vi.fn();
   render(
     <InsightsDashboard
       accounts={accounts}
@@ -141,15 +142,17 @@ it("shows daily freshness without offering a manual provider refresh", () => {
       selectedId="instagram"
       onSelect={() => {}}
       refreshing={false}
-      onRefresh={() => {}}
+      onRefresh={onRefresh}
       displayPeriodDays={30}
       savingDisplayPeriod={false}
       onDisplayPeriodChange={() => {}}
     />,
   );
 
-  expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
-  expect(screen.getByText("Updated every 24 hours")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Refresh insights" })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Refresh insights" }));
+  expect(onRefresh).toHaveBeenCalledOnce();
+  expect(screen.getByText("Refresh overdue")).toBeVisible();
   expect(screen.getByText(/Last updated Sep 20, 2026/i)).toBeVisible();
 });
 
@@ -195,4 +198,35 @@ it("shows the import state only during first-time setup and preserves error metr
   expect(screen.queryByRole("heading", { name: "We’re importing your data" })).toBeNull();
   expect(screen.getAllByText("Reconnect Instagram to resume daily updates.")[0]).toBeVisible();
   expect(screen.getAllByText("Followers")[0]).toBeVisible();
+});
+
+it("keeps a video post visible when its provider thumbnail expires", () => {
+  render(
+    <InsightsDashboard
+      accounts={accounts}
+      content={[
+        {
+          ...content[0],
+          contentType: "video",
+          thumbnailUrl: "https://scontent.cdninstagram.com/expired.jpg",
+          remotePostUrl: "https://www.instagram.com/reel/example/",
+        },
+      ]}
+      history={[]}
+      selectedId="instagram"
+      onSelect={() => {}}
+      refreshing={false}
+      onRefresh={() => {}}
+      displayPeriodDays={30}
+      savingDisplayPeriod={false}
+      onDisplayPeriodChange={() => {}}
+    />,
+  );
+
+  fireEvent.error(screen.getByAltText("video post thumbnail"));
+  expect(screen.getByText("Preview unavailable")).toBeVisible();
+  expect(screen.getByRole("link", { name: "Repost" })).toHaveAttribute(
+    "href",
+    "https://www.instagram.com/reel/example/",
+  );
 });

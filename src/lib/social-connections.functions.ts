@@ -1,3 +1,5 @@
+import { requireOnboardingPreview } from "./onboarding/session.server";
+import { hasPlanEntitlement } from "./plan.server";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
@@ -17,7 +19,6 @@ import {
   unsubscribeInstagramAccountWebhooks,
 } from "@/lib/instagram-auto-dm.server";
 import { instagramOAuthFailureMessage } from "@/lib/instagram-oauth-errors";
-import { requirePlanEntitlement } from "@/lib/plan.server";
 import { durableSocialAvatarUrl } from "@/lib/social-avatar.server";
 import { queueInitialSocialInsightsImport } from "@/lib/social-analytics.functions";
 import {
@@ -214,11 +215,9 @@ export const beginInstagramConnection = createServerFn({ method: "POST" })
   )
   .handler(async ({ context, data }) => {
     if (data.intent === "scheduler") {
-      await requirePlanEntitlement(
-        context.userId,
-        "socialConnections",
-        "Creator social account connections are included with the Creator plan.",
-      );
+      if (!(await hasPlanEntitlement(context.userId, "socialConnections"))) {
+        await requireOnboardingPreview(context.userId);
+      }
     }
     await enforceRequestRateLimit(
       "EXPENSIVE_API_RATE_LIMITER",
@@ -286,11 +285,9 @@ export const completeInstagramConnection = createServerFn({ method: "POST" })
         instagramConnectionIntentSchema.catch("scheduler").parse(oauthMetadata.intent) ===
         "scheduler"
       ) {
-        await requirePlanEntitlement(
-          context.userId,
-          "socialConnections",
-          "Creator social account connections are included with the Creator plan.",
-        );
+        if (!(await hasPlanEntitlement(context.userId, "socialConnections"))) {
+          await requireOnboardingPreview(context.userId);
+        }
       }
       const requestedScopes = z
         .array(z.string().min(1).max(100))

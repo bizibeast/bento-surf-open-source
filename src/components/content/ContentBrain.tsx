@@ -1,5 +1,6 @@
+import { STRATEGY_PLATFORMS, type StrategyPlatform } from "@/lib/content-brain";
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
-import { ChevronRight, Image, Plus, RefreshCw, Search } from "lucide-react";
+import { ChevronRight, Eye, Image, Plus, RefreshCw, Search } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,6 +16,7 @@ import { ContentDocument, ContentMarkdown } from "./ContentDocument";
 import {
   buildContentStrategy,
   groupBrainItems,
+  profileDocuments,
   type BrainItem,
   type BrainItemInput,
   type ContentProfile,
@@ -67,6 +69,8 @@ const providers: Record<string, string> = {
   twitter: "X",
   linkedin: "LinkedIn",
   instagram: "Instagram",
+  threads: "Threads",
+  facebook: "Facebook",
   youtube: "YouTube",
   tiktok: "TikTok",
   notion: "Notion",
@@ -79,11 +83,17 @@ const providers: Record<string, string> = {
 
 export function ContentBrain({
   profile,
+  items,
   initialSection = "profile",
   initialItemId = null,
-  initialPlatform = "twitter",
+  initialPlatform = STRATEGY_PLATFORMS.find((provider) =>
+    items.some(
+      (item) =>
+        item.kind === "strategy" &&
+        item.title.toLowerCase().startsWith(`${providers[provider].toLowerCase()} strategy`),
+    ),
+  ) ?? "twitter",
   onNavigate,
-  items,
   sources,
   photos = [],
   folders = [],
@@ -96,6 +106,7 @@ export function ContentBrain({
   onLoadMoreMedia,
   onRefreshMedia,
   onReviewOldMedia,
+  humanSummary = "",
   indexing,
   onMediaSearch,
   building = false,
@@ -114,10 +125,11 @@ export function ContentBrain({
   onSetHero,
 }: {
   profile: ContentProfile;
+  humanSummary?: string;
   initialSection?: Section;
   initialItemId?: string | null;
-  initialPlatform?: "twitter" | "linkedin";
-  onNavigate?: (section: Section, item: string | null, platform: "twitter" | "linkedin") => void;
+  initialPlatform?: StrategyPlatform;
+  onNavigate?: (section: Section, item: string | null, platform: StrategyPlatform) => void;
   items: BrainItem[];
   sources: ContentBrainSource[];
   photos?: ContentBrainPhoto[];
@@ -169,7 +181,7 @@ export function ContentBrain({
   const [section, setSection] = useState<Section>(initialSection);
   const [selected, setSelected] = useState<string | null>(initialItemId);
   const [search, setSearch] = useState("");
-  const [platform, setPlatform] = useState<"twitter" | "linkedin">(initialPlatform);
+  const [platform, setPlatform] = useState<StrategyPlatform>(initialPlatform);
   const [newTitle, setNewTitle] = useState("");
   const [newContent, setNewContent] = useState("");
   const [adding, setAdding] = useState(false);
@@ -207,8 +219,7 @@ export function ContentBrain({
     onNavigate?.(section, id, platform);
   };
   const grouped = useMemo(() => groupBrainItems(items), [items]);
-  const human = grouped.profile.find((item) => item.title === "My Human");
-  const memories = grouped.profile.filter((item) => item.id !== human?.id);
+  const { human, humanContent, memories } = profileDocuments(items);
   const visible =
     section === "library"
       ? [...grouped.inspiration, ...grouped.link]
@@ -375,8 +386,8 @@ export function ContentBrain({
                 (section === "strategy" ? `${providers[platform]} Strategy` : title)}
             </h2>
             {section === "strategy" && (
-              <div className="flex gap-1" aria-label="Strategy platform">
-                {(["twitter", "linkedin"] as const).map((provider) => (
+              <div className="flex flex-wrap gap-1" aria-label="Strategy platform">
+                {STRATEGY_PLATFORMS.map((provider) => (
                   <button
                     key={provider}
                     type="button"
@@ -388,7 +399,7 @@ export function ContentBrain({
                     }}
                     className={`rounded-lg px-3 py-2 text-sm ${platform === provider ? "bg-neutral-100" : "text-neutral-500"}`}
                   >
-                    {provider === "twitter" ? "𝕏" : "in"}
+                    {providers[provider]}
                   </button>
                 ))}
               </div>
@@ -415,9 +426,9 @@ export function ContentBrain({
           {section === "profile" ? (
             <>
               <ContentDocument
-                key={human?.id || "human"}
+                key="human"
                 label="My Human"
-                value={human?.content || ""}
+                value={humanContent || humanSummary}
                 placeholder="Everything Bento should know about you - background, product facts, audience notes, offers, positioning, examples to remember…"
                 onSave={(content) => saveText(human, "profile", "My Human", content)}
               />
@@ -439,14 +450,23 @@ export function ContentBrain({
                   />
                 ))
               ) : (
-                <p className="text-sm text-neutral-400">
-                  No memories yet. Tell Agent about yourself or refresh from your posts.
-                </p>
+                <ContentDocument
+                  label="Bento Memories"
+                  value=""
+                  placeholder="What should Bento remember? Click here to add a fact, preference, or lesson."
+                  onSave={(content) => saveText(undefined, "profile", "Bento Memories", content)}
+                />
               )}
               <details className="mt-10 border-t border-neutral-100 pt-5">
                 <summary className="cursor-pointer text-sm text-neutral-500">
-                  Publishing settings
+                  <span className="inline-flex items-center gap-2">
+                    <Eye className="size-4" /> Publishing settings
+                  </span>
                 </summary>
+                <p className="mt-2 text-xs leading-5 text-neutral-500">
+                  Your topics, weekly targets, and timezone guide Discover and Agent. Choose whether
+                  each routine saves drafts or schedules posts in Routines.
+                </p>
                 <ProfileSettings
                   key={JSON.stringify(profile)}
                   profile={profile}
@@ -459,12 +479,12 @@ export function ContentBrain({
               const item = grouped.strategy.find((candidate) =>
                 platform === "twitter"
                   ? /\b(x|twitter)\b/i.test(candidate.title)
-                  : /linkedin/i.test(candidate.title),
+                  : candidate.title.toLowerCase().includes(providers[platform].toLowerCase()),
               );
               return (
                 <>
                   <ContentDocument
-                    key={`${platform}:${item?.id || "new"}`}
+                    key={platform}
                     label={`${providers[platform]} Strategy`}
                     value={item?.content || buildContentStrategy(platform, profile, items)}
                     onSave={(content) =>
@@ -1006,7 +1026,20 @@ export function ContentBrain({
                   />
                 ))
               )}
-              {!filtered.length && (
+              {!visible.length && section === "instruction" && (
+                <>
+                  <h3 className="mb-3 text-lg font-semibold">Writing voice</h3>
+                  <ContentDocument
+                    label="Writing voice"
+                    value=""
+                    placeholder="Describe how you write: tone, sentence length, words to use, and things to avoid. Click here to start."
+                    onSave={(content) =>
+                      saveText(undefined, "instruction", "Writing voice", content)
+                    }
+                  />
+                </>
+              )}
+              {!filtered.length && section !== "instruction" && (
                 <p className="py-6 text-sm text-neutral-400">
                   {visible.length
                     ? "No matching items."
@@ -1096,10 +1129,11 @@ export function ContentBrain({
 
 function storyPoint(content: string) {
   return (
+    content.match(/(?:^|\n)#{1,6}\s+Point\s*\n+\s*([^\n]+)/i)?.[1] ||
     content.match(/(?:^|\n)(?:[-*]\s*)?(?:\*\*)?Point:(?:\*\*)?\s*([^\n]+)/i)?.[1] ||
     content
       .split("\n")
-      .find((line) => line.trim())
+      .find((line) => line.trim() && !line.trim().startsWith("#"))
       ?.slice(0, 220) ||
     ""
   );
@@ -1221,6 +1255,9 @@ function ProfileSettings({
   onSave: (value: ContentProfile) => void | Promise<void>;
 }) {
   const [value, setValue] = useState(profile);
+  const [keywords, setKeywords] = useState(profile.nicheKeywords.join(", "));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   return (
     <div className="mt-5 space-y-4 text-sm">
       <label className="block">
@@ -1240,16 +1277,8 @@ function ProfileSettings({
         Niche topics
         <input
           className="content-field mt-1"
-          value={value.nicheKeywords.join(", ")}
-          onChange={(event) =>
-            setValue({
-              ...value,
-              nicheKeywords: event.target.value
-                .split(",")
-                .map((word) => word.trim().toLowerCase())
-                .filter(Boolean),
-            })
-          }
+          value={keywords}
+          onChange={(event) => setKeywords(event.target.value)}
         />
       </label>
       <div className="grid gap-3 sm:grid-cols-3">
@@ -1290,9 +1319,35 @@ function ProfileSettings({
           ))}
         </div>
       </fieldset>
-      <button type="button" className="content-action" onClick={() => void onSave(value)}>
-        Save settings
+      <button
+        type="button"
+        className="content-action"
+        disabled={saving}
+        onClick={async () => {
+          setSaving(true);
+          setError("");
+          try {
+            await onSave({
+              ...value,
+              nicheKeywords: keywords
+                .split(",")
+                .map((word) => word.trim().toLowerCase())
+                .filter(Boolean),
+            });
+          } catch (cause) {
+            setError(cause instanceof Error ? cause.message : "Could not save settings.");
+          } finally {
+            setSaving(false);
+          }
+        }}
+      >
+        {saving ? "Saving…" : "Save settings"}
       </button>
+      {error && (
+        <p role="alert" className="text-sm text-red-700">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

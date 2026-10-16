@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Telegram rows are validated at boundaries. */
 import { z } from "zod";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { withProviderBudgetWorkspace } from "./provider-budget.server";
 import {
   agentCardActionSchema,
   agentScheduleApprovalSchema,
@@ -15,6 +16,7 @@ import {
   renderTelegramAgentResult,
   telegramActionId,
   telegramStartState,
+  formatTelegramText,
   type TelegramUpdate,
 } from "./telegram";
 
@@ -143,9 +145,11 @@ export async function sendTelegramText(
   text: string,
   actions: Array<{ id: string; label: string }> = [],
 ) {
+  const formatted = formatTelegramText(text);
   await telegramApi("sendMessage", {
     chat_id: chatId,
-    text,
+    text: formatted.text,
+    ...(formatted.entities.length ? { entities: formatted.entities } : {}),
     ...(actions.length
       ? {
           reply_markup: {
@@ -226,6 +230,7 @@ async function createTelegramActions(input: {
           messageId: input.messageId,
           draftCardId: card.draftCardId,
           scheduleCardId: card.cardId,
+          revision: 0,
         },
       });
     }
@@ -345,7 +350,7 @@ const defaultDependencies: TelegramServerDependencies = {
   rateLimit(userId) {
     return enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "content-agent-turn", userId);
   },
-  runAgent: runContentAgentTurn,
+  runAgent: (input) => withProviderBudgetWorkspace(input.userId, () => runContentAgentTurn(input)),
   createActions: createTelegramActions,
   async claimAction(actionId, chatId) {
     const { data, error } = await (supabaseAdmin as any).rpc("claim_telegram_action", {

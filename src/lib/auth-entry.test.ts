@@ -89,15 +89,17 @@ describe("auth entry recovery", () => {
     expect(authMocks.from).not.toHaveBeenCalled();
   });
 
-  it("clears a locally invalid session instead of redirecting onboarding", async () => {
+  it("keeps the session when the profile query is denied", async () => {
     authMocks.getClaims.mockResolvedValue({ data: { claims: { sub: "user-1" } }, error: null });
     authMocks.maybeSingle.mockResolvedValue({
       data: null,
       error: { code: "42501", message: "permission denied for table profiles" },
     });
 
-    await expect(redirectAuthenticatedVisitor()).resolves.toBeUndefined();
-    expect(authMocks.signOut).toHaveBeenCalledWith({ scope: "local" });
+    await expect(redirectAuthenticatedVisitor()).rejects.toEqual(
+      expect.objectContaining({ code: "42501" }),
+    );
+    expect(authMocks.signOut).not.toHaveBeenCalled();
   });
 
   it("clears a session when PostgREST rejects its JWT", async () => {

@@ -21,6 +21,7 @@ const ENV_KEYS = [
   "LINKEDIN_CLIENT_ID",
   "LINKEDIN_CLIENT_SECRET",
   "SOCIAL_CONNECTION_ENCRYPTION_KEY",
+  "THREADS_PROFILE_DISCOVERY_APPROVED",
 ] as const;
 
 const originalEnvironment = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
@@ -99,6 +100,13 @@ describe("social provider credential readiness", () => {
       "w_member_social",
     ]);
     expect(socialProviderRequestedScopes("reddit")).toContain("submit");
+  });
+
+  it("requests Threads profile discovery only after its permission is approved", () => {
+    delete process.env.THREADS_PROFILE_DISCOVERY_APPROVED;
+    expect(socialProviderRequestedScopes("threads")).not.toContain("threads_profile_discovery");
+    setEnvironment("THREADS_PROFILE_DISCOVERY_APPROVED", "true");
+    expect(socialProviderRequestedScopes("threads")).toContain("threads_profile_discovery");
   });
 
   it("requests only LinkedIn sign-in and publishing scopes", () => {

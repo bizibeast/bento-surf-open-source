@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { AnchorHTMLAttributes, ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { APP_NAV_ITEMS, AppSidebar } from "./AppSidebar";
+import { APP_NAV_GROUPS, AppSidebar } from "./AppSidebar";
 
 const routerState = vi.hoisted(() => ({
   pathname: "/link",
@@ -36,127 +36,113 @@ vi.mock("./WorkspaceMenu", () => ({
   WorkspaceMenu: () => <button type="button" aria-label="Open workspace menu" />,
 }));
 
+function renderSidebar(collapsed = false, onCollapsedChange = vi.fn()) {
+  return render(
+    <AppSidebar
+      profile={{ display_name: "Yash", username: "yash" }}
+      collapsed={collapsed}
+      onCollapsedChange={onCollapsedChange}
+    />,
+  );
+}
+
 describe("AppSidebar", () => {
   afterEach(() => {
     routerState.pathname = "/link";
     routerState.search = {};
     vi.unstubAllGlobals();
   });
-  it("expands on hover, collapses on leave, and hides settings when closed", () => {
-    const onCollapsedChange = vi.fn();
-    const { rerender } = render(
-      <AppSidebar
-        profile={{ display_name: "Yash", username: "yash" }}
-        collapsed
-        onCollapsedChange={onCollapsedChange}
-      />,
+
+  it("groups creator tools in the requested order and pins Earn above the profile", () => {
+    expect(
+      APP_NAV_GROUPS.map(({ label, items }) => [label, items.map((item) => item.label)]),
+    ).toEqual([
+      ["Create", ["Agent", "Brain", "Routine", "MCP"]],
+      ["Grow", ["Post Scheduler", "Auto DMs", "Social Insights", "Discover"]],
+      ["Monetize", ["Link", "Store", "Priority DM", "Calendar", "Community", "Newsletter"]],
+    ]);
+
+    renderSidebar();
+    const sidebar = screen.getByRole("complementary", { name: "App navigation" });
+    const navigation = within(sidebar).getByRole("navigation", { name: "Creator tools" });
+    expect(navigation).toHaveClass("overflow-y-auto", "flex-1");
+    expect(
+      within(navigation)
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["Create", "Grow", "Monetize"]);
+    expect(within(navigation).queryByText("APPS")).not.toBeInTheDocument();
+    expect(within(navigation).queryByRole("link", { name: "Earn" })).not.toBeInTheDocument();
+    const earn = within(sidebar).getByRole("link", { name: "Earn" });
+    const profile = within(sidebar).getByRole("button", { name: "Open workspace menu" });
+    expect(earn).toHaveAttribute("href", "/earn");
+    expect(earn.compareDocumentPosition(profile) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(sidebar).queryByRole("link", { name: "Home" })).not.toBeInTheDocument();
+  });
+
+  it("opens the current section and toggles other sections independently", () => {
+    renderSidebar();
+    const sidebar = screen.getByRole("complementary", { name: "App navigation" });
+    const monetize = within(sidebar).getByRole("button", { name: "Monetize" });
+    const create = within(sidebar).getByRole("button", { name: "Create" });
+    const grow = within(sidebar).getByRole("button", { name: "Grow" });
+
+    expect(monetize).toHaveAttribute("aria-expanded", "true");
+    expect(create).toHaveAttribute("aria-expanded", "false");
+    expect(within(sidebar).getByRole("link", { name: "Link" })).toHaveAttribute(
+      "aria-current",
+      "page",
     );
 
-    const labels = [
-      "Home",
-      "Link",
-      "Store",
-      "Priority DM",
-      "Calendar",
-      "Community",
-      "Email Marketing",
-      "Post Scheduler",
-      "Social Insights",
-      "Auto DMs",
-      "Agent",
-      "Brain",
-      "Routines",
-      "Discover",
-      "MCP",
-      "Earn",
-    ];
-    expect(APP_NAV_ITEMS.map((item) => item.label)).toEqual(labels);
-    expect(APP_NAV_ITEMS.map((item) => item.to)).toEqual([
-      "/home",
-      "/link",
-      "/store",
-      "/priority-dm",
-      "/calendar",
-      "/community",
-      "/email-marketing",
-      "/post-scheduler",
-      "/social-insights",
-      "/auto-dms",
-      "/content",
-      "/content",
-      "/content",
-      "/content",
-      "/mcp",
-      "/earn",
-    ]);
-    for (const label of labels) {
-      expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
-    }
-    const activeLink = screen.getByRole("link", { name: "Link" });
-    expect(activeLink).toHaveAttribute("aria-current", "page");
-    expect(activeLink).toHaveClass(
-      "min-h-9",
-      "rounded-[8px]",
-      "border",
-      "bg-card",
-      "shadow-sm",
-      "text-xs",
-      "text-foreground",
-    );
-    expect(activeLink).not.toHaveClass(
-      "rounded-lg",
-      "rounded-2xl",
-      "bg-foreground",
-      "shadow-[0_3px_0_rgba(23,33,58,0.12),0_7px_16px_-10px_rgba(23,33,58,0.45)]",
-    );
-    const inactiveLink = screen.getByRole("link", { name: "Home" });
-    expect(inactiveLink).toHaveClass("hover:bg-black/[0.035]");
-    expect(inactiveLink).not.toHaveClass("hover:border-border/70", "hover:shadow-sm");
-    expect(activeLink.parentElement).toHaveClass("border-t", "pt-2.5");
-    expect(screen.getByRole("link", { name: "Agent" }).parentElement).toHaveClass(
-      "border-t",
-      "pt-2.5",
-    );
-    expect(screen.getByRole("link", { name: "Agent" })).toHaveAttribute(
+    fireEvent.click(create);
+    expect(create).toHaveAttribute("aria-expanded", "true");
+    expect(monetize).toHaveAttribute("aria-expanded", "true");
+    expect(within(sidebar).getByRole("link", { name: "Agent" })).toHaveAttribute(
       "href",
       "/content?tab=agent",
     );
-    expect(screen.getByRole("link", { name: "Brain" })).toHaveAttribute(
+    expect(within(sidebar).getByRole("link", { name: "Brain" })).toHaveAttribute(
       "href",
       "/content?tab=brain",
     );
-    expect(screen.getByRole("link", { name: "Routines" })).toHaveAttribute(
+    expect(within(sidebar).getByRole("link", { name: "Routine" })).toHaveAttribute(
       "href",
       "/content?tab=agent&routines=true",
     );
-    expect(screen.getByRole("link", { name: "Discover" })).toHaveAttribute(
+    expect(within(sidebar).getByRole("link", { name: "MCP" })).toHaveAttribute("href", "/mcp");
+
+    fireEvent.click(grow);
+    expect(grow).toHaveAttribute("aria-expanded", "true");
+    expect(create).toHaveAttribute("aria-expanded", "true");
+    expect(within(sidebar).getByRole("link", { name: "Post Scheduler" })).toHaveAttribute(
+      "href",
+      "/post-scheduler",
+    );
+    expect(within(sidebar).getByRole("link", { name: "Auto DMs" })).toHaveAttribute(
+      "href",
+      "/auto-dms",
+    );
+    expect(within(sidebar).getByRole("link", { name: "Social Insights" })).toHaveAttribute(
+      "href",
+      "/social-insights",
+    );
+    expect(within(sidebar).getByRole("link", { name: "Discover" })).toHaveAttribute(
       "href",
       "/content?tab=discover",
     );
-    expect(screen.getByRole("link", { name: "MCP" })).toHaveAttribute("href", "/mcp");
-    expect(screen.getByRole("link", { name: "Priority DM" })).toHaveAttribute(
-      "href",
-      "/priority-dm",
-    );
-    expect(APP_NAV_ITEMS.findIndex((item) => item.label === "Email Marketing")).toBe(
-      APP_NAV_ITEMS.findIndex((item) => item.label === "Community") + 1,
-    );
-    expect(APP_NAV_ITEMS.findIndex((item) => item.label === "Priority DM")).toBe(
-      APP_NAV_ITEMS.findIndex((item) => item.label === "Store") + 1,
-    );
-    expect(screen.getByRole("link", { name: "Post Scheduler" }).parentElement).toHaveClass(
-      "border-t",
-      "pt-2.5",
-    );
-    expect(screen.getByRole("link", { name: "MCP" }).parentElement).not.toHaveClass("border-t");
-    expect(screen.getByRole("link", { name: "Community" }).parentElement).not.toHaveClass(
-      "border-t",
-    );
-    expect(screen.getByRole("navigation", { name: "Creator tools" })).toHaveClass("no-scrollbar");
-    expect(screen.getByRole("button", { name: "Open workspace menu" })).toBeInTheDocument();
-    expect(document.querySelector('img[src="/branding/bento-logo.svg"]')).not.toBeNull();
+    fireEvent.click(grow);
+    expect(grow).toHaveAttribute("aria-expanded", "false");
+    expect(create).toHaveAttribute("aria-expanded", "true");
+  });
 
-    const sidebar = screen.getByLabelText("App navigation");
+  it("expands on hover and collapses on leave", () => {
+    const onCollapsedChange = vi.fn();
+    const { rerender } = renderSidebar(true, onCollapsedChange);
+    const sidebar = screen.getByRole("complementary", { name: "App navigation" });
+    expect(within(sidebar).getByRole("button", { name: "Monetize" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
     fireEvent.mouseEnter(sidebar);
     expect(onCollapsedChange).toHaveBeenCalledWith(false);
 
@@ -167,58 +153,50 @@ describe("AppSidebar", () => {
         onCollapsedChange={onCollapsedChange}
       />,
     );
-    expect(screen.getByRole("button", { name: "Open workspace menu" })).toBeInTheDocument();
-    fireEvent.mouseLeave(screen.getByLabelText("App navigation"));
+    fireEvent.mouseLeave(sidebar);
     expect(onCollapsedChange).toHaveBeenLastCalledWith(true);
   });
 
   it.each(["/email-marketing", "/email-marketing/newsletters/example"])(
-    "marks Email Marketing active at %s",
+    "marks Newsletter active at %s",
     (pathname) => {
       routerState.pathname = pathname;
-      render(
-        <AppSidebar
-          profile={{ display_name: "Yash", username: "yash" }}
-          collapsed={false}
-          onCollapsedChange={vi.fn()}
-        />,
-      );
-
-      expect(screen.getByRole("link", { name: "Email Marketing" })).toHaveAttribute(
+      renderSidebar();
+      expect(screen.getByRole("link", { name: "Newsletter" })).toHaveAttribute(
         "aria-current",
         "page",
       );
     },
   );
 
+  it("opens Grow and marks Post Scheduler active on its route", () => {
+    routerState.pathname = "/post-scheduler";
+    renderSidebar();
+    const sidebar = screen.getByRole("complementary", { name: "App navigation" });
+    expect(within(sidebar).getByRole("button", { name: "Grow" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(within(sidebar).getByRole("link", { name: "Post Scheduler" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
   it.each([
     ["Agent", { tab: "agent" }],
     ["Brain", { tab: "brain" }],
-    ["Routines", { tab: "agent", routines: true }],
+    ["Routine", { tab: "agent", routines: true }],
     ["Discover", { tab: "discover" }],
   ])("marks %s active for its Content view", (label, search) => {
     routerState.pathname = "/content";
     routerState.search = search;
-    render(
-      <AppSidebar
-        profile={{ display_name: "Yash", username: "yash" }}
-        collapsed={false}
-        onCollapsedChange={vi.fn()}
-      />,
-    );
-
+    renderSidebar();
     expect(screen.getByRole("link", { name: label })).toHaveAttribute("aria-current", "page");
   });
 
-  it("opens a scrollable modal navigation that closes on Escape", async () => {
-    render(
-      <AppSidebar
-        profile={{ display_name: "Yash", username: "yash" }}
-        collapsed
-        onCollapsedChange={vi.fn()}
-      />,
-    );
-
+  it("opens mobile navigation with Earn pinned outside the scroll area", async () => {
+    renderSidebar(true);
     const trigger = screen.getByRole("button", { name: "Open app navigation" });
     fireEvent.click(trigger);
 
@@ -226,8 +204,15 @@ describe("AppSidebar", () => {
     const navigation = within(dialog).getByRole("navigation", { name: "Creator tools" });
     expect(dialog).toHaveClass("h-dvh", "overflow-hidden");
     expect(navigation).toHaveClass("min-h-0", "overflow-y-auto", "overscroll-contain");
-    expect(within(dialog).getByRole("link", { name: "MCP" })).toHaveAttribute("href", "/mcp");
+    expect(within(navigation).queryByRole("link", { name: "Earn" })).not.toBeInTheDocument();
     expect(within(dialog).getByRole("link", { name: "Earn" })).toHaveAttribute("href", "/earn");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+    expect(within(dialog).getByRole("link", { name: "MCP" })).toHaveAttribute("href", "/mcp");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Grow" }));
+    expect(within(dialog).getByRole("link", { name: "Post Scheduler" })).toHaveAttribute(
+      "href",
+      "/post-scheduler",
+    );
 
     fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() =>
@@ -249,13 +234,7 @@ describe("AppSidebar", () => {
       "matchMedia",
       vi.fn(() => media),
     );
-    render(
-      <AppSidebar
-        profile={{ display_name: "Yash", username: "yash" }}
-        collapsed
-        onCollapsedChange={vi.fn()}
-      />,
-    );
+    renderSidebar(true);
 
     fireEvent.click(screen.getByRole("button", { name: "Open app navigation" }));
     expect(screen.getByRole("dialog", { name: "App navigation" })).toBeInTheDocument();

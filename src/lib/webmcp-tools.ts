@@ -594,7 +594,7 @@ export function createAuthenticatedWebMcpTools(refresh: () => Promise<void>): We
       "Loads products, orders, leads, contacts, discounts, order bumps, publications, Posts, audience lists, and campaigns.",
       "get_store_workspace",
       objectSchema({
-        publicationId: id("Optional owned publication ID to scope Email Marketing data."),
+        publicationId: id("Optional owned publication ID to scope Newsletter data."),
       }),
     ),
     readTool(

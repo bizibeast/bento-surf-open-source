@@ -9,6 +9,7 @@ const ids = {
 
 const mocks = vi.hoisted(() => ({
   checkoutCreate: vi.fn(),
+  cookie: vi.fn(),
   rpc: vi.fn(),
   deleteProfile: vi.fn(),
   subscription: {
@@ -54,6 +55,12 @@ vi.mock("@tanstack/react-start", () => ({
     return builder;
   },
 }));
+vi.mock("@tanstack/react-start/server", () => ({ setCookie: mocks.cookie }));
+vi.mock("./workspace-session.server", () => ({
+  WORKSPACE_COOKIE: "bento_workspace",
+  workspaceCookieSigningKey: () => "secret",
+  signWorkspaceCookie: async (id: string) => `signed:${id}`,
+}));
 vi.mock("@/integrations/supabase/auth-middleware", () => ({ requireSupabaseAuth: {} }));
 vi.mock("@/integrations/supabase/client.server", () => ({
   supabaseAdmin: {
@@ -88,6 +95,7 @@ import { beginAdditionalWorkspaceCheckout } from "./billing.functions";
 beforeEach(() => {
   vi.clearAllMocks();
   Object.assign(process.env, {
+    DODO_CREATOR_39_MONTHLY_PRODUCT_ID: "creator-new-monthly",
     DODO_CREATOR_YEARLY_PRODUCT_ID: "creator-yearly",
     VITE_APP_URL: "https://app.example.com",
   });
@@ -113,13 +121,13 @@ describe("additional workspace checkout", () => {
     );
   });
 
-  it("creates a pending workspace checkout with the current paid plan and interval", async () => {
+  it("opens preparation for the new workspace without creating checkout", async () => {
     await expect(
       beginAdditionalWorkspaceCheckout({
         data: { displayName: "Second Studio", username: "second_studio" },
       }),
     ).resolves.toEqual({
-      checkoutUrl: "https://checkout.dodopayments.com/add-workspace",
+      checkoutUrl: "https://app.example.com/onboarding",
       workspaceId: ids.pending,
     });
 
@@ -128,14 +136,11 @@ describe("additional workspace checkout", () => {
       p_display_name: "Second Studio",
       p_username: "second_studio",
     });
-    expect(mocks.checkoutCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        product_cart: [{ product_id: "creator-yearly", quantity: 1 }],
-        metadata: expect.objectContaining({
-          auth_user_id: ids.auth,
-          workspace_id: ids.pending,
-        }),
-      }),
+    expect(mocks.checkoutCreate).not.toHaveBeenCalled();
+    expect(mocks.cookie).toHaveBeenCalledWith(
+      "bento_workspace",
+      `signed:${ids.pending}`,
+      expect.objectContaining({ httpOnly: true, secure: true }),
     );
   });
 

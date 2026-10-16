@@ -66,7 +66,7 @@ vi.mock("@/lib/newsletter.functions", () => ({
 
 import { Route } from "./email-marketing";
 
-describe("Email Marketing workspace", () => {
+describe("Newsletter workspace", () => {
   beforeEach(() => {
     vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
   });
@@ -167,7 +167,7 @@ describe("Email Marketing workspace", () => {
       </QueryClientProvider>,
     );
 
-    const heading = screen.getByRole("heading", { name: "Email Marketing" });
+    const heading = screen.getByRole("heading", { name: "Newsletter" });
     expect(heading).toBeVisible();
     expect(
       await screen.findByRole("button", {
@@ -514,7 +514,9 @@ describe("Email Marketing workspace", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText(/Email marketing is included with Store/i)).toBeVisible();
+    expect(
+      await screen.findByText(/Newsletter is included with Creator and Creator Plus/i),
+    ).toBeVisible();
     expect(screen.getByRole("button", { name: "Overview" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Broadcasts" })).toBeNull();
     expect(getPublicationRecipientCounts).not.toHaveBeenCalled();

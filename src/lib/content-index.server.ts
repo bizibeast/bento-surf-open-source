@@ -1,9 +1,11 @@
+import { withProviderBudgetWorkspace } from "./provider-budget.server";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Indexing jobs and provider rows are server-owned. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { requireContentWorkspace } from "./content-access.server";
 import { generateConnectedBrainSuggestions, sampleBrainSourcePosts } from "./content-agent.server";
 import {
   brainItemFromRow,
+  sourceBackedBrainItems,
   contentProfileFromRow,
   contentProfileSchema,
   contentProfileToRow,
@@ -11,40 +13,25 @@ import {
   type BrainSuggestion,
   type BrainItem,
 } from "./content-brain";
-import { parsePublicHttpUrl } from "./safe-url";
 
-export async function contentSourceFingerprint(posts: Array<Record<string, unknown>>) {
+export async function contentSourceFingerprint(
+  posts: Array<Record<string, unknown>>,
+  profile?: ContentProfile,
+) {
   const material = posts
     .map((post) => `${post.provider}:${post.remote_post_id}:${post.caption || ""}`)
     .sort()
     .join("\n");
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(material));
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(
+      material + (profile ? "\n" + JSON.stringify(contentProfileSchema.parse(profile)) : ""),
+    ),
+  );
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export function sourceBackedBrainItems(
-  posts: Array<Record<string, unknown>>,
-  generated: BrainSuggestion[],
-) {
-  const byRef = new Map(posts.map((post) => [`${post.provider}:${post.remote_post_id}`, post]));
-  return generated.flatMap((item) => {
-    const post = byRef.get(item.sourceRef || "");
-    if (
-      !post ||
-      !item.evidence?.length ||
-      item.evidence.some(
-        (evidence) =>
-          !byRef.has(evidence.sourceRef) ||
-          !String(byRef.get(evidence.sourceRef)?.caption || "").includes(evidence.quote),
-      )
-    )
-      return [];
-    const sourceUrl = parsePublicHttpUrl(post.remote_post_url, { requireHttps: true })
-      ? String(post.remote_post_url)
-      : null;
-    return [{ ...item, sourceUrl, provenance: "social_post" as const }];
-  });
-}
+export { sourceBackedBrainItems } from "./content-brain";
 
 export function existingIndexedBrainItem(existing: BrainItem[], suggestion: BrainSuggestion) {
   return existing.find(
@@ -248,12 +235,14 @@ export async function processDueContentIndexes(dependencies: ContentIndexDepende
       } = await dependencies.load(job.user_id);
       sourceCount = totalPosts ?? posts.length;
       await dependencies.selectMedia(job.user_id);
-      const fingerprint = await contentSourceFingerprint(posts);
+      const fingerprint = await contentSourceFingerprint(posts, profile);
       if (
         posts.some((post) => String(post.caption || "").trim().length >= 8) &&
         fingerprint !== job.source_fingerprint
       ) {
-        const generated = await dependencies.generate(sampleBrainSourcePosts(posts), profile);
+        const generated = await withProviderBudgetWorkspace(job.user_id, () =>
+          dependencies.generate(sampleBrainSourcePosts(posts), profile),
+        );
         const candidates = sourceBackedBrainItems(posts, generated);
         if (!candidates.length)
           throw new Error(

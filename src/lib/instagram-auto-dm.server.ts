@@ -16,8 +16,8 @@ import {
   readResponseText,
   RequestBodyTooLargeError,
 } from "./request-security.server";
-import { getPlan } from "./plan.server";
-import { planHasEntitlement } from "./plans";
+import { hasPlanEntitlement } from "./plan.server";
+import { usesAdvancedAutoDm } from "./plans";
 import { captureServerEvent, captureServerException } from "./posthog.server";
 
 const encoder = new TextEncoder();
@@ -769,7 +769,7 @@ async function processInstagramCommentReconciliation(
   if (!connection || !getInstagramConnectionReadiness(connection).ready) {
     return { skipped: true, reason: "connection_not_ready" };
   }
-  if (!planHasEntitlement(await getPlan(String(connection.user_id)), "instagramAutoDM")) {
+  if (!(await hasPlanEntitlement(String(connection.user_id), "instagramAutoDM"))) {
     await updateInstagramCommentReconcileState(connectionId, {
       last_comment_reconcile_completed_at: new Date().toISOString(),
       last_comment_reconcile_error: "plan_unavailable",
@@ -1451,7 +1451,7 @@ export async function processInstagramDmQueueMessage(
     await Promise.all(
       [...new Set<string>(connections.map((connection: any) => String(connection.user_id)))].map(
         async (userId) => {
-          if (planHasEntitlement(await getPlan(userId), "instagramAutoDM")) {
+          if (await hasPlanEntitlement(userId, "instagramAutoDM")) {
             eligibleUserIds.add(userId);
           }
         },
@@ -1495,13 +1495,39 @@ export async function processInstagramDmQueueMessage(
     }
 
     const connectionIds = readyConnections.map((connection: any) => connection.id);
-    const { data: automations, error: automationError } = await (supabaseAdmin as any)
+    const { data: loadedAutomations, error: automationError } = await (supabaseAdmin as any)
       .from("instagram_dm_automations")
       .select("*")
       .in("connection_id", connectionIds)
       .eq("enabled", true)
       .order("created_at", { ascending: true });
     if (automationError) throw new Error("Unable to load Instagram automation rules.");
+    // Filter before resuming follow/email workflows, which may send messages
+    // before the main matching path reaches its final entitlement check.
+    const advancedOwners = new Set<string>();
+    await Promise.all(
+      [...new Set<string>(readyConnections.map((item: any) => String(item.user_id)))].map(
+        async (userId) => {
+          if (await hasPlanEntitlement(userId, "advancedAutoDM")) advancedOwners.add(userId);
+        },
+      ),
+    );
+    const automations = (loadedAutomations ?? []).filter((rule: any) => {
+      const owner = readyConnections.find((item: any) => item.id === rule.connection_id);
+      return (
+        owner &&
+        (advancedOwners.has(String(owner.user_id)) ||
+          !usesAdvancedAutoDm({
+            excludedKeywords: rule.excluded_keywords,
+            publicReplyEnabled: rule.public_reply_enabled,
+            openingMessage: rule.opening_message,
+            confirmationButtonLabel: rule.confirmation_button_label,
+            emailCaptureEnabled: rule.email_capture_enabled,
+            emailMarketingConsentEnabled: rule.email_marketing_consent_enabled,
+            followGateEnabled: rule.follow_gate_enabled,
+          }))
+      );
+    });
     let match: ReturnType<typeof matchInstagramAutomation> = null;
     let confirmationFlow = false;
     let emailCaptureFlow = false;
@@ -1753,6 +1779,26 @@ export async function processInstagramDmQueueMessage(
       actionConnection ||
       readyConnections.find((candidate: any) => candidate.id === automation.connection_id);
     if (!connection) throw new Error("The matching Instagram connection is unavailable.");
+    if (
+      !(await hasPlanEntitlement(String(connection.user_id), "instagramAutoDM")) ||
+      (usesAdvancedAutoDm({
+        excludedKeywords: automation.excluded_keywords,
+        publicReplyEnabled: automation.public_reply_enabled,
+        openingMessage: automation.opening_message,
+        confirmationButtonLabel: automation.confirmation_button_label,
+        emailCaptureEnabled: automation.email_capture_enabled,
+        emailMarketingConsentEnabled: automation.email_marketing_consent_enabled,
+        followGateEnabled: automation.follow_gate_enabled,
+      }) &&
+        !(await hasPlanEntitlement(String(connection.user_id), "advancedAutoDM")))
+    ) {
+      await updateEvent(eventId, {
+        status: "ignored",
+        error_code: "plan_unavailable",
+        processed_at: new Date().toISOString(),
+      });
+      return { ignored: true };
+    }
     claimedConnectionId = String(connection.id);
     claimedUserId = String(connection.user_id);
     claimedAutomationId = String(automation.id);

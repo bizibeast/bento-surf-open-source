@@ -6,6 +6,7 @@ import {
   createGitHubAppJwt,
   githubAppInstallationUrl,
   githubReady,
+  verifyGitHubInstallationForUser,
 } from "./github-content.server";
 
 const originalEnv = { ...process.env };
@@ -19,6 +20,8 @@ function base64Pem(bytes: ArrayBuffer) {
 beforeEach(() => {
   process.env.GITHUB_CONTENT_APP_ID = "12345";
   process.env.GITHUB_CONTENT_APP_SLUG = "bento-content-test";
+  process.env.GITHUB_CONTENT_APP_CLIENT_ID = "Iv1.test";
+  process.env.GITHUB_CONTENT_APP_CLIENT_SECRET = "client-secret";
   process.env.GITHUB_CONTENT_APP_PRIVATE_KEY = "test-key";
 });
 
@@ -88,9 +91,10 @@ describe("GitHub Content app", () => {
     const save = vi.fn(async () => undefined);
     const result = await completeGitHubConnectionForUser(
       "owner",
-      { installationId: "789", state: "11111111-1111-4111-8111-111111111111" },
+      { installationId: "789", code: "auth-code", state: "11111111-1111-4111-8111-111111111111" },
       {
         consumeState: vi.fn(async () => ({ metadata: {} })),
+        verifyInstallation: vi.fn(async () => undefined),
         installationInfo: vi.fn(async () => ({
           accountId: "42",
           displayName: "creator",
@@ -105,6 +109,24 @@ describe("GitHub Content app", () => {
       expect.objectContaining({ installationId: "789", displayName: "creator" }),
     );
     expect(JSON.stringify(result)).not.toContain("token");
+  });
+
+  it("checks the installing user's access before accepting an installation", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/login/oauth/access_token")) {
+        return json({ access_token: "user-token" });
+      }
+      return json({ message: "Not Found" }, { status: 404 });
+    });
+    await expect(verifyGitHubInstallationForUser("789", "auth-code", fetcher)).rejects.toThrow(
+      "not accessible to the authorized account",
+    );
+    expect(fetcher).toHaveBeenCalledWith(
+      "https://api.github.com/user/installations/789/repositories?per_page=1",
+      expect.objectContaining({
+        headers: expect.objectContaining({ authorization: "Bearer user-token" }),
+      }),
+    );
   });
 });
 

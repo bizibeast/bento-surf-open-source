@@ -1,3 +1,4 @@
+import { planHasEntitlement } from "./plans";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -55,7 +56,11 @@ vi.mock("@/integrations/supabase/client.server", () => ({
   },
 }));
 
-vi.mock("./plan.server", () => ({ getPlan: mocks.getPlan }));
+vi.mock("./plan.server", () => ({
+  getPlan: mocks.getPlan,
+  hasPlanEntitlement: async (id: string, key: Parameters<typeof planHasEntitlement>[1]) =>
+    planHasEntitlement(await mocks.getPlan(id), key, "legacy"),
+}));
 vi.mock("./secret-crypto.server", () => ({
   decryptServerSecret: mocks.decryptServerSecret,
   encryptServerSecret: vi.fn(),

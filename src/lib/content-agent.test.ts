@@ -98,3 +98,37 @@ describe("content Agent contract", () => {
     expect(prompt).not.toContain("provider_secret");
   });
 });
+
+it("reads legacy video payloads and additive carousel/editorial fields", () => {
+  const base = {
+    type: "draft",
+    cardId: "draft",
+    platform: "youtube",
+    format: "long_script",
+    body: "Legacy script",
+    rationale: "Requested video",
+  };
+  expect(
+    contentAgentResultSchema.parse({ action: "draft", message: "Draft", cards: [base] }).cards[0],
+  ).toMatchObject({ format: "long_script" });
+  expect(
+    contentAgentResultSchema.parse({
+      action: "draft",
+      message: "Draft",
+      cards: [
+        {
+          ...base,
+          platform: "instagram",
+          format: "carousel",
+          slides: [{ heading: "One idea", body: "A useful example" }],
+          editorial: {
+            sourceIds: ["source"],
+            angle: "One idea",
+            whyNow: "A durable lesson",
+            validationState: "passed",
+          },
+        },
+      ],
+    }).cards[0],
+  ).toMatchObject({ slides: [{ heading: "One idea" }], editorial: { validationState: "passed" } });
+});

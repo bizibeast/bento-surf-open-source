@@ -1,3 +1,4 @@
+import { withWorkspaceBillingSync, applyWorkspaceBillingSnapshot } from "@/lib/billing-sync.server";
 // Dodo Payments webhook handler. Invoked from src/server.ts for POST /api/webhooks/dodo.
 // The webhook log is the idempotency boundary; Postgres remains the billing source of truth.
 import { dodo } from "./client.server";
@@ -10,15 +11,18 @@ import {
   type VerifiedDodoAddonState,
 } from "@/lib/billing-addons";
 import { readRequestText, RequestBodyTooLargeError } from "@/lib/request-security.server";
+import { resolveBillingProduct, verifiedTrialEnd } from "@/lib/billing-catalog";
+import { readTrialTerms } from "@/lib/billing-trial-terms.server";
 import { enqueueBentoBillingEmail } from "@/lib/email.server";
+import { syncWorkspaceBillingLifecycle } from "@/lib/billing-lifecycle.server";
+import type { BillingLifecycle } from "@/lib/billing-lifecycle";
 import {
-  DODO_PRODUCT_ENV,
   BASE_MARKETING_CONTACTS,
   highestPlan,
   isPaidPlan,
   normalizePlan,
-  PAID_PLAN_IDS,
   type BillingPeriod,
+  type BillingCatalog,
   type PaidPlanId,
   type PlanId,
 } from "@/lib/plans";
@@ -44,7 +48,7 @@ export type DodoQueueMessage = {
   event: DodoEvent;
 };
 type DodoWebhookEnvironment = { BILLING_QUEUE?: Queue<DodoQueueMessage> };
-type SubStatus = "active" | "trialing" | "past_due" | "canceled" | "incomplete";
+type SubStatus = "active" | "trialing" | "past_due" | "paused" | "canceled" | "incomplete";
 
 const asRecord = (value: unknown): JsonRecord =>
   value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
@@ -94,14 +98,8 @@ function planFromEvent(data: JsonRecord): PaidPlanId | null {
   // metadata is buyer-influenceable on Dodo payment links, so it is only a
   // fallback for events that carry no product reference at all.
   const productId = asString(data.product_id) ?? firstProductId(data);
-  if (productId) {
-    for (const plan of PAID_PLAN_IDS) {
-      for (const period of ["monthly", "yearly"] as const) {
-        if (process.env[DODO_PRODUCT_ENV[plan][period]] === productId) return plan;
-      }
-    }
-    return null;
-  }
+  if (productId) return resolveBillingProduct(productId, process.env)?.plan ?? null;
+  if (asRecord(data.metadata).billing_catalog === "2026-10") return null;
 
   const metadataPlan = normalizePlan(asRecord(data.metadata).plan);
   return isPaidPlan(metadataPlan) ? metadataPlan : null;
@@ -115,13 +113,7 @@ function requiredPlanFromEvent(data: JsonRecord): PaidPlanId {
 
 function billingPeriodFromEvent(data: JsonRecord): BillingPeriod | null {
   const productId = asString(data.product_id) ?? firstProductId(data);
-  if (productId) {
-    for (const plan of PAID_PLAN_IDS) {
-      for (const period of ["monthly", "yearly"] as const) {
-        if (process.env[DODO_PRODUCT_ENV[plan][period]] === productId) return period;
-      }
-    }
-  }
+  if (productId) return resolveBillingProduct(productId, process.env)?.period ?? null;
   const period = asString(data.payment_frequency_interval);
   return period === "monthly" || period === "yearly" ? period : null;
 }
@@ -161,6 +153,7 @@ async function applyPlan(
   userId: string,
   plan: PlanId,
   subscription: {
+    syncLease?: string;
     dodoId?: string | null;
     status: SubStatus;
     currentPeriodEnd?: string | null;
@@ -172,8 +165,53 @@ async function applyPlan(
     cancelAtPeriodEnd?: boolean;
     canceledAt?: string | null;
     addonState?: VerifiedDodoAddonState | null;
+    catalog?: BillingCatalog;
+    trialEndsAt?: string | null;
+    pendingPlan?: PaidPlanId | null;
+    pendingPlanEffectiveAt?: string | null;
+    lifecycle?: {
+      reason: BillingLifecycle["reason"] | null;
+      stoppedAt: string | null;
+      plan: PaidPlanId;
+      lastPaidAt: string | null;
+    };
   },
 ) {
+  const snapshot = {
+    user_id: userId,
+    plan_id: plan,
+    pending_plan_id: subscription.pendingPlan ?? null,
+    pending_plan_effective_at: subscription.pendingPlanEffectiveAt ?? null,
+    status: subscription.status,
+    billing_catalog: subscription.catalog ?? "legacy",
+    trial_ends_at: subscription.trialEndsAt ?? null,
+    dodo_subscription_id: subscription.dodoId ?? null,
+    stripe_subscription_id: subscription.dodoId ?? null,
+    product_id: subscription.productId ?? null,
+    price_id: subscription.productId ?? null,
+    customer_id: subscription.customerId ?? null,
+    amount: subscription.amount ?? null,
+    currency: subscription.currency ?? null,
+    billing_interval: subscription.billingInterval ?? null,
+    cancel_at_period_end: subscription.cancelAtPeriodEnd ?? false,
+    canceled_at: subscription.canceledAt ?? null,
+    current_period_end: subscription.currentPeriodEnd ?? null,
+    ...(subscription.addonState
+      ? {
+          contact_tier_contacts: subscription.addonState.contactTierContacts,
+          storage_addon_units: subscription.addonState.storageAddonUnits,
+        }
+      : {}),
+  };
+  if (subscription.syncLease) {
+    await applyWorkspaceBillingSnapshot(
+      userId,
+      subscription.syncLease,
+      snapshot,
+      subscription.lifecycle,
+    );
+    return;
+  }
   const { data: complimentaryGrant, error: complimentaryError } = await supabaseAdmin
     .from("complimentary_plan_grants")
     .select("plan_id")
@@ -185,9 +223,19 @@ async function applyPlan(
     throw new Error(`complimentary plan lookup failed: ${complimentaryError.message}`);
   }
   const grantedPlan = normalizePlan(complimentaryGrant?.plan_id);
+  const lifecycle =
+    subscription.lifecycle && subscription.dodoId
+      ? await syncWorkspaceBillingLifecycle({
+          workspaceId: userId,
+          subscriptionId: subscription.dodoId,
+          ...subscription.lifecycle,
+        })
+      : null;
   const effectiveProfilePlan = highestPlan(grantedPlan, plan);
   const workspaceStatus =
-    isPaidPlan(grantedPlan) || ["active", "trialing"].includes(subscription.status)
+    isPaidPlan(grantedPlan) ||
+    ["active", "trialing"].includes(subscription.status) ||
+    (lifecycle && Date.parse(lifecycle.toolsStopAt) > Date.now())
       ? "active"
       : "locked";
 
@@ -197,37 +245,15 @@ async function applyPlan(
       is_pro: isPaidPlan(effectiveProfilePlan),
       plan_id: effectiveProfilePlan,
       workspace_status: workspaceStatus,
+      billing_catalog: subscription.catalog ?? "legacy",
+      trial_ends_at: subscription.trialEndsAt ?? null,
     } as never)
     .eq("id", userId);
   if (profileError) throw new Error(`profiles update failed: ${profileError.message}`);
 
-  const { error: subscriptionError } = await supabaseAdmin.from("subscriptions").upsert(
-    {
-      user_id: userId,
-      plan_id: plan,
-      pending_plan_id: null,
-      pending_plan_effective_at: null,
-      status: subscription.status,
-      dodo_subscription_id: subscription.dodoId ?? null,
-      stripe_subscription_id: subscription.dodoId ?? null,
-      product_id: subscription.productId ?? null,
-      price_id: subscription.productId ?? null,
-      customer_id: subscription.customerId ?? null,
-      amount: subscription.amount ?? null,
-      currency: subscription.currency ?? null,
-      billing_interval: subscription.billingInterval ?? null,
-      cancel_at_period_end: subscription.cancelAtPeriodEnd ?? false,
-      canceled_at: subscription.canceledAt ?? null,
-      current_period_end: subscription.currentPeriodEnd ?? null,
-      ...(subscription.addonState
-        ? {
-            contact_tier_contacts: subscription.addonState.contactTierContacts,
-            storage_addon_units: subscription.addonState.storageAddonUnits,
-          }
-        : {}),
-    },
-    { onConflict: "user_id" },
-  );
+  const { error: subscriptionError } = await supabaseAdmin
+    .from("subscriptions")
+    .upsert(snapshot, { onConflict: "user_id" });
   if (subscriptionError) {
     throw new Error(`subscriptions upsert failed: ${subscriptionError.message}`);
   }
@@ -310,10 +336,13 @@ function subscriptionState(event: DodoEvent): { active: boolean; status: SubStat
   if (event.type === "subscription.failed" || event.type === "subscription.on_hold") {
     return { active: false, status: "past_due" };
   }
+  if (event.type === "subscription.paused") return { active: false, status: "paused" };
+  if (event.type === "subscription.unpaused") return { active: true, status: "active" };
   if (["cancelled", "canceled", "expired"].includes(rawStatus)) {
     return { active: false, status: "canceled" };
   }
-  if (["failed", "on_hold", "past_due", "paused"].includes(rawStatus)) {
+  if (rawStatus === "paused") return { active: false, status: "paused" };
+  if (["failed", "on_hold", "past_due"].includes(rawStatus)) {
     return { active: false, status: "past_due" };
   }
   if (rawStatus === "trialing") return { active: true, status: "trialing" };
@@ -324,12 +353,50 @@ function subscriptionState(event: DodoEvent): { active: boolean; status: SubStat
   return { active: false, status: "incomplete" };
 }
 
-async function syncSubscription(
+async function syncSubscriptionUnderLease(
   event: DodoEvent,
   userId: string,
-  requireExactSubscription = false,
+  requireExactSubscription: boolean,
+  syncLease: string,
 ) {
-  const data = event.data;
+  let data = event.data;
+  const subscriptionId = asString(data.subscription_id);
+  const { data: current, error: currentError } = await supabaseAdmin
+    .from("subscriptions")
+    .select(
+      "dodo_subscription_id,status,billing_catalog,plan_id,current_period_end,cancel_at_period_end",
+    )
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (currentError) throw new Error(`subscription lookup failed: ${currentError.message}`);
+  const differentSubscription = Boolean(
+    current?.dodo_subscription_id && current.dodo_subscription_id !== subscriptionId,
+  );
+  // A delayed event from a replaced subscription must never overwrite the live contract.
+  if (differentSubscription && ["active", "trialing", "past_due"].includes(current!.status)) return;
+  const incomingProduct = resolveBillingProduct(
+    asString(data.product_id) ?? firstProductId(data),
+    process.env,
+  );
+  const isCurrentCatalog =
+    incomingProduct?.catalog === "2026-10" ||
+    asRecord(data.metadata).billing_catalog === "2026-10" ||
+    (!differentSubscription && current?.billing_catalog === "2026-10");
+  if (isCurrentCatalog || incomingProduct || current?.dodo_subscription_id === subscriptionId) {
+    if (!subscriptionId) throw new Error("Missing subscription identity.");
+    const remote = await dodo.subscriptions.retrieve(subscriptionId);
+    data = remote as unknown as JsonRecord;
+    if (resolveUserId(data) !== userId || asString(data.subscription_id) !== subscriptionId)
+      throw new Error("Subscription owner does not match.");
+    if (
+      (isCurrentCatalog || asRecord(data.metadata).workspace_id) &&
+      !(await validateWorkspaceMetadata(data, userId))
+    )
+      throw new Error("Subscription workspace ownership could not be verified.");
+    if (!resolveBillingProduct(asString(data.product_id), process.env))
+      throw new Error("Subscription product could not be verified.");
+    event = { ...event, type: `subscription.${remote.status}`, data };
+  }
   const state = subscriptionState(event);
   const plan = state.active ? requiredPlanFromEvent(data) : "free";
   const billingPeriod = billingPeriodFromEvent(data);
@@ -343,12 +410,6 @@ async function syncSubscription(
     // A terminal/inactive event for subscription X must not downgrade a user
     // whose current entitlement comes from a different, still-active
     // subscription Y (e.g. a stale/foreign subscription referencing this user).
-    const { data: current, error } = await supabaseAdmin
-      .from("subscriptions")
-      .select("dodo_subscription_id, status")
-      .eq("user_id", userId)
-      .maybeSingle();
-    if (error) throw new Error(`subscription lookup failed: ${error.message}`);
     const mismatchedCurrent = current?.dodo_subscription_id !== dodoId;
     if (
       (requireExactSubscription && mismatchedCurrent) ||
@@ -365,10 +426,119 @@ async function syncSubscription(
       return;
     }
   }
+  const catalog =
+    resolveBillingProduct(asString(data.product_id) ?? firstProductId(data), process.env)
+      ?.catalog ?? "legacy";
+  const contractPlan =
+    resolveBillingProduct(asString(data.product_id), process.env)?.plan ??
+    normalizePlan(current?.plan_id);
+  const now = Date.now();
+  const priorDue = Date.parse(current?.current_period_end ?? "");
+  const lastPaid = Date.parse(asString(data.previous_billing_date) ?? "");
+  const providerDue = Date.parse(asString(data.next_billing_date) ?? "");
+  const eventTime = Date.parse(event.timestamp ?? "");
+  const isUnpaidBoundary = (value: number) =>
+    Number.isFinite(value) && value <= now && (!Number.isFinite(lastPaid) || value > lastPaid);
+  const stoppedAt = new Date(
+    isUnpaidBoundary(providerDue)
+      ? providerDue
+      : Number.isFinite(priorDue) &&
+          priorDue <= now &&
+          (!Number.isFinite(lastPaid) || priorDue > lastPaid)
+        ? priorDue
+        : isUnpaidBoundary(eventTime)
+          ? eventTime
+          : now,
+  ).toISOString();
+  const overdue = state.active && isUnpaidBoundary(providerDue);
+  const lifecycleReason =
+    state.status === "paused"
+      ? "paused"
+      : state.status === "past_due"
+        ? "past_due"
+        : !state.active && state.status === "canceled"
+          ? data.status === "expired"
+            ? "expired"
+            : "canceled"
+          : state.active && data.cancel_at_next_billing_date === true
+            ? "canceled"
+            : overdue
+              ? "past_due"
+              : null;
+  const trialMetadata = asRecord(data.metadata);
+  const trialOwnerId = asString(trialMetadata.auth_user_id);
+  const trialCheckoutKey = asString(trialMetadata.trial_checkout_key);
+  const requestedTrial = Boolean(trialCheckoutKey);
+  const trialTerms =
+    state.active &&
+    catalog === "2026-10" &&
+    (requestedTrial || (asNumber(data.trial_period_days) ?? 0) > 0)
+      ? await readTrialTerms({
+          workspaceId: userId,
+          ownerId: trialOwnerId,
+          checkoutKey: trialCheckoutKey,
+          subscriptionId: asString(data.subscription_id) ?? "",
+        })
+      : null;
+  let trialEndsAt =
+    state.active && catalog === "2026-10" && trialTerms
+      ? verifiedTrialEnd(data, 0, trialTerms.days, trialTerms.approvedExtensionEnd)
+      : null;
+  if (state.active && catalog === "2026-10") {
+    // Card-optional subscriptions are also reported as active. An invalid trial
+    // must never fall through to paid access or consume the owner's trial claim.
+    if (data.has_payment_method !== true)
+      throw new Error("Trial payment requirements could not be verified.");
+    if (requestedTrial || (asNumber(data.trial_period_days) ?? 0) > 0) {
+      if (!trialTerms || data.trial_period_days !== trialTerms.days || data.trial_amount != null)
+        throw new Error("Trial payment requirements could not be verified.");
+      if (!trialEndsAt) {
+        const startedAt = Date.parse(String(data.created_at ?? ""));
+        const paidAt = Date.parse(String(data.previous_billing_date ?? ""));
+        const nextChargeAt = Date.parse(String(data.next_billing_date ?? ""));
+        const now = Date.now();
+        // Dodo defines previous_billing_date as the last payment timestamp.
+        // A genuine renewal has a paid period starting after the original trial.
+        if (
+          !Number.isFinite(startedAt) ||
+          !Number.isFinite(paidAt) ||
+          !Number.isFinite(nextChargeAt) ||
+          paidAt < startedAt + trialTerms.days * 86_400_000 - 60_000 ||
+          paidAt > now ||
+          nextChargeAt <= now ||
+          nextChargeAt <= paidAt
+        )
+          throw new Error("Trial payment requirements could not be verified.");
+      }
+    }
+  }
+  if (trialEndsAt) {
+    const ownerId = trialOwnerId;
+    if (!ownerId || !dodoId) throw new Error("Trial ownership could not be verified.");
+    const { data: claimedEnd, error: claimError } = await supabaseAdmin.rpc(
+      "claim_bento_trial" as never,
+      {
+        p_auth_user_id: ownerId,
+        p_workspace_id: userId,
+        p_subscription_id: dodoId,
+        p_trial_ends_at: trialEndsAt,
+        p_checkout_key: trialCheckoutKey,
+      } as never,
+    );
+    if (claimError || !claimedEnd) throw new Error("Trial eligibility could not be verified.");
+    trialEndsAt = String(claimedEnd);
+  }
   await applyPlan(userId, plan, {
+    syncLease,
     dodoId: asString(data.subscription_id),
-    status: state.status,
-    currentPeriodEnd: asString(data.next_billing_date),
+    status: trialEndsAt ? "trialing" : state.status,
+    catalog,
+    trialEndsAt,
+    pendingPlan:
+      resolveBillingProduct(asString(asRecord(data.scheduled_change).product_id), process.env)
+        ?.plan ?? null,
+    pendingPlanEffectiveAt: asString(asRecord(data.scheduled_change).effective_at),
+    currentPeriodEnd: trialEndsAt ?? asString(data.next_billing_date),
     productId: asString(data.product_id) ?? firstProductId(data),
     customerId: asString(data.customer_id),
     amount: asNumber(data.recurring_pre_tax_amount),
@@ -377,7 +547,38 @@ async function syncSubscription(
     cancelAtPeriodEnd: asBoolean(data.cancel_at_next_billing_date) ?? false,
     canceledAt: state.status === "canceled" ? occurredAt(event) : null,
     addonState,
+    ...(isPaidPlan(contractPlan)
+      ? {
+          lifecycle: {
+            reason: lifecycleReason,
+            stoppedAt:
+              state.active && (lifecycleReason === "canceled" || overdue)
+                ? asString(data.next_billing_date)
+                : lifecycleReason === "paused"
+                  ? occurredAt(event)
+                  : lifecycleReason
+                    ? stoppedAt
+                    : null,
+            plan: contractPlan,
+            lastPaidAt: asString(data.previous_billing_date),
+          },
+        }
+      : {}),
   });
+  if (
+    dodoId &&
+    (((state.status === "active" || state.status === "trialing") &&
+      data.cancel_at_next_billing_date === true &&
+      !current?.cancel_at_period_end) ||
+      (state.status === "canceled" &&
+        (current?.status === "active" || current?.status === "trialing")))
+  ) {
+    const ownerId = asString(asRecord(data.metadata).auth_user_id);
+    if (ownerId) {
+      const { markCancellationConfirmed } = await import("@/lib/cancellation.functions");
+      await markCancellationConfirmed({ ownerId, workspaceId: userId, subscriptionId: dodoId });
+    }
+  }
   if (state.active && billingPeriod && addonState) {
     await captureServerEvent(userId, "dodo_addons_verified", {
       plan,
@@ -386,6 +587,36 @@ async function syncSubscription(
       storage_units: addonState.storageAddonUnits,
     });
   }
+}
+
+async function syncSubscription(
+  event: DodoEvent,
+  userId: string,
+  requireExactSubscription = false,
+  existingLease?: string,
+) {
+  if (existingLease)
+    return syncSubscriptionUnderLease(event, userId, requireExactSubscription, existingLease);
+  return withWorkspaceBillingSync(userId, (lease) =>
+    syncSubscriptionUnderLease(event, userId, requireExactSubscription, lease),
+  );
+}
+
+/** Reconcile due periods without relying on timely webhook delivery. */
+export async function refreshWorkspaceSubscription(
+  workspaceId: string,
+  subscriptionId: string,
+  existingLease?: string,
+) {
+  await syncSubscription(
+    {
+      type: "subscription.updated",
+      data: { subscription_id: subscriptionId, metadata: { user_id: workspaceId } },
+    },
+    workspaceId,
+    true,
+    existingLease,
+  );
 }
 
 async function processEvent(event: DodoEvent): Promise<string | null> {
@@ -512,6 +743,18 @@ async function enqueueBillingEmail(event: DodoEvent, userId: string | null, webh
     "pro_activated" | "payment_failed" | "subscription_cancelled" | "refund_processed" | null =
     null;
   const belongsToSubscription = Boolean(asString(event.data.subscription_id));
+  // Episode-bound notices carry the real deadlines and are rechecked at delivery.
+  if (
+    belongsToSubscription &&
+    [
+      "payment.failed",
+      "subscription.failed",
+      "subscription.on_hold",
+      "subscription.cancelled",
+      "subscription.expired",
+    ].includes(event.type)
+  )
+    return;
   // Dodo emits both a payment event and a subscription event for the same
   // subscription transition. Use subscription events for recurring plans and
   // payment events only for one-time/lifetime purchases to avoid duplicate mail.

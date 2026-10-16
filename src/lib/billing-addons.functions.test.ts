@@ -45,6 +45,7 @@ const mocks = vi.hoisted(() => {
     adminUpdates,
     checkoutCreate: vi.fn(),
     changePlan: vi.fn(),
+    refresh: vi.fn(),
     enforceRequestRateLimit: vi.fn(),
     retrieveSubscription: vi.fn(),
     subscription,
@@ -52,6 +53,12 @@ const mocks = vi.hoisted(() => {
   };
 });
 
+vi.mock("./billing-sync.server", () => ({
+  withWorkspaceBillingSync: (_id: string, action: (lease: string) => unknown) => action("lease"),
+}));
+vi.mock("@/integrations/dodo/webhook.server", () => ({
+  refreshWorkspaceSubscription: mocks.refresh,
+}));
 vi.mock("@tanstack/react-start", () => ({
   createServerFn: () => {
     let validate = (input: unknown) => input;
@@ -106,6 +113,7 @@ describe("Bento add-on billing server boundary", () => {
       DODO_CONTACT_TIER_50000_MONTHLY_ADDON_ID: "contact-50000-monthly",
       DODO_CONTACT_TIER_50000_YEARLY_ADDON_ID: "contact-50000-yearly",
       DODO_CREATOR_MONTHLY_PRODUCT_ID: "creator-monthly",
+      DODO_CREATOR_39_MONTHLY_PRODUCT_ID: "creator-39-monthly",
       DODO_CREATOR_YEARLY_PRODUCT_ID: "creator-yearly",
       DODO_STORAGE_10GB_MONTHLY_ADDON_ID: "storage-monthly",
       DODO_STORAGE_10GB_YEARLY_ADDON_ID: "storage-yearly",
@@ -133,7 +141,7 @@ describe("Bento add-on billing server boundary", () => {
     });
   });
 
-  it("maps checkout add-on selections to the configured Dodo cart", async () => {
+  it("rejects paid add-ons during the zero-charge trial checkout", async () => {
     await expect(
       createCheckout({
         data: {
@@ -144,22 +152,8 @@ describe("Bento add-on billing server boundary", () => {
           storageUnits: 12,
         },
       }),
-    ).resolves.toEqual({ url: "https://checkout.dodopayments.com/session" });
-
-    expect(mocks.checkoutCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        product_cart: [
-          {
-            addons: [
-              { addon_id: "contact-50000-monthly", quantity: 1 },
-              { addon_id: "storage-monthly", quantity: 12 },
-            ],
-            product_id: "creator-monthly",
-            quantity: 1,
-          },
-        ],
-      }),
-    );
+    ).rejects.toThrow("Add-ons can be added after your trial");
+    expect(mocks.checkoutCreate).not.toHaveBeenCalled();
   });
 
   it("rejects a Store paid contact tier before starting checkout", async () => {
@@ -212,10 +206,12 @@ describe("Bento add-on billing server boundary", () => {
       proration_billing_mode: "difference_immediately",
       quantity: 1,
     });
-    expect(mocks.adminUpdates).toContainEqual({
-      contact_tier_contacts: 50000,
-      storage_addon_units: 12,
-    });
+    expect(mocks.adminUpdates).toEqual([]);
+    expect(mocks.refresh).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      "sub_123",
+      "lease",
+    );
   });
 
   it("rejects add-on changes while a base-plan change is pending", async () => {

@@ -1,3 +1,4 @@
+import { AppSetupGuide } from "@/components/onboarding/AppSetupGuide";
 import {
   createFileRoute,
   Outlet,
@@ -314,6 +315,7 @@ function AuthLayout() {
               onCollapsedChange={setSidebarCollapsed}
             />
             <div className={`min-w-0 flex-1 pt-14 lg:pt-0 ${compactAppUi ? "app-ui-compact" : ""}`}>
+              <AppSetupGuide workspaceId={workspaceSession?.workspaceId} />
               <Outlet />
             </div>
           </div>
@@ -322,7 +324,7 @@ function AuthLayout() {
             <Outlet />
           </div>
         )}
-        {FEATUREBASE_CONFIG && (
+        {FEATUREBASE_CONFIG && pathname !== "/link" && (
           <FeaturebaseHub portalUrl={FEATUREBASE_CONFIG.portalUrl} inAppShell={showSidebar} />
         )}
       </div>

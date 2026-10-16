@@ -1,0 +1,20 @@
+{
+  "source": "Bento shared application",
+  "syncedAt": "2026-10-16",
+  "features": [
+    "proactive content agent",
+    "Brain and Discover editorial context",
+    "media preparation and carousels",
+    "provider spending caps",
+    "Telegram entities",
+    "profile mention discovery",
+    "commerce access checks"
+  ],
+  "editionDifferences": [
+    "Configurable instance URLs and self-hosted setup",
+    "Hosted marketing and SEO operations excluded",
+    "No hosted credentials or customer data",
+    "AGPL license and public release tooling retained"
+  ],
+  "sharedSourceCommit": "44e5c81105853e03d9c2f8d798560e9252c6ddce"
+}

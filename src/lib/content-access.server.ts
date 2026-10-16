@@ -1,9 +1,6 @@
 import { requirePlanEntitlement } from "./plan.server";
+import { entitlementUpgradeMessage, type EntitlementKey } from "./plans";
 
-export function requireContentWorkspace(userId: string) {
-  return requirePlanEntitlement(
-    userId,
-    "postScheduler",
-    "Content is included in the Creator plan. Upgrade to continue.",
-  );
+export function requireContentWorkspace(userId: string, entitlement: EntitlementKey = "brain") {
+  return requirePlanEntitlement(userId, entitlement, entitlementUpgradeMessage(entitlement));
 }

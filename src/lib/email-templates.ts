@@ -17,6 +17,11 @@ import { getInstancePublicConfig } from "./instance-public-config";
 export type BentoEmailCategory = "transactional" | "marketing";
 
 export type BentoEmailEvent =
+  | "billing_access_ending"
+  | "billing_tools_paused"
+  | "billing_page_paused"
+  | "workspace_deletion_warning"
+  | "workspace_deletion_final"
   | "creator_welcome"
   | "onboarding_quick_win"
   | "commerce_feature"
@@ -40,12 +45,18 @@ export type BentoEmailEvent =
   | "webinar_reminder"
   | "webinar_replay_ready"
   | "pro_activated"
+  | "trial_ending_reminder"
+  | "trial_extended"
+  | "subscription_cancellation_scheduled"
+  | "subscription_paused"
+  | "pause_ending_reminder"
   | "payment_failed"
   | "subscription_cancelled"
   | "refund_processed"
   | "social_publish_failed"
   | "social_connection_expired"
-  | "content_drafts_ready";
+  | "content_drafts_ready"
+  | "seo_publish_failed";
 
 export type EmailTemplateInput = {
   eventType: BentoEmailEvent;
@@ -320,6 +331,7 @@ function templateCopy(input: EmailTemplateInput) {
   const dashboard = absoluteUrl(input.appUrl, "/link", "/link");
   const products = absoluteUrl(input.appUrl, "/store?tab=products", "/store?tab=products");
   const settings = absoluteUrl(input.appUrl, "/settings", "/settings");
+  const billing = absoluteUrl(input.appUrl, "/settings?section=plan", "/settings?section=plan");
   const accessUrl = absoluteUrl(input.appUrl, payload.accessUrl, "/");
   const productTitle = asText(payload.productTitle, "your purchase");
   const creatorName = asText(payload.creatorName, "the creator");
@@ -329,16 +341,16 @@ function templateCopy(input: EmailTemplateInput) {
   switch (input.eventType) {
     case "creator_welcome":
       return {
-        subject: "Your Bento is ready",
+        subject: "Let’s build your Bento",
         eyebrow: "Welcome to bento.surf",
         title: `Hey ${firstName}, let’s build your storefront.`,
-        body: "Your creator page is ready. Add the one link, video, product, or social block you want people to notice first.",
-        cta: "Open my editor",
-        href: dashboard,
+        body: "Connect a social account or tell us about your work. Review your prepared page, Brain and starter drafts, then add a card to begin your three-day trial.",
+        cta: "Continue my setup",
+        href: absoluteUrl(input.appUrl, "/onboarding", "/onboarding"),
       };
     case "onboarding_quick_win":
       return {
-        subject: "Your first Bento can be live in 10 minutes",
+        subject: "Your next step toward a ready Bento",
         eyebrow: "A quick win",
         title: "Start with the one thing you want clicked.",
         body: "Add your strongest link, move it to the top, and publish. A focused Bento beats an unfinished page every time.",
@@ -546,12 +558,100 @@ function templateCopy(input: EmailTemplateInput) {
         cta: "Fix billing",
         href: absoluteUrl(input.appUrl, "/settings?section=plan", "/settings?section=plan"),
       };
+    case "billing_access_ending":
+      return {
+        subject: "Your Bento workspace needs attention",
+        eyebrow: "Workspace access",
+        title:
+          payload.reason === "past_due"
+            ? "Let’s get your payment sorted."
+            : "Your workspace’s paid period has ended.",
+        body: `${asText(payload.workspaceName, "Your workspace")}: ${payload.reason === "past_due" ? `We couldn’t complete your payment. Creator tools and scheduled activity pause on ${asText(payload.toolsDate)}. Your public page and products go offline on ${asText(payload.publicDate)}.` : "Your public page, products and creator tools are now paused."} Your workspace data is retained until ${asText(payload.deletionDate)}. Renew before then to keep your workspace, or sign in to export your work. Only this unpaid workspace is affected.`,
+        cta: "Manage billing",
+        href: billing,
+      };
+    case "billing_tools_paused":
+      return {
+        subject: "Your Bento creator tools are paused",
+        eyebrow: "Payment reminder",
+        title: "Your work is saved. Your tools are paused.",
+        body: `Scheduling, Auto DMs, Newsletter sending and other creator tools are paused after three days without a successful payment. Your public page and products go offline on ${asText(payload.publicDate)}. Your workspace is scheduled for deletion on ${asText(payload.deletionDate)}. Complete payment to restore access, or sign in to export your work.`,
+        cta: "Restore my workspace",
+        href: billing,
+      };
+    case "billing_page_paused":
+      return {
+        subject: "Your Bento page and products are offline",
+        eyebrow: "Workspace paused",
+        title: "Bring your page back when you’re ready.",
+        body: `Your public page and products are now unavailable after seven days without a successful payment. Your content is retained until ${asText(payload.deletionDate)}. Complete payment to restore access before that date, or sign in to export your work.`,
+        cta: "Manage billing",
+        href: billing,
+      };
+    case "workspace_deletion_warning":
+    case "workspace_deletion_final":
+      return {
+        subject:
+          input.eventType === "workspace_deletion_warning"
+            ? "Your unpaid Bento workspace is due for deletion in 7 days"
+            : "Final reminder: your unpaid Bento workspace is due for deletion",
+        eyebrow: "90-day retention reminder",
+        title: "Please save or restore your workspace.",
+        body: `${asText(payload.workspaceName, "Your unpaid workspace")} is scheduled for permanent deletion on ${asText(payload.deletionDate)}, after 90 days without an active paid subscription. Its page, products, Brain, drafts and uploaded files will be removed. Renew or export your work before then. Other workspaces are kept. Your login account is deleted only if no workspaces remain. Order and receipt records may be retained as described in our privacy policy.`,
+        cta: "Keep or export my workspace",
+        href: billing,
+      };
+    case "trial_ending_reminder":
+      return {
+        subject: "Your Bento trial is ending soon",
+        eyebrow: "Your trial, your choice",
+        title: "A reminder before your first charge.",
+        body: `Your Bento trial ends on ${asText(payload.chargeDate)}. Your card will be charged ${amount} per ${payload.billingPeriod === "yearly" ? "year" : "month"} for ${asText(payload.planName, "your chosen plan")} unless you cancel before then. ${asText(payload.taxNote)} How has Bento been so far, and what could we improve? Reply to this email to share your feedback.`,
+        cta: "Manage or cancel my plan",
+        href: absoluteUrl(input.appUrl, "/settings?section=plan", "/settings?section=plan"),
+      };
+    case "trial_extended":
+      return {
+        subject: "Your Bento trial has been extended",
+        eyebrow: "More time to try Bento",
+        title: "Your trial now lasts seven total days.",
+        body: `Your new first-charge date is ${asText(payload.chargeDate)}. We will remind you before then. You can cancel renewal at any time in Billing without an early charge.`,
+        cta: "Manage my trial",
+        href: billing,
+      };
+    case "subscription_cancellation_scheduled":
+      return {
+        subject: "Your Bento renewal is cancelled",
+        eyebrow: "Plan update",
+        title: "Thank you for building with Bento.",
+        body: `Your ${asText(payload.planName, "paid plan")} will not renew. It remains active until ${asText(payload.endDate)}. After that, this workspace’s hosted page, store, and tools pause. You can keep the plan before that date or renew and export your work during the 90-day retention period. Other workspaces are unaffected.`,
+        cta: "Review or restart my plan",
+        href: billing,
+      };
+    case "subscription_paused":
+      return {
+        subject: "Your Bento plan is paused",
+        eyebrow: "Plan update",
+        title: "Your work is saved while you take a break.",
+        body: `Billing is frozen. Your hosted page, store, and creator tools are offline while paused. Automatic resume is scheduled for ${asText(payload.resumeDate)}; we will remind you first. You can resume earlier in Billing. This pause does not start workspace deletion.`,
+        cta: "Review or resume my plan",
+        href: billing,
+      };
+    case "pause_ending_reminder":
+      return {
+        subject: "Your Bento pause ends soon",
+        eyebrow: "Upcoming resume",
+        title: "Your Bento will be ready again soon.",
+        body: `Your paused subscription is scheduled to resume on ${asText(payload.resumeDate)}. Dodo will move your next billing date forward by the time you were paused. Review your plan or resume earlier in Billing.`,
+        cta: "Review my plan",
+        href: billing,
+      };
     case "subscription_cancelled":
       return {
         subject: "Your paid Bento plan has ended",
         eyebrow: "Plan update",
-        title: "Your account is now on the Free plan.",
-        body: "Your page and content remain available on Free. You can start Link or Store whenever you want to restore paid features.",
+        title: "Your paid plan has ended.",
+        body: "Your saved content is safe. Review your billing and access options to continue using Bento, export your work, or explore the self-hosted edition.",
         cta: "Review my plan",
         href: absoluteUrl(input.appUrl, "/settings?section=plan", "/settings?section=plan"),
       };
@@ -572,6 +672,15 @@ function templateCopy(input: EmailTemplateInput) {
         body: `${asText(payload.provider, "A connected account")} could not publish your post. ${asText(payload.reason, "Open the scheduler to review the error and retry or reconnect.")}`,
         cta: "Open scheduler",
         href: absoluteUrl(input.appUrl, payload.schedulerUrl, "/post-scheduler"),
+      };
+    case "seo_publish_failed":
+      return {
+        subject: `SEO article failed on ${asText(payload.publicationDate, "the scheduled date")}`,
+        eyebrow: "Automated SEO",
+        title: `Publishing stopped at the ${asText(payload.stage, "unknown")} stage.`,
+        body: `Attempt ${Math.max(1, asNumber(payload.attempt))} for ${asText(payload.publicationDate, "the scheduled date")} failed. ${asText(payload.summary, "Open Bento to inspect the run.")}`,
+        cta: "Open SEO operations",
+        href: absoluteUrl(input.appUrl, "/admin?tab=operations", "/admin?tab=operations"),
       };
     case "social_connection_expired":
       return {

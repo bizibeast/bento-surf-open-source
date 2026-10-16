@@ -1,3 +1,5 @@
 [install]
 # Supply-chain guard: skip package versions published less than seven days ago.
 minimumReleaseAge = 604800
+# Security patch for GHSA-68fv-2mgg-jv7q; pinned to 1.2.2 in package.json.
+minimumReleaseAgeExcludes = ["source-map-js"]

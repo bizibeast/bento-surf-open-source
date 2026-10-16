@@ -7,6 +7,8 @@ import {
   PLAN_HIGHLIGHTS,
   PLAN_FEATURES,
   PLAN_PRICING,
+  PAID_PLAN_IDS,
+  NEW_BILLING_PERIODS,
   minimumPlanForEntitlement,
   normalizePlan,
   planHasEntitlement,
@@ -17,12 +19,17 @@ import {
 } from "./plans";
 
 describe("creator plans", () => {
-  it("prices Store and Creator with two free annual months", () => {
-    expect(PLAN_PRICING.store.monthly.amount).toBe(15);
-    expect(PLAN_PRICING.store.yearly.amount).toBe(150);
-    expect(PLAN_PRICING.creator.monthly.amount).toBe(30);
-    expect(PLAN_PRICING.creator.yearly.amount).toBe(300);
-    expect(TRIAL_DAYS).toBe(7);
+
+  it("prices yearly plans at ten monthly payments", () => {
+    expect(PLAN_PRICING.store.monthly.amount).toBe(19);
+    expect(PLAN_PRICING.store.yearly.amount).toBe(190);
+    expect(PLAN_PRICING.creator.monthly.amount).toBe(39);
+    expect(PLAN_PRICING.creator.yearly.amount).toBe(390);
+    expect(TRIAL_DAYS).toBe(3);
+    expect(PLAN_PRICING.creator_plus.monthly.amount).toBe(49);
+    expect(PLAN_PRICING.creator_plus.yearly.amount).toBe(490);
+    expect(PAID_PLAN_IDS).toEqual(["store", "creator", "creator_plus"]);
+    expect(NEW_BILLING_PERIODS).toEqual(["monthly", "yearly"]);
   });
 
   it("advertises Bento's zero sales fee on the Store plan", () => {
@@ -44,16 +51,22 @@ describe("creator plans", () => {
     expect(planHasEntitlement("free", "liveSocialPreviews")).toBe(false);
   });
 
-  it("gives Store and Creator unlimited pages with 5 GB storage", () => {
+  it("gives paid plans their included storage allowances", () => {
     expect(planLimits("store").maxPages).toBeNull();
     expect(planLimits("creator").maxPages).toBeNull();
-    expect(planLimits("store").storageMb).toBe(5 * 1024);
-    expect(planLimits("creator").storageMb).toBe(5 * 1024);
+    expect(planLimits("store").storageMb).toBe(10 * 1024);
+    expect(planLimits("creator").storageMb).toBe(50 * 1024);
+    expect(planLimits("creator_plus").storageMb).toBe(100 * 1024);
+    expect(PLAN_FEATURES.find((row) => row.label === "Storage")).toMatchObject({
+      store: "10 GB",
+      creator: "50 GB",
+      creator_plus: "100 GB",
+    });
     expect(PLAN_HIGHLIGHTS.store).toContain("Unlimited pages and blocks");
   });
 
   it("separates Store monetization and automation from Creator growth", () => {
-    expect(planHasEntitlement("store", "advancedAutoDM")).toBe(true);
+    expect(planHasEntitlement("store", "advancedAutoDM")).toBe(false);
     expect(planHasEntitlement("store", "storeCards")).toBe(true);
     expect(planHasEntitlement("store", "courses")).toBe(true);
     expect(planHasEntitlement("store", "postScheduler")).toBe(false);
@@ -76,7 +89,7 @@ describe("creator plans", () => {
     expect(CONTACT_TIER_PRICING[25_000]).toEqual({ monthly: 200, yearly: 2_000 });
     expect(storageAddonPrice("monthly", 37)).toBe(37);
     expect(storageAddonPrice("yearly", 37)).toBe(370);
-    expect(PLAN_FEATURES.find((row) => row.label === "Email marketing")).toMatchObject({
+    expect(PLAN_FEATURES.find((row) => row.label === "Newsletter")).toMatchObject({
       store: "Capture up to 500",
       creator: "500 contacts, unlimited sends; larger tiers available",
     });
@@ -90,11 +103,42 @@ describe("creator plans", () => {
   });
 
   it("normalizes legacy database and billing values safely", () => {
+    expect(normalizePlan("creator_plus")).toBe("creator_plus");
     expect(normalizePlan("max")).toBe("creator");
     expect(normalizePlan("pro")).toBe("store");
     expect(normalizePlan("link")).toBe("store");
     expect(normalizePlan("store")).toBe("store");
     expect(normalizePlan("lifetime")).toBe("free");
     expect(normalizePlan(null, true)).toBe("store");
+  });
+
+  it("keeps Creator distribution separate from the Plus Brain and routine features", () => {
+    for (const feature of [
+      "discover",
+      "postScheduler",
+      "emailMarketing",
+      "mcpSocialAutomation",
+    ] as const) {
+      expect(planHasEntitlement("creator", feature)).toBe(true);
+      expect(planHasEntitlement("store", feature)).toBe(false);
+    }
+    for (const feature of [
+      "brain",
+      "contentAgent",
+      "contentRoutines",
+      "weeklyStrategyReview",
+    ] as const) {
+      expect(planHasEntitlement("creator", feature)).toBe(false);
+      expect(planHasEntitlement("creator_plus", feature)).toBe(true);
+      expect(minimumPlanForEntitlement(feature)).toBe("creator_plus");
+      expect(planHasEntitlement("unknown", feature)).toBe(false);
+    }
+  });
+
+  it("preserves the purchased feature bundle of existing paid contracts", () => {
+    expect(planHasEntitlement("store", "advancedAutoDM", "legacy")).toBe(true);
+    expect(planHasEntitlement("store", "postScheduler", "legacy")).toBe(false);
+    expect(planHasEntitlement("creator", "brain", "legacy")).toBe(true);
+    expect(planHasEntitlement("creator", "brain", "2026-10")).toBe(false);
   });
 });

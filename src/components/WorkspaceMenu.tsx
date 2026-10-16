@@ -119,11 +119,9 @@ export function WorkspaceMenu({
           </DropdownMenuLabel>
           {session?.workspaces.map((candidate) => {
             const current = candidate.id === session.workspaceId;
-            const disabled = candidate.status !== "active";
             return (
               <DropdownMenuItem
                 key={candidate.id}
-                disabled={disabled}
                 onSelect={() => void selectWorkspace(candidate.id)}
                 className="gap-2 rounded-lg"
               >
@@ -133,7 +131,11 @@ export function WorkspaceMenu({
                     {candidate.displayName}
                   </span>
                   <span className="block truncate text-[10px] text-muted-foreground">
-                    {disabled ? "Awaiting payment" : `@${candidate.username ?? "profile"}`}
+                    {candidate.status === "pending"
+                      ? "Resume setup"
+                      : candidate.status === "locked"
+                        ? "Billing and saved work"
+                        : `@${candidate.username ?? "profile"}`}
                   </span>
                 </span>
                 {current && (

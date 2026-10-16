@@ -4,7 +4,7 @@ import { downloadConnectedMedia, importedMediaType } from "./content-media.serve
 const asset = (id: string, caption: string, tags: string[]): ContentMediaAsset => ({
   id,
   type: "image",
-  url: `https://example.com/cdn/${id}.jpg`,
+  url: `https://bento.surf/cdn/${id}.jpg`,
   title: caption,
   caption,
   tags,
@@ -26,6 +26,28 @@ describe("connected media index", () => {
     expect(
       importedMediaType(new TextEncoder().encode("<script>bad</script>"), "image/jpeg"),
     ).toBeNull();
+  });
+  it("accepts official YouTube thumbnail hosts and rejects lookalike domains", async () => {
+    const fetcher = vi.fn().mockImplementation(
+      async () =>
+        new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]), {
+          headers: { "content-type": "image/jpeg" },
+        }),
+    );
+    for (const host of ["i.ytimg.com", "i9.ytimg.com"]) {
+      await expect(
+        downloadConnectedMedia("youtube", `https://${host}/vi/video/hqdefault.jpg`, 1024, fetcher),
+      ).resolves.toMatchObject({ mimeType: "image/jpeg" });
+    }
+    await expect(
+      downloadConnectedMedia(
+        "youtube",
+        "https://i.ytimg.com.evil.example/photo.jpg",
+        1024,
+        fetcher,
+      ),
+    ).rejects.toThrow("approved provider asset");
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
   it("downloads approved provider media and refuses redirect escapes", async () => {
     const fetcher = vi.fn().mockResolvedValue(

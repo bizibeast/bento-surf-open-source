@@ -1,3 +1,9 @@
+import {
+  reserveXRead,
+  xBackgroundReadsEnabled,
+  ProviderBudgetError,
+  withProviderBudgetWorkspace,
+} from "./provider-budget.server";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Provider payloads are normalized at this boundary. */
 import { createServerFn } from "@tanstack/react-start";
 import { setSystemPageVisibility } from "./pages.functions";
@@ -22,6 +28,10 @@ import {
 import { accessTokenForConnection, ProviderError } from "./social-publisher.server";
 import type { SocialProvider } from "./social-scheduler";
 import { nextLocalRefreshAt } from "./timezones";
+import {
+  durableSocialInsightThumbnailUrl,
+  isStoredSocialInsightThumbnailUrl,
+} from "./social-insight-thumbnail.server";
 
 export const SOCIAL_INSIGHTS_LEASE_MS = 15 * 60_000;
 export const SOCIAL_INSIGHTS_REFRESH_INTERVAL_MS = 24 * 60 * 60_000;
@@ -149,7 +159,8 @@ export function isSocialInsightsCapabilityError(error: unknown) {
 }
 
 export function socialInsightsDeliveryDisposition(error: unknown, attempts: number) {
-  if (error instanceof ProviderError && !error.retryable) return "fail" as const;
+  if (error instanceof ProviderBudgetError || (error instanceof ProviderError && !error.retryable))
+    return "fail" as const;
   return attempts < SOCIAL_INSIGHTS_MAX_DELIVERY_ATTEMPTS
     ? ("retry" as const)
     : ("dead_letter" as const);
@@ -167,7 +178,7 @@ export function socialInsightsBackfillTargets<T extends { id: string }>(
     if (snapshot?.refresh_started_at) return true;
     const fetchedAt = Date.parse(snapshot?.fetched_at || "");
     return (
-      force ||
+      (force && fetchedAt <= now.getTime() - 60 * 60_000) ||
       !snapshot?.history_imported_at ||
       !Number.isFinite(fetchedAt) ||
       fetchedAt <= now.getTime() - SOCIAL_INSIGHTS_REFRESH_INTERVAL_MS
@@ -499,6 +510,7 @@ async function providerJson(
   token: string,
   extraHeaders: Record<string, string> = {},
 ) {
+  await reserveXRead(url);
   const response = await fetch(url, {
     headers: {
       Accept: "application/json",
@@ -757,6 +769,10 @@ export async function fetchProviderAnalytics(
   }
 
   if (provider === "twitter") {
+    if (!xBackgroundReadsEnabled())
+      return unavailable(
+        "Automatic paid X reads are paused by the workspace cost policy. Previously imported content remains available.",
+      );
     const data = await providerJson(
       "https://api.x.com/2/users/me?user.fields=public_metrics",
       token,
@@ -1213,8 +1229,40 @@ async function dispatchSocialInsightsSuccessor(
 async function persistSocialInsightsContentPage(connection: any, content: SocialContentInsight[]) {
   const storable = uniqueStorableSocialContent(content);
   if (!storable.length) return;
+  const { data: existing, error: existingError } = await (supabaseAdmin as any)
+    .from("social_content_insights")
+    .select("remote_post_id,thumbnail_url")
+    .eq("connection_id", connection.id)
+    .in(
+      "remote_post_id",
+      storable.map((item) => item.remotePostId),
+    );
+  if (existingError) throw new Error("Historical social thumbnails could not be loaded.");
+  const storedThumbnails = new Map<string, string>(
+    (existing || []).flatMap((row: any) =>
+      typeof row.thumbnail_url === "string" && isStoredSocialInsightThumbnailUrl(row.thumbnail_url)
+        ? [[row.remote_post_id, row.thumbnail_url] as [string, string]]
+        : [],
+    ),
+  );
+  const durable = await Promise.all(
+    storable.map(async (item) => ({
+      item,
+      thumbnailUrl:
+        storedThumbnails.get(item.remotePostId) ||
+        (["instagram", "threads"].includes(connection.provider)
+          ? await durableSocialInsightThumbnailUrl({
+              userId: connection.user_id,
+              connectionId: connection.id,
+              provider: connection.provider,
+              remotePostId: item.remotePostId,
+              url: item.thumbnailUrl,
+            })
+          : item.thumbnailUrl),
+    })),
+  );
   const { error } = await (supabaseAdmin as any).from("social_content_insights").upsert(
-    storable.map((item) => ({
+    durable.map(({ item, thumbnailUrl }) => ({
       connection_id: connection.id,
       user_id: connection.user_id,
       provider: connection.provider,
@@ -1222,7 +1270,7 @@ async function persistSocialInsightsContentPage(connection: any, content: Social
       remote_post_url: item.remotePostUrl,
       content_type: item.contentType,
       caption: item.caption,
-      thumbnail_url: item.thumbnailUrl,
+      thumbnail_url: thumbnailUrl,
       media_sources: item.mediaSources || [],
       published_at: item.publishedAt,
       views: item.views,
@@ -1335,8 +1383,20 @@ async function processSocialInsightsContentStage(
   queue?: SocialInsightsQueue,
 ) {
   const db = supabaseAdmin as any;
+  let latestIndexedPostId: string | null = null;
+  if (connection.provider === "twitter" && !message.cursor) {
+    const latest = await db
+      .from("social_content_insights")
+      .select("remote_post_id")
+      .eq("connection_id", connection.id)
+      .order("published_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (latest.error) throw new Error("Latest X insight could not be loaded.");
+    latestIndexedPostId = latest.data?.remote_post_id || null;
+  }
   const page = await fetchSocialContentInsightsPage(
-    connection,
+    connection.provider === "twitter" ? { ...connection, latestIndexedPostId } : connection,
     await accessTokenForConnection(connection),
     message.cursor,
   );
@@ -1509,6 +1569,7 @@ export async function processSocialInsightsBackfillMessage(
   queue?: SocialInsightsQueue,
 ) {
   const message = normalizeSocialInsightsBackfillMessage(input);
+  if (!planHasEntitlement(await getPlan(message.userId), "socialAnalytics")) return;
   const db = supabaseAdmin as any;
   const [{ data: connection, error }, { data: initialSnapshot, error: snapshotError }] =
     await Promise.all([
@@ -1521,7 +1582,9 @@ export async function processSocialInsightsBackfillMessage(
         .maybeSingle(),
       db
         .from("social_analytics_snapshots")
-        .select("refresh_job_id,refresh_stage,refresh_cursor,refresh_processing_at")
+        .select(
+          "refresh_job_id,refresh_stage,refresh_cursor,refresh_processing_at,history_imported_at",
+        )
         .eq("connection_id", message.connectionId)
         .eq("user_id", message.userId)
         .maybeSingle(),
@@ -1576,9 +1639,36 @@ export async function processSocialInsightsBackfillMessage(
   if (!socialInsightsCheckpointMatches(checkpoint, message)) return;
   const processingAt = await claimSocialInsightsCheckpoint(message);
   if (!processingAt) return;
-  if (message.stage === "account")
-    await processSocialInsightsAccountStage(connection, message, processingAt, queue);
-  else await processSocialInsightsContentStage(connection, message, processingAt, queue);
+  if (connection.provider === "twitter" && !xBackgroundReadsEnabled()) {
+    const paused = await db
+      .from("social_analytics_snapshots")
+      .update({
+        note: "Paid X reads are paused by the cost policy. Showing previously imported data.",
+        refresh_job_id: null,
+        refresh_stage: null,
+        refresh_cursor: null,
+        refresh_processing_at: null,
+        refresh_started_at: null,
+        next_refresh_at: new Date(Date.now() + 86400000).toISOString(),
+      })
+      .eq("connection_id", connection.id)
+      .eq("user_id", message.userId)
+      .eq("refresh_job_id", message.jobId)
+      .eq("refresh_processing_at", processingAt);
+    if (paused.error) throw new Error("X insights pause could not be saved.");
+    return;
+  }
+  await withProviderBudgetWorkspace(message.userId, async () => {
+    if (message.stage === "account")
+      await processSocialInsightsAccountStage(connection, message, processingAt, queue);
+    else
+      await processSocialInsightsContentStage(
+        { ...connection, initialImportComplete: Boolean(initialSnapshot.history_imported_at) },
+        message,
+        processingAt,
+        queue,
+      );
+  });
 }
 
 export async function failSocialInsightsBackfillMessage(
@@ -1587,27 +1677,25 @@ export async function failSocialInsightsBackfillMessage(
 ) {
   const message = normalizeSocialInsightsBackfillMessage(input);
   const capabilityLimited = message.stage === "content" && isSocialInsightsCapabilityError(error);
-  const terminalProviderError = error instanceof ProviderError && !error.retryable;
-  if (error instanceof ProviderError && error.status === 401) {
-    const connection = await (supabaseAdmin as any)
-      .from("social_connections")
-      .update({ status: "expired", last_error: "Reconnect to refresh social analytics." })
-      .eq("id", message.connectionId)
-      .eq("user_id", message.userId);
-    if (connection.error) throw new Error("Expired social connection could not be stored.");
-  }
+  const terminalProviderError =
+    error instanceof ProviderBudgetError || (error instanceof ProviderError && !error.retryable);
+  // An insights endpoint can reject a scope or request while publishing still works.
+  // Only a connection health check or a publishing failure may expire the connection.
   let query = (supabaseAdmin as any)
     .from("social_analytics_snapshots")
     .update({
       status: capabilityLimited ? "partial" : "error",
       note: capabilityLimited
         ? "Account insights are ready. This platform did not provide access to older post insights."
-        : "Historical insights could not import. Reconnect the account or try refreshing again.",
+        : error instanceof ProviderError && error.status === 401
+          ? "Social insights could not authenticate with this provider. Publishing access may still work."
+          : "Historical insights could not import. Reconnect the account or try refreshing again.",
       refresh_job_id: null,
       refresh_stage: null,
       refresh_cursor: null,
       refresh_processing_at: null,
       refresh_started_at: null,
+      next_refresh_at: new Date(Date.now() + SOCIAL_INSIGHTS_REFRESH_INTERVAL_MS).toISOString(),
       ...(capabilityLimited || terminalProviderError
         ? { history_imported_at: new Date().toISOString() }
         : {}),
@@ -1766,7 +1854,7 @@ export async function loadSocialAnalyticsPages(
   }
 }
 
-async function loadSocialAnalytics(userId: string) {
+async function loadSocialAnalytics(userId: string, allContent = false) {
   const db = supabaseAdmin as any;
   let profileResult = await db
     .from("profiles")
@@ -1816,17 +1904,15 @@ async function loadSocialAnalytics(userId: string) {
         .order("connection_id", { ascending: true })
         .range(from, to),
     ),
-    loadSocialAnalyticsPages((from, to) =>
-      db
-        .from("social_content_insights")
-        .select("*")
-        .eq("user_id", userId)
-        .gte("published_at", cutoff)
+    loadSocialAnalyticsPages((from, to) => {
+      let query = db.from("social_content_insights").select("*").eq("user_id", userId);
+      if (!allContent) query = query.gte("published_at", cutoff);
+      return query
         .order("published_at", { ascending: false })
         .order("connection_id", { ascending: true })
         .order("remote_post_id", { ascending: true })
-        .range(from, to),
-    ),
+        .range(from, to);
+    }),
   ]);
   const activeIds = new Set(
     accounts.map((account: SocialAnalyticsAccount) => account.connectionId),
@@ -1867,7 +1953,7 @@ export const getSocialAnalytics = createServerFn({ method: "GET" })
       return { locked: true as const, ...(await loadSocialAnalytics(context.userId)) };
     }
     await enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "social-analytics", context.userId);
-    return { locked: false as const, ...(await loadSocialAnalytics(context.userId)) };
+    return { locked: false as const, ...(await loadSocialAnalytics(context.userId, true)) };
   });
 
 export const refreshSocialAnalytics = createServerFn({ method: "POST" })
@@ -1882,7 +1968,7 @@ export const refreshSocialAnalytics = createServerFn({ method: "POST" })
       context.userId,
     );
     await queueSocialInsightsBackfill(context.userId, true);
-    return loadSocialAnalytics(context.userId);
+    return loadSocialAnalytics(context.userId, true);
   });
 
 export const setPublicSocialInsights = createServerFn({ method: "POST" })

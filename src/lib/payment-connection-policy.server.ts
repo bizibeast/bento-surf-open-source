@@ -38,6 +38,15 @@ export async function creatorStorePaymentSetup(
     .single();
   if (profileError) throw new Error(profileError.message);
 
+  // The isolated staging checkout uses mock money. Do not require live credentials
+  // or override a creator who explicitly selected a real test-mode provider.
+  if (
+    process.env.APP_ENV === "staging" &&
+    process.env.COMMERCE_PAYMENT_PROVIDER === "mock" &&
+    !profile?.commerce_payment_provider
+  )
+    return { ready: true, selectedProvider: null };
+
   const selectedProvider = creatorPaymentProvider(
     String(profile?.commerce_payment_provider || ""),
   )?.id;

@@ -17,6 +17,7 @@ import { Toaster } from "sonner";
 import appCss from "../styles.css?url";
 import { HoverGuide } from "@/components/HoverGuide";
 import { shouldInvalidateRouterForAuthEvent } from "@/lib/auth-route-refresh";
+import { isReplayableProductPath, isTrackedProductPath } from "@/lib/posthog-paths";
 import { safeWebMcpPathname, useWebMcpTools, webMcpResult } from "@/lib/webmcp";
 
 // After a deploy, tabs loaded against the previous asset manifest 404 when they
@@ -258,6 +259,15 @@ function RootShell({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
+        <script async src="https://www.googletagmanager.com/gtag/js?id=G-JEX5V76CMP" />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+gtag('config', 'G-JEX5V76CMP');`,
+          }}
+        />
         <RouteHeadContent />
       </head>
       <body>
@@ -332,6 +342,11 @@ function AuthSync() {
   const router = useRouter();
   const queryClient = useQueryClient();
   useEffect(() => {
+    // Public marketing and creator pages live on this hostname and cannot
+    // navigate into the signed-in workspace without switching to the app host.
+    const publicHost = new URL(import.meta.env.VITE_PUBLIC_URL || location.origin).hostname;
+    const appHost = new URL(import.meta.env.VITE_APP_URL || location.origin).hostname;
+    if (publicHost !== appHost && location.hostname === publicHost) return;
     let disposed = false;
     let lastUserId: string | null | undefined;
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -398,6 +413,10 @@ function ProductAnalyticsSync() {
 
   useEffect(() => {
     let disposed = false;
+
+    // Comparison and editorial pages do not send product analytics. Keep the
+    // analytics SDK off their critical loading path entirely.
+    if (!isTrackedProductPath(pathname) && !isReplayableProductPath(pathname)) return;
 
     void import("@/lib/posthog")
       .then(

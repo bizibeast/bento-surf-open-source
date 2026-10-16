@@ -40,7 +40,7 @@ export const Route = createFileRoute("/$username_/store")({
         name: "description",
         content: loaderData?.profile.bio || "Products from a bento.surf creator.",
       },
-      ...creatorIndexingMeta(loaderData?.profile ?? {}),
+      ...creatorIndexingMeta(loaderData?.profile ?? {}, { surface: "store" }),
     ],
     links: loaderData
       ? [

@@ -1,0 +1,2104 @@
+.discover-shell,
+.discover-workspace,
+.discover-loading,
+.discover-dialog,
+.discover-menu {
+  --discover-bg: var(--background);
+  --discover-card: var(--card);
+  --discover-soft: var(--muted);
+  --discover-ink: var(--foreground);
+  --discover-muted: var(--muted-foreground);
+  --discover-line: var(--border);
+  --discover-hover: color-mix(in srgb, var(--foreground) 22%, var(--border));
+  --discover-accent: var(--tint-sky-fg);
+  color: var(--discover-ink);
+  font-family: var(--font-ui-sans), ui-sans-serif, system-ui, sans-serif;
+}
+.discover-shell {
+  min-height: 100dvh;
+  background: var(--discover-bg);
+}
+.discover-shell-main {
+  padding: 20px 24px 48px;
+  margin-inline: auto;
+  max-width: 1600px;
+}
+.discover-workspace {
+  container-type: inline-size;
+  min-height: calc(100dvh - 10rem);
+}
+.discover-workspace h2,
+.discover-workspace h3,
+.discover-dialog h2,
+.discover-dialog h3 {
+  font-family: inherit;
+}
+.discover-workspace button,
+.discover-dialog button,
+.discover-menu button {
+  cursor: pointer;
+}
+.discover-workspace button:disabled,
+.discover-dialog button:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+.discover-workspace :is(button, a, input):focus-visible,
+.discover-dialog :is(button, a, summary):focus-visible,
+.discover-menu :is(button, select):focus-visible {
+  outline: 2px solid var(--discover-accent);
+  outline-offset: 3px;
+}
+.discover-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  padding: 0 12px 0 18px;
+  border: 1px solid var(--discover-line);
+  border-radius: 28px;
+  background: var(--discover-card);
+}
+.discover-search-bar > svg {
+  width: 16px;
+  height: 16px;
+  color: var(--discover-muted);
+  flex-shrink: 0;
+}
+.discover-search-bar input {
+  width: 100%;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  font-size: 13px;
+}
+.discover-search-bar input::placeholder {
+  color: var(--discover-muted);
+}
+.discover-navigation {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin: 25px 0 16px;
+}
+.discover-navigation > button {
+  color: var(--discover-muted);
+  font-size: 26px;
+  line-height: 1.2;
+  letter-spacing: normal;
+  font-weight: 650;
+  transition: color 150ms;
+}
+.discover-navigation > button:hover,
+.discover-navigation > button[aria-current] {
+  color: var(--discover-ink);
+}
+.discover-navigation h2 {
+  font-size: inherit;
+  font-weight: inherit;
+}
+.discover-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 20px;
+  min-width: 0;
+}
+.discover-feed-switch {
+  display: inline-flex;
+  flex-shrink: 0;
+  padding: 2px;
+  border: 1px solid var(--discover-line);
+  border-radius: 20px;
+  background: var(--discover-soft);
+}
+.discover-feed-switch button {
+  padding: 5px 10px;
+  border-radius: var(--radius-surface);
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--discover-muted);
+}
+.discover-feed-switch button[aria-pressed="true"] {
+  background: var(--discover-card);
+  color: var(--discover-ink);
+  box-shadow: 0 1px 4px #0001;
+  font-weight: 600;
+}
+.discover-chip-strip {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.discover-chip-strip::-webkit-scrollbar {
+  display: none;
+}
+.discover-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  padding: 6px 12px;
+  border: 1px solid var(--discover-line);
+  border-radius: 20px;
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--discover-muted);
+  background: var(--discover-card);
+}
+.discover-chip svg {
+  width: 12px;
+  height: 12px;
+}
+.discover-chip:hover {
+  border-color: var(--discover-hover);
+  color: var(--discover-ink);
+}
+.discover-chip[aria-pressed="true"] {
+  color: var(--discover-ink);
+  background: var(--discover-soft);
+  border-color: var(--discover-hover);
+}
+.discover-icon-button {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  justify-content: center;
+  align-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--discover-line);
+  border-radius: 50%;
+  color: var(--discover-muted);
+  background: transparent;
+  transition:
+    color 150ms,
+    background 150ms,
+    border-color 150ms;
+}
+.discover-icon-button svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+.discover-icon-button:hover,
+.discover-icon-button[data-state="open"] {
+  color: var(--discover-ink);
+  background: var(--discover-soft);
+  border-color: var(--discover-hover);
+}
+.discover-icon-button[aria-pressed="true"],
+.discover-icon-button[data-active="true"] {
+  color: var(--discover-accent);
+  border-color: var(--discover-accent);
+}
+.discover-search-bar .discover-icon-button {
+  border: 0;
+}
+.discover-filter-count {
+  position: absolute;
+  right: -2px;
+  top: -2px;
+  border-radius: 50%;
+  min-width: 14px;
+  background: var(--discover-ink);
+  color: var(--discover-card);
+  font-size: 9px;
+}
+.discover-scroll-chips {
+  width: 22px;
+  height: 28px;
+  border: 0;
+  margin-left: -7px;
+}
+.discover-toolbar-tools {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+}
+.discover-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  border: 1px solid color-mix(in srgb, var(--discover-accent) 22%, var(--discover-line));
+  background: color-mix(in srgb, var(--discover-accent) 5%, var(--discover-card));
+  border-radius: 16px;
+  padding: 12px 14px;
+  margin-bottom: 22px;
+}
+.discover-tip > svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--discover-accent);
+  margin-top: 3px;
+}
+.discover-tip strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 650;
+}
+.discover-tip p {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--discover-muted);
+  margin-top: 3px;
+}
+.discover-tip .discover-icon-button {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  margin-left: auto;
+}
+.discover-tip .discover-icon-button svg {
+  width: 12px;
+  height: 12px;
+}
+.discover-grid {
+  columns: 1;
+  column-gap: 12px;
+}
+.discover-card {
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+  display: inline-block;
+  vertical-align: top;
+  break-inside: avoid;
+  margin-bottom: 12px;
+  overflow: hidden;
+  border-radius: var(--radius-surface);
+  border: 1px solid var(--discover-line);
+  background: var(--discover-card);
+  transition:
+    border-color 150ms,
+    background 150ms;
+}
+.discover-card:hover {
+  border-color: var(--discover-hover);
+}
+.discover-card-open {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+}
+.discover-card-open:focus-visible {
+  outline-offset: -3px !important;
+}
+.discover-card-body {
+  padding: 14px;
+}
+.discover-identity {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  max-width: 100%;
+  text-align: left;
+}
+button.discover-identity {
+  position: relative;
+  z-index: 2;
+  border-radius: 8px;
+}
+.discover-identity-text {
+  display: grid;
+  min-width: 0;
+}
+.discover-identity-text strong {
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+}
+button.discover-identity:hover strong {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.discover-identity-text > span {
+  color: var(--discover-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.discover-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--discover-soft);
+  border: 1px solid var(--discover-line);
+  color: var(--discover-muted);
+  font-size: 10px;
+  font-weight: 650;
+}
+.discover-post-title,
+.discover-video-title {
+  margin-top: 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  letter-spacing: -0.2px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-weight: 450;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.discover-video-title {
+  font-weight: 650;
+  -webkit-line-clamp: 2;
+  line-height: 1.4;
+}
+.discover-post-summary {
+  margin-top: 12px;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 8;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.discover-card-media {
+  width: 100%;
+  max-height: 420px;
+  object-fit: contain;
+  border-radius: 10px;
+  margin-top: 12px;
+}
+.discover-card-media-first {
+  border-radius: 0;
+  margin-top: 0;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+}
+.discover-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 13px;
+  color: var(--discover-muted);
+}
+.discover-stats {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--discover-muted);
+}
+.discover-stat > span,
+.discover-outlier > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.discover-stats svg {
+  width: 12px;
+  height: 12px;
+}
+.discover-outlier {
+  display: inline-flex;
+  align-items: center;
+  background: var(--tint-amber);
+  border: 1px solid color-mix(in srgb, var(--tint-amber-fg) 18%, var(--border));
+  border-radius: 6px;
+  padding: 1px 5px;
+  color: var(--tint-amber-fg);
+  font-size: 10px;
+}
+
+.discover-source {
+  position: relative;
+  z-index: 2;
+  padding: 3px;
+  border-radius: 5px;
+  flex-shrink: 0;
+}
+.discover-source:hover {
+  color: var(--discover-ink);
+}
+.discover-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  position: absolute;
+  z-index: 3;
+  right: 9px;
+  top: 9px;
+  padding-left: 12px;
+  border-radius: 24px;
+  background: linear-gradient(90deg, transparent, var(--discover-card) 15%);
+}
+.discover-card-actions .discover-icon-button {
+  width: 36px;
+  height: 36px;
+  background: color-mix(in srgb, var(--discover-card) 94%, transparent);
+  backdrop-filter: blur(8px);
+  color: var(--discover-ink);
+  border-color: var(--discover-hover);
+}
+.discover-card-actions .discover-icon-button[aria-pressed="true"],
+.discover-card-actions .discover-icon-button[data-active="true"] {
+  color: var(--discover-accent);
+}
+@media (hover: hover) and (pointer: fine) {
+  .discover-card-actions {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-3px);
+    transition:
+      opacity 140ms,
+      transform 140ms;
+  }
+  .discover-card:hover .discover-card-actions,
+  .discover-card:focus-within .discover-card-actions,
+  .discover-card:has([data-state="open"]) .discover-card-actions {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+  }
+}
+@media (hover: none), (pointer: coarse) {
+  .discover-card-actions {
+    position: relative;
+    top: auto;
+    right: auto;
+    padding: 9px 10px 0;
+    background: transparent;
+  }
+}
+.discover-menu {
+  border: 1px solid var(--discover-line);
+  background: var(--discover-card);
+  color: var(--discover-ink);
+  border-radius: var(--radius-surface);
+  padding: 6px;
+  box-shadow: 0 12px 35px #0002;
+  max-width: calc(100vw - 24px);
+}
+.discover-menu [role="menuitem"] {
+  padding: 11px 9px;
+  border-radius: 11px;
+  font-size: 12px;
+  gap: 10px;
+  cursor: pointer;
+}
+.discover-menu [role="menuitem"]:focus {
+  background: var(--discover-soft);
+  color: var(--discover-ink);
+}
+.discover-menu small {
+  display: block;
+  color: var(--discover-muted);
+  font-size: 11px;
+  margin-top: 3px;
+}
+.discover-filters {
+  width: 290px;
+  padding: 18px;
+  max-height: min(620px, var(--radix-popover-content-available-height));
+  overflow: auto;
+}
+.discover-filters h3 {
+  font-size: 13px;
+  font-weight: 650;
+  margin-bottom: 16px;
+}
+.discover-filters label {
+  display: block;
+  color: var(--discover-muted);
+  font-size: 11px;
+  margin-top: 15px;
+}
+.discover-filters select {
+  display: block;
+  width: 100%;
+  color: var(--discover-ink);
+  background: var(--discover-soft);
+  border: 1px solid var(--discover-line);
+  border-radius: 9px;
+  padding: 9px;
+  font-size: 12px;
+  margin-top: 6px;
+}
+.discover-reset {
+  width: 100%;
+  margin-top: 18px;
+  padding: 9px;
+  font-size: 12px;
+  border: 1px solid var(--discover-line);
+  border-radius: 9px;
+}
+.discover-overlay {
+  backdrop-filter: blur(8px);
+  background: #0008;
+}
+.discover-dialog {
+  padding: 0;
+  gap: 0;
+  max-width: 960px;
+  width: calc(100vw - 48px);
+  border: 1px solid var(--discover-line);
+  border-radius: var(--radius-surface);
+  background: var(--discover-bg);
+  box-shadow: 0 24px 80px #0005;
+  overflow: hidden;
+  display: block;
+}
+.discover-dialog > [data-state] {
+  border-radius: 50%;
+}
+.discover-dialog-heading {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  height: 50px;
+  padding: 0 58px 0 20px;
+  border-bottom: 1px solid var(--discover-line);
+  background: var(--discover-card);
+}
+.discover-dialog-heading h2 {
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.discover-dialog > button {
+  top: 6px;
+  right: 8px;
+  color: var(--discover-muted);
+}
+.discover-dialog-body {
+  max-height: calc(90dvh - 50px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 20px 24px 28px;
+}
+.discover-detail-preview {
+  overflow: hidden;
+  border-radius: var(--radius-surface);
+  border: 1px solid var(--discover-line);
+  background: var(--discover-card);
+}
+.discover-detail-preview iframe {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  background: #111;
+}
+.discover-detail-preview .discover-identity {
+  padding: 14px 18px;
+  width: 100%;
+}
+.discover-detail-preview .discover-avatar {
+  width: 36px;
+  height: 36px;
+}
+.discover-detail-image {
+  width: 100%;
+  max-height: 420px;
+  object-fit: contain;
+  background: var(--discover-soft);
+}
+.discover-detail-actions {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 7px;
+  margin: 12px 0 9px;
+}
+.discover-detail-action {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 7px;
+  padding: 12px 5px;
+  min-height: 62px;
+  background: var(--discover-card);
+  border: 1px solid var(--discover-line);
+  border-radius: 12px;
+  font-size: 11px;
+  text-align: center;
+}
+.discover-detail-action svg {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+}
+.discover-detail-action span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.discover-detail-action:hover {
+  border-color: var(--discover-hover);
+  background: var(--discover-soft);
+}
+.discover-detail-action[data-active="true"] {
+  color: var(--discover-accent);
+}
+.discover-detail-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+  gap: 7px;
+}
+.discover-stat-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  background: var(--discover-card);
+  border: 1px solid var(--discover-line);
+  border-radius: 12px;
+  padding: 9px 5px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.discover-stat-tile > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.discover-stat-tile svg {
+  width: 12px;
+  height: 12px;
+  color: var(--discover-muted);
+}
+.discover-stat-tile small {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--discover-muted);
+}
+.discover-text-panel {
+  margin-top: 28px;
+  padding: 18px 20px;
+  border: 1px solid var(--discover-line);
+  border-radius: var(--radius-surface);
+  background: var(--discover-card);
+}
+.discover-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  color: var(--discover-muted);
+}
+.discover-panel-heading h3 {
+  font-size: 12px;
+  font-weight: 500;
+}
+.discover-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  border-radius: 20px;
+  padding: 6px 10px;
+  background: var(--discover-soft);
+}
+.discover-copy svg {
+  width: 12px;
+  height: 12px;
+}
+.discover-text-panel p {
+  font-size: 14px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.discover-text-panel p + p {
+  margin-top: 20px;
+}
+.discover-context {
+  margin-top: 14px;
+  border: 1px solid var(--discover-line);
+  background: var(--discover-card);
+  border-radius: 13px;
+  padding: 15px 18px;
+  font-size: 12px;
+  color: var(--discover-muted);
+}
+.discover-context summary {
+  cursor: pointer;
+}
+.discover-context p,
+.discover-context ul {
+  margin-top: 12px;
+  line-height: 1.7;
+}
+.discover-context ul {
+  list-style: disc;
+  padding-left: 18px;
+}
+.discover-related {
+  margin-top: 30px;
+}
+.discover-related h3 {
+  font-size: 12px;
+  color: var(--discover-muted);
+  margin-bottom: 12px;
+}
+.discover-related > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+.discover-related button {
+  text-align: left;
+  border: 1px solid var(--discover-line);
+  border-radius: 14px;
+  background: var(--discover-card);
+  padding: 13px;
+}
+.discover-related button:hover {
+  border-color: var(--discover-hover);
+}
+.discover-related small {
+  display: block;
+  font-size: 10px;
+  color: var(--discover-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.discover-related p {
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 8px 0 14px;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.discover-creator-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 24px 0 20px;
+}
+.discover-creator-heading h2 {
+  font-size: 23px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.discover-creator-heading > span {
+  color: var(--discover-muted);
+  font-size: 12px;
+}
+.discover-creators {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+.discover-creators-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 24px 0 16px;
+}
+.discover-creators-heading h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 17px;
+  font-weight: 600;
+}
+.discover-creators-heading h3 svg {
+  width: 17px;
+  color: var(--discover-accent);
+}
+.discover-creators-heading p,
+.discover-follow-empty p {
+  color: var(--discover-muted);
+  font-size: 13px;
+  margin-top: 5px;
+}
+.discover-add-creator {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: var(--radius-control);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.discover-add-creator svg {
+  width: 16px;
+  height: 16px;
+}
+.discover-add-creator:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.discover-creator-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+.discover-creator-actions button,
+.discover-creator-actions a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  min-height: 32px;
+}
+.discover-creator-actions svg {
+  width: 14px;
+  height: 14px;
+}
+.discover-creator-actions a {
+  margin-left: auto;
+}
+.discover-creator-actions button:hover,
+.discover-creator-actions a:hover {
+  color: var(--primary);
+}
+.discover-creator-card[data-tracked="true"] {
+  border-color: color-mix(in srgb, var(--primary) 28%, var(--discover-line));
+}
+.discover-follow-empty {
+  border: 1px dashed var(--discover-line);
+  border-radius: var(--radius-surface);
+  padding: 32px;
+  text-align: center;
+  background: var(--discover-card);
+}
+.discover-follow-empty > svg {
+  margin: 0 auto 12px;
+  width: 22px;
+  color: var(--discover-muted);
+}
+.discover-track-dialog {
+  background: var(--card);
+  color: var(--foreground);
+}
+.discover-track-dialog form {
+  display: grid;
+  gap: 16px;
+}
+.discover-track-dialog label {
+  display: grid;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.discover-track-dialog label span,
+.discover-track-dialog form > p {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 400;
+}
+.discover-track-dialog input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--background);
+  color: var(--foreground);
+}
+.discover-track-dialog input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+@media (max-width: 640px) {
+  .discover-creators-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .discover-creators {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.discover-creator-card {
+  padding: 18px;
+  border: 1px solid var(--discover-line);
+  border-radius: var(--radius-surface);
+  background: var(--discover-card);
+}
+.discover-creator-card p {
+  margin: 18px 0 12px;
+  font-size: 12px;
+  color: var(--discover-muted);
+}
+.discover-creator-card > button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+.discover-warning,
+.discover-status,
+.discover-error {
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--discover-line);
+  border-radius: 12px;
+  color: var(--discover-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.discover-warning summary {
+  cursor: pointer;
+}
+.discover-warning p {
+  margin-top: 8px;
+}
+.discover-status,
+.discover-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.discover-error {
+  border-color: #b9802950;
+}
+.discover-error button {
+  margin-left: auto;
+  text-decoration: underline;
+  white-space: nowrap;
+}
+.discover-empty {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 64px 20px;
+  text-align: center;
+  color: var(--discover-muted);
+}
+.discover-empty h3 {
+  font-size: 16px;
+  color: var(--discover-ink);
+}
+.discover-empty p {
+  max-width: 380px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.discover-empty button {
+  font-size: 12px;
+  padding: 8px 16px;
+  border: 1px solid var(--discover-line);
+  border-radius: 20px;
+  color: var(--discover-ink);
+}
+@container (min-width: 540px) {
+  .discover-grid {
+    columns: 2;
+  }
+}
+@container (min-width: 940px) {
+  .discover-grid {
+    columns: 3;
+  }
+}
+@container (min-width: 1280px) {
+  .discover-grid {
+    columns: 4;
+  }
+}
+@media (max-width: 600px) {
+  .discover-shell-main {
+    padding: 16px 14px 36px;
+  }
+  .discover-navigation {
+    gap: 20px;
+  }
+  .discover-navigation > button {
+    font-size: 24px;
+  }
+  .discover-toolbar {
+    flex-wrap: wrap;
+    position: relative;
+    row-gap: 12px;
+  }
+  .discover-chip-strip {
+    order: 3;
+    flex-basis: calc(100% - 32px);
+  }
+  .discover-scroll-chips {
+    order: 4;
+  }
+  .discover-toolbar-tools {
+    margin-left: auto;
+  }
+  .discover-tip {
+    margin-bottom: 16px;
+  }
+  .discover-dialog {
+    width: calc(100vw - 16px);
+  }
+  .discover-dialog-body {
+    padding: 14px 12px 22px;
+  }
+  .discover-detail-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-auto-flow: row;
+  }
+  .discover-detail-action {
+    min-height: 58px;
+  }
+  .discover-related > div {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .discover-text-panel {
+    padding: 15px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .discover-workspace *,
+  .discover-dialog *,
+  .discover-menu * {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Use Bento's shared appearance tokens; Discover never selects its own theme. */
+.discover-navigation > button {
+  font-family: var(--font-ui-display), serif;
+  font-weight: 400;
+  font-size: 34px;
+}
+.discover-navigation > button[aria-current] {
+  color: var(--discover-ink);
+}
+.discover-navigation {
+  margin-bottom: 8px;
+}
+.discover-intro {
+  margin-bottom: 20px;
+  color: var(--discover-muted);
+  font-size: 13px;
+  line-height: 1.65;
+  max-width: 650px;
+}
+.discover-search-bar {
+  border-radius: var(--radius-control);
+  box-shadow: var(--shadow-subtle);
+}
+.discover-avatar {
+  overflow: hidden;
+  background: var(--tint-sky);
+  color: var(--tint-sky-fg);
+}
+.discover-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.discover-idea-label {
+  display: inline-block;
+  color: var(--tint-lavender-fg);
+  background: var(--tint-lavender);
+  font-size: 10px;
+  border-radius: 5px;
+  padding: 2px 6px;
+  margin-top: 10px;
+}
+.discover-source {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--discover-accent);
+  white-space: nowrap;
+}
+.discover-card-footer {
+  flex-wrap: wrap;
+}
+.discover-source svg {
+  width: 12px;
+  height: 12px;
+}
+.discover-profile-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--discover-accent);
+  font-size: 12px;
+}
+.discover-detail-preview > .discover-profile-link {
+  margin: 0 18px 14px 63px;
+}
+.discover-creator-heading {
+  flex-wrap: wrap;
+}
+.discover-creator-heading > .discover-profile-link {
+  margin-left: auto;
+}
+.discover-media {
+  position: relative;
+  overflow: hidden;
+  background: var(--discover-soft);
+}
+.discover-media-feed {
+  width: 100%;
+}
+.discover-media-feed.discover-media-vertical {
+  aspect-ratio: auto;
+}
+.discover-media img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 640px;
+  object-fit: contain;
+}
+.discover-card-body > .discover-media {
+  border-radius: var(--radius-control);
+  margin-top: 12px;
+}
+.discover-media-feed iframe {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  pointer-events: none;
+}
+.discover-media-badge {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  padding: 4px 8px;
+  border-radius: 7px;
+  background: #17213acc;
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+}
+.discover-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: #17213abf;
+  color: white;
+  border: 1px solid #ffffff70;
+}
+.discover-play svg {
+  width: 17px;
+  height: 17px;
+  margin-left: 2px;
+}
+.discover-detail-preview .discover-media-detail iframe {
+  width: 100%;
+  min-height: 420px;
+  height: min(62dvh, 600px);
+  aspect-ratio: auto;
+  border: 0;
+  background: var(--discover-card);
+}
+.discover-detail-preview .discover-media-detail:not(.discover-media-vertical) iframe {
+  min-height: 0;
+  height: auto;
+  aspect-ratio: 16 / 9;
+}
+.discover-media-detail img {
+  max-height: 62dvh;
+  width: 100%;
+  object-fit: contain;
+}
+.discover-media-detail video {
+  max-height: 62dvh;
+  width: 100%;
+  background: #17213a;
+}
+.discover-media-detail.discover-media-vertical video {
+  aspect-ratio: 9 / 16;
+}
+.discover-media-unavailable {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+  gap: 10px;
+  color: var(--discover-muted);
+  font-size: 12px;
+  height: 100%;
+}
+.discover-media-unavailable a {
+  display: flex;
+  gap: 5px;
+  color: var(--discover-accent);
+}
+.discover-gallery-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+  padding: 10px;
+  font-size: 12px;
+  background: var(--discover-card);
+  border-top: 1px solid var(--discover-line);
+}
+.discover-gallery-controls button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--discover-line);
+}
+.discover-gallery-controls button svg {
+  width: 16px;
+  height: 16px;
+}
+@media (max-width: 600px) {
+  .discover-navigation > button {
+    font-size: 30px;
+  }
+  .discover-intro {
+    font-size: 12px;
+  }
+  .discover-navigation {
+    gap: 20px;
+    overflow-x: auto;
+  }
+  .discover-detail-preview .discover-media-detail.discover-media-vertical iframe {
+    height: min(65dvh, 560px);
+  }
+}
+.discover-embed-loading {
+  position: absolute;
+  inset: 0;
+  background: var(--discover-soft);
+  pointer-events: none;
+}
+.discover-embed-loading img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  opacity: 0.7;
+}
+.discover-embed-loading > span {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 8px 12px;
+  border-radius: var(--radius-control);
+  background: var(--discover-card);
+  color: var(--discover-muted);
+  font-size: 12px;
+}
+
+.discover-related h3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.discover-related h3 > span {
+  font-size: 11px;
+  font-weight: 400;
+}
+.discover-related .discover-related-card {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.discover-related-thumbnail {
+  display: block;
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  background: var(--discover-soft);
+}
+.discover-related-thumbnail > img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.discover-related-thumbnail .discover-media-badge {
+  bottom: 6px;
+  left: 6px;
+  padding: 2px 5px;
+  font-size: 9px;
+}
+.discover-related-placeholder {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+  color: var(--discover-muted);
+  font-size: 11px;
+}
+.discover-related-body {
+  display: block;
+  padding: 12px;
+  width: 100%;
+}
+.discover-related .discover-related-more {
+  display: block;
+  width: 100%;
+  text-align: center;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--discover-accent);
+}
+
+.discover-fallback {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 16px 18px;
+  margin-bottom: 20px;
+  border: 1px solid var(--discover-line);
+  border-radius: 12px;
+  background: var(--discover-soft);
+  font-size: 12px;
+}
+.discover-fallback p {
+  margin-top: 4px;
+  color: var(--discover-muted);
+  line-height: 1.6;
+}
+.discover-fallback button {
+  flex-shrink: 0;
+  color: var(--discover-accent);
+}
+.discover-media-feed.discover-media-vertical iframe {
+  aspect-ratio: 9 / 16;
+}
+.discover-creator-card .discover-identity-text strong {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.discover-creator-card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.discover-creator-card .discover-creator-actions {
+  margin-top: auto;
+  flex-wrap: wrap;
+}
+.discover-creator-reason {
+  color: var(--discover-ink);
+  line-height: 1.65;
+}
+.discover-creator-label {
+  align-self: flex-start;
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: var(--tint-lavender);
+  color: var(--tint-lavender-fg);
+  font-size: 10px;
+  font-weight: 600;
+}
+@media (max-width: 600px) {
+  .discover-fallback {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+/* Small filtered feeds should fill a row before starting the next column. */
+.discover-grid[data-sparse="true"] {
+  columns: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  align-items: start;
+  gap: 12px;
+}
+.discover-grid[data-sparse="true"] > .discover-card {
+  max-width: 480px;
+}
+.discover-media-feed > .discover-media-badge {
+  position: static;
+  display: table;
+  margin: 8px 10px;
+}
+.discover-creators {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+}
+.discover-creator-card p {
+  margin: 0;
+  line-height: 1.65;
+}
+.discover-creator-card .discover-creator-reason {
+  padding-top: 10px;
+  border-top: 1px solid var(--discover-line);
+}
+.discover-creator-card .discover-creator-actions {
+  padding-top: 6px;
+}
+
+/* Fresh inspiration: a stable grid, a distinct creation surface and quiet motion. */
+.discover-grid,
+.discover-grid[data-sparse="true"] {
+  columns: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+  align-items: start;
+  gap: 16px;
+}
+.discover-grid[data-mode="ideas"] {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+}
+.discover-feed-item {
+  min-width: 0;
+  animation: discover-arrive 430ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.discover-feed-item > .discover-card {
+  margin-bottom: 0;
+}
+.discover-feed-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin: 6px 0 22px;
+}
+.discover-feed-heading h3 {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.35px;
+}
+.discover-feed-heading p {
+  max-width: 650px;
+  margin-top: 7px;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--discover-muted);
+}
+.discover-period-control {
+  display: grid;
+  flex-shrink: 0;
+  gap: 6px;
+  color: var(--discover-muted);
+  font-size: 10px;
+}
+.discover-period-control select {
+  max-width: 100%;
+  padding: 8px 28px 8px 10px;
+  color: var(--discover-ink);
+  background: var(--discover-card);
+  border: 1px solid var(--discover-line);
+  border-radius: 10px;
+  font-size: 11px;
+}
+.discover-curation-reason {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 14px;
+  color: var(--discover-muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.discover-curation-reason svg {
+  width: 13px;
+  height: 13px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  color: var(--discover-accent);
+}
+.discover-metrics-unavailable {
+  color: var(--discover-muted);
+  font-size: 10px;
+  font-weight: 400;
+}
+.discover-identity-text > span {
+  white-space: normal;
+  overflow: visible;
+}
+.discover-idea-card {
+  border-color: color-mix(in srgb, var(--discover-accent) 24%, var(--discover-line));
+}
+.discover-idea-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 14px 18px;
+  background: color-mix(in srgb, var(--discover-accent) 5%, var(--discover-card));
+  font-size: 10px;
+  color: var(--discover-muted);
+}
+.discover-idea-topline > span:first-child {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--discover-accent);
+  font-weight: 600;
+}
+.discover-idea-topline svg {
+  width: 13px;
+  height: 13px;
+}
+.discover-idea-content {
+  padding: 20px 18px;
+}
+.discover-idea-content h3 {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.45;
+  letter-spacing: -0.3px;
+  overflow-wrap: anywhere;
+}
+.discover-idea-hook {
+  margin-top: 18px;
+  padding-left: 12px;
+  border-left: 2px solid var(--discover-accent);
+}
+.discover-idea-hook > span {
+  font-size: 10px;
+  color: var(--discover-muted);
+}
+.discover-idea-hook p {
+  margin-top: 5px;
+  font-size: 15px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.discover-idea-thesis {
+  margin-top: 16px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--discover-muted);
+  overflow-wrap: anywhere;
+}
+.discover-idea-outline {
+  margin-top: 20px;
+}
+.discover-idea-outline h4 {
+  font-size: 11px;
+  font-weight: 600;
+}
+.discover-idea-outline ol {
+  counter-reset: idea-step;
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+.discover-idea-outline li {
+  counter-increment: idea-step;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--discover-muted);
+  font-size: 12px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.discover-idea-outline li::before {
+  content: counter(idea-step, decimal-leading-zero);
+  color: var(--discover-accent);
+  font-size: 10px;
+  margin-top: 2px;
+}
+.discover-idea-timing {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 18px;
+  font-size: 11px;
+  line-height: 1.65;
+  color: var(--discover-muted);
+}
+.discover-idea-timing svg {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.discover-idea-source {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 9px 12px;
+  padding: 16px 18px;
+  border-top: 1px solid var(--discover-line);
+  background: color-mix(in srgb, var(--discover-soft) 35%, var(--discover-card));
+}
+.discover-idea-source > span {
+  grid-column: 1 / -1;
+  font-size: 10px;
+  color: var(--discover-muted);
+}
+.discover-idea-source .discover-identity {
+  grid-column: 1 / -1;
+}
+.discover-idea-source > a,
+.discover-idea-source > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--discover-muted);
+  justify-self: start;
+}
+.discover-idea-source > a svg {
+  width: 12px;
+  height: 12px;
+}
+.discover-idea-source > a:hover,
+.discover-idea-source > button:hover {
+  color: var(--discover-ink);
+}
+.discover-idea-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 14px 18px;
+  border-top: 1px solid var(--discover-line);
+}
+.discover-idea-actions > button:not(.discover-icon-button) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  font-size: 11px;
+  padding: 7px 8px;
+}
+.discover-idea-actions .discover-idea-create {
+  border-radius: 8px;
+  background: var(--discover-ink);
+  color: var(--discover-card);
+}
+.discover-idea-create svg {
+  width: 13px;
+  height: 13px;
+}
+.discover-empty-actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.discover-empty-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.discover-empty-actions svg {
+  width: 13px;
+  height: 13px;
+}
+.discover-refresh-progress {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  overflow: hidden;
+  padding: 13px 16px 16px;
+  margin-bottom: 20px;
+  border: 1px solid var(--discover-line);
+  border-radius: 12px;
+  font-size: 12px;
+  animation: discover-arrive 300ms ease both;
+}
+.discover-refresh-progress small {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--discover-muted);
+}
+.discover-progress-track {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 2px;
+  background: var(--discover-soft);
+  overflow: hidden;
+}
+.discover-progress-track::after {
+  content: "";
+  position: absolute;
+  width: 35%;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--discover-accent);
+  animation: discover-progress 1.8s ease-in-out infinite;
+}
+.discover-progress {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin: 12px 0 24px;
+}
+.discover-progress strong {
+  font-size: 14px;
+  font-weight: 500;
+}
+.discover-progress p {
+  font-size: 12px;
+  color: var(--discover-muted);
+  line-height: 1.6;
+  margin-top: 5px;
+}
+.discover-progress-orbit {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--discover-accent) 8%, var(--discover-card));
+  color: var(--discover-accent);
+  animation: discover-breathe 2.2s ease-in-out infinite;
+}
+.discover-progress-orbit svg {
+  width: 21px;
+  height: 21px;
+}
+.discover-skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+  gap: 16px;
+}
+.discover-skeleton-card {
+  padding: 12px;
+  border: 1px solid var(--discover-line);
+  border-radius: 14px;
+  background: var(--discover-card);
+  animation: discover-arrive 430ms ease both;
+}
+.discover-skeleton-image,
+.discover-skeleton-line,
+.discover-skeleton-identity > span,
+.discover-skeleton-identity > div {
+  border-radius: 6px;
+  background: linear-gradient(
+    110deg,
+    var(--discover-soft) 25%,
+    color-mix(in srgb, var(--discover-soft) 50%, var(--discover-card)) 45%,
+    var(--discover-soft) 65%
+  );
+  background-size: 250% 100%;
+  animation: discover-shimmer 2s linear infinite;
+}
+.discover-skeleton-image {
+  aspect-ratio: 16 / 10;
+  border-radius: 8px;
+}
+.discover-skeleton-identity {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 16px;
+}
+.discover-skeleton-identity > span {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+}
+.discover-skeleton-identity > div {
+  width: 45%;
+  height: 12px;
+}
+.discover-skeleton-line {
+  margin-top: 18px;
+  height: 12px;
+}
+.discover-skeleton-short {
+  width: 75%;
+  margin-top: 9px;
+}
+.discover-skeleton-caption {
+  width: 45%;
+  height: 9px;
+  margin: 22px 0 8px;
+}
+@keyframes discover-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes discover-shimmer {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+@keyframes discover-progress {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(400%);
+  }
+}
+@keyframes discover-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1.06);
+    opacity: 1;
+  }
+}
+@media (max-width: 600px) {
+  .discover-feed-heading {
+    flex-direction: column;
+    gap: 14px;
+  }
+  .discover-period-control {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .discover-feed-heading h3 {
+    font-size: 18px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .discover-feed-item,
+  .discover-loading *,
+  .discover-refresh-progress,
+  .discover-progress-track::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  .discover-progress-track::after {
+    width: 100%;
+    opacity: 0.45;
+  }
+}
+.discover-feed-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 10px;
+  color: var(--discover-muted);
+  font-size: 10px;
+}
+.discover-feed-meta > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--discover-accent);
+}
+.discover-feed-meta svg {
+  width: 12px;
+  height: 12px;
+}
+.discover-grid[data-sparse="true"] {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+}
+.discover-grid[data-sparse="true"] > .discover-feed-item {
+  max-width: 480px;
+  width: 100%;
+}
+.discover-grid[data-mode="ideas"][data-sparse="true"] > .discover-feed-item {
+  max-width: 560px;
+}
+.discover-idea-outline li::before {
+  min-width: 18px;
+  flex-shrink: 0;
+}
+
+/* Loading follows the varied shape of the feed; appended placeholders never replace it. */
+.discover-skeleton-grid {
+  display: block;
+  columns: 3 280px;
+  column-gap: 16px;
+}
+.discover-skeleton-grid > .discover-skeleton-card {
+  display: inline-block;
+  width: 100%;
+  margin-bottom: 16px;
+  break-inside: avoid;
+}
+.discover-skeleton-card {
+  min-width: 0;
+  align-self: start;
+}
+.discover-skeleton-card[data-variant="portrait"] .discover-skeleton-image {
+  aspect-ratio: 4 / 5;
+  max-height: 340px;
+}
+.discover-skeleton-card[data-variant="square"] .discover-skeleton-image {
+  aspect-ratio: 1;
+  max-height: 280px;
+}
+.discover-skeleton-card[data-variant="landscape"] .discover-skeleton-image {
+  aspect-ratio: 16 / 9;
+}
+.discover-skeleton-card[data-variant^="text"] {
+  padding: 18px 16px;
+}
+.discover-skeleton-identity > div {
+  display: grid;
+  gap: 7px;
+  height: auto;
+  width: 55%;
+  background: transparent;
+  animation: none;
+}
+.discover-skeleton-identity > div > i {
+  display: block;
+  height: 9px;
+  width: 100%;
+  border-radius: 4px;
+  background: var(--discover-soft);
+}
+.discover-skeleton-identity > div > i:last-child {
+  width: 60%;
+  height: 7px;
+}
+.discover-skeleton-text {
+  margin-top: 22px;
+}
+.discover-skeleton-text > .discover-skeleton-line {
+  margin-top: 10px;
+  height: 8px;
+}
+.discover-skeleton-text > .discover-skeleton-line:last-child {
+  width: 62%;
+}
+.discover-skeleton-metrics {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 24px;
+  padding-top: 12px;
+  border-top: 1px solid var(--discover-line);
+}
+.discover-skeleton-metrics > span {
+  width: 40px;
+  height: 9px;
+  border-radius: 4px;
+  background: var(--discover-soft);
+}
+.discover-skeleton-metrics > span:last-child {
+  margin-left: auto;
+  width: 54px;
+}
+.discover-progress-compact {
+  margin-top: 20px;
+}
+.discover-progress-compact .discover-progress-orbit {
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+}
+.discover-progress-compact p {
+  display: none;
+}
+.discover-pagination {
+  display: flex;
+  justify-content: center;
+  min-height: 90px;
+  padding: 24px 12px;
+  color: var(--discover-muted);
+  font-size: 12px;
+  text-align: center;
+}
+.discover-pagination > p {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  line-height: 1.7;
+}
+.discover-pagination svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.discover-pagination button {
+  padding: 9px 18px;
+  border: 1px solid var(--discover-line);
+  border-radius: 22px;
+  background: var(--discover-card);
+  color: var(--discover-ink);
+  font-size: 12px;
+  align-self: flex-start;
+}
+.discover-pagination [role="alert"] {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  max-width: 520px;
+}
+.discover-creator-followers {
+  margin-top: 3px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--discover-muted);
+  font-weight: 400;
+}
+@media (max-width: 600px) {
+  .discover-skeleton-grid {
+    columns: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .discover-skeleton-card,
+  .discover-skeleton-card *,
+  .discover-pagination .animate-spin {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+.discover-quality-hint {
+  max-width: 280px;
+  font-size: 11px;
+  line-height: 1.65;
+  color: var(--discover-muted);
+}
+.discover-skeleton-image {
+  width: 100%;
+}

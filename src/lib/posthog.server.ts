@@ -1,3 +1,4 @@
+import { reserveProviderUsage } from "./provider-budget.server";
 import { PostHog } from "posthog-node/edge";
 
 type ServerEventProperties = Record<string, string | number | boolean | null | undefined>;
@@ -38,6 +39,7 @@ export async function captureServerEvent(
   if (!client) return;
 
   try {
+    await reserveProviderUsage("analytics_events");
     await client.captureImmediate({
       distinctId,
       event,
@@ -59,6 +61,7 @@ export async function captureServerException(
   if (!client) return;
 
   try {
+    await reserveProviderUsage("analytics_events");
     await client.captureExceptionImmediate(error, distinctId, {
       service: "bento-surf",
       runtime: "cloudflare-worker",

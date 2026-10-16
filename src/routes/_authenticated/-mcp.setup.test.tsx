@@ -5,7 +5,7 @@ vi.mock("@tanstack/react-router", () => ({
   createFileRoute: () => (options: unknown) => options,
 }));
 
-import { McpSetupPage } from "./mcp.setup";
+import { McpSetupPage } from "./-mcp-setup-page";
 
 describe("MCP setup guide", () => {
   it("switches client instructions and capability examples", () => {

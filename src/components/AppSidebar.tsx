@@ -5,9 +5,9 @@ import {
   Brain,
   CalendarClock,
   CalendarDays,
+  ChevronDown,
   Clock3,
   Compass,
-  House,
   BadgeDollarSign,
   Bot,
   Link2,
@@ -15,8 +15,11 @@ import {
   Menu,
   MessageCircleMore,
   MessagesSquare,
+  PanelsTopLeft,
   Store,
+  TrendingUp,
   UsersRound,
+  Wallet,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -28,7 +31,6 @@ import type { WorkspaceSession } from "@/lib/workspace-session.server";
 type AppNavItem = {
   label: string;
   to:
-    | "/home"
     | "/link"
     | "/store"
     | "/priority-dm"
@@ -49,79 +51,113 @@ type AppNavItem = {
 
 type SidebarSearch = { tab?: unknown; routines?: unknown };
 
-export const APP_NAV_ITEMS: ReadonlyArray<AppNavItem> = [
-  { label: "Home", to: "/home", icon: House, description: "Your creator workspace" },
-  { label: "Link", to: "/link", icon: Link2, description: "Edit your main page" },
-  { label: "Store", to: "/store", icon: Store, description: "Products, orders and payouts" },
+type AppNavGroup = {
+  label: "Create" | "Grow" | "Monetize";
+  icon: LucideIcon;
+  items: ReadonlyArray<AppNavItem>;
+};
+
+export const APP_NAV_GROUPS: ReadonlyArray<AppNavGroup> = [
   {
-    label: "Priority DM",
-    to: "/priority-dm",
-    icon: MessagesSquare,
-    description: "Paid conversations and replies",
-  },
-  { label: "Calendar", to: "/calendar", icon: CalendarDays, description: "Sessions and bookings" },
-  { label: "Community", to: "/community", icon: UsersRound, description: "Members and updates" },
-  {
-    label: "Email Marketing",
-    to: "/email-marketing",
-    icon: Mail,
-    description: "Newsletters, broadcasts and audience",
-  },
-  {
-    label: "Post Scheduler",
-    to: "/post-scheduler",
-    icon: CalendarClock,
-    description: "Plan and publish content",
-  },
-  {
-    label: "Social Insights",
-    to: "/social-insights",
-    icon: BarChart3,
-    description: "Audience growth and content performance",
-  },
-  {
-    label: "Auto DMs",
-    to: "/auto-dms",
-    icon: MessageCircleMore,
-    description: "Instagram, Facebook and X",
-  },
-  {
-    label: "Agent",
-    to: "/content",
-    icon: Bot,
-    description: "Research, write and prepare content",
-    contentTab: "agent",
+    label: "Create",
+    icon: PanelsTopLeft,
+    items: [
+      {
+        label: "Agent",
+        to: "/content",
+        icon: Bot,
+        description: "Research, write and prepare content",
+        contentTab: "agent",
+      },
+      {
+        label: "Brain",
+        to: "/content",
+        icon: Brain,
+        description: "Context and content strategy",
+        contentTab: "brain",
+      },
+      {
+        label: "Routine",
+        to: "/content",
+        icon: Clock3,
+        description: "Automated content preparation",
+        contentTab: "agent",
+        routines: true,
+      },
+      { label: "MCP", to: "/mcp", icon: Bot, description: "Connect an AI agent" },
+    ],
   },
   {
-    label: "Brain",
-    to: "/content",
-    icon: Brain,
-    description: "Your context and content strategy",
-    contentTab: "brain",
+    label: "Grow",
+    icon: TrendingUp,
+    items: [
+      {
+        label: "Post Scheduler",
+        to: "/post-scheduler",
+        icon: CalendarClock,
+        description: "Plan and publish content",
+      },
+      {
+        label: "Auto DMs",
+        to: "/auto-dms",
+        icon: MessageCircleMore,
+        description: "Instagram, Facebook and X",
+      },
+      {
+        label: "Social Insights",
+        to: "/social-insights",
+        icon: BarChart3,
+        description: "Audience growth and content performance",
+      },
+      {
+        label: "Discover",
+        to: "/content",
+        icon: Compass,
+        description: "Ideas from the niche and top performers",
+        contentTab: "discover",
+      },
+    ],
   },
   {
-    label: "Routines",
-    to: "/content",
-    icon: Clock3,
-    description: "Automated content preparation",
-    contentTab: "agent",
-    routines: true,
+    label: "Monetize",
+    icon: Wallet,
+    items: [
+      { label: "Link", to: "/link", icon: Link2, description: "Edit the main page" },
+      { label: "Store", to: "/store", icon: Store, description: "Products, orders and payouts" },
+      {
+        label: "Priority DM",
+        to: "/priority-dm",
+        icon: MessagesSquare,
+        description: "Paid conversations and replies",
+      },
+      {
+        label: "Calendar",
+        to: "/calendar",
+        icon: CalendarDays,
+        description: "Sessions and bookings",
+      },
+      {
+        label: "Community",
+        to: "/community",
+        icon: UsersRound,
+        description: "Members and updates",
+      },
+      {
+        label: "Newsletter",
+        to: "/email-marketing",
+        icon: Mail,
+        description: "Newsletters, broadcasts and audience",
+      },
+    ],
   },
-  {
-    label: "Discover",
-    to: "/content",
-    icon: Compass,
-    description: "Ideas from your niche and winners",
-    contentTab: "discover",
-  },
-  {
-    label: "MCP",
-    to: "/mcp",
-    icon: Bot,
-    description: "Connect your AI agent",
-  },
-  { label: "Earn", to: "/earn", icon: BadgeDollarSign, description: "Referrals and rewards" },
 ];
+
+const EARN_NAV_ITEM: AppNavItem = {
+  label: "Earn",
+  to: "/earn",
+  icon: BadgeDollarSign,
+  description: "Referrals and rewards",
+};
 
 type SidebarProfile =
   | {
@@ -179,7 +215,7 @@ export function AppSidebar({
           <DialogPrimitive.Content className="fixed inset-y-0 left-0 z-50 flex h-dvh w-[min(14.5rem,86vw)] flex-col overflow-hidden border-r border-border bg-background p-2.5 shadow-2xl outline-none data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left lg:hidden">
             <DialogPrimitive.Title className="sr-only">App navigation</DialogPrimitive.Title>
             <DialogPrimitive.Description className="sr-only">
-              Navigate between your Bento creator tools.
+              Navigate between Bento creator tools.
             </DialogPrimitive.Description>
             <SidebarPanel
               profile={profile}
@@ -238,6 +274,19 @@ function SidebarPanel({
   onNavigate: () => void;
 }) {
   const pathname = pathnameOverride ?? "/home";
+  const activeGroup =
+    APP_NAV_GROUPS.find((group) =>
+      group.items.some((item) => isNavItemActive(pathname, search, item)),
+    )?.label ?? null;
+  const [openGroups, setOpenGroups] = useState<ReadonlySet<AppNavGroup["label"]>>(
+    () => new Set(activeGroup ? [activeGroup] : []),
+  );
+
+  useEffect(() => {
+    if (activeGroup) {
+      setOpenGroups((previous) => new Set([...previous, activeGroup]));
+    }
+  }, [activeGroup]);
 
   return (
     <>
@@ -265,38 +314,71 @@ function SidebarPanel({
       </div>
 
       <nav
-        className="no-scrollbar mt-4 flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain pr-0.5"
+        className="no-scrollbar mt-4 min-h-0 flex-1 overflow-y-auto overscroll-contain pr-0.5"
         aria-label="Creator tools"
       >
-        <div className="grid gap-1">
-          {APP_NAV_ITEMS.slice(0, -1).map((item) => (
-            <div
-              key={item.label}
-              className={
-                item.to === "/link" || item.to === "/post-scheduler" || item.label === "Agent"
-                  ? "mt-1.5 border-t border-border/70 pt-2.5"
-                  : undefined
-              }
-            >
-              <SidebarLink
-                {...item}
-                active={isNavItemActive(pathname, search, item)}
-                collapsed={collapsed}
-                onNavigate={onNavigate}
-              />
-            </div>
-          ))}
-        </div>
-        <div className="mt-auto border-t border-border/70 pt-2.5">
-          <SidebarLink
-            {...APP_NAV_ITEMS.at(-1)!}
-            active={pathname === "/earn"}
-            collapsed={collapsed}
-            onNavigate={onNavigate}
-          />
+        <div className="space-y-1">
+          {APP_NAV_GROUPS.map((group) => {
+            const open = openGroups.has(group.label);
+            const GroupIcon = group.icon;
+            const contentId = `sidebar-${mobile ? "mobile" : "desktop"}-${group.label.toLowerCase()}`;
+            return (
+              <div key={group.label}>
+                <button
+                  type="button"
+                  aria-label={group.label}
+                  aria-expanded={open}
+                  aria-controls={contentId}
+                  title={collapsed ? group.label : undefined}
+                  onClick={() =>
+                    setOpenGroups((previous) => {
+                      const next = new Set(previous);
+                      if (next.has(group.label)) next.delete(group.label);
+                      else next.add(group.label);
+                      return next;
+                    })
+                  }
+                  className={`flex min-h-10 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground ${
+                    open ? "bg-accent text-foreground" : ""
+                  } ${collapsed ? "lg:justify-center lg:px-0" : ""}`}
+                >
+                  {collapsed ? (
+                    <GroupIcon className="size-4 shrink-0" />
+                  ) : (
+                    <span>{group.label}</span>
+                  )}
+                  {!collapsed && (
+                    <ChevronDown
+                      className={`ml-auto size-4 shrink-0 transition-transform ${open ? "rotate-180" : ""}`}
+                    />
+                  )}
+                </button>
+                <div id={contentId} hidden={!open} className="space-y-0.5 py-1">
+                  {group.items.map((item) => (
+                    <SidebarLink
+                      key={item.label}
+                      {...item}
+                      active={isNavItemActive(pathname, search, item)}
+                      collapsed={collapsed}
+                      onNavigate={onNavigate}
+                      nested
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </nav>
 
+      <div className="shrink-0 border-t border-border/70 pt-2.5">
+        <SidebarLink
+          {...EARN_NAV_ITEM}
+          active={pathname === "/earn"}
+          collapsed={collapsed}
+          onNavigate={onNavigate}
+        />
+      </div>
       <WorkspaceMenu session={workspaceSession} collapsed={collapsed} fallbackProfile={profile} />
     </>
   );
@@ -325,10 +407,12 @@ function SidebarLink({
   active,
   collapsed,
   onNavigate,
+  nested = false,
 }: AppNavItem & {
   active: boolean;
   collapsed: boolean;
   onNavigate: () => void;
+  nested?: boolean;
 }) {
   return (
     <Link
@@ -342,7 +426,7 @@ function SidebarLink({
         active
           ? "border border-border/70 bg-card text-foreground shadow-sm"
           : "border border-transparent text-muted-foreground hover:bg-black/[0.035] hover:text-foreground dark:hover:bg-white/[0.06]"
-      } ${collapsed ? "lg:justify-center lg:px-0" : ""}`}
+      } ${collapsed ? "lg:justify-center lg:px-0" : nested ? "ml-2 w-[calc(100%-0.5rem)]" : ""}`}
     >
       <Icon className="size-4 shrink-0" />
       {!collapsed && <span className="truncate">{label}</span>}

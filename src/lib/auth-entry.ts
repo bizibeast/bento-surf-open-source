@@ -1,3 +1,4 @@
+import { getCreatorEntryState } from "./workspace.functions";
 import { redirect } from "@tanstack/react-router";
 import { supabase } from "@/integrations/supabase/client";
 import { sanitizeLocalRedirect } from "@/lib/safe-url";
@@ -46,9 +47,8 @@ async function readAuthenticatedUserId() {
 
 function isInvalidSessionError(error: { code?: string; message?: string }) {
   return (
-    error.code === "42501" ||
     error.code === "PGRST301" ||
-    /(?:jwt|token).*(?:expired|invalid)|permission denied/i.test(error.message ?? "")
+    /(?:jwt|token).*(?:expired|invalid)/i.test(error.message ?? "")
   );
 }
 
@@ -79,13 +79,18 @@ async function readOnboardedStatus(userId: string): Promise<boolean | null> {
 export async function requireAuthenticatedCreator(pathname: string, href: string) {
   const userId = await readAuthenticatedUserId();
   if (!userId) {
-    throw redirect({ to: "/login", search: { redirect: href } });
+    // Product routes render a pending shell on the server (ssr: false). Load
+    // login as a document so an immediate auth redirect cannot hydrate that
+    // pending boundary with a different route's markup.
+    throw redirect({ to: "/login", search: { redirect: href }, reloadDocument: true });
   }
   if (pathname === "/onboarding") return { userId };
 
-  const onboarded = await readOnboardedStatus(userId);
-  if (onboarded === null) throw redirect({ to: "/login", search: { redirect: href } });
-  if (!onboarded) throw redirect({ to: "/onboarding" });
+  // Workspace selection is held in a signed server cookie, not the auth user ID cache.
+  const { onboarded, needsBilling } = await getCreatorEntryState();
+  if (needsBilling && pathname !== "/settings")
+    throw redirect({ to: "/settings", search: { section: "plan" } });
+  if (!onboarded && pathname !== "/settings") throw redirect({ to: "/onboarding" });
   return { userId };
 }
 

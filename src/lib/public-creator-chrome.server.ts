@@ -3,12 +3,14 @@ import { getRequestHost } from "@tanstack/react-start/server";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { hostnameFromRequestHost } from "./custom-domain";
 import { publicProfilePath } from "./application-urls";
-import { normalizePlan, planHasEntitlement } from "./plans";
+import { planHasEntitlement } from "./plans";
+import { getPlan, isSelfHostedEdition } from "./plan.server";
 import { safeNavigationHref } from "./safe-url";
 import type { PageSystem } from "./pages.functions";
+import { billingAllows } from "./billing-lifecycle";
 
 const publicCreatorColumns =
-  "id, username, display_name, bio, avatar_url, cover_url, theme, accent_color, primary_font, secondary_font, header_mode, pattern, pattern_settings, is_pro, onboarded, noindex, plan_id, badge_hidden, calendar_page_enabled, calendar_page_name, social_insights_enabled, store_page_enabled, meta_title, meta_description, updated_at";
+  "id, username, display_name, bio, avatar_url, cover_url, theme, accent_color, primary_font, secondary_font, header_mode, pattern, pattern_settings, is_pro, onboarded, noindex, plan_id, billing_catalog, billing_lifecycle, trial_ends_at, page_published, badge_hidden, calendar_page_enabled, calendar_page_name, social_insights_enabled, store_page_enabled, meta_title, meta_description, updated_at";
 
 export const loadPublicCreatorChrome = createServerOnlyFn(
   async (
@@ -41,8 +43,21 @@ export const loadPublicCreatorChrome = createServerOnlyFn(
       throw new Error("Unable to load public creator");
     }
     if (!profileResult.data) return null;
-    const creator = profileResult.data;
-    const plan = normalizePlan(creator.plan_id, Boolean(creator.is_pro));
+    const { billing_catalog, billing_lifecycle, trial_ends_at, page_published, ...creator } =
+      profileResult.data;
+    if (page_published === false) return null;
+    const plan = await getPlan(userId, "public");
+    if (!isSelfHostedEdition() && plan === "free" && !billingAllows(billing_lifecycle, "public"))
+      return null;
+    if (
+      !isSelfHostedEdition() &&
+      billing_catalog === "2026-10" &&
+      (plan === "free" || !creator.onboarded)
+    )
+      return null;
+    // Downstream public renderers must use the same verified effective plan.
+    creator.plan_id = plan;
+    creator.is_pro = plan !== "free";
     const available: Record<PageSystem, boolean> = {
       calendar:
         Boolean(creator.calendar_page_enabled) && planHasEntitlement(plan, "calendarBookings"),

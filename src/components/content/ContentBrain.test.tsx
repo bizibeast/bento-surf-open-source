@@ -36,6 +36,25 @@ const handlers = () => ({
 });
 
 describe("ContentBrain", () => {
+  it("shows a story's point instead of Markdown heading syntax in the index", () => {
+    render(
+      <ContentBrain
+        profile={profile}
+        items={[
+          {
+            ...suggestedStory,
+            content: "### Point\nA lesson from startup failure.\n### Hook\nThe first launch.",
+          },
+        ]}
+        sources={[]}
+        {...handlers()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Stories" }));
+    expect(screen.getByText(/A lesson from startup failure/)).toBeVisible();
+    expect(screen.queryByText(/### Point/)).not.toBeInTheDocument();
+  });
+
   it("uploads every selected photo instead of dropping all but the first", async () => {
     const actions = handlers();
     render(<ContentBrain profile={profile} items={[]} sources={[]} {...actions} />);
@@ -118,7 +137,7 @@ describe("ContentBrain", () => {
     );
   });
 
-  it("automatically creates editable X and LinkedIn strategy documents", () => {
+  it("automatically creates editable X and LinkedIn strategy documents", async () => {
     const actions = handlers();
     render(<ContentBrain profile={profile} items={[]} sources={[]} {...actions} />);
     fireEvent.click(screen.getByRole("button", { name: "Strategy" }));
@@ -126,15 +145,16 @@ describe("ContentBrain", () => {
     expect(
       screen.getByRole("heading", { name: "Creator Content Strategy - One-Pager" }),
     ).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Edit X Strategy" }));
-    expect(
-      (screen.getByRole("textbox", { name: "X Strategy" }) as HTMLTextAreaElement).value,
-    ).toContain("## Posting Rhythm");
+    expect(screen.getByRole("textbox", { name: "X Strategy" })).toHaveTextContent("Posting Rhythm");
     fireEvent.click(screen.getByRole("button", { name: "LinkedIn strategy" }));
-    fireEvent.click(screen.getByRole("button", { name: "Edit LinkedIn Strategy" }));
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(actions.onSaveItem).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: "strategy", title: "LinkedIn Strategy" }),
+    const editor = screen.getByRole("textbox", { name: "LinkedIn Strategy" });
+    editor.innerHTML = "<p>My LinkedIn strategy</p>";
+    fireEvent.input(editor);
+    fireEvent.blur(editor);
+    await waitFor(() =>
+      expect(actions.onSaveItem).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "strategy", title: "LinkedIn Strategy" }),
+      ),
     );
   });
 

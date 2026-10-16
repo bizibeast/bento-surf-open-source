@@ -1,3 +1,4 @@
+import { reserveXRead, xBackgroundReadsEnabled } from "./provider-budget.server";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Provider payloads are normalized here. */
 import { readResponseText } from "./request-security.server";
 import { socialApiErrorMessage, socialApiPayloadHasError } from "./social-provider-response";
@@ -204,6 +205,7 @@ async function providerJson(
   token: string,
   options: { method?: "GET" | "POST"; body?: unknown; headers?: Record<string, string> } = {},
 ) {
+  await reserveXRead(url);
   const response = await fetch(url, {
     method: options.method || "GET",
     headers: {
@@ -549,6 +551,16 @@ async function fetchTwitter(
   token: string,
   state: CursorState,
 ): Promise<ProviderPage> {
+  if (!xBackgroundReadsEnabled()) return { items: [], nextState: null };
+  // X bills post reads by returned post. Preserve the newest indexed ID across
+  // pages so routine refreshes fetch new posts instead of rereading the archive.
+  const sinceId =
+    typeof state.sinceId === "string"
+      ? state.sinceId
+      : typeof connection.latestIndexedPostId === "string"
+        ? connection.latestIndexedPostId
+        : "";
+  const pageNumber = typeof state.pageNumber === "number" ? state.pageNumber : 0;
   const url = new URL(
     `https://api.x.com/2/users/${encodeURIComponent(connection.provider_user_id)}/tweets`,
   );
@@ -557,21 +569,11 @@ async function fetchTwitter(
   url.searchParams.set("tweet.fields", "created_at,public_metrics,attachments");
   url.searchParams.set("expansions", "attachments.media_keys");
   url.searchParams.set("media.fields", "media_key,type,url,preview_image_url,variants");
+  if (/^\d{1,30}$/.test(sinceId)) url.searchParams.set("since_id", sinceId);
   if (typeof state.paginationToken === "string")
     url.searchParams.set("pagination_token", state.paginationToken);
   const payload = await providerJson(url, token);
   const source = Array.isArray(payload.data) ? payload.data.slice(0, 25) : [];
-  const organicById = new Map<string, any>();
-  const ids = source.flatMap((item: any) => (item.id ? [String(item.id)] : []));
-  if (ids.length) {
-    const organicUrl = new URL("https://api.x.com/2/tweets");
-    organicUrl.searchParams.set("ids", ids.join(","));
-    organicUrl.searchParams.set("tweet.fields", "organic_metrics");
-    const organicPayload = await providerJson(organicUrl, token).catch(() => null);
-    for (const item of Array.isArray(organicPayload?.data) ? organicPayload.data : []) {
-      if (item.id && item.organic_metrics) organicById.set(String(item.id), item.organic_metrics);
-    }
-  }
   const media = new Map<string, any>(
     (Array.isArray(payload.includes?.media) ? payload.includes.media : []).map((item: any) => [
       item.media_key,
@@ -580,7 +582,7 @@ async function fetchTwitter(
   );
   const items = source.flatMap((item: any): ProviderContentInsight[] => {
     if (!item.id || !Number.isFinite(Date.parse(item.created_at || ""))) return [];
-    const metrics = { ...(item.public_metrics || {}), ...(organicById.get(String(item.id)) || {}) };
+    const metrics = item.public_metrics || {};
     const likes = count(metrics.like_count);
     const comments = count(metrics.reply_count);
     const shares = sum(count(metrics.retweet_count), count(metrics.quote_count));
@@ -629,7 +631,15 @@ async function fetchTwitter(
     ];
   });
   const next = typeof payload.meta?.next_token === "string" ? payload.meta.next_token : null;
-  return { items, nextState: next ? { paginationToken: next } : null };
+  // A bounded first import protects a new workspace with a very large archive.
+  // The daily refresh uses since_id and the same cap to bound worst-case spend.
+  return {
+    items,
+    nextState:
+      next && pageNumber < 3
+        ? { paginationToken: next, sinceId, pageNumber: pageNumber + 1 }
+        : null,
+  };
 }
 
 async function fetchLinkedIn(
@@ -870,6 +880,9 @@ export async function fetchSocialContentInsightsPage(
 ): Promise<SocialContentInsightsPage> {
   const provider = connection.provider as SocialProvider;
   const state = decodeCursor(provider, cursor);
+  const completedPages = Number.isSafeInteger(state.budgetPage) ? Number(state.budgetPage) : 0;
+  const pageLimit = connection.initialImportComplete ? 1 : 5;
+  if (completedPages >= pageLimit) return { content: [], nextCursor: null };
   let page: ProviderPage = { items: [], nextState: null };
   if (provider === "instagram") page = await fetchInstagram(connection, token, state);
   else if (provider === "facebook") page = await fetchFacebook(connection, token, state);
@@ -887,7 +900,12 @@ export async function fetchSocialContentInsightsPage(
       provider,
       fetchedAt,
     })),
-    nextCursor: encodeCursor(provider, page.nextState),
+    nextCursor: encodeCursor(
+      provider,
+      page.nextState && completedPages + 1 < pageLimit
+        ? { ...page.nextState, budgetPage: completedPages + 1 }
+        : null,
+    ),
   };
 }
 

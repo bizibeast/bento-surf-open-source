@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { routeCanonicalHostname } from "./hostname-routing.server";
+import { routeCanonicalHostname, trailingSlashRedirect } from "./hostname-routing.server";
 
 const production = {
   VITE_APP_URL: "https://app.bento.surf",
@@ -10,6 +10,34 @@ function destination(url: string) {
   const response = routeCanonicalHostname(new Request(url), production);
   return response ? { status: response.status, location: response.headers.get("location") } : null;
 }
+
+describe("trailing slash redirects", () => {
+  it("permanently strips a trailing slash and keeps the query", () => {
+    const response = trailingSlashRedirect(new Request("https://bento.surf/blog/?utm=1"));
+    expect(response?.status).toBe(308);
+    expect(response?.headers.get("location")).toBe("https://bento.surf/blog?utm=1");
+    expect(trailingSlashRedirect(new Request("https://creator.example/store/"))?.status).toBe(308);
+    expect(trailingSlashRedirect(new Request("https://bento.surf/"))).toBeNull();
+    expect(
+      trailingSlashRedirect(new Request("https://bento.surf/blog/", { method: "POST" })),
+    ).toBeNull();
+  });
+
+  it.each([
+    "https://bento.surf/api/health/",
+    "https://bento.surf/_server/foo/",
+    "https://bento.surf/.well-known/acme/",
+    "https://app.bento.surf/settings/",
+  ])("leaves %s alone", (url) => {
+    expect(trailingSlashRedirect(new Request(url), production)).toBeNull();
+  });
+
+  it("keeps a protocol-relative path on the request host", () => {
+    const response = trailingSlashRedirect(new Request("https://creator.example//example.com/"));
+    expect(response?.status).toBe(308);
+    expect(new URL(response?.headers.get("location") || "").hostname).toBe("creator.example");
+  });
+});
 
 describe("canonical hostname routing", () => {
   it("leaves same-origin routes to the application router", () => {
@@ -28,6 +56,30 @@ describe("canonical hostname routing", () => {
     expect(destination("http://bento.surf/")).toEqual({
       status: 308,
       location: "https://bento.surf/",
+    });
+    expect(destination("http://bento.surf/blog/")).toEqual({
+      status: 308,
+      location: "https://bento.surf/blog",
+    });
+    expect(destination("https://www.bento.surf/blog/?utm=1")).toEqual({
+      status: 308,
+      location: "https://bento.surf/blog?utm=1",
+    });
+    expect(destination("http://www.bento.surf/pricing/")).toEqual({
+      status: 308,
+      location: "https://bento.surf/pricing",
+    });
+    expect(destination("http://bento.surf/api/health/")).toEqual({
+      status: 308,
+      location: "https://bento.surf/api/health/",
+    });
+    expect(destination("https://www.bento.surf//example.com/")).toEqual({
+      status: 308,
+      location: "https://bento.surf//example.com",
+    });
+    expect(destination("https://www.bento.surf/\\example.com")).toEqual({
+      status: 308,
+      location: "https://bento.surf//example.com",
     });
     expect(destination("http://bento.surf/settings?section=plan")).toEqual({
       status: 308,
@@ -95,7 +147,7 @@ describe("canonical hostname routing", () => {
     expect(destination("https://bento.surf/sitemaps/profiles-0001.xml")).toBeNull();
   });
 
-  it("keeps public products canonical while sending purchase success to the app", () => {
+  it("keeps products and purchase success on the public origin", () => {
     expect(destination("https://bento.surf/p/creator-launch-kit")).toBeNull();
     expect(destination("https://app.bento.surf/p/creator-launch-kit")).toEqual({
       status: 308,
@@ -110,11 +162,17 @@ describe("canonical hostname routing", () => {
       status: 308,
       location: "https://bento.surf/@creator/products/launch-kit",
     });
-    expect(destination("https://bento.surf/@creator/products/launch-kit/success?order=1")).toEqual({
+    expect(
+      destination("https://bento.surf/@creator/products/launch-kit/success?order=1"),
+    ).toBeNull();
+    expect(destination("https://app.bento.surf/@creator/products/launch-kit/success")).toEqual({
       status: 308,
-      location: "https://app.bento.surf/@creator/products/launch-kit/success?order=1",
+      location: "https://bento.surf/@creator/products/launch-kit/success",
     });
-    expect(destination("https://app.bento.surf/@creator/products/launch-kit/success")).toBeNull();
+    expect(destination("https://bento.surf/products/launch-kit")).toEqual({
+      status: 308,
+      location: "https://bento.surf/p/launch-kit",
+    });
   });
 
   it("permanently preserves legacy creator links", () => {

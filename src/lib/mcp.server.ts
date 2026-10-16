@@ -1414,7 +1414,7 @@ export function createBentoMcpServer(
     "get_content_discover",
     {
       title: "Get Content Discover",
-      description: "Load personalized Discover recommendations and preferences.",
+      description: "Load personalized Discover recommendations, tracked creators, and preferences.",
       inputSchema: z.object({ creatorId: z.uuid().optional() }),
       annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     },
@@ -1428,7 +1428,8 @@ export function createBentoMcpServer(
     "manage_content_discover",
     {
       title: "Manage Content Discover",
-      description: "Refresh recommendations, set feedback or bookmarks, and edit preferences.",
+      description:
+        "Refresh recommendations, set feedback or bookmarks, edit preferences, or track and untrack creators.",
       inputSchema: discoverMutationSchema,
       annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
     },

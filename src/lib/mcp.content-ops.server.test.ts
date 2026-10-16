@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   from: vi.fn(),
   rpc: vi.fn(),
   requireContentWorkspace: vi.fn(),
+  listContentAgentThreadsForWorkspace: vi.fn(),
 }));
 
 vi.mock("@/integrations/supabase/client.server", () => ({
@@ -12,8 +13,12 @@ vi.mock("@/integrations/supabase/client.server", () => ({
 vi.mock("./content-access.server", () => ({
   requireContentWorkspace: mocks.requireContentWorkspace,
 }));
+vi.mock("./content-agent-identity.server", () => ({
+  listContentAgentThreadsForWorkspace: mocks.listContentAgentThreadsForWorkspace,
+}));
 
 import {
+  getMcpContentAgent,
   manageMcpContentBrain,
   manageMcpContentMedia,
   manageMcpContentRoutine,
@@ -43,6 +48,18 @@ describe("Content MCP ownership", () => {
     mocks.from.mockReset();
     mocks.rpc.mockReset();
     mocks.requireContentWorkspace.mockReset();
+    mocks.listContentAgentThreadsForWorkspace.mockReset();
+  });
+
+  it("lists bounded owned Agent chats with pin and unread state", async () => {
+    const agent = { id: "agent-id", kind: "agent", pinned_at: null, unread_count: 1 };
+    const chat = { id: itemId, kind: "chat", pinned_at: "2026-10-15T00:00:00Z", unread_count: 2 };
+    mocks.listContentAgentThreadsForWorkspace.mockResolvedValue({ agent, chats: [chat] });
+
+    await expect(getMcpContentAgent(userId)).resolves.toEqual({ threads: [agent, chat] });
+    expect(mocks.requireContentWorkspace).toHaveBeenCalledWith(userId);
+    expect(mocks.listContentAgentThreadsForWorkspace).toHaveBeenCalledWith(userId, { limit: 49 });
+    expect(mocks.from).not.toHaveBeenCalled();
   });
 
   it("rejects edits to another creator's Brain item", async () => {

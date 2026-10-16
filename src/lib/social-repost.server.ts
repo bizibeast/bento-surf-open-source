@@ -1,3 +1,4 @@
+import { reserveProviderUsage } from "./provider-budget.server";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Repost table lands with the paired migration. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { getPlan } from "./plan.server";
@@ -67,6 +68,7 @@ export async function createNativeRepost(
 ) {
   const token = accessToken ?? (await accessTokenForConnection(connection));
   if (provider === "twitter") {
+    await reserveProviderUsage("x_write_actions", 1, { workspaceId: connection.user_id });
     const { data } = await providerJson(
       `https://api.x.com/2/users/${encodeURIComponent(connection.provider_user_id)}/retweets`,
       {

@@ -1,3 +1,4 @@
+import { planHasEntitlement } from "./plans";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { InstagramWebhookEvent } from "./instagram-auto-dm";
 
@@ -65,6 +66,8 @@ vi.mock("@/integrations/supabase/client.server", () => ({
 
 vi.mock("./plan.server", () => ({
   getPlan: mocks.getPlan,
+  hasPlanEntitlement: async (id: string, key: Parameters<typeof planHasEntitlement>[1]) =>
+    planHasEntitlement(await mocks.getPlan(id), key, "legacy"),
 }));
 
 vi.mock("./secret-crypto.server", () => ({

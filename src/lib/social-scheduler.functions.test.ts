@@ -14,13 +14,15 @@ describe("shared social scheduler domain helper", () => {
     expect(helper).toContain("socialPostInputSchema.parse(input)");
     expect(helper).toContain('.eq("user_id", userId)');
     expect(helper).toContain("validatePostForProviders(");
-    expect(helper).toContain('db.rpc("save_social_post_atomic"');
+    expect(helper).toContain(
+      'agentGuard ? "save_agent_social_post_atomic" : "save_social_post_atomic"',
+    );
     expect(helper).toContain("if (data.publishNow && !data.asDraft)");
     expect(helper).toContain("p_as_draft: Boolean(data.asDraft)");
   });
 
   it("uses the shared helper for approved Agent scheduling and never requests publish-now", () => {
-    expect(agentActionsSource).toContain("saveSocialPostForUser(userId");
+    expect(agentActionsSource).toMatch(/saveSocialPostForUser\(\s*userId/);
     expect(agentActionsSource).toContain("publishNow: false");
     expect(agentActionsSource).toContain("asDraft: false");
   });

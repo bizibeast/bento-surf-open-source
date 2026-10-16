@@ -83,16 +83,19 @@ export const requireSupabaseAuth = createMiddleware({ type: "function" }).server
       throw error;
     }
 
-    return next({
-      context: {
-        supabase,
-        userId: workspaceSession.workspaceId,
-        workspaceId: workspaceSession.workspaceId,
-        authUserId: data.claims.sub,
-        workspaceSession,
-        claims: data.claims,
-        accessToken: token,
-      },
-    });
+    const { withProviderBudgetWorkspace } = await import("@/lib/provider-budget.server");
+    return withProviderBudgetWorkspace(workspaceSession.workspaceId, () =>
+      next({
+        context: {
+          supabase,
+          userId: workspaceSession.workspaceId,
+          workspaceId: workspaceSession.workspaceId,
+          authUserId: data.claims.sub,
+          workspaceSession,
+          claims: data.claims,
+          accessToken: token,
+        },
+      }),
+    );
   },
 );

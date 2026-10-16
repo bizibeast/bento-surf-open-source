@@ -250,6 +250,29 @@ describe("WebMCP read result projection", () => {
     );
   });
 
+  it("shows bounded Agent chat pin and unread state without internal thread data", () => {
+    const result = sanitizeBentoWebMcpReadResult("get_content_agent", {
+      threads: Array.from({ length: 60 }, (_, index) => ({
+        id: `thread-${index}`,
+        title: `Chat ${index}`,
+        kind: "chat",
+        pinned_at: index === 0 ? "2026-10-15T00:00:00Z" : null,
+        unread_count: index,
+        last_message_at: "2026-10-15T00:00:00Z",
+        created_at: "2026-10-14T00:00:00Z",
+        user_id: "private-owner-id",
+      })),
+    }) as { threads: unknown[] };
+    expect(result.threads).toHaveLength(50);
+    expect(result.threads[0]).toMatchObject({
+      id: "thread-0",
+      kind: "chat",
+      pinned_at: "2026-10-15T00:00:00Z",
+      unread_count: 0,
+    });
+    expect(JSON.stringify(result)).not.toContain("private-owner-id");
+  });
+
   it("projects Brain, Media, Routines, and Discover without private connection details", () => {
     const brain = sanitizeBentoWebMcpReadResult("get_content_brain", {
       profile: { goal: "reach_growth", nicheKeywords: ["design"], privateField: "secret" },

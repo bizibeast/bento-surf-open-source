@@ -3,6 +3,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   calls: [] as Array<{ method: string; args: unknown[] }>,
   access: vi.fn(),
+  legacy: false,
 }));
 
 function query() {
@@ -18,7 +19,12 @@ function query() {
   value.maybeSingle = vi.fn(async () => ({
     data: {
       id: "routine",
-      schedule: { intervalMinutes: 1440, time: "09:00" },
+      schedule: {
+        intervalMinutes: 1440,
+        time: "09:00",
+        ...(mocks.legacy ? { outputMode: "schedule" } : {}),
+      },
+      platforms: mocks.legacy ? ["youtube"] : ["linkedin"],
       timezone: "Asia/Kolkata",
     },
     error: null,
@@ -56,6 +62,7 @@ import {
 
 beforeEach(() => {
   mocks.calls.length = 0;
+  mocks.legacy = false;
   mocks.access.mockReset().mockResolvedValue("creator");
 });
 
@@ -116,4 +123,26 @@ it("stores independent custom routines and rejects unsupported cadence", async (
     next_run_at: null,
   });
   expect(() => saveContentRoutine({ data: { ...value, intervalMinutes: 15 } })).toThrow();
+});
+
+it("requires corrected settings before resuming a legacy routine", async () => {
+  mocks.legacy = true;
+  await expect(
+    setContentRoutinePaused({
+      data: { id: "11111111-1111-4111-8111-111111111111", paused: false },
+    }),
+  ).rejects.toThrow(/review/i);
+  expect(mocks.calls.some((call) => call.method === "update")).toBe(false);
+});
+it("rejects new automatic video and schedule settings on the server", () => {
+  const data = {
+    template: "fill_schedule",
+    enabled: true,
+    intervalMinutes: 1440,
+    time: "09:00",
+    timezone: "UTC",
+    platforms: ["linkedin"],
+  };
+  expect(() => saveContentRoutine({ data: { ...data, platforms: ["youtube"] } })).toThrow();
+  expect(() => saveContentRoutine({ data: { ...data, outputMode: "schedule" } })).toThrow();
 });

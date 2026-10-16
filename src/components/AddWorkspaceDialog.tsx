@@ -43,7 +43,8 @@ export function AddWorkspaceDialog({
         <DialogHeader>
           <DialogTitle>Add another profile</DialogTitle>
           <DialogDescription>
-            This creates a separate Bento workspace with its own subscription and data.
+            Prepare a separate Bento workspace with its own data. Review your page and Brain before
+            choosing its paid plan.
           </DialogDescription>
         </DialogHeader>
         <form className="space-y-4" onSubmit={submit}>
@@ -79,7 +80,7 @@ export function AddWorkspaceDialog({
             disabled={submitting}
             className="h-10 w-full rounded-lg bg-[#17213a] px-4 text-sm font-medium text-white disabled:opacity-60"
           >
-            {submitting ? "Opening checkout…" : "Continue to payment"}
+            {submitting ? "Opening setup…" : "Set up my workspace"}
           </button>
         </form>
       </DialogContent>

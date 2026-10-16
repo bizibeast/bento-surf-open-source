@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   calls: [] as Array<{ table: string; method: string; args: unknown[] }>,
   requireContentWorkspace: vi.fn(),
   requestIndex: vi.fn(),
+  indexJob: null as Record<string, unknown> | null,
 }));
 
 function resultFor(table: string) {
@@ -20,7 +21,7 @@ function resultFor(table: string) {
       error: null,
     };
   }
-  if (table === "creator_content_index_jobs") return { data: null, error: null };
+  if (table === "creator_content_index_jobs") return { data: mocks.indexJob, error: null };
   if (table === "creator_content_media") return { data: [], error: null };
   if (table === "creator_media_folders") return { data: [], error: null };
   if (table === "social_content_insights") return { data: [], error: null };
@@ -130,16 +131,39 @@ import {
   deleteBrainItem,
   getContentBrain,
   getContentBrainMedia,
+  recordContentBrainVisit,
   saveContentProfile,
   setBrainItemLocked,
 } from "./content-brain.functions";
 
 beforeEach(() => {
   mocks.calls.length = 0;
+  mocks.indexJob = null;
   mocks.requireContentWorkspace.mockReset().mockResolvedValue("creator");
 });
 
 describe("content Brain server functions", () => {
+  it("records a daily Brain visit without copying private Brain content", async () => {
+    await recordContentBrainVisit();
+    const visit = mocks.calls.find(
+      (call) => call.table === "founder_brain_daily_usage" && call.method === "upsert",
+    );
+    expect(visit?.args[0]).toMatchObject({ user_id: "owner", day: expect.any(String) });
+    expect(JSON.stringify(visit?.args[0])).not.toContain("content");
+  });
+  it("reports an expired indexing lease as interrupted, while preserving a live lease", async () => {
+    mocks.indexJob = {
+      status: "running",
+      lease_expires_at: new Date(Date.now() - 1000).toISOString(),
+    };
+    expect((await getContentBrain()).indexing).toMatchObject({
+      status: "error",
+      error: expect.stringContaining("interrupted"),
+    });
+    mocks.indexJob.lease_expires_at = new Date(Date.now() + 60000).toISOString();
+    expect((await getContentBrain()).indexing?.status).toBe("running");
+  });
+
   it("loads only safe creator-owned Brain and connection summaries", async () => {
     const result = await getContentBrain();
     expect(mocks.requireContentWorkspace).toHaveBeenCalledWith("owner");

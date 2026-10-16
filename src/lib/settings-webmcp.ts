@@ -2,7 +2,6 @@ import { z } from "zod";
 import { supabase } from "@/integrations/supabase/client";
 import { deleteMyAccount } from "@/lib/account.functions";
 import {
-  acceptMyRetentionOffer,
   cancelMyPlanChange,
   cancelMyRenewal,
   changeMyPlan,
@@ -11,6 +10,15 @@ import {
   getMyBillingOverview,
   resumeMyRenewal,
 } from "@/lib/billing.functions";
+import {
+  acceptMyRetentionDiscount,
+  extendMyTrial,
+  getMyCancellationImpact,
+  pauseMySubscription,
+  resumeMyPausedSubscription,
+  startMyCancellation,
+} from "@/lib/cancellation.functions";
+import { cancellationReasonSchema as currentCancellationReasonSchema } from "@/lib/cancellation-policy";
 import {
   beginFathomConnection,
   beginGoogleCalendarConnection,
@@ -92,6 +100,7 @@ export type SettingsWebMcpOptions = {
   refresh: () => Promise<void>;
   navigate?: (destination: string, mode: NavigationMode) => void;
   openPaymentSetup?: (provider: Exclude<CreatorPaymentProvider, "polar">) => void | Promise<void>;
+  openCancellationFlow?: () => void | Promise<void>;
 };
 
 const objectSchema = (
@@ -209,10 +218,34 @@ const billingInputSchema = z.discriminatedUnion("action", [
     .strict(),
   z.object({ action: z.literal("change_plan"), plan: z.enum(["store", "creator"]) }).strict(),
   z.object({ action: z.literal("cancel_plan_change") }).strict(),
+  z.object({ action: z.literal("review_cancellation") }).strict(),
   z.object({ action: z.literal("cancel_renewal"), ...cancellationFields }).strict(),
-  z.object({ action: z.literal("accept_retention_offer"), ...cancellationFields }).strict(),
   z.object({ action: z.literal("resume_renewal") }).strict(),
+  z.object({ action: z.literal("resume_paused") }).strict(),
   z.object({ action: z.literal("open_billing_portal") }).strict(),
+]);
+
+const retentionInputSchema = z.discriminatedUnion("action", [
+  z
+    .object({
+      action: z.literal("start"),
+      reason: currentCancellationReasonSchema.nullable(),
+      details: z.string().trim().max(500).optional(),
+      switchDestination: z.string().trim().max(80).optional(),
+      switchWhy: z.string().trim().max(120).optional(),
+    })
+    .strict(),
+  z.object({ action: z.literal("accept_trial_extension"), intentId: z.string().uuid() }).strict(),
+  z
+    .object({
+      action: z.literal("accept_pause"),
+      intentId: z.string().uuid(),
+      days: z.union([z.literal(30), z.literal(60), z.literal(90)]),
+    })
+    .strict(),
+  z.object({ action: z.literal("accept_downgrade"), intentId: z.string().uuid() }).strict(),
+  z.object({ action: z.literal("accept_discount"), intentId: z.string().uuid() }).strict(),
+  z.object({ action: z.literal("confirm_cancellation"), intentId: z.string().uuid() }).strict(),
 ]);
 
 const securityInputSchema = z.discriminatedUnion("action", [
@@ -309,6 +342,20 @@ function confirmedTool<T extends Record<string, unknown>>({
   };
 }
 
+async function optionalCustomDomain() {
+  try {
+    return await getMyCustomDomain();
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message === "Custom domains are disabled in the test environment."
+    ) {
+      return { disabled: true, cnameTarget: null, domain: null };
+    }
+    throw error;
+  }
+}
+
 async function settingsWorkspace() {
   const [profile, billing, emailPreferences, integrations, payments, customDomain, auth] =
     await Promise.all([
@@ -317,7 +364,7 @@ async function settingsWorkspace() {
       getMyEmailPreferences(),
       getIntegrationOverview(),
       getCreatorPaymentSettings(),
-      getMyCustomDomain(),
+      optionalCustomDomain(),
       supabase.auth.getUser(),
     ]);
   if (auth.error) throw new Error("Your account details could not be loaded.");
@@ -368,13 +415,18 @@ async function settingsWorkspace() {
       "currentPeriodEnd",
       "hasSubscription",
       "billingPeriod",
+      "billingCatalog",
       "pendingPlan",
       "pendingPlanEffectiveAt",
       "retentionOfferAvailable",
       "retentionOfferExpiresAt",
+      "pausedUntil",
+      "contactTierContacts",
+      "storageAddonUnits",
       "complimentaryAccessExpiresAt",
     ]),
     customDomain: {
+      disabled: domainRecord.disabled === true,
       cnameTarget: domainRecord.cnameTarget || null,
       domain: Object.keys(domain).length
         ? {
@@ -465,6 +517,7 @@ export function createSettingsWebMcpTools({
   refresh,
   navigate = defaultNavigate,
   openPaymentSetup,
+  openCancellationFlow,
 }: SettingsWebMcpOptions): WebMcpTool[] {
   const accountProperties = {
     action: { type: "string", enum: ["update_profile", "set_timezone", "set_email_preferences"] },
@@ -511,6 +564,125 @@ export function createSettingsWebMcpTools({
         return webMcpResult("Settings workspace loaded.", { workspace });
       },
     },
+    {
+      name: "get_settings_cancellation_impact",
+      title: "Get cancellation impact",
+      description:
+        "Loads bounded counts of the published pages, products, scheduled posts, and active Auto DMs affected by ending this workspace's paid access.",
+      inputSchema: objectSchema(),
+      annotations: { readOnlyHint: true, untrustedContentHint: false },
+      async execute(input, { signal }) {
+        z.object({}).strict().parse(input);
+        signal.throwIfAborted();
+        const impact = await getMyCancellationImpact();
+        signal.throwIfAborted();
+        return webMcpResult("Loaded cancellation impact.", { impact });
+      },
+    },
+    confirmedTool({
+      name: "manage_settings_retention",
+      title: "Manage cancellation and retention",
+      description:
+        "Starts the current reason-specific cancellation flow, accepts only the server-offered one-time response, or confirms cancellation after an intent exists. Each step is separate and browser-approved; starting does not cancel renewal.",
+      inputSchema: {
+        ...objectSchema(
+          {
+            action: {
+              type: "string",
+              enum: [
+                "start",
+                "accept_trial_extension",
+                "accept_pause",
+                "accept_downgrade",
+                "accept_discount",
+                "confirm_cancellation",
+              ],
+            },
+            reason: {
+              type: ["string", "null"],
+              enum: [null, ...currentCancellationReasonSchema.options],
+            },
+            details: { type: "string", maxLength: 500 },
+            switchDestination: { type: "string", maxLength: 80 },
+            switchWhy: { type: "string", maxLength: 120 },
+            intentId: { type: "string", format: "uuid" },
+            days: { type: "integer", enum: [30, 60, 90] },
+          },
+          ["action"],
+        ),
+        oneOf: actionVariants({
+          start: ["reason"],
+          accept_trial_extension: ["intentId"],
+          accept_pause: ["intentId", "days"],
+          accept_downgrade: ["intentId"],
+          accept_discount: ["intentId"],
+          confirm_cancellation: ["intentId"],
+        }),
+      },
+      parse: (input) => retentionInputSchema.parse(input),
+      run: async (input) => {
+        if (input.action === "start") {
+          const intent = await startMyCancellation({
+            data: {
+              reason: input.reason,
+              details: input.details,
+              switchDestination: input.switchDestination,
+              switchWhy: input.switchWhy,
+            },
+          });
+          return {
+            data: {
+              intentId: intent.intentId,
+              firstAttempt: intent.firstAttempt,
+              reason: intent.reason,
+              offerType: intent.offerType,
+              discountPercent: intent.discountPercent,
+              activeIntegrations: intent.activeIntegrations,
+              hasSocial: intent.hasSocial,
+              activeUsage: intent.activeUsage,
+            },
+            message: "Cancellation options prepared. Renewal is still on.",
+          };
+        }
+        if (input.action === "accept_trial_extension") {
+          const result = await extendMyTrial({ data: { intentId: input.intentId } });
+          return { data: { outcome: "trial_extended", trialEndsAt: result.trialEndsAt } };
+        }
+        if (input.action === "accept_pause") {
+          const result = await pauseMySubscription({
+            data: { intentId: input.intentId, days: input.days },
+          });
+          return { data: { outcome: "paused", resumeAt: result.resumeAt } };
+        }
+        if (input.action === "accept_downgrade") {
+          const billing = await getMyBillingOverview();
+          const plan = billing.plan === "creator_plus" ? "creator" : "store";
+          const result = await changeMyPlan({ data: { plan, intentId: input.intentId } });
+          return {
+            data: {
+              outcome: "downgraded",
+              plan,
+              effectiveAt: result.mode === "changed" ? result.billing.pendingPlanEffectiveAt : null,
+            },
+          };
+        }
+        if (input.action === "accept_discount") {
+          const result = await acceptMyRetentionDiscount({ data: { intentId: input.intentId } });
+          return { data: { outcome: "discounted", nextBillingDate: result.nextBillingDate } };
+        }
+        const billing = await cancelMyRenewal({ data: { intentId: input.intentId } });
+        return {
+          data: {
+            outcome: "cancelled",
+            cancelAtPeriodEnd: billing.cancelAtPeriodEnd,
+            accessUntil: billing.currentPeriodEnd,
+          },
+          message: "Renewal cancellation confirmed.",
+        };
+      },
+      refresh,
+      navigate,
+    }),
     confirmedTool({
       name: "update_settings_account",
       title: "Update Settings account preferences",
@@ -718,7 +890,7 @@ export function createSettingsWebMcpTools({
       name: "manage_settings_billing",
       title: "Manage Settings billing",
       description:
-        "Starts checkout, changes or restores a plan, manages renewal and retention, or opens the secure billing portal.",
+        "Starts checkout, changes or restores a plan, opens the current cancellation offer flow, resumes a pause, or opens the secure billing portal. cancel_renewal directly schedules cancellation without reviewing an offer.",
       inputSchema: {
         ...objectSchema(
           {
@@ -728,9 +900,10 @@ export function createSettingsWebMcpTools({
                 "start_checkout",
                 "change_plan",
                 "cancel_plan_change",
+                "review_cancellation",
                 "cancel_renewal",
-                "accept_retention_offer",
                 "resume_renewal",
+                "resume_paused",
                 "open_billing_portal",
               ],
             },
@@ -745,9 +918,10 @@ export function createSettingsWebMcpTools({
           start_checkout: ["plan", "period"],
           change_plan: ["plan"],
           cancel_plan_change: [],
+          review_cancellation: [],
           cancel_renewal: ["reason"],
-          accept_retention_offer: ["reason"],
           resume_renewal: [],
+          resume_paused: [],
           open_billing_portal: [],
         }),
       },
@@ -764,21 +938,23 @@ export function createSettingsWebMcpTools({
           };
         }
         if (input.action === "change_plan") {
-          const result = await changeMyPlan({ data: { plan: input.plan } });
-          return result.mode === "checkout"
-            ? {
-                destination: safeDestination(result.url),
-                message: "Opening secure Bento checkout to finish the plan change.",
-                data: { ok: true, action: input.action, plan: input.plan },
-              }
-            : { data: { ok: true, action: input.action, plan: input.plan } };
+          await changeMyPlan({ data: { plan: input.plan } });
+          return { data: { ok: true, action: input.action, plan: input.plan } };
+        }
+        if (input.action === "review_cancellation") {
+          if (!openCancellationFlow) throw new Error("The cancellation flow is unavailable here.");
+          await openCancellationFlow();
+          return {
+            data: { ok: true, action: input.action },
+            message: "Opened the current cancellation options for review.",
+            refresh: false,
+          };
         }
         if (input.action === "cancel_plan_change") await cancelMyPlanChange();
         else if (input.action === "cancel_renewal") {
           await cancelMyRenewal({ data: { reason: input.reason, details: input.details } });
-        } else if (input.action === "accept_retention_offer") {
-          await acceptMyRetentionOffer({ data: { reason: input.reason, details: input.details } });
         } else if (input.action === "resume_renewal") await resumeMyRenewal();
+        else if (input.action === "resume_paused") await resumeMyPausedSubscription();
         else {
           const result = await createMyBillingPortal();
           return {

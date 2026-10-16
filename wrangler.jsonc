@@ -31,6 +31,12 @@
     "CUSTOM_DOMAINS_ENABLED": "false",
     "PUBLIC_PAGE_CACHE_TTL_SECONDS": "30",
     "EMAIL_DELIVERY_MODE": "disabled",
+    "CONTENT_AGENT_PROACTIVE_ENABLED": "true",
+    "CONTENT_AGENT_PROACTIVE_WORKSPACES": "*",
+    "CONTENT_AGENT_IMAGES_ENABLED": "true",
+    "CONTENT_AGENT_IMAGES_WORKSPACES": "*",
+    "CONTENT_AGENT_REFERENCE_VISION_ENABLED": "false",
+    "X_PAID_READS_ENABLED": "false",
   },
   "triggers": { "crons": ["* * * * *", "0 9 * * *"] },
   "r2_buckets": [{ "binding": "MEDIA_BUCKET", "bucket_name": "bento-media" }],
@@ -84,6 +90,7 @@
       { "binding": "FACEBOOK_DM_QUEUE", "queue": "bento-facebook-dm" },
     ],
     "consumers": [
+      { "queue": "bento-content-media", "max_batch_size": 1, "max_batch_timeout": 2, "max_retries": 3, "max_concurrency": 2, "dead_letter_queue": "bento-content-media-dlq" },
       {
         "queue": "bento-telegram",
         "max_batch_size": 10,
@@ -155,14 +162,6 @@
         "max_retries": 5,
         "max_concurrency": 2,
         "dead_letter_queue": "bento-social-insights-dlq",
-      },
-      {
-        "queue": "bento-content-media",
-        "max_batch_size": 1,
-        "max_batch_timeout": 2,
-        "max_retries": 5,
-        "max_concurrency": 8,
-        "dead_letter_queue": "bento-content-media-dlq",
       },
       {
         "queue": "bento-referral",

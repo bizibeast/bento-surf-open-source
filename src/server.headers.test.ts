@@ -202,10 +202,10 @@ describe("deployment security headers", () => {
 
     for (const directive of [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' https://checkout.razorpay.com https://maps.googleapis.com https://maps.gstatic.com https://static.cloudflareinsights.com https://us-assets.i.posthog.com https://challenges.cloudflare.com https://do.featurebase.app",
+      "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://www.googletagmanager.com https://checkout.razorpay.com https://maps.googleapis.com https://maps.gstatic.com https://static.cloudflareinsights.com https://us-assets.i.posthog.com https://challenges.cloudflare.com https://do.featurebase.app",
       "style-src 'self' 'unsafe-inline' https:",
       "img-src 'self' data: blob: https:",
-      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://us.i.posthog.com https://cloudflareinsights.com https://*.featurebase.app wss://ws.featurebase.app https://api.razorpay.com https://maps.googleapis.com https://maps.gstatic.com",
+      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://www.google-analytics.com https://region1.google-analytics.com https://www.googletagmanager.com https://us.i.posthog.com https://cloudflareinsights.com https://*.featurebase.app wss://ws.featurebase.app https://api.razorpay.com https://maps.googleapis.com https://maps.gstatic.com",
       "object-src 'none'",
       "base-uri 'self'",
       "form-action 'self'",
@@ -426,6 +426,13 @@ describe("deployment health boundary", () => {
       DODO_STORE_YEARLY_PRODUCT_ID: "store-yearly",
       DODO_CREATOR_MONTHLY_PRODUCT_ID: "creator-monthly",
       DODO_CREATOR_YEARLY_PRODUCT_ID: "creator-yearly",
+      DODO_STORE_19_MONTHLY_PRODUCT_ID: "configured-DODO_STORE_19_MONTHLY_PRODUCT_ID",
+      DODO_CREATOR_39_MONTHLY_PRODUCT_ID: "configured-DODO_CREATOR_39_MONTHLY_PRODUCT_ID",
+      DODO_CREATOR_PLUS_MONTHLY_PRODUCT_ID: "configured-DODO_CREATOR_PLUS_MONTHLY_PRODUCT_ID",
+      DODO_STORE_190_YEARLY_PRODUCT_ID: "configured-DODO_STORE_190_YEARLY_PRODUCT_ID",
+      DODO_CREATOR_390_YEARLY_PRODUCT_ID: "configured-DODO_CREATOR_390_YEARLY_PRODUCT_ID",
+      DODO_CREATOR_PLUS_490_YEARLY_PRODUCT_ID: "configured-DODO_CREATOR_PLUS_490_YEARLY_PRODUCT_ID",
+
       ...Object.fromEntries(addonKeys.map((key) => [key, `configured-${key}`])),
     };
     const request = () =>

@@ -20,16 +20,37 @@ afterEach(() => {
 });
 
 describe("Bento email templates", () => {
-  it("builds the default brand asset from the configured instance origin", () => {
-    const email = renderBentoEmail({
-      eventType: "buyer_receipt",
+  it("explains the workspace-specific deletion deadline and links directly to Billing", () => {
+    const rendered = renderBentoEmail({
+      eventType: "workspace_deletion_warning",
       category: "transactional",
-      payload: { productTitle: "Guide" },
-      appUrl: "https://self.example",
+      appUrl: "https://app.bento.surf",
+      payload: { workspaceName: "Ari's studio", deletionDate: "January 5, 2027 at 10:00 UTC" },
+    });
+    expect(rendered.text).toContain("January 5, 2027 at 10:00 UTC");
+    expect(rendered.text).toContain("Other workspaces are kept");
+    expect(rendered.text).toContain("only if no workspaces remain");
+    expect(rendered.text).toContain("/settings?section=plan");
+    expect(rendered.text).toContain("receipt records may be retained");
+  });
+
+  it("renders a bounded automated SEO failure email", () => {
+    const rendered = renderBentoEmail({
+      eventType: "seo_publish_failed",
+      category: "transactional",
+      payload: {
+        publicationDate: "2026-09-27",
+        stage: "image",
+        attempt: 3,
+        summary: "Image provider failed.",
+      },
+      appUrl: "https://app.bento.surf",
     });
 
-    expect(email.html).toContain("https://self.example/branding/bento-logo.png");
-    expect(email.html).not.toContain("https://example.com");
+    expect(rendered.subject).toContain("SEO article failed");
+    expect(rendered.text).toContain("image");
+    expect(rendered.text).toContain("2026-09-27");
+    expect(rendered.html).toContain("/admin?tab=operations");
   });
 
   it("renders a concise content-drafts-ready email without private Brain content", () => {
