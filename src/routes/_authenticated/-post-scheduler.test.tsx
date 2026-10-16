@@ -496,7 +496,7 @@ describe("scheduler compose close protection", () => {
     expect(within(compose).getByRole("textbox")).toHaveValue("");
   });
 
-  it("saves the same native repost and removal timing for selected X and LinkedIn posts", async () => {
+  it("saves independent repost settings in the X and LinkedIn tabs", async () => {
     renderScheduler({
       ...schedulerData,
       connections: [
@@ -528,6 +528,19 @@ describe("scheduler compose close protection", () => {
     });
     fireEvent.click(within(compose).getByRole("checkbox", { name: /Auto-repost on/i }));
     fireEvent.click(within(compose).getByRole("checkbox", { name: "Remove the repost later" }));
+    fireEvent.click(
+      within(compose).getByRole("button", { name: "Edit LinkedIn: LinkedIn account" }),
+    );
+    expect(
+      within(compose).getByRole("checkbox", { name: "Auto-repost on LinkedIn" }),
+    ).not.toBeChecked();
+    expect(
+      within(compose).queryByRole("checkbox", { name: "Auto-repost on X" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(within(compose).getByRole("checkbox", { name: "Auto-repost on LinkedIn" }));
+    fireEvent.change(within(compose).getByLabelText("Repost after (hours)"), {
+      target: { value: "72" },
+    });
     await waitFor(
       () =>
         expect(saveSocialPost).toHaveBeenCalledWith({
@@ -537,7 +550,7 @@ describe("scheduler compose close protection", () => {
                 autoRepost: { afterHours: 24, removeAfterHours: 48 },
               }),
               linkedin: expect.objectContaining({
-                autoRepost: { afterHours: 24, removeAfterHours: 48 },
+                autoRepost: { afterHours: 72, removeAfterHours: null },
               }),
             }),
           }),
@@ -766,7 +779,7 @@ describe("scheduler compose close protection", () => {
     const previewScroll = within(compose).getByTestId("scheduler-preview-scroll");
     for (const [provider, label] of networks) {
       fireEvent.click(
-        within(compose).getByRole("button", { name: `Preview ${label}: ${provider} account` }),
+        within(compose).getByRole("button", { name: `Edit ${label}: ${provider} account` }),
       );
       expect(previewScroll).toHaveClass("overflow-y-auto");
       if (provider === "reddit") expect(previewScroll).toHaveTextContent("Paragraph 30");
@@ -1247,7 +1260,7 @@ describe("scheduler compose close protection", () => {
     );
     expect(
       within(compose).getByRole("checkbox", {
-        name: /Auto DM after this Instagram video goes live/i,
+        name: /Auto DM after this Instagram post goes live/i,
       }),
     ).toBeChecked();
     expect(within(compose).getByRole("combobox", { name: "Trigger" })).toHaveValue("any_comment");
@@ -1502,10 +1515,10 @@ describe("scheduler compose close protection", () => {
     fireEvent.change(document.querySelector('input[type="file"][accept*="video"]')!, {
       target: { files: [new File(["video"], "post.mp4", { type: "video/mp4" })] },
     });
-    await screen.findByRole("checkbox", { name: /Auto DM after this Instagram video goes live/i });
+    await screen.findByRole("checkbox", { name: /Auto DM after this Instagram post goes live/i });
     fireEvent.click(
       within(compose).getByRole("checkbox", {
-        name: /Auto DM after this Instagram video goes live/i,
+        name: /Auto DM after this Instagram post goes live/i,
       }),
     );
     fireEvent.change(within(compose).getByRole("textbox", { name: "Keyword" }), {
@@ -1865,7 +1878,7 @@ it("opens the exact Agent handoff draft outside the first scheduler page without
   }
 });
 
-it("keeps two LinkedIn accounts' text separate while preview selection leaves the editor alone", async () => {
+it("keeps account text separate and automatically previews the active editor", async () => {
   vi.mocked(saveSocialPost).mockClear();
   const connections = ["personal", "company"].map((name) => ({
     ...missingAvatar,
@@ -1893,9 +1906,9 @@ it("keeps two LinkedIn accounts' text separate while preview selection leaves th
   fireEvent.change(within(compose).getByRole("textbox", { name: /Post text/ }), {
     target: { value: "My personal lesson." },
   });
-  fireEvent.click(within(compose).getByRole("button", { name: "Preview LinkedIn: company" }));
+  fireEvent.click(within(compose).getByRole("button", { name: "Edit LinkedIn: company" }));
   expect(within(compose).getByRole("textbox", { name: /Post text/ })).toHaveValue(
-    "My personal lesson.",
+    "The company announcement.",
   );
   expect(within(compose).getByTestId("scheduler-preview-pane")).toHaveTextContent(
     "The company announcement.",
@@ -1943,7 +1956,7 @@ it("keeps community choices per X account while text stays synced and previews f
   fireEvent.change(within(compose).getByRole("textbox", { name: "Post" }), {
     target: { value: "One useful idea" },
   });
-  fireEvent.click(within(compose).getByRole("button", { name: "Preview X: company" }));
+  fireEvent.click(within(compose).getByRole("button", { name: "Edit X: company" }));
   expect(within(compose).getByTestId("scheduler-preview-pane")).toHaveTextContent("Builders");
   fireEvent.click(within(compose).getByRole("button", { name: "Edit X: personal" }));
   expect(within(compose).getByRole("button", { name: "Everyone" })).toHaveAttribute(
@@ -1954,7 +1967,7 @@ it("keeps community choices per X account while text stays synced and previews f
     "aria-checked",
     "true",
   );
-  fireEvent.click(within(compose).getByRole("button", { name: "Preview X: personal" }));
+  fireEvent.click(within(compose).getByRole("button", { name: "Edit X: personal" }));
   expect(within(compose).getByTestId("scheduler-preview-pane")).not.toHaveTextContent("Builders");
   await waitFor(
     () =>
@@ -2041,3 +2054,191 @@ it("opens media sources from Add media before opening a device upload", async ()
   expect(within(picker).getByRole("button", { name: /Stock photos/ })).toBeVisible();
   expect(within(picker).getByRole("button", { name: /Generate with AI/ })).toBeVisible();
 });
+
+function feedbackDraft(
+  connections: SchedulerConnection[],
+  settings: Record<string, Record<string, unknown>> = {},
+): SchedulerPost {
+  return {
+    id: "11111111-1111-4111-8111-111111111190",
+    status: "draft",
+    title: null,
+    body: "Day 1 of building an open source alternative. Follow along as we build.",
+    scheduledAt: null,
+    createdAt: new Date().toISOString(),
+    timezone: "UTC",
+    media: [],
+    targets: connections.map((connection) => ({
+      id: `target-${connection.id}`,
+      connectionId: connection.id,
+      provider: connection.provider,
+      status: "pending",
+      remotePostUrl: null,
+      errorMessage: null,
+      publishedAt: null,
+      providerSettings: settings[connection.provider] || {},
+    })),
+  };
+}
+
+async function openFeedbackDraft() {
+  const drafts = await screen.findByRole("region", { name: "Drafts drop area" });
+  fireEvent.click(within(drafts).getByRole("button", { name: "Edit draft" }));
+  return screen.findByRole("dialog", { name: "Edit post" });
+}
+
+it("allows the saved X/LinkedIn video draft despite a previous Instagram Auto DM and preserves its independent repost settings", async () => {
+  const connections = ["twitter", "linkedin"].map((provider, i) => ({
+    ...missingAvatar,
+    avatarUrl: "https://bento.surf/avatar.png",
+    id: `11111111-1111-4111-8111-11111111119${i + 1}`,
+    provider: provider as "twitter" | "linkedin",
+    displayName: provider,
+  }));
+  const draft = feedbackDraft(connections, {
+    twitter: { autoRepost: { afterHours: 24, removeAfterHours: 48 } },
+    linkedin: { autoRepost: null },
+  });
+  draft.media = [
+    {
+      key: "users/creator/video/day-one.mp4",
+      url: "https://bento.surf/day-one.mp4",
+      name: "day-one.mp4",
+      mimeType: "video/mp4",
+      size: 141220266,
+    },
+  ];
+  const previous = feedbackDraft([missingAvatar], {
+    instagram: {
+      scheduledAutoDm: {
+        triggerType: "any_comment",
+        keyword: "",
+        openingMessage: "Tap Send it",
+        replyMessage: "Here it is",
+      },
+    },
+  });
+  previous.id = "11111111-1111-4111-8111-111111111199";
+  previous.status = "published";
+  const data = { ...schedulerData, connections, posts: [previous, draft] };
+  renderScheduler(data);
+  vi.mocked(saveSocialPost).mockResolvedValue(data as never);
+  const compose = await openFeedbackDraft();
+  expect(within(compose).getByRole("button", { name: "Publish now" })).toBeEnabled();
+  expect(within(compose).getByRole("button", { name: "Schedule" })).toBeEnabled();
+  expect(within(compose).getByRole("checkbox", { name: "Auto-repost on X" })).toBeChecked();
+  fireEvent.click(within(compose).getByRole("button", { name: "Edit LinkedIn: linkedin" }));
+  expect(
+    within(compose).getByRole("checkbox", { name: "Auto-repost on LinkedIn" }),
+  ).not.toBeChecked();
+  expect(
+    within(compose)
+      .getByTestId("scheduler-preview-pane")
+      .querySelector('button[aria-label^="Preview "]'),
+  ).toBeNull();
+  const mediaButton = within(compose).getByRole("button", { name: "Add media" });
+  expect(mediaButton.parentElement).toContainElement(
+    within(compose).getByRole("button", { name: "Rewrite for LinkedIn" }),
+  );
+});
+
+it("shows another network's blocker at the action buttons and opens its editor from the message", async () => {
+  const connections = [
+    {
+      ...missingAvatar,
+      avatarUrl: "https://bento.surf/avatar.png",
+      id: "linkedin",
+      provider: "linkedin" as const,
+      displayName: "Company",
+    },
+    { ...missingAvatar, avatarUrl: "https://bento.surf/avatar.png" },
+  ];
+  renderScheduler({ ...schedulerData, connections, posts: [feedbackDraft(connections)] });
+  const compose = await openFeedbackDraft();
+  const publish = within(compose).getByRole("button", { name: "Publish now" });
+  expect(publish).toBeDisabled();
+  expect(publish).toHaveAttribute(
+    "title",
+    expect.stringContaining("Instagram needs an image or video"),
+  );
+  const feedback = compose.querySelector("#scheduler-posting-feedback") as HTMLElement;
+  fireEvent.click(
+    within(feedback).getByRole("button", { name: /Instagram needs an image or video/ }),
+  );
+  expect(
+    within(compose).getByRole("button", { name: "Edit Instagram: Bizibeast" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  expect(
+    within(compose).getByRole("checkbox", { name: "Auto DM after this Instagram post goes live" }),
+  ).toBeVisible();
+});
+
+it("lets an expired selected account be removed while explaining why it blocks publication", async () => {
+  const connection = {
+    ...missingAvatar,
+    avatarUrl: "https://bento.surf/avatar.png",
+    provider: "linkedin" as const,
+    canPublish: false,
+    publishBlockReason: "Reconnect LinkedIn to publish.",
+  };
+  renderScheduler({
+    ...schedulerData,
+    connections: [connection],
+    posts: [feedbackDraft([connection])],
+  });
+  const compose = await openFeedbackDraft();
+  expect(compose.querySelector("#scheduler-posting-feedback")).toHaveTextContent(
+    "Reconnect LinkedIn to publish.",
+  );
+  const account = within(compose).getByRole("button", { name: "LinkedIn: Bizibeast" });
+  expect(account).toBeEnabled();
+  fireEvent.click(account);
+  expect(compose.querySelector("#scheduler-posting-feedback")).toHaveTextContent(
+    "Select at least one account",
+  );
+});
+
+it("keeps publish now available for a past schedule and retains server rejection feedback", async () => {
+  const connection = {
+    ...missingAvatar,
+    avatarUrl: "https://bento.surf/avatar.png",
+    provider: "linkedin" as const,
+  };
+  renderScheduler({
+    ...schedulerData,
+    connections: [connection],
+    posts: [feedbackDraft([connection])],
+  });
+  const compose = await openFeedbackDraft();
+  fireEvent.change(within(compose).getByLabelText("Publish at"), {
+    target: { value: "2020-01-01T12:00" },
+  });
+  expect(within(compose).getByRole("button", { name: "Schedule" })).toBeDisabled();
+  expect(within(compose).getByRole("button", { name: "Publish now" })).toBeEnabled();
+  expect(compose.querySelector("#scheduler-posting-feedback")).toHaveTextContent(
+    "at least one minute in the future",
+  );
+  vi.mocked(saveSocialPost).mockRejectedValueOnce(
+    new Error("LinkedIn rejected the attachment. Upload a new file."),
+  );
+  fireEvent.click(within(compose).getByRole("button", { name: "Publish now" }));
+  expect(await within(compose).findByRole("alert")).toHaveTextContent(
+    "LinkedIn rejected the attachment. Upload a new file.",
+  );
+});
+
+it.each(["instagram", "twitter", "facebook"] as const)(
+  "offers %s Auto DM settings without navigating away from the draft",
+  async (provider) => {
+    const connection = { ...missingAvatar, avatarUrl: "https://bento.surf/avatar.png", provider };
+    renderScheduler({
+      ...schedulerData,
+      connections: [connection],
+      posts: [feedbackDraft([connection])],
+    });
+    const compose = await openFeedbackDraft();
+    const link = within(compose).getByRole("link", { name: /Manage .* Auto DM/ });
+    expect(link).toHaveAttribute("href", `/auto-dms/${provider}`);
+    expect(link).toHaveAttribute("target", "_blank");
+  },
+);

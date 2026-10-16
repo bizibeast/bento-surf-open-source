@@ -99,7 +99,7 @@ describe("social scheduler validation", () => {
     expect(autoRepostSchema.safeParse({ afterHours: 0, removeAfterHours: 48 }).success).toBe(false);
   });
 
-  it("requires an Instagram video and a complete scheduled auto DM", () => {
+  it("requires Instagram media and a complete scheduled auto DM", () => {
     const input = {
       body: "Watch this",
       scheduledAt: new Date(Date.now() + 3_600_000).toISOString(),
@@ -117,7 +117,9 @@ describe("social scheduler validation", () => {
       },
     };
     expect(socialPostInputSchema.safeParse(input).success).toBe(true);
-    expect(socialPostInputSchema.safeParse({ ...input, media: [image] }).success).toBe(false);
+    expect(socialPostInputSchema.safeParse({ ...input, media: [image] }).success).toBe(true);
+    expect(socialPostInputSchema.safeParse({ ...input, media: [image, image] }).success).toBe(true);
+    expect(socialPostInputSchema.safeParse({ ...input, media: [] }).success).toBe(false);
     expect(
       socialPostInputSchema.safeParse({
         ...input,
