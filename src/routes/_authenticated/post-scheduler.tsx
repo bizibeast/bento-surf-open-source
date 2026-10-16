@@ -726,6 +726,7 @@ function SchedulerPage() {
     linkedin: repostPreferences(null),
   }));
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [autosaveError, setAutosaveError] = useState<string | null>(null);
   const [instagramGraduationStrategy, setInstagramGraduationStrategy] =
     useState<InstagramTrialGraduationStrategy>("MANUAL");
   const [tiktokCoverMs, setTiktokCoverMs] = useState(1_000);
@@ -921,6 +922,7 @@ function SchedulerPage() {
       linkedin: repostPreferences(preferences.linkedin?.autoRepost),
     });
     setSubmitError(null);
+    setAutosaveError(null);
     setInstagramGraduationStrategy(
       instagram.graduationStrategy === "SS_PERFORMANCE" ? "SS_PERFORMANCE" : "MANUAL",
     );
@@ -2004,11 +2006,15 @@ function SchedulerPage() {
           autosavedFingerprintRef.current = persistedFingerprint;
           initialComposeFingerprintRef.current = persistedFingerprint;
           setAutosaveStatus("saved");
+          setAutosaveError(null);
         })
         .catch((error) => {
           failedAutosaveFingerprintRef.current = fingerprint;
           setAutosaveStatus("error");
-          toast.error(error instanceof Error ? error.message : "Could not save draft");
+          const message =
+            error instanceof Error ? error.message : "Could not save draft. Please try again.";
+          setAutosaveError(`Draft not saved: ${message}`);
+          toast.error(message);
         })
         .finally(() => {
           autosaveInFlightRef.current = false;
@@ -4186,15 +4192,20 @@ function SchedulerPage() {
                           </ul>
                         </div>
                       )}
-                      {submitError && (
+                      {(submitError || autosaveError) && (
                         <div
                           role="alert"
                           className="mb-2 flex items-start gap-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800"
                         >
-                          <p className="min-w-0 flex-1 break-words">{submitError}</p>
+                          <p className="min-w-0 flex-1 break-words">
+                            {submitError || autosaveError}
+                          </p>
                           <button
                             type="button"
-                            onClick={() => setSubmitError(null)}
+                            onClick={() => {
+                              setSubmitError(null);
+                              setAutosaveError(null);
+                            }}
                             className="shrink-0 underline"
                           >
                             Dismiss

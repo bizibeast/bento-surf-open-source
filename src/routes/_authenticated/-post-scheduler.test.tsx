@@ -2242,3 +2242,34 @@ it.each(["instagram", "twitter", "facebook"] as const)(
     expect(link).toHaveAttribute("target", "_blank");
   },
 );
+
+it("keeps the autosave failure reason visible until the next successful save", async () => {
+  const connection = {
+    ...missingAvatar,
+    provider: "linkedin" as const,
+    avatarUrl: "https://bento.surf/avatar.png",
+  };
+  const data = {
+    ...schedulerData,
+    connections: [connection],
+    posts: [feedbackDraft([connection])],
+  };
+  renderScheduler(data);
+  vi.mocked(saveSocialPost)
+    .mockRejectedValueOnce(new Error("Reconnect LinkedIn to enable reposts."))
+    .mockResolvedValue({ ...data, savedPostId: data.posts[0].id } as never);
+  const compose = await openFeedbackDraft();
+  fireEvent.change(within(compose).getByRole("textbox", { name: "Post text" }), {
+    target: { value: "My updated draft text." },
+  });
+  expect(await within(compose).findByRole("alert", {}, { timeout: 3000 })).toHaveTextContent(
+    "Draft not saved: Reconnect LinkedIn to enable reposts.",
+  );
+  fireEvent.change(within(compose).getByRole("textbox", { name: "Post text" }), {
+    target: { value: "My corrected draft text." },
+  });
+  await waitFor(() => expect(within(compose).queryByRole("alert")).not.toBeInTheDocument(), {
+    timeout: 3000,
+  });
+  expect(within(compose).getByText("Saved", { exact: true })).toBeVisible();
+});
