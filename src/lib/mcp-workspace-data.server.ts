@@ -139,6 +139,9 @@ export async function readWorkspaceData(context: CreatorMcpContext, input: ReadW
         .filter((key) => key !== "metadata")
         .map((key) => [key, row[key]]),
     );
+    // PostgREST returns bigint history IDs as numbers; all tool IDs are strings.
+    if (row[config.key] !== undefined && row[config.key] !== null)
+      item[config.key] = String(row[config.key]);
     if (data.collection === "discover_items") {
       const metadata = row.metadata as Record<string, unknown> | null;
       item.saved = row.feedback === "saved" || metadata?.saved === true;

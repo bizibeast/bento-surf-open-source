@@ -213,6 +213,15 @@ describe("stored MCP workspace data", () => {
     });
   });
 
+  it("returns history IDs as strings accepted by the detail schema", async () => {
+    rows.social_analytics_history = [
+      { id: 123, user_id: owner, captured_at: "2026-10-16T12:00:00Z" },
+    ];
+    const result = await readWorkspaceData(context, { collection: "social_history" });
+    expect(result.items[0].id).toBe("123");
+    expect(result.nextCursor).toBeNull();
+  });
+
   it("returns older bookmarks and safe inspiration fields without arbitrary provider metadata", async () => {
     rows.creator_content_recommendations = [
       {
