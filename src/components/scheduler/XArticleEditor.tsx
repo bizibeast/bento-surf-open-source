@@ -182,7 +182,7 @@ export function XArticleEditor({
                   onChange={(event) =>
                     update(index, { ...block, type: event.target.value as typeof block.type })
                   }
-                  className="rounded-lg border px-2 py-1 text-xs"
+                  className="scheduler-select rounded-lg border px-2 py-1 text-xs"
                 >
                   <option value="unstyled">Paragraph</option>
                   <option value="header-two">Heading</option>

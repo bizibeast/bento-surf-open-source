@@ -44,7 +44,7 @@ export function XCommunityPicker({
               Recent communities
               <select
                 aria-label="Recent X communities"
-                className={`${micro.input} mt-1 w-full min-w-0`}
+                className={`scheduler-select ${micro.input} mt-1 w-full min-w-0`}
                 value={recent.some((item) => item.id === id) ? id! : ""}
                 onChange={(event) =>
                   onChange(

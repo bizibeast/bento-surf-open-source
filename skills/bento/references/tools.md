@@ -2,7 +2,8 @@
 
 - `get_bento_overview`: profile, plan, feature links, counts, and recent workspace state.
 - `list_social_accounts`: connected publishing/Auto-DM accounts and readiness.
-- `upload_media`: import a public media URL or a small base64 payload into Bento storage.
+- `upload_media`: stream a public media URL into Bento storage, or send inline base64 up to 25 MiB over remote MCP (128 KiB through browser WebMCP). Prefer binary chunks for local files over 8 MB.
+- `begin_media_upload`: check storage/plan and prepare a private two-hour binary upload. The returned HTTP instructions handle parts, completion and cancellation without exposing the account OAuth token.
 - `get_content_brain`, `manage_content_brain`: inspect the Content profile, Brain documents, and index; save the profile and documents, confirm, lock, delete, or refresh indexing.
 - `get_content_media`, `manage_content_media`: list/search Brain Media and its limits; register an uploaded image/video, fetch a connected post, manage folders, move items, and set or clear four hero-image slots. Use `upload_media` first and pass its `key` to `register_upload`.
 - `get_content_routines`, `manage_content_routine`: inspect routine schedules and recent activity; save template/custom routines or pause/resume them.
@@ -41,3 +42,87 @@ Common product settings:
 - `custom_product`: `fulfillmentInstructions` and `buyerQuestions`.
 - `lead_form`: `fields` and `confirmationMessage`.
 - `bento_affiliate`: `targetUrl`.
+
+## One video, one draft, several networks
+
+List accounts first. Replace the example UUIDs with the connected account IDs. Upload
+once and replace the example media object with the actual returned `media`. This is
+**one** `create_social_post` call and creates **one** draft with three targets:
+
+```json
+{
+  "mode": "draft",
+  "body": "A quick look at what we built this week.",
+  "connectionIds": [
+    "00000000-0000-4000-8000-000000000001",
+    "00000000-0000-4000-8000-000000000002",
+    "00000000-0000-4000-8000-000000000003"
+  ],
+  "connectionOverrides": {
+    "00000000-0000-4000-8000-000000000001": {
+      "bodyOverride": "We shipped the first version today. Here's the 30-second walkthrough."
+    },
+    "00000000-0000-4000-8000-000000000002": {
+      "bodyOverride": "From a rough sketch to a working product. A look behind the scenes of our first launch."
+    }
+  },
+  "providerSettings": {
+    "youtube": {
+      "titleOverride": "Building our first version",
+      "description": "A walkthrough of what we shipped and what we learned.",
+      "youtubePrivacy": "public"
+    }
+  },
+  "media": [
+    {
+      "key": "REPLACE_WITH_RETURNED_KEY",
+      "url": "https://app.example.com/cdn/REPLACE_WITH_RETURNED_KEY",
+      "name": "launch.mp4",
+      "mimeType": "video/mp4",
+      "size": 22020096
+    }
+  ],
+  "timezone": "Asia/Kolkata"
+}
+```
+
+Here the first account is X, the second Instagram, and the third YouTube. They must
+be real accounts returned by `list_social_accounts`. Use `connectionOverrides` for
+account-specific captions, not provider names as keys. Use `providerSettings` for
+platform options. For editing, add the existing post `id` and preserve intended
+targets, media and options. `manage_scheduler` changes lifecycle/timing; use
+`create_social_post` to edit captions. Do not create duplicate drafts to tailor text.
+
+## Original video upload protocol
+
+1. Read the file's size locally. Call `begin_media_upload` with `fileName`,
+   `mimeType`, `kind` (`video` for video), and exact `size` in bytes. Current hosted
+   paid plans allow videos up to 250 MiB per file; Free allows 10 MiB. Remaining
+   storage must cover the file. Platform publishing limits are checked separately.
+2. The result contains `uploadUrl`, private `headers.Authorization`, `partSize`
+   (8,388,608 bytes), `partCount`, and `expiresAt` (two hours). Keep the credential
+   out of chat, logs, URLs and committed files. It grants access only to this upload.
+3. Using a local script or file/HTTP tool, read at most `partSize` bytes at a time.
+   `PUT uploadUrl?partNumber=1` with the returned Authorization header,
+   `Content-Type: application/octet-stream`, and the raw binary chunk. Continue
+   with parts 2 through `partCount`. The final part can be shorter. Do not base64
+   encode binary parts. Each response returns `{partNumber, etag}`.
+4. After all parts succeed, `POST uploadUrl` with the same Authorization header,
+   `Content-Type: application/json`, and `{"parts":[{"partNumber":1,"etag":"RETURNED_ETAG"}, ...]}`.
+   This validates all parts and remaining storage, and returns `{media:{key,url,name,mimeType,size}}`.
+   Only this successful completion makes the file ready for a post. Pass `media`
+   directly into the single draft above.
+5. Retry an interrupted part at most twice with the same part number and bytes.
+   Repeating completion returns the existing file without charging storage twice.
+   On cancellation/failure, `DELETE uploadUrl` with the same Authorization header
+   aborts only the unfinished upload. It cannot delete a completed file. Start a
+   new upload if the credential expires; do not repeatedly restart uploads.
+
+`upload_media.sourceUrl` must be a public HTTP(S) media URL, not a local path or a
+chat attachment ID. A valid Content-Length permits streaming within plan limits.
+If the source has no usable size and is over 25 MiB, download it in the client and
+use the binary upload protocol. Inline `base64` is only for small files (25 MiB
+maximum over remote MCP; browser WebMCP accepts only 128 KiB inline). Use
+`begin_media_upload` for larger local files. A client may have a smaller tool-message limit. Never reduce video
+quality merely to fit the inline transport. If the client lacks file/HTTP tools,
+use Bento's attachment picker, then reference the uploaded asset.

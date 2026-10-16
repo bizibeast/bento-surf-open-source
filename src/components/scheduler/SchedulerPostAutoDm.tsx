@@ -46,7 +46,7 @@ export function SchedulerPostAutoDm({
               onChange={(e) =>
                 update({ triggerType: e.target.value as ScheduledPostAutoDmDraft["triggerType"] })
               }
-              className={micro.input}
+              className={`scheduler-select ${micro.input}`}
             >
               {provider === "twitter" ? (
                 <>
@@ -75,7 +75,7 @@ export function SchedulerPostAutoDm({
               </Field>
               <Field label="Match">
                 <select
-                  className={micro.input}
+                  className={`scheduler-select ${micro.input}`}
                   value={value.matchType}
                   onChange={(e) => update({ matchType: e.target.value as "contains" | "exact" })}
                 >

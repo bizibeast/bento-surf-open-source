@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { webMcpUploadInputSchema } from "./webmcp-media";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { defaultBentoMcpOperations } from "./mcp.server";
 import type { CreatorMcpContext } from "./mcp.creator-ops.server";
@@ -28,6 +29,7 @@ export const BENTO_WEBMCP_READ_OPERATIONS = [
 
 export const BENTO_WEBMCP_WRITE_OPERATIONS = [
   "upload_media",
+  "begin_media_upload",
   "create_social_post",
   "save_auto_dm_automation",
   "set_auto_dm_enabled",
@@ -113,19 +115,6 @@ export function parseBentoWebMcpReadInput(
 ): Record<string, unknown> {
   return webMcpReadSchemas[operation].parse(input) as Record<string, unknown>;
 }
-
-const webMcpUploadInputSchema = z
-  .object({
-    sourceUrl: z.string().url().optional(),
-    base64: z.string().optional(),
-    fileName: z.string().min(1).max(255),
-    mimeType: z.string().min(1).max(100),
-    kind: z.enum(["image", "video", "audio", "file"]),
-  })
-  .strict()
-  .refine((value) => Boolean(value.sourceUrl) !== Boolean(value.base64), {
-    message: "Provide exactly one of sourceUrl or base64.",
-  });
 
 const webMcpAutoDmIdentifierSchema = z
   .object({
@@ -1097,6 +1086,15 @@ export const runBentoWebMcpWrite = createServerFn({ method: "POST" })
     };
     const input = data.input;
     switch (data.operation) {
+      case "begin_media_upload": {
+        const { beginMcpMediaUpload, beginMediaUploadSchema } =
+          await import("./mcp-media-upload.server");
+        return beginMcpMediaUpload(
+          context.userId,
+          process.env.VITE_APP_URL || "http://localhost:8080",
+          beginMediaUploadSchema.parse(input),
+        );
+      }
       case "upload_media": {
         const mediaInput = webMcpUploadInputSchema.parse(input);
         return defaultBentoMcpOperations.uploadMedia(

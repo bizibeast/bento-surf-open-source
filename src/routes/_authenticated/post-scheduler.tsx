@@ -139,6 +139,7 @@ import {
   scheduleTimeForDate,
   defaultScheduleTime,
   nextPostingSlot,
+  matchingPostingSlot,
   isSchedulableCalendarDay,
   validatePostForProviders,
   youtubeDetectedFormat,
@@ -1183,7 +1184,9 @@ function SchedulerPage() {
     [data?.connections, selected],
   );
   const activeConnection =
-    selectedConnections.find((connection) => connection.id === editorConnectionId) || null;
+    selectedConnections.find((connection) => connection.id === editorConnectionId) ||
+    selectedConnections[0] ||
+    null;
   const activeProvider = activeConnection?.provider;
   const activeProviders = activeProvider ? [activeProvider] : [];
   const editorBody = activeProvider && !sync ? (bodyOverrides[activeConnection!.id] ?? body) : body;
@@ -3005,16 +3008,6 @@ function SchedulerPage() {
                             className="flex items-center gap-2 overflow-x-auto whitespace-nowrap"
                             aria-label="Selected accounts"
                           >
-                            <button
-                              type="button"
-                              aria-pressed={!activeConnection}
-                              onClick={() => setEditorConnectionId("")}
-                              title="Edit the main text shared by your destinations"
-                              data-hover-guide="Edit the main text shared by your destinations"
-                              className={`shrink-0 rounded-t-lg border-b-2 px-3 py-2 text-xs font-semibold ${!activeConnection ? "border-primary text-primary" : "border-transparent text-muted-foreground"}`}
-                            >
-                              All networks
-                            </button>
                             {selectedConnections.map((connection) => (
                               <SelectedAccountTab
                                 key={connection.id}
@@ -3483,7 +3476,7 @@ function SchedulerPage() {
                                   onChange={(event) =>
                                     setRedditKind(event.target.value as "self" | "link")
                                   }
-                                  className={`mt-2 ${micro.input}`}
+                                  className={`scheduler-select mt-2 ${micro.input}`}
                                 >
                                   <option value="self">Text post</option>
                                   <option value="link">Link post</option>
@@ -3616,7 +3609,7 @@ function SchedulerPage() {
                                       <select
                                         value={youtubePrivacy}
                                         onChange={(event) => setYoutubePrivacy(event.target.value)}
-                                        className={`mt-2 ${micro.input}`}
+                                        className={`scheduler-select mt-2 ${micro.input}`}
                                       >
                                         <option value="private">Private</option>
                                         <option value="unlisted">Unlisted</option>
@@ -3656,7 +3649,7 @@ function SchedulerPage() {
                                                 .value as InstagramTrialGraduationStrategy,
                                             )
                                           }
-                                          className={`mt-2 ${micro.input}`}
+                                          className={`scheduler-select mt-2 ${micro.input}`}
                                         >
                                           <option value="MANUAL">Manual</option>
                                           <option value="SS_PERFORMANCE">
@@ -3747,7 +3740,7 @@ function SchedulerPage() {
                                       <select
                                         value={tiktokPrivacy}
                                         onChange={(event) => setTiktokPrivacy(event.target.value)}
-                                        className={`mt-2 ${micro.input}`}
+                                        className={`scheduler-select mt-2 ${micro.input}`}
                                         disabled={!tiktokCreatorInfo.isSuccess}
                                       >
                                         <option value="">Choose privacy</option>
@@ -3879,7 +3872,7 @@ function SchedulerPage() {
                               <select
                                 value={youtubePrivacy}
                                 onChange={(event) => setYoutubePrivacy(event.target.value)}
-                                className={`mt-2 ${micro.input}`}
+                                className={`scheduler-select mt-2 ${micro.input}`}
                               >
                                 <option value="private">Private</option>
                                 <option value="unlisted">Unlisted</option>
@@ -3925,7 +3918,7 @@ function SchedulerPage() {
                                       onChange={(event) =>
                                         setAutoDmTrigger(event.target.value as typeof autoDmTrigger)
                                       }
-                                      className={`mt-1 ${micro.input}`}
+                                      className={`scheduler-select mt-1 ${micro.input}`}
                                     >
                                       <option value="comment_keyword">
                                         Comment with a keyword
@@ -3954,7 +3947,7 @@ function SchedulerPage() {
                                               event.target.value as typeof autoDmMatchType,
                                             )
                                           }
-                                          className={`mt-1 ${micro.input}`}
+                                          className={`scheduler-select mt-1 ${micro.input}`}
                                         >
                                           <option value="contains">Contains keyword</option>
                                           <option value="exact">Exact comment</option>
@@ -4047,7 +4040,7 @@ function SchedulerPage() {
                                           onChange={(event) =>
                                             setAutoDmFollowChecks(Number(event.target.value))
                                           }
-                                          className={`mt-1 ${micro.input}`}
+                                          className={`scheduler-select mt-1 ${micro.input}`}
                                         >
                                           {[1, 2, 3].map((count) => (
                                             <option key={count} value={count}>
@@ -4065,7 +4058,7 @@ function SchedulerPage() {
                                               event.target.value as typeof autoDmFollowFail,
                                             )
                                           }
-                                          className={`mt-1 ${micro.input}`}
+                                          className={`scheduler-select mt-1 ${micro.input}`}
                                         >
                                           <option value="send_anyway">Send anyway</option>
                                           <option value="withhold">Do not send</option>
@@ -4371,13 +4364,17 @@ function SchedulerPage() {
                             onChange={(event) => setScheduledAt(event.target.value)}
                             className={`${micro.input} h-9 w-full px-2 py-1 text-xs lg:w-[172px]`}
                           />
-                          <div className="flex flex-1 overflow-hidden rounded-lg shadow-sm lg:flex-none">
+                          <div
+                            role="group"
+                            aria-label="Schedule options"
+                            className="scheduler-schedule-actions inline-flex min-w-max flex-1 gap-0 overflow-hidden rounded-xl shadow-sm lg:flex-none"
+                          >
                             <SchedulerActionButton
                               label="Schedule"
                               issues={schedulingBlockers}
                               onAction={() => save.mutate({ publishNow: false })}
                               onOpenConnection={setEditorConnectionId}
-                              className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 bg-[#ff922b] px-3 text-xs font-semibold text-white transition-colors hover:bg-[#f58218]"
+                              className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-none bg-[#ff922b] px-3 text-xs font-semibold text-white transition-colors hover:bg-[#f58218]"
                             >
                               <CalendarClock className="size-4" /> Schedule
                             </SchedulerActionButton>
@@ -4386,7 +4383,7 @@ function SchedulerPage() {
                               issues={postingBlockers}
                               onAction={scheduleAtNextSlot}
                               onOpenConnection={setEditorConnectionId}
-                              className="inline-flex h-9 items-center border-l border-border/50 bg-[#ff922b] px-2 text-white transition-colors hover:bg-[#f58218]"
+                              className="inline-flex size-9 shrink-0 items-center justify-center rounded-none border-l border-white/25 bg-[#ff922b] text-white transition-colors hover:bg-[#f58218]"
                             >
                               <ChevronRight className="size-4" />
                             </SchedulerActionButton>
@@ -4746,11 +4743,16 @@ function SchedulerCalendarView({
   const [cursor, setCursor] = useState(() => new Date());
   const [expandedSlotDays, setExpandedSlotDays] = useState<Set<string>>(() => new Set());
   const dates = socialCalendarDates(cursor, view);
+  const calendarTimeZone = postingSchedule?.timezone || browserTimeZone();
   const postsByDate = new Map<string, SchedulerPost[]>();
+  const postSlots = new Map<string, { date: string; time: string }>();
 
   for (const post of posts) {
     if (!isSocialCalendarPost(post)) continue;
-    const key = socialCalendarDateKey(post.scheduledAt);
+    const slot = postingSchedule ? matchingPostingSlot(post.scheduledAt, postingSchedule) : null;
+    if (slot) postSlots.set(post.id, slot);
+    const key =
+      slot?.date || isoToZonedDateTimeInput(post.scheduledAt, calendarTimeZone).slice(0, 10);
     postsByDate.set(key, [...(postsByDate.get(key) || []), post]);
   }
   for (const dayPosts of postsByDate.values()) {
@@ -4914,17 +4916,11 @@ function SchedulerCalendarView({
               const slotLimit = view === "month" ? 2 : 4;
               const slotsExpanded = expandedSlotDays.has(key);
               const visibleSlots = slotsExpanded ? daySlots : daySlots.slice(0, slotLimit);
-              const calendarTimeZone = postingSchedule?.timezone || browserTimeZone();
-              const slotTimes = new Set(daySlots.map((slot) => slot.time));
               const postsBySlot = new Map<string, SchedulerPost[]>();
               const slottedPostIds = new Set<string>();
               for (const post of dayPosts) {
-                if (!post.scheduledAt) continue;
-                const time = isoToZonedDateTimeInput(post.scheduledAt, calendarTimeZone).slice(
-                  11,
-                  16,
-                );
-                if (!slotTimes.has(time)) continue;
+                const time = postSlots.get(post.id)?.time;
+                if (!time) continue;
                 postsBySlot.set(time, [...(postsBySlot.get(time) || []), post]);
                 slottedPostIds.add(post.id);
               }

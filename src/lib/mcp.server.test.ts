@@ -1,3 +1,4 @@
+import bentoToolsReference from "../../skills/bento/references/tools.md?raw";
 import { createMcpHandler, type AuthInfo } from "@modelcontextprotocol/server";
 import { describe, expect, it, vi } from "vitest";
 
@@ -349,6 +350,7 @@ const bentoMcpToolAnnotations = {
   manage_content_discover: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
   list_social_accounts: readOnlyAnnotations,
   upload_media: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
+  begin_media_upload: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
   list_social_posts: readOnlyAnnotations,
   search_stock_photos: { readOnlyHint: true, openWorldHint: true, destructiveHint: false },
   resolve_post_media: readOnlyAnnotations,
@@ -564,13 +566,20 @@ describe("Bento MCP tools", () => {
       ]),
     );
     const appTools = createBentoAppTools(
-      { userId: String(authInfo.extra!.userId), accessToken: authInfo.token, supabase: {} as any },
+      {
+        userId: String(authInfo.extra!.userId),
+        accessToken: authInfo.token,
+        supabase: {} as Parameters<typeof createBentoAppTools>[0]["supabase"],
+      },
       "https://app.bento.surf",
     );
     expect([...appTools.keys()].sort()).toEqual(
       toolsPayload.result.tools
         .map((tool: { name: string }) => tool.name)
-        .filter((name: string) => !["upload_media", "manage_content_agent"].includes(name))
+        .filter(
+          (name: string) =>
+            !["upload_media", "begin_media_upload", "manage_content_agent"].includes(name),
+        )
         .sort(),
     );
     expect(appTools.get("create_social_post")?.readOnly).toBe(false);
@@ -632,6 +641,7 @@ describe("Bento MCP tools", () => {
       manage_content_discover: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
       list_social_accounts: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
       upload_media: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
+      begin_media_upload: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
       list_social_posts: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
       create_social_post: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
       list_auto_dm_automations: {
@@ -776,7 +786,11 @@ describe("Bento MCP tools", () => {
       input: socialPostInputSchema.parse(input),
     }));
     const tools = createBentoAppTools(
-      { userId: String(authInfo.extra!.userId), accessToken: authInfo.token, supabase: {} as any },
+      {
+        userId: String(authInfo.extra!.userId),
+        accessToken: authInfo.token,
+        supabase: {} as Parameters<typeof createBentoAppTools>[0]["supabase"],
+      },
       "https://app.bento.surf",
       { ...defaultBentoMcpOperations, saveSocialPostForUser: save },
     );
@@ -1056,7 +1070,11 @@ it("imports the selected free photo only at execution and schedules all tailored
     input: socialPostInputSchema.parse(input),
   }));
   const tools = createBentoAppTools(
-    { userId: String(authInfo.extra!.userId), accessToken: authInfo.token, supabase: {} as any },
+    {
+      userId: String(authInfo.extra!.userId),
+      accessToken: authInfo.token,
+      supabase: {} as Parameters<typeof createBentoAppTools>[0]["supabase"],
+    },
     "https://app.bento.surf",
     {
       ...defaultBentoMcpOperations,
@@ -1088,5 +1106,33 @@ it("imports the selected free photo only at execution and schedules all tailored
     },
     scheduledAt: "2099-10-22T18:00:00Z",
     asDraft: false,
+  });
+});
+
+it("executes the documented video example as one draft with three platform targets", async () => {
+  const example = JSON.parse(bentoToolsReference.match(/```json\n([\s\S]*?)\n```/)![1]);
+  example.media[0].key = `users/${authInfo.extra!.userId}/video/example.mp4`;
+  const save = vi.fn(async (_userId: string, input: unknown) => socialPostInputSchema.parse(input));
+  const tools = createBentoAppTools(
+    {
+      userId: String(authInfo.extra!.userId),
+      accessToken: authInfo.token,
+      supabase: {} as Parameters<typeof createBentoAppTools>[0]["supabase"],
+    },
+    "https://app.example.com",
+    { ...defaultBentoMcpOperations, saveSocialPostForUser: save },
+  );
+  await tools.get("create_social_post")!.execute(example);
+  expect(save).toHaveBeenCalledOnce();
+  expect(save.mock.calls[0][1]).toMatchObject({
+    asDraft: true,
+    publishNow: false,
+    scheduledAt: null,
+    connectionIds: example.connectionIds,
+    connectionOverrides: example.connectionOverrides,
+    media: example.media,
+    providerSettings: {
+      youtube: { titleOverride: "Building our first version", youtubePrivacy: "public" },
+    },
   });
 });

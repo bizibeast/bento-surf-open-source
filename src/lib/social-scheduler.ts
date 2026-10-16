@@ -2,7 +2,7 @@ import { scheduledPostAutoDmSchemas } from "./scheduled-post-auto-dm";
 import { z } from "zod";
 import { socialMediaSizeError } from "./social-media-limits";
 import { SOCIAL_IMAGE_OPTIMIZATION_MAX_BYTES } from "./social-provider-media";
-import { zonedDateTimeInputToIso } from "./local-datetime";
+import { isoToZonedDateTimeInput, zonedDateTimeInputToIso } from "./local-datetime";
 import { isValidTimeZone } from "./timezones";
 import { validSocialMentions } from "./social-mentions";
 import { xCommunityDraftSchema, xCommunityError } from "./x-community";
@@ -214,6 +214,33 @@ export type PostingSchedule = {
   slots: PostingSlot[];
   naturalOffset: boolean;
 };
+
+/** Place a naturally shifted post in the nearest recurring slot, keeping its real timestamp. */
+export function matchingPostingSlot(scheduledAt: string, schedule: PostingSchedule) {
+  const timestamp = new Date(scheduledAt).getTime();
+  if (!Number.isFinite(timestamp) || !schedule.slots.length) return null;
+  const minute = Math.floor(timestamp / 60_000) * 60_000;
+  const slots = new Set(schedule.slots.map((slot) => `${slot.day}:${slot.time}`));
+  const tolerance = schedule.naturalOffset ? 4 : 0;
+
+  // Search instants rather than wall-clock minutes so offsets across midnight
+  // and daylight-saving transitions still belong to the correct slot/day.
+  // Exact matches win; equally close slots resolve to the earlier one.
+  for (let distance = 0; distance <= tolerance; distance += 1) {
+    for (const offset of distance ? [-distance, distance] : [0]) {
+      const local = isoToZonedDateTimeInput(
+        new Date(minute + offset * 60_000).toISOString(),
+        schedule.timezone,
+      );
+      if (!local) return null;
+      const date = local.slice(0, 10);
+      const time = local.slice(11, 16);
+      const weekday = new Date(`${date}T12:00:00Z`).getUTCDay();
+      if (slots.has(`${weekday}:${time}`)) return { date, time };
+    }
+  }
+  return null;
+}
 
 export const postingScheduleSchema = z
   .object({

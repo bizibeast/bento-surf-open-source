@@ -829,6 +829,7 @@ async function abortMultipartUpload(
 async function completeMultipartUpload(
   request: Request,
   env: StorageEnv,
+  context: StorageContext,
   dependencies: StorageDependencies,
 ) {
   const url = new URL(request.url);
@@ -875,6 +876,49 @@ async function completeMultipartUpload(
   }
 
   try {
+    // A lost completion response must not make a successfully stored upload
+    // appear failed or increment its usage twice.
+    const existing = await env.MEDIA_BUCKET.head(key);
+    if (existing && existing.size === metadata.size) {
+      return Response.json(
+        {
+          key,
+          size: existing.size,
+          publicUrl: key.startsWith("private/")
+            ? null
+            : mediaObjectUrl(key, new URL(request.url).origin),
+        },
+        { status: 200 },
+      );
+    }
+    // Uploads can remain unfinished for hours. Recheck after other files or a
+    // plan change have consumed the allowance since mpu-create.
+    const segments = key.split("/");
+    const kind = key.startsWith("private/")
+      ? segments[3] === "agent"
+        ? "agent_file"
+        : "product_file"
+      : key.startsWith("avatars/")
+        ? "avatar"
+        : segments[2];
+    if (!isUploadKind(kind)) return jsonError("Invalid upload kind", 400);
+    const plan = await resolveUploadPlan(userId, dependencies);
+    if (metadata.size > uploadLimitMb(kind, plan) * 1024 * 1024) {
+      return jsonError(
+        `This file exceeds the current plan's ${uploadLimitMb(kind, plan)} MB upload limit`,
+        413,
+      );
+    }
+    const quotaError = await assertUploadQuota(
+      env,
+      context,
+      userId,
+      plan,
+      kind === "avatar" ? 0 : await resolveStorageAllowance(userId, dependencies),
+      kind,
+      metadata.size,
+    );
+    if (quotaError) return quotaError;
     const multipart = env.MEDIA_BUCKET.resumeMultipartUpload(key, uploadId);
     const object = await multipart.complete(parts as R2UploadedPart[]);
     if (object.size !== metadata.size) {
@@ -1420,7 +1464,7 @@ export async function handleR2StorageRequest(
       return uploadMultipartPart(request, env, dependencies);
     }
     if (request.method === "POST" && action === "mpu-complete") {
-      return completeMultipartUpload(request, env, dependencies);
+      return completeMultipartUpload(request, env, context, dependencies);
     }
     if (request.method === "POST" && action === "mpu-abort") {
       return abortMultipartUpload(request, env, dependencies);

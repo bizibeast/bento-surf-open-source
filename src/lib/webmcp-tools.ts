@@ -1,3 +1,4 @@
+import { WEBMCP_INLINE_BASE64_CHARS, webMcpUploadInputSchema } from "./webmcp-media";
 import {
   runBentoWebMcpRead,
   runBentoWebMcpWrite,
@@ -153,6 +154,7 @@ function writeTool(
     annotations: { readOnlyHint: false, untrustedContentHint: true },
     async execute(input, { signal }) {
       signal?.throwIfAborted();
+      if (operation === "upload_media") webMcpUploadInputSchema.parse(input);
       await requireWebMcpUserConfirmation(title, input);
       signal?.throwIfAborted();
       const result = await runBentoWebMcpWrite({
@@ -643,11 +645,14 @@ export function createAuthenticatedWebMcpTools(refresh: () => Promise<void>): We
     writeTool(
       "upload_media",
       "Upload media to Bento",
-      "Imports one public media URL or a small base64 payload into the creator's Bento media storage.",
+      "Imports one public media URL within plan/storage limits or inline base64 for files up to 128 KiB. For larger local files use begin_media_upload and binary chunks. Reuse returned media in ONE multi-platform post.",
       "upload_media",
       {
         sourceUrl: string("Public HTTP or HTTPS media URL."),
-        base64: string("Optional base64 media payload up to 25 MB."),
+        base64: string(
+          "Raw base64 for files up to 128 KiB, without a data-URL prefix. Use begin_media_upload for larger local files.",
+          { maxLength: WEBMCP_INLINE_BASE64_CHARS },
+        ),
         fileName: string("Filename including extension."),
         mimeType: string("Media MIME type."),
         kind: string("Media kind.", { enum: ["image", "video", "audio", "file"] }),
@@ -660,9 +665,30 @@ export function createAuthenticatedWebMcpTools(refresh: () => Promise<void>): We
       ],
     ),
     writeTool(
+      "begin_media_upload",
+      "Start a large media upload",
+      "Checks plan and remaining storage and returns private, two-hour HTTP upload instructions. PUT original binary 8 MiB chunks, then POST their ETags to complete and receive media. No compression or full-file base64 is required. Never expose the returned credential. Requires file and HTTP access in the client; otherwise use Bento's attachment picker.",
+      "begin_media_upload",
+      {
+        fileName: string("Original filename including extension.", {
+          minLength: 1,
+          maxLength: 255,
+        }),
+        mimeType: string("Media MIME type.", { minLength: 1, maxLength: 100 }),
+        kind: string("Media kind.", { enum: ["image", "video", "audio", "file"] }),
+        size: number("Exact original file size in bytes; plan and storage limits apply.", {
+          minimum: 1,
+          maximum: 5 * 1024 * 1024 * 1024,
+          multipleOf: 1,
+        }),
+      },
+      ["fileName", "mimeType", "kind", "size"],
+      refresh,
+    ),
+    writeTool(
       "create_social_post",
       "Save social post",
-      "Creates a draft, schedules a post, or publishes it through selected connected-account IDs.",
+      "Creates or edits ONE draft for all selected accounts. Upload media once. Use connectionOverrides[connectionId].bodyOverride for each platform's caption; providerSettings.youtube holds title/description. Pass id to edit the same draft, not duplicate it.",
       "create_social_post",
       {
         id: id("Existing post ID when updating."),
@@ -713,6 +739,15 @@ export function createAuthenticatedWebMcpTools(refresh: () => Promise<void>): We
           },
           additionalProperties: { type: "object", additionalProperties: true },
         },
+        connectionOverrides: {
+          type: "object",
+          description:
+            'Per-account captions keyed by a selected connection UUID, e.g. {"<connection-id>":{"bodyOverride":"Caption for this account"}}.',
+          additionalProperties: objectSchema(
+            { bodyOverride: string("Caption for this selected account.", { maxLength: 25_000 }) },
+            [],
+          ),
+        },
         mode: string("Save mode.", { enum: ["draft", "schedule", "publish_now"] }),
         scheduledAt: string("ISO timestamp required for schedule mode.", { format: "date-time" }),
         timezone: string("IANA timezone.", { minLength: 1, maxLength: 100 }),
@@ -722,15 +757,39 @@ export function createAuthenticatedWebMcpTools(refresh: () => Promise<void>): We
       discriminatedVariants("mode", {
         draft: {
           required: [],
-          optional: ["id", "body", "title", "media", "providerSettings", "timezone"],
+          optional: [
+            "id",
+            "body",
+            "title",
+            "media",
+            "providerSettings",
+            "connectionOverrides",
+            "timezone",
+          ],
         },
         schedule: {
           required: ["scheduledAt"],
-          optional: ["id", "body", "title", "media", "providerSettings", "timezone"],
+          optional: [
+            "id",
+            "body",
+            "title",
+            "media",
+            "providerSettings",
+            "connectionOverrides",
+            "timezone",
+          ],
         },
         publish_now: {
           required: [],
-          optional: ["id", "body", "title", "media", "providerSettings", "timezone"],
+          optional: [
+            "id",
+            "body",
+            "title",
+            "media",
+            "providerSettings",
+            "connectionOverrides",
+            "timezone",
+          ],
         },
       }),
     ),

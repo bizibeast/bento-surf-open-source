@@ -22,6 +22,7 @@ import {
   defaultScheduleTime,
   minimumScheduleTime,
   nextPostingSlot,
+  matchingPostingSlot,
   postingScheduleSchema,
   isSchedulableCalendarDay,
   socialPostInputSchema,
@@ -202,6 +203,83 @@ describe("social scheduler validation", () => {
         slots: [{ day: 8, time: "25:00" }],
       }).success,
     ).toBe(false);
+  });
+
+  it.each(["08:56", "08:57", "09:00", "09:03", "09:04"])(
+    "groups a naturally shifted %s post in its 9 AM slot",
+    (time) => {
+      expect(
+        matchingPostingSlot(`2026-08-17T${time}:00Z`, {
+          timezone: "UTC",
+          slots: [{ day: 1, time: "09:00" }],
+          naturalOffset: true,
+        }),
+      ).toEqual({ date: "2026-08-17", time: "09:00" });
+    },
+  );
+
+  it("leaves custom times outside the natural window unslotted and honors the toggle", () => {
+    const schedule = {
+      timezone: "UTC",
+      slots: [{ day: 1, time: "09:00" }],
+      naturalOffset: true,
+    };
+    expect(matchingPostingSlot("2026-08-17T08:55:00Z", schedule)).toBeNull();
+    expect(matchingPostingSlot("2026-08-17T09:05:00Z", schedule)).toBeNull();
+    expect(
+      matchingPostingSlot("2026-08-17T08:57:00Z", { ...schedule, naturalOffset: false }),
+    ).toBeNull();
+    expect(
+      matchingPostingSlot("2026-08-17T09:00:30Z", { ...schedule, naturalOffset: false }),
+    ).toEqual({ date: "2026-08-17", time: "09:00" });
+    expect(matchingPostingSlot("invalid", schedule)).toBeNull();
+  });
+
+  it("assigns a post once to the nearest slot, preferring the earlier slot on a tie", () => {
+    const schedule = {
+      timezone: "UTC",
+      slots: [
+        { day: 1, time: "09:04" },
+        { day: 1, time: "09:00" },
+      ],
+      naturalOffset: true,
+    };
+    for (const [time, expected] of [
+      ["09:00", "09:00"],
+      ["09:03", "09:04"],
+      ["09:02", "09:00"],
+    ]) {
+      expect(matchingPostingSlot(`2026-08-17T${time}:00Z`, schedule)?.time).toBe(expected);
+    }
+  });
+
+  it("keeps offsets crossing midnight in the slot's day and selected timezone", () => {
+    const schedule = {
+      timezone: "Asia/Kolkata",
+      slots: [
+        { day: 1, time: "00:00" },
+        { day: 1, time: "23:59" },
+      ],
+      naturalOffset: true,
+    };
+    expect(matchingPostingSlot("2026-08-16T18:27:00Z", schedule)).toEqual({
+      date: "2026-08-17",
+      time: "00:00",
+    });
+    expect(matchingPostingSlot("2026-08-17T18:33:00Z", schedule)).toEqual({
+      date: "2026-08-17",
+      time: "23:59",
+    });
+  });
+
+  it("matches real minute offsets across a daylight-saving clock change", () => {
+    expect(
+      matchingPostingSlot("2026-03-08T06:57:00Z", {
+        timezone: "America/New_York",
+        slots: [{ day: 0, time: "03:00" }],
+        naturalOffset: true,
+      }),
+    ).toEqual({ date: "2026-03-08", time: "03:00" });
   });
 
   it("finds the next unoccupied posting slot in the account timezone", () => {

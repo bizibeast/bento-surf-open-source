@@ -10,8 +10,12 @@ Use the connected Bento MCP server for Bento data and actions. Do not invent IDs
 For a social post:
 
 1. Call `list_social_accounts` and select only accounts the user named.
-2. If media is not already in Bento, call `upload_media` with one public URL or a small base64 payload.
-3. Call `create_social_post` in `draft`, `schedule`, or `publish_now` mode. Publishing is an external side effect; use `publish_now` only when the user explicitly asked to publish now.
+2. Upload media once. For a local video over 8 MB, call `begin_media_upload` with its original filename, MIME type, kind and exact byte size, then use your file/HTTP tools to send binary chunks and complete the upload. Keep the returned credential private. Do not compress the video to fit MCP JSON. `upload_media` supports public URLs and remote MCP inline base64 up to 25 MiB. Browser WebMCP inline uploads are limited to 128 KiB; use `begin_media_upload` for larger local files. Every path enforces plan and remaining storage limits.
+3. Create **ONE** `create_social_post` for one piece of content across all requested networks: include every selected `connectionId`, shared `media`, and `connectionOverrides[connectionId].bodyOverride` for the different captions. YouTube `titleOverride`, `description` and `youtubePrivacy` go in `providerSettings.youtube`. Different captions are not a reason to create separate drafts.
+4. Use `draft`, `schedule`, or `publish_now` mode as requested. A draft is not scheduled or published. Scheduling requires an ISO timestamp with offset and the creator's IANA timezone. Use `publish_now` only when the user explicitly asked to publish now.
+5. Verify the returned post ID, targets, captions and media with `list_social_posts`. Edit that same post by passing its `id` to `create_social_post`; retain the full intended account/media/settings selection. Never delete or duplicate posts to change a caption.
+
+Read [references/tools.md](references/tools.md) for the exact upload protocol and a multi-network draft example. If the client cannot read the attached file or send HTTP, explain that limitation and ask the user to upload it in Bento, then reuse its real media key. Never fabricate a URL/key or claim success before upload completion.
 
 For a lead-magnet Auto-DM:
 
