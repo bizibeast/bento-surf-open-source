@@ -106,7 +106,91 @@ describe("Bento MCP HTTP surface", () => {
   });
 });
 
+const readOnlyAnnotations = {
+  readOnlyHint: true,
+  openWorldHint: false,
+  destructiveHint: false,
+};
+
+/** Pins the hints OpenAI reads from tools/list. Idempotent is omitted unless true. */
+const bentoMcpToolAnnotations = {
+  get_bento_overview: readOnlyAnnotations,
+  get_content_brain: readOnlyAnnotations,
+  manage_content_brain: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
+  get_content_media: readOnlyAnnotations,
+  manage_content_media: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  get_content_routines: readOnlyAnnotations,
+  manage_content_routine: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
+  get_content_agent: readOnlyAnnotations,
+  manage_content_agent: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  get_content_discover: readOnlyAnnotations,
+  manage_content_discover: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  list_social_accounts: readOnlyAnnotations,
+  upload_media: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
+  list_social_posts: readOnlyAnnotations,
+  create_social_post: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  list_auto_dm_automations: readOnlyAnnotations,
+  save_auto_dm_automation: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  set_auto_dm_enabled: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+  },
+  delete_auto_dm_automation: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  list_pages: readOnlyAnnotations,
+  list_products: readOnlyAnnotations,
+  list_bookings: readOnlyAnnotations,
+  get_priority_dm_conversations: readOnlyAnnotations,
+  send_priority_dm_message: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  set_priority_dm_closed: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+  },
+  get_scheduler_workspace: readOnlyAnnotations,
+  manage_scheduler: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  manage_page: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  manage_block: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  get_store_workspace: readOnlyAnnotations,
+  manage_product: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  manage_discount_code: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  manage_order_bump: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  manage_audience: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  get_calendar_workspace: readOnlyAnnotations,
+  manage_calendar: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  get_community_workspace: readOnlyAnnotations,
+  manage_community: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  get_profile_workspace: readOnlyAnnotations,
+  update_profile: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  get_analytics_workspace: readOnlyAnnotations,
+  get_integration_workspace: readOnlyAnnotations,
+  get_earn_workspace: readOnlyAnnotations,
+  manage_earn: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+};
+
 describe("Bento MCP tools", () => {
+  it("pins read, destructive, idempotent, and open-world hints for every tool", async () => {
+    const handler = createMcpHandler(() =>
+      createBentoMcpServer(authInfo, "https://mcp.example.test"),
+    );
+    const response = await handler.fetch(
+      request({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      { authInfo },
+    );
+    expect(response.status, await response.clone().text()).toBe(200);
+    const body = await payload(response);
+    const actual = Object.fromEntries(
+      body.result.tools.map((tool: { name: string; annotations?: unknown }) => [
+        tool.name,
+        tool.annotations,
+      ]),
+    );
+    expect(actual).toEqual(bentoMcpToolAnnotations);
+  });
+
+
   it("preserves advanced Auto-DM configuration and rejects unowned partial updates", async () => {
     const automationId = "00000000-0000-4000-8000-000000000020";
     const connectionId = "00000000-0000-4000-8000-000000000010";

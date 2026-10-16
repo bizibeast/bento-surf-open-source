@@ -1373,7 +1373,7 @@ export function createBentoMcpServer(
       title: "Manage Content Routine",
       description: "Create or edit a template or custom routine, or pause and resume a routine.",
       inputSchema: routineMutationSchema,
-      annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
+      annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
     },
     async (input) =>
       textResult(`Completed Routine action: ${input.action}.`, {
@@ -1402,7 +1402,7 @@ export function createBentoMcpServer(
       description:
         "Send a message, edit/reject/regenerate a draft, or approve Brain and scheduling proposals. Schedule approval may create social posts.",
       inputSchema: agentMutationSchema,
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
+      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
     },
     async (input) =>
       textResult(`Completed Agent action: ${input.action}.`, {
@@ -1431,7 +1431,7 @@ export function createBentoMcpServer(
       description:
         "Refresh recommendations, set feedback or bookmarks, edit preferences, or track and untrack creators.",
       inputSchema: discoverMutationSchema,
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
+      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
     },
     async (input) =>
       textResult(`Completed Discover action: ${input.action}.`, {
@@ -1513,7 +1513,7 @@ export function createBentoMcpServer(
         scheduledAt: z.iso.datetime({ offset: true }).optional(),
         timezone: z.string().min(1).max(100).default("UTC"),
       }),
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
+      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
     },
     async ({ mode, ...input }) => {
       if (mode === "schedule" && !input.scheduledAt)
@@ -1556,7 +1556,7 @@ export function createBentoMcpServer(
       description:
         "Create or update an Instagram, Facebook, or X keyword/engagement Auto-DM automation.",
       inputSchema: autoDmInputSchema,
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
+      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
     },
     async ({ platform, ...input }) => {
       const automation = await operations.saveAutoDmAutomation(userId, platform, input);
@@ -1570,7 +1570,12 @@ export function createBentoMcpServer(
       title: "Enable or pause Auto-DM",
       description: "Enable or pause one owned Instagram, Facebook, or X Auto-DM automation.",
       inputSchema: z.object({ platform: platformSchema, id: z.uuid(), enabled: z.boolean() }),
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
     async ({ platform, id, enabled }) => {
       const automation = await operations.setAutoDmEnabled(userId, platform, id, enabled);
@@ -1665,7 +1670,7 @@ export function createBentoMcpServer(
         requestId: z.uuid(),
         body: z.string().trim().min(1).max(10_000),
       }),
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
+      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
     },
     async (input) => {
       const message = await operations.sendPriorityDmMessage(userId, input);
@@ -1682,7 +1687,12 @@ export function createBentoMcpServer(
       title: "Close or reopen Priority DM conversation",
       description: "Close or reopen one owned Priority DM conversation.",
       inputSchema: z.object({ requestId: z.uuid(), closed: z.boolean() }),
-      annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
     async (input) => {
       const conversation = await operations.setPriorityDmClosed(userId, input);
@@ -1732,7 +1742,7 @@ export function createBentoMcpServer(
       description:
         "Create, rename, or delete a secondary Bento page. Deleting also removes its page blocks.",
       inputSchema: pageMutationInputSchema,
-      annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
+      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
     },
     async (input) => {
       const result = await operations.mutatePage(creatorContext(), input);
@@ -1747,7 +1757,7 @@ export function createBentoMcpServer(
       description:
         "Create, edit, position, or delete a Bento block, including links, media, email capture, booking, commerce, headings, notes, and social links.",
       inputSchema: blockMutationInputSchema,
-      annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
+      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
     },
     async (input) => {
       const result = await operations.mutateBlock(creatorContext(), input);
@@ -1791,7 +1801,7 @@ export function createBentoMcpServer(
       title: "Manage discount code",
       description: "Create, update, activate, deactivate, or delete a Bento Store discount code.",
       inputSchema: discountMutationInputSchema,
-      annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
+      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
     },
     async (input) => {
       const result = await operations.mutateDiscount(creatorContext(), input);
@@ -1806,7 +1816,7 @@ export function createBentoMcpServer(
       description:
         "Create, update, activate, deactivate, or delete an order bump between two products.",
       inputSchema: orderBumpMutationInputSchema,
-      annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
+      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
     },
     async (input) => {
       const result = await operations.mutateOrderBump(creatorContext(), input);
@@ -1913,7 +1923,7 @@ export function createBentoMcpServer(
       description:
         "Update creator identity, username, bio, avatar, theme, fonts, Explore visibility/category, header, or pattern.",
       inputSchema: profileUpdateInputSchema,
-      annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
+      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
     },
     async (input) => {
       const profile = await operations.updateCreatorProfile(creatorContext(), input);
@@ -1974,7 +1984,7 @@ export function createBentoMcpServer(
       title: "Manage Earn",
       description: "Change the referral code or request a payout in an available currency.",
       inputSchema: earnMutationInputSchema,
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
+      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
     },
     async (input) => {
       const result = await operations.mutateEarn(creatorContext(), input);
