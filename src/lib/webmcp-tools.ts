@@ -1,3 +1,4 @@
+import { WEBMCP_INLINE_BASE64_CHARS, webMcpUploadInputSchema } from "./webmcp-media";
 import {
   runBentoWebMcpRead,
   runBentoWebMcpWrite,
@@ -153,6 +154,7 @@ function writeTool(
     annotations: { readOnlyHint: false, untrustedContentHint: true },
     async execute(input, { signal }) {
       signal?.throwIfAborted();
+      if (operation === "upload_media") webMcpUploadInputSchema.parse(input);
       await requireWebMcpUserConfirmation(title, input);
       signal?.throwIfAborted();
       const result = await runBentoWebMcpWrite({
@@ -643,11 +645,14 @@ export function createAuthenticatedWebMcpTools(refresh: () => Promise<void>): We
     writeTool(
       "upload_media",
       "Upload media to Bento",
-      "Imports one public media URL within plan/storage limits or small inline base64. For local videos over 8 MB prefer begin_media_upload and binary chunks. Reuse returned media in ONE multi-platform post.",
+      "Imports one public media URL within plan/storage limits or inline base64 for files up to 128 KiB. For larger local files use begin_media_upload and binary chunks. Reuse returned media in ONE multi-platform post.",
       "upload_media",
       {
         sourceUrl: string("Public HTTP or HTTPS media URL."),
-        base64: string("Optional base64 media payload up to 25 MB."),
+        base64: string(
+          "Raw base64 for files up to 128 KiB, without a data-URL prefix. Use begin_media_upload for larger local files.",
+          { maxLength: WEBMCP_INLINE_BASE64_CHARS },
+        ),
         fileName: string("Filename including extension."),
         mimeType: string("Media MIME type."),
         kind: string("Media kind.", { enum: ["image", "video", "audio", "file"] }),

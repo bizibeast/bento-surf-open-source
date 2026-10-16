@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { webMcpUploadInputSchema } from "./webmcp-media";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { defaultBentoMcpOperations } from "./mcp.server";
 import type { CreatorMcpContext } from "./mcp.creator-ops.server";
@@ -114,19 +115,6 @@ export function parseBentoWebMcpReadInput(
 ): Record<string, unknown> {
   return webMcpReadSchemas[operation].parse(input) as Record<string, unknown>;
 }
-
-const webMcpUploadInputSchema = z
-  .object({
-    sourceUrl: z.string().url().optional(),
-    base64: z.string().optional(),
-    fileName: z.string().min(1).max(255),
-    mimeType: z.string().min(1).max(100),
-    kind: z.enum(["image", "video", "audio", "file"]),
-  })
-  .strict()
-  .refine((value) => Boolean(value.sourceUrl) !== Boolean(value.base64), {
-    message: "Provide exactly one of sourceUrl or base64.",
-  });
 
 const webMcpAutoDmIdentifierSchema = z
   .object({

@@ -2,7 +2,7 @@
 
 - `get_bento_overview`: profile, plan, feature links, counts, and recent workspace state.
 - `list_social_accounts`: connected publishing/Auto-DM accounts and readiness.
-- `upload_media`: stream a public media URL into Bento storage, or send inline base64 up to 25 MB. Prefer binary chunks for local files over 8 MB.
+- `upload_media`: stream a public media URL into Bento storage, or send inline base64 up to 25 MiB over remote MCP (128 KiB through browser WebMCP). Prefer binary chunks for local files over 8 MB.
 - `begin_media_upload`: check storage/plan and prepare a private two-hour binary upload. The returned HTTP instructions handle parts, completion and cancellation without exposing the account OAuth token.
 - `get_content_brain`, `manage_content_brain`: inspect the Content profile, Brain documents, and index; save the profile and documents, confirm, lock, delete, or refresh indexing.
 - `get_content_media`, `manage_content_media`: list/search Brain Media and its limits; register an uploaded image/video, fetch a connected post, manage folders, move items, and set or clear four hero-image slots. Use `upload_media` first and pass its `key` to `register_upload`.
@@ -122,6 +122,7 @@ targets, media and options. `manage_scheduler` changes lifecycle/timing; use
 chat attachment ID. A valid Content-Length permits streaming within plan limits.
 If the source has no usable size and is over 25 MiB, download it in the client and
 use the binary upload protocol. Inline `base64` is only for small files (25 MiB
-maximum); a client may have a smaller tool-message limit. Never reduce video
+maximum over remote MCP; browser WebMCP accepts only 128 KiB inline). Use
+`begin_media_upload` for larger local files. A client may have a smaller tool-message limit. Never reduce video
 quality merely to fit the inline transport. If the client lacks file/HTTP tools,
 use Bento's attachment picker, then reference the uploaded asset.

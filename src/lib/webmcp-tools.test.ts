@@ -102,6 +102,51 @@ describe("authenticated WebMCP tools", () => {
     expect(refresh).not.toHaveBeenCalled();
   });
 
+  it("directs oversized browser media to binary upload before approval or a network request", async () => {
+    const confirm = vi.spyOn(window, "confirm");
+    const refresh = vi.fn();
+    const tool = createAuthenticatedWebMcpTools(refresh).find(
+      (candidate) => candidate.name === "upload_media",
+    )!;
+
+    await expect(
+      tool.execute(
+        {
+          base64: btoa("x".repeat(128 * 1024 + 1)),
+          fileName: "video.mp4",
+          mimeType: "video/mp4",
+          kind: "video",
+        },
+        { signal: new AbortController().signal },
+      ),
+    ).rejects.toThrow("begin_media_upload");
+    expect(confirm).not.toHaveBeenCalled();
+    expect(runWrite).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+    expect(tool.description).toContain("128 KiB");
+  });
+
+  it("keeps a maximum-size browser inline upload below the server request limit", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    runWrite.mockResolvedValue({ key: "media/photo.png" });
+    const tool = createAuthenticatedWebMcpTools(vi.fn()).find(
+      (candidate) => candidate.name === "upload_media",
+    )!;
+    await tool.execute(
+      {
+        base64: btoa("x".repeat(128 * 1024)),
+        fileName: "photo.png",
+        mimeType: "image/png",
+        kind: "image",
+      },
+      { signal: new AbortController().signal },
+    );
+    expect(runWrite).toHaveBeenCalledOnce();
+    expect(new TextEncoder().encode(JSON.stringify(runWrite.mock.calls[0][0])).length).toBeLessThan(
+      256 * 1024,
+    );
+  });
+
   it("runs an approved write exactly once", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     runWrite.mockResolvedValue({ id: "page-id" });
