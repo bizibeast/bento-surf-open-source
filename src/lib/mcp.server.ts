@@ -680,7 +680,7 @@ async function getSchedulerWorkspace(userId: string) {
 }
 
 const schedulerMutationSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("save_posting_schedule"), schedule: z.unknown() }),
+  z.object({ action: z.literal("save_posting_schedule"), schedule: postingScheduleSchema }),
   z.object({
     action: z.literal("reschedule_post"),
     id: z.uuid(),
@@ -1288,6 +1288,235 @@ const earnMutationInputSchema = z.discriminatedUnion("action", [
 async function sha256(value: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return `sha256:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/** Explicit JSON value. `z.unknown()` / `z.any()` emit `{}`, which strict scanners reject. */
+const JSON_VALUE_SCHEMA = {
+  anyOf: [
+    { type: "string" },
+    { type: "number" },
+    { type: "boolean" },
+    { type: "null" },
+    { type: "array" },
+    { type: "object" },
+  ],
+};
+const SCHEMA_TYPE_KEYS = new Set(["$ref", "allOf", "anyOf", "const", "enum", "oneOf", "type"]);
+const SCHEMA_MAP_KEYS = new Set([
+  "$defs",
+  "definitions",
+  "dependentSchemas",
+  "patternProperties",
+  "properties",
+]);
+const SCHEMA_ARRAY_KEYS = new Set(["allOf", "anyOf", "oneOf", "prefixItems"]);
+const SCHEMA_CHILD_KEYS = new Set([
+  "additionalProperties",
+  "contains",
+  "else",
+  "if",
+  "items",
+  "not",
+  "propertyNames",
+  "then",
+  "unevaluatedItems",
+  "unevaluatedProperties",
+]);
+const SCHEMA_ANNOTATION_KEYS = new Set([
+  "default",
+  "deprecated",
+  "description",
+  "examples",
+  "title",
+]);
+// Zod's format patterns (uuid ~166, date-time ~293, email ~96) duplicate `format`
+// and are large enough for a scanner to reject or stall on. Runtime checks stay on Zod.
+const REDUNDANT_FORMAT_PATTERN_MAX = 80;
+
+function isSchemaRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function sanitizeMcpJsonSchema(schema: unknown): Record<string, unknown> {
+  const sanitized = sanitizeSchemaNode(schema);
+  return isSchemaRecord(sanitized) ? replaceUnresolvedRefs(sanitized) : { ...JSON_VALUE_SCHEMA };
+}
+
+function sanitizeSchemaNode(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map((item) => sanitizeSchemaNode(item));
+  if (!isSchemaRecord(node)) return node;
+  const copy: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(node)) {
+    // Draft 2020-12 `$schema` makes a draft-07 scanner try to load a meta-schema it does not have.
+    if (key === "$schema") continue;
+    if (SCHEMA_MAP_KEYS.has(key) && isSchemaRecord(value)) {
+      copy[key] = Object.fromEntries(
+        Object.entries(value).map(([childKey, child]) => [childKey, sanitizeSchemaNode(child)]),
+      );
+      continue;
+    }
+    if (SCHEMA_ARRAY_KEYS.has(key) && Array.isArray(value)) {
+      copy[key] = value.map((item) => sanitizeSchemaNode(item));
+      continue;
+    }
+    if (SCHEMA_CHILD_KEYS.has(key)) {
+      copy[key] = sanitizeSchemaNode(value);
+      continue;
+    }
+    copy[key] = value;
+  }
+  if (
+    isSchemaRecord(copy.propertyNames) &&
+    copy.propertyNames.type === "string" &&
+    Object.keys(copy.propertyNames).length === 1
+  ) {
+    // JSON object keys are already strings. `propertyNames` is redundant and trips strict scanners.
+    delete copy.propertyNames;
+  }
+  if (
+    typeof copy.pattern === "string" &&
+    copy.pattern.length > REDUNDANT_FORMAT_PATTERN_MAX &&
+    typeof copy.format === "string"
+  ) {
+    delete copy.pattern;
+  }
+  const hasType = Object.keys(copy).some((key) => SCHEMA_TYPE_KEYS.has(key));
+  if (!hasType) {
+    if (
+      "properties" in copy ||
+      "additionalProperties" in copy ||
+      "patternProperties" in copy ||
+      "required" in copy
+    ) {
+      copy.type = "object";
+    } else {
+      const annotations: Record<string, unknown> = {};
+      for (const key of SCHEMA_ANNOTATION_KEYS) {
+        if (key in copy) annotations[key] = copy[key];
+      }
+      return { ...JSON_VALUE_SCHEMA, ...annotations };
+    }
+  }
+  if (
+    copy.type === "object" &&
+    isSchemaRecord(copy.properties) &&
+    !("required" in copy) &&
+    !("oneOf" in copy) &&
+    !("anyOf" in copy) &&
+    !("allOf" in copy)
+  ) {
+    // OpenAI's strict tool check requires this key even when nothing is required.
+    copy.required = [];
+  }
+  return copy;
+}
+
+function resolveJsonPointer(root: Record<string, unknown>, ref: string) {
+  if (ref === "#") return root;
+  if (!ref.startsWith("#/")) return undefined;
+  let current: unknown = root;
+  for (const part of ref.slice(2).split("/")) {
+    if (!isSchemaRecord(current)) return undefined;
+    current = current[part.replace(/~1/g, "/").replace(/~0/g, "~")];
+  }
+  return current;
+}
+
+function replaceUnresolvedRefs(root: Record<string, unknown>) {
+  const visit = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map((item) => visit(item));
+    if (!isSchemaRecord(node)) return node;
+    if (typeof node.$ref === "string" && resolveJsonPointer(root, node.$ref) === undefined) {
+      const annotations: Record<string, unknown> = {};
+      for (const key of SCHEMA_ANNOTATION_KEYS) {
+        if (key in node) annotations[key] = node[key];
+      }
+      return { ...JSON_VALUE_SCHEMA, ...annotations };
+    }
+    return Object.fromEntries(Object.entries(node).map(([key, value]) => [key, visit(value)]));
+  };
+  const replaced = visit(root);
+  return isSchemaRecord(replaced) ? replaced : { ...JSON_VALUE_SCHEMA };
+}
+
+function isStandardJsonSchema(schema: unknown): schema is {
+  "~standard": {
+    validate: (value: unknown) => unknown;
+    jsonSchema: {
+      input: (params?: { target?: string }) => unknown;
+      output: (params?: { target?: string }) => unknown;
+    };
+  };
+} {
+  if (!schema || typeof schema !== "object" || !("~standard" in schema)) return false;
+  const standard = (
+    schema as {
+      "~standard"?: {
+        validate?: unknown;
+        jsonSchema?: { input?: unknown; output?: unknown };
+      };
+    }
+  )["~standard"];
+  return (
+    typeof standard?.validate === "function" &&
+    typeof standard.jsonSchema?.input === "function" &&
+    typeof standard.jsonSchema?.output === "function"
+  );
+}
+
+function scannerSafeInputSchema<T>(schema: T): T {
+  if (!isStandardJsonSchema(schema)) return schema;
+  const standard = schema["~standard"];
+  const validate = standard.validate.bind(standard);
+  const input = standard.jsonSchema.input.bind(standard.jsonSchema);
+  const output = standard.jsonSchema.output.bind(standard.jsonSchema);
+  return {
+    "~standard": {
+      version: 1,
+      vendor: "bento-mcp",
+      validate,
+      jsonSchema: {
+        input: (params?: { target?: string }) => sanitizeMcpJsonSchema(input(params)),
+        output: (params?: { target?: string }) => sanitizeMcpJsonSchema(output(params)),
+      },
+    },
+  } as T;
+}
+
+function installScannerSafeToolSchemas(server: McpServer) {
+  const registerTool = server.registerTool.bind(server);
+  server.registerTool = ((
+    name: string,
+    config: { inputSchema?: unknown },
+    cb: Parameters<McpServer["registerTool"]>[2],
+  ) => {
+    if (config && typeof config === "object" && "inputSchema" in config) {
+      config = {
+        ...config,
+        inputSchema: scannerSafeInputSchema(config.inputSchema),
+      };
+    }
+    return registerTool(name, config as never, cb as never);
+  }) as typeof server.registerTool;
+}
+
+function advertiseSkillsOnlyWhenRequested(server: McpServer) {
+  const protocol = server.server as unknown as {
+    _oninitialize: (request: {
+      params?: { capabilities?: { extensions?: unknown } };
+    }) => Promise<{ capabilities?: Record<string, unknown> } & Record<string, unknown>>;
+  };
+  const negotiate = protocol._oninitialize.bind(protocol);
+  protocol._oninitialize = async (request) => {
+    const result = await negotiate(request);
+    const clientExtensions = request.params?.capabilities?.extensions;
+    // MCP 2025-06-18 ServerCapabilities has no `extensions` key. A strict client
+    // rejects it. Clients that advertise the field (OpenAI's skills importer) still get it.
+    if (clientExtensions !== null && typeof clientExtensions === "object") return result;
+    if (!result.capabilities || !("extensions" in result.capabilities)) return result;
+    const { extensions: _extensions, ...capabilities } = result.capabilities;
+    return { ...result, capabilities };
+  };
 }
 
 /** The web Agent and remote MCP clients share these schemas and service boundaries. */
@@ -2132,6 +2361,8 @@ export function createBentoMcpServer(
     },
   );
 
+  installScannerSafeToolSchemas(server);
+  advertiseSkillsOnlyWhenRequested(server);
   registerBentoTools(server, authInfo, origin, operations, creatorContext);
 
   server.registerResource(
@@ -2213,7 +2444,21 @@ async function authenticateMcpRequest(request: Request): Promise<AuthInfo> {
     global: { headers: { Authorization: `Bearer ${token}` } },
     auth: { storage: undefined, persistSession: false, autoRefreshToken: false },
   });
-  const { data, error } = await client.auth.getClaims(token);
+  // getClaims returns { data, error } for AuthError, but rethrows anything else.
+  // A 3-part base64url token that is not a JWT (for example "aaaaaaaa.bbbbbbbb.cccccccc")
+  // throws Error "Invalid UTF-8 sequence" from the decoder. That used to escape the
+  // worker and become Cloudflare error 1101.
+  let claimsResult: Awaited<ReturnType<typeof client.auth.getClaims>>;
+  try {
+    claimsResult = await client.auth.getClaims(token);
+  } catch (verificationError) {
+    console.error(
+      "MCP bearer verification failed",
+      verificationError instanceof Error ? verificationError.name : "unknown",
+    );
+    throw new RequestHttpError(401, "Unauthorized");
+  }
+  const { data, error } = claimsResult;
   const claims = data?.claims as Record<string, unknown> | undefined;
   const userId = claims?.sub;
   const clientId = claims?.client_id;
@@ -2268,10 +2513,30 @@ function unauthorized(request: Request, message = "Authorization required") {
       status: 401,
       headers: {
         "cache-control": "no-store",
-        "www-authenticate": `Bearer resource_metadata="${metadata}", scope="${OAUTH_SCOPES.join(" ")}"`,
+        "www-authenticate": `Bearer error="invalid_token", error_description="Authorization required", resource_metadata="${metadata}", scope="${OAUTH_SCOPES.join(" ")}"`,
       },
     },
   );
+}
+
+async function mcpInternalErrorResponse(request: { json: () => Promise<unknown> }) {
+  const headers = { "cache-control": "no-store" };
+  try {
+    const body = (await request.json()) as { jsonrpc?: unknown; id?: unknown };
+    if (body?.jsonrpc === "2.0") {
+      return Response.json(
+        {
+          jsonrpc: "2.0",
+          id: body.id ?? null,
+          error: { code: -32603, message: "Internal error" },
+        },
+        { status: 500, headers },
+      );
+    }
+  } catch {
+    // Not a JSON-RPC body. Fall through to a plain HTTP error.
+  }
+  return Response.json({ error: "internal_error" }, { status: 500, headers });
 }
 
 export async function handleBentoMcpRequest(
@@ -2279,8 +2544,14 @@ export async function handleBentoMcpRequest(
   configuredOrigin: string | null | undefined,
   authenticate: (request: Request) => Promise<AuthInfo> = authenticateMcpRequest,
 ): Promise<Response | null> {
-  const response = await routeBentoMcpRequest(request, configuredOrigin, authenticate);
-  return response ? applyMcpCors(response, request) : null;
+  const captured = request.clone();
+  try {
+    const response = await routeBentoMcpRequest(request, configuredOrigin, authenticate);
+    return response ? applyMcpCors(response, request) : null;
+  } catch (error) {
+    console.error("MCP request failed", error instanceof Error ? error.name : "unknown");
+    return applyMcpCors(await mcpInternalErrorResponse(captured), request);
+  }
 }
 
 async function routeBentoMcpRequest(
