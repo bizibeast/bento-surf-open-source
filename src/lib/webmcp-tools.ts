@@ -1,3 +1,4 @@
+import { MCP_WORKSPACE_COLLECTIONS, WORKSPACE_DATA_DESCRIPTION } from "./mcp-workspace-data";
 import { WEBMCP_INLINE_BASE64_CHARS, webMcpUploadInputSchema } from "./webmcp-media";
 import {
   runBentoWebMcpRead,
@@ -298,6 +299,30 @@ export function createAuthenticatedWebMcpTools(refresh: () => Promise<void>): We
   );
 
   return [
+    readTool(
+      "read_workspace_data",
+      "Read stored workspace data",
+      WORKSPACE_DATA_DESCRIPTION,
+      "read_workspace_data",
+      objectSchema(
+        {
+          collection: string("Stored dataset.", { enum: MCP_WORKSPACE_COLLECTIONS }),
+          id: string("Record ID for full text (UUID, or numeric string for social_history)."),
+          cursor: string("nextCursor returned by the previous page; keep other filters unchanged."),
+          limit: number("Records per page.", { minimum: 1, maximum: 25, default: 10 }),
+          query: string("Filter Brain/source/Discover titles or social post captions.", {
+            minLength: 1,
+            maxLength: 120,
+          }),
+          savedOnly: boolean("Discover bookmarks only."),
+          range: string("Social history range, always limited by the plan.", {
+            enum: ["today", "3d", "7d", "30d", "90d", "all"],
+            default: "all",
+          }),
+        },
+        ["collection"],
+      ),
+    ),
     readTool(
       "get_content_brain",
       "Content Brain",

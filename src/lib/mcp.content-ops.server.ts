@@ -4,6 +4,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { requireContentWorkspace } from "./content-access.server";
 import {
   brainItemInputSchema,
+  type BrainItem,
   contentProfileFromRow,
   contentProfileSchema,
   contentProfileToRow,
@@ -36,7 +37,6 @@ import {
 } from "./content-agent.actions";
 import { listContentAgentThreadsForWorkspace } from "./content-agent-identity.server";
 import {
-  getDiscoverCreatorForUser,
   loadMoreDiscoverForUser,
   loadMoreDiscoverInputSchema,
   readStoredDiscover,
@@ -135,7 +135,21 @@ async function ownedMutation(query: any, message: string) {
 
 export async function getMcpContentBrain(userId: string) {
   await requireContentWorkspace(userId);
-  return loadContentBrain(userId);
+  const brain = await loadContentBrain(userId, 21);
+  return {
+    ...brain,
+    items: brain.items.slice(0, 20).map((item: BrainItem) => ({
+      ...item,
+      content: item.content.slice(0, 2000),
+      contentTruncated: item.content.length > 2000,
+    })),
+    dataAccess: {
+      tool: "read_workspace_data",
+      collections: ["brain_items", "brain_sources"],
+      hasMoreItems: brain.items.length > 20,
+      fullText: "Pass a document id to read its full text.",
+    },
+  };
 }
 
 export async function manageMcpContentBrain(userId: string, input: unknown) {
@@ -422,7 +436,15 @@ export async function getMcpContentRoutines(userId: string) {
       .limit(30),
   ]);
   if (routines.error || activity.error) throw new Error("Content routines could not be loaded.");
-  return { routines: routines.data || [], activity: activity.data || [] };
+  return {
+    routines: routines.data || [],
+    activity: activity.data || [],
+    dataAccess: {
+      tool: "read_workspace_data",
+      collections: ["routines", "routine_runs"],
+      recentActivityLimit: 30,
+    },
+  };
 }
 
 export async function manageMcpContentRoutine(userId: string, input: unknown) {
@@ -564,7 +586,31 @@ export async function manageMcpContentAgent(userId: string, input: unknown) {
 
 export async function getMcpContentDiscover(userId: string, creatorId?: string) {
   await requireContentWorkspace(userId, "discover");
-  if (creatorId) return { creator: await getDiscoverCreatorForUser(userId, uuid.parse(creatorId)) };
+  if (creatorId) {
+    const { data: row, error } = await db()
+      .from("creator_content_recommendations")
+      .select("id,title,summary,source_url,source_published_at,source_retrieved_at,metadata")
+      .eq("user_id", userId)
+      .eq("id", uuid.parse(creatorId))
+      .maybeSingle();
+    if (error || !row) throw new Error("This stored recommendation could not be loaded.");
+    return {
+      creator: {
+        author: typeof row.metadata?.author === "string" ? row.metadata.author : null,
+        authorUrl: typeof row.metadata?.authorUrl === "string" ? row.metadata.authorUrl : null,
+        authorAvatarUrl:
+          typeof row.metadata?.authorAvatarUrl === "string" ? row.metadata.authorAvatarUrl : null,
+      },
+      recommendation: {
+        id: row.id,
+        title: row.title,
+        summary: row.summary,
+        sourceUrl: row.source_url,
+        sourcePublishedAt: row.source_published_at,
+        sourceRetrievedAt: row.source_retrieved_at,
+      },
+    };
+  }
   const [discover, profile] = await Promise.all([
     readStoredDiscover(userId),
     db().from("creator_content_profiles").select("*").eq("user_id", userId).maybeSingle(),
@@ -572,6 +618,11 @@ export async function getMcpContentDiscover(userId: string, creatorId?: string) 
   if (profile.error) throw new Error("Discover preferences could not be loaded.");
   return {
     discover,
+    dataAccess: {
+      tool: "read_workspace_data",
+      collections: ["discover_items"],
+      savedOnly: "Use savedOnly: true to fetch every stored bookmark, including older briefs.",
+    },
     preferences: {
       ...(profile.data ? contentProfileFromRow(profile.data) : contentProfileSchema.parse({})),
       useBrainContext: profile.data?.discover_use_brain !== false,

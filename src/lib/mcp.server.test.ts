@@ -338,6 +338,7 @@ const readOnlyAnnotations = {
 /** Pins the hints OpenAI reads from tools/list. Idempotent is omitted unless true. */
 const bentoMcpToolAnnotations = {
   get_bento_overview: readOnlyAnnotations,
+  read_workspace_data: readOnlyAnnotations,
   get_content_brain: readOnlyAnnotations,
   manage_content_brain: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
   get_content_media: readOnlyAnnotations,
@@ -627,6 +628,7 @@ describe("Bento MCP tools", () => {
     }[];
     expect(Object.fromEntries(tools.map((tool) => [tool.name, tool.annotations]))).toEqual({
       get_bento_overview: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      read_workspace_data: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
       get_content_brain: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
       manage_content_brain: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
       get_content_media: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
@@ -702,6 +704,51 @@ describe("Bento MCP tools", () => {
     });
   });
 
+  it("exposes complete context to text-only MCP clients without duplicating internal Agent context", async () => {
+    const fullText = "Full writing voice. ".repeat(300);
+    const readWorkspaceData = vi.fn(async () => ({
+      collection: "brain_items" as const,
+      items: [{ id: "10000000-0000-4000-8000-000000000001", content: fullText }],
+      hasMore: false,
+      nextCursor: null,
+      readFrom: "stored" as const,
+    }));
+    const operations = { ...defaultBentoMcpOperations, readWorkspaceData };
+    const handler = createMcpHandler(() =>
+      createBentoMcpServer(authInfo, "https://bento.example", operations),
+    );
+    const args = { collection: "brain_items", id: "10000000-0000-4000-8000-000000000001" };
+    const response = await handler.fetch(
+      request({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "read_workspace_data", arguments: args },
+      }),
+      { authInfo },
+    );
+    const result = (await payload(response)).result;
+    expect(JSON.parse(result.content[1].text)).toEqual(result.structuredContent);
+    expect(result.structuredContent.data.items[0].content).toBe(fullText);
+    expect(readWorkspaceData).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: authInfo.extra!.userId }),
+      expect.objectContaining(args),
+    );
+    const tools = createBentoAppTools(
+      {
+        userId: String(authInfo.extra!.userId),
+        accessToken: authInfo.token,
+        supabase: {} as Parameters<typeof createBentoAppTools>[0]["supabase"],
+      },
+      "https://bento.example",
+      operations,
+    );
+    expect(tools.get("read_workspace_data")?.readOnly).toBe(true);
+    const internal = await tools.get("read_workspace_data")!.execute(args);
+    expect(internal.content).toHaveLength(1);
+    expect(internal.structuredContent.data.items[0].content).toBe(fullText);
+  });
+
   it("routes Content reads and edits through the authorized creator ID", async () => {
     const getMcpContentBrain = vi.fn(async () => ({
       profile: {
@@ -716,8 +763,22 @@ describe("Bento MCP tools", () => {
       sources: [],
       indexing: null,
       humanSummary: "",
+      dataAccess: {
+        tool: "read_workspace_data",
+        collections: ["brain_items", "brain_sources"],
+        hasMoreItems: false,
+        fullText: "Read by id",
+      },
     }));
-    const getMcpContentRoutines = vi.fn(async () => ({ routines: [], activity: [] }));
+    const getMcpContentRoutines = vi.fn(async () => ({
+      routines: [],
+      activity: [],
+      dataAccess: {
+        tool: "read_workspace_data",
+        collections: ["routines", "routine_runs"],
+        recentActivityLimit: 30,
+      },
+    }));
     const manageMcpContentBrain = vi.fn(async () => ({ id: "brain-1" }));
     const manageMcpContentMedia = vi.fn(async () => ({ id: "media-1" }));
     const manageMcpContentRoutine = vi.fn(async () => ({ id: "routine-1", nextRunAt: null }));

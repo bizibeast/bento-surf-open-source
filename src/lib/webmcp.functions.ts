@@ -1,11 +1,13 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { readWorkspaceDataSchema } from "./mcp-workspace-data";
 import { webMcpUploadInputSchema } from "./webmcp-media";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { defaultBentoMcpOperations } from "./mcp.server";
 import type { CreatorMcpContext } from "./mcp.creator-ops.server";
 
 export const BENTO_WEBMCP_READ_OPERATIONS = [
+  "read_workspace_data",
   "get_bento_overview",
   "list_social_accounts",
   "list_social_posts",
@@ -57,6 +59,7 @@ export type BentoWebMcpWriteOperation = (typeof BENTO_WEBMCP_WRITE_OPERATIONS)[n
 const inputSchema = z.record(z.string(), z.unknown()).default({});
 
 const webMcpReadSchemas = {
+  read_workspace_data: readWorkspaceDataSchema,
   get_bento_overview: z.object({}).strict(),
   list_social_accounts: z
     .object({
@@ -202,7 +205,12 @@ function projectRecommendation(value: unknown) {
       "title",
       "summary",
       "sourceName",
+      "sourceUrl",
+      "sourceRetrievedAt",
       "sourcePublishedAt",
+      "authorUrl",
+      "authorAvatarUrl",
+      "thumbnailUrl",
       "reason",
       "metricName",
       "metricValue",
@@ -648,6 +656,9 @@ export function sanitizeBentoWebMcpReadResult(
       return {
         range: data.range,
         timeZone: data.timeZone,
+        dataAccess: data.dataAccess,
+        effectiveStart: data.effectiveStart,
+        historyDays: data.historyDays,
         site: {
           totalViews: site.totalViews,
           totalClicks: site.totalClicks,
@@ -657,38 +668,49 @@ export function sanitizeBentoWebMcpReadResult(
           dimensions: projectList(site.dimensions, ["dimension", "value", "count"], 100),
           blockClicks: projectList(site.blockClicks, ["blockId", "clicks"], 100),
         },
-        socialSnapshots: projectList(data.socialSnapshots, [
-          "provider",
-          "provider_handle",
-          "provider_display_name",
-          "provider_avatar_url",
-          "followers",
-          "following",
-          "posts",
-          "views",
-          "reach",
-          "engagements",
-          "status",
-          "note",
-          "fetched_at",
-        ]),
-        socialContent: projectList(data.socialContent, [
-          "provider",
-          "remote_post_url",
-          "caption",
-          "content_type",
-          "thumbnail_url",
-          "views",
-          "impressions",
-          "reach",
-          "engagements",
-          "likes",
-          "comments",
-          "shares",
-          "saves",
-          "published_at",
-          "fetched_at",
-        ]),
+        socialSnapshots: projectList(
+          data.socialSnapshots,
+          [
+            "connection_id",
+            "provider",
+            "provider_handle",
+            "provider_display_name",
+            "provider_avatar_url",
+            "followers",
+            "following",
+            "posts",
+            "views",
+            "reach",
+            "engagements",
+            "status",
+            "note",
+            "fetched_at",
+          ],
+          100,
+        ),
+        socialContent: projectList(
+          data.socialContent,
+          [
+            "id",
+            "connection_id",
+            "provider",
+            "remote_post_url",
+            "caption",
+            "content_type",
+            "thumbnail_url",
+            "views",
+            "impressions",
+            "reach",
+            "engagements",
+            "likes",
+            "comments",
+            "shares",
+            "saves",
+            "published_at",
+            "fetched_at",
+          ],
+          100,
+        ),
       };
     }
     case "get_integration_workspace":
@@ -773,6 +795,8 @@ export function sanitizeBentoWebMcpReadResult(
       };
     case "get_content_brain":
       return {
+        humanSummary: data.humanSummary,
+        dataAccess: data.dataAccess,
         profile: project(data.profile, [
           "goal",
           "nicheKeywords",
@@ -789,6 +813,10 @@ export function sanitizeBentoWebMcpReadResult(
             "title",
             "content",
             "provenance",
+            "sourceUrl",
+            "sourceRef",
+            "tags",
+            "contentTruncated",
             "status",
             "locked",
             "createdAt",
@@ -796,7 +824,11 @@ export function sanitizeBentoWebMcpReadResult(
           ],
           50,
         ),
-        sources: projectList(data.sources, ["id", "provider", "status"], 50),
+        sources: projectList(
+          data.sources,
+          ["id", "provider", "status", "handle", "displayName"],
+          50,
+        ),
         indexing: project(data.indexing, ["status", "indexedAt", "sourceCount", "mediaCount"]),
       };
     case "get_content_media": {
@@ -815,6 +847,8 @@ export function sanitizeBentoWebMcpReadResult(
                 "id",
                 "title",
                 "caption",
+                "url",
+                "sourceUrl",
                 "provider",
                 "type",
                 "role",
@@ -839,6 +873,7 @@ export function sanitizeBentoWebMcpReadResult(
     }
     case "get_content_routines":
       return {
+        dataAccess: data.dataAccess,
         routines: Array.isArray(data.routines)
           ? data.routines.slice(0, 50).map((routine) => ({
               ...project(routine, [
@@ -904,13 +939,19 @@ export function sanitizeBentoWebMcpReadResult(
           : [],
       };
     case "get_content_discover": {
-      if (data.creator) return { creator: projectRecommendation(data.creator) };
+      if (data.creator)
+        return {
+          creator: projectRecommendation(data.creator),
+          recommendation: data.recommendation,
+        };
       if (data.recommendation) {
         const recommendation = asRecord(data.recommendation);
         return {
           recommendation: projectRecommendation({
             ...recommendation,
             sourceName: recommendation.source_name,
+            sourceUrl: recommendation.source_url,
+            sourceRetrievedAt: recommendation.source_retrieved_at,
             sourcePublishedAt: recommendation.source_published_at,
             metricName: recommendation.metric_name,
             metricValue: recommendation.metric_value,
@@ -920,11 +961,12 @@ export function sanitizeBentoWebMcpReadResult(
       }
       const discover = asRecord(data.discover);
       return {
+        dataAccess: data.dataAccess,
         discover: {
           ...project(discover, ["status", "lastRefreshedAt"]),
           winners: projectList(
             discover.winners,
-            ["id", "provider", "contentType", "metric", "value", "outlierScore"],
+            ["id", "provider", "contentType", "metric", "value", "outlierScore", "caption", "url"],
             20,
           ),
           patterns: projectList(
@@ -941,7 +983,7 @@ export function sanitizeBentoWebMcpReadResult(
           warnings: boundedTextList(discover.warnings, 10, 300),
           creators: projectList(
             discover.creators,
-            ["id", "name", "platform", "topics", "postCount", "lastCheckedAt"],
+            ["id", "name", "platform", "topics", "postCount", "lastCheckedAt", "profileUrl"],
             25,
           ),
           suggestedCreators: projectList(
@@ -1031,6 +1073,11 @@ export const runBentoWebMcpRead = createServerFn({ method: "POST" })
           );
         case "get_profile_workspace":
           return defaultBentoMcpOperations.getProfileWorkspace(creatorContext);
+        case "read_workspace_data":
+          return defaultBentoMcpOperations.readWorkspaceData(
+            creatorContext,
+            readWorkspaceDataSchema.parse(input),
+          );
         case "get_analytics_workspace":
           return defaultBentoMcpOperations.getAnalyticsWorkspace(creatorContext, {
             range:

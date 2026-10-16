@@ -1,5 +1,6 @@
 # Bento MCP tools
 
+- `read_workspace_data`: paginated stored Brain/source documents, routines/runs, Discover/bookmarks and social account/post/history records. Read an item by ID for full text; no provider refresh.
 - `get_bento_overview`: profile, plan, feature links, counts, and recent workspace state.
 - `list_social_accounts`: connected publishing/Auto-DM accounts and readiness.
 - `upload_media`: stream a public media URL into Bento storage, or send inline base64 up to 25 MiB over remote MCP (128 KiB through browser WebMCP). Prefer binary chunks for local files over 8 MB.
@@ -126,3 +127,53 @@ maximum over remote MCP; browser WebMCP accepts only 128 KiB inline). Use
 `begin_media_upload` for larger local files. A client may have a smaller tool-message limit. Never reduce video
 quality merely to fit the inline transport. If the client lacks file/HTTP tools,
 use Bento's attachment picker, then reference the uploaded asset.
+
+
+## Fetch complete stored context
+
+Use the overview tools for initial orientation, then call `read_workspace_data`.
+Responses include `items`, `hasMore`, `nextCursor` and `readFrom: "stored"`.
+
+| Collection | Available context | Text query |
+|---|---|---|
+| `brain_items` | Profile/voice/strategy/story/instruction documents, confirmation state, tags and provenance | Title |
+| `brain_sources` | Imported source text from connected knowledge sources, source URL and retrieval time; deleted sources excluded | Title |
+| `routines` | Schedule, timezone, instructions, platforms, enabled state, next/last run | Not supported |
+| `routine_runs` | Routine ID, status, scheduled time, output count and failure detail | Not supported |
+| `discover_items` | All stored recommendations and older bookmarks, source dates/URLs, feedback, metrics and inspiration | Title |
+| `social_accounts` | Latest cached account metrics with `fetched_at` | Not supported |
+| `social_posts` | Stored captions, content type, source URL and post performance | Caption |
+| `social_history` | Stored historical account metrics with `captured_at` | Not supported |
+
+For example, find a writing-voice document:
+
+```json
+{"collection":"brain_items","query":"voice","limit":10}
+```
+
+Then call the same tool with `collection: "brain_items"` and the returned item's
+`id` to read its full content. Item IDs are UUIDs except `social_history`, which
+uses numeric strings. For `social_accounts`, use the returned `connection_id`.
+Do not combine `id` and `cursor`.
+
+To inspect all saved Discover items:
+
+```json
+{"collection":"discover_items","savedOnly":true,"limit":10}
+```
+
+If `hasMore` is true, pass the returned `nextCursor` as `cursor` in the next call
+and retain `collection`, `savedOnly`, `query`, and `range`. A page has at most 25
+records. A list's 500-character preview explicitly marks `contentTruncated`;
+reading by ID returns the complete stored text. Never claim the first page is
+all the user's data. Do not repeatedly refetch unchanged pages.
+
+For social metrics, choose `range` (`today`, `3d`, `7d`, `30d`, `90d`, or `all`).
+`all` means all retained data allowed by the plan, not unlimited paid history.
+The response includes the effective start date, timezone and history limit.
+Account snapshots are latest values; use `social_history` for time-series data.
+The site aggregate remains available from `get_analytics_workspace`.
+
+Empty results mean no matching stored records within those filters. No read tool
+starts paid research or scraping. Ask for fresh collection only if the user needs
+it, then use the relevant explicit refresh action with existing budgets.

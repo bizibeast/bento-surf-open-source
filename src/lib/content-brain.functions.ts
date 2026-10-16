@@ -20,7 +20,7 @@ import { parsePublicHttpUrl } from "./safe-url";
 const brainItemIdSchema = z.object({ id: z.string().uuid() });
 const lockBrainItemSchema = brainItemIdSchema.extend({ locked: z.boolean() });
 
-export async function loadContentBrain(userId: string) {
+export async function loadContentBrain(userId: string, itemLimit = 1000) {
   const db = supabaseAdmin as any;
   const [
     profileResult,
@@ -38,7 +38,7 @@ export async function loadContentBrain(userId: string) {
       .select("*")
       .eq("user_id", userId)
       .order("updated_at", { ascending: false })
-      .limit(1000),
+      .limit(itemLimit),
     db
       .from("social_connections")
       .select("id,provider,provider_handle,provider_display_name,status,reauth_required,created_at")
