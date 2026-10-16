@@ -286,6 +286,83 @@ describe("Bento MCP tools", () => {
     expect(skillsPayload.result.skills[0].resources[0].digest).toMatch(/^sha256:[a-f0-9]{64}$/);
   });
 
+  it("pins tools/list safety annotations", async () => {
+    const handler = createMcpHandler(() => createBentoMcpServer(authInfo, "http://localhost:8080"));
+    const response = await handler.fetch(
+      request({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      { authInfo },
+    );
+    expect(response.status, await response.clone().text()).toBe(200);
+    const tools = (await payload(response)).result.tools as {
+      name: string;
+      annotations?: Record<string, boolean>;
+    }[];
+    expect(Object.fromEntries(tools.map((tool) => [tool.name, tool.annotations]))).toEqual({
+      get_bento_overview: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      get_content_brain: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      manage_content_brain: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
+      get_content_media: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      manage_content_media: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      get_content_routines: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      manage_content_routine: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
+      get_content_agent: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      manage_content_agent: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      get_content_discover: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      manage_content_discover: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      list_social_accounts: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      upload_media: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
+      list_social_posts: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      create_social_post: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      list_auto_dm_automations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      save_auto_dm_automation: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      set_auto_dm_enabled: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
+      delete_auto_dm_automation: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      list_pages: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      list_products: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      list_bookings: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      get_priority_dm_conversations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+      },
+      send_priority_dm_message: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      set_priority_dm_closed: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
+      get_scheduler_workspace: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      manage_scheduler: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      manage_page: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      manage_block: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      get_store_workspace: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      manage_product: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      manage_discount_code: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      manage_order_bump: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      manage_audience: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      get_calendar_workspace: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      manage_calendar: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      get_community_workspace: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      manage_community: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      get_profile_workspace: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      update_profile: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      get_analytics_workspace: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      get_integration_workspace: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+      },
+      get_earn_workspace: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      manage_earn: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+    });
+  });
+
   it("routes Content reads and edits through the authorized creator ID", async () => {
     const getMcpContentBrain = vi.fn(async () => ({
       profile: {
