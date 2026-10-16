@@ -10,6 +10,7 @@ describe("Cloudflare Worker entry configuration", () => {
     expect(contents).not.toContain('"account_id"');
     expect(contents).not.toContain('"routes"');
     expect(contents).toContain('"binding": "MEDIA_BUCKET"');
+    expect(contents).toContain('"redact_query_string": true');
     expect(contents).toContain('"binding": "SOCIAL_PUBLISH_QUEUE"');
     expect(contents).toContain('"binding": "EMAIL_QUEUE"');
     expect(contents).toContain('"VITE_APP_URL": "https://app.example.com"');
