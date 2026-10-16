@@ -2,6 +2,16 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { AnchorHTMLAttributes, ComponentType, ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.stubGlobal(
+  "ResizeObserver",
+  class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  },
+);
+
 import type { SchedulerConnection, SchedulerPost } from "@/lib/social-scheduler";
 import { xAccountCapabilities } from "@/lib/x-account";
 import { uploadFileResult } from "@/lib/upload";
