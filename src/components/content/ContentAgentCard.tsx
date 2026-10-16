@@ -1,3 +1,5 @@
+import { ContentDraftPreview } from "./ContentDraftPreview";
+import type { SchedulerConnection } from "@/lib/social-scheduler";
 import { useState } from "react";
 import { ExternalLink } from "lucide-react";
 import type { ContentMediaAsset } from "@/lib/content-media";
@@ -23,6 +25,7 @@ export function ContentAgentCard({
   card,
   allCards,
   mediaAssets = [],
+  previewAccounts = [],
   onApproveBrain,
   onRejectDraft,
   onRegenerateDraft,
@@ -35,6 +38,7 @@ export function ContentAgentCard({
   card: Card;
   allCards: Card[];
   mediaAssets?: ContentMediaAsset[];
+  previewAccounts?: SchedulerConnection[];
   onApproveBrain: (cardId: string) => void | Promise<void>;
   onRejectDraft: (cardId: string, reason: string) => void | Promise<void>;
   onRegenerateDraft: (cardId: string, reason: string) => void | Promise<void>;
@@ -75,9 +79,18 @@ export function ContentAgentCard({
   }
 
   if (card.type === "draft") {
+    const proposal = allCards.find(
+      (item) => item.type === "schedule_proposal" && item.draftCardId === card.cardId,
+    );
+    const destination = proposal?.type === "schedule_proposal" ? proposal.connectionId : null;
     return (
       <DraftCard
         card={card}
+        previewAccount={
+          previewAccounts.find((account) => account.id === destination) ||
+          previewAccounts.find((account) => account.provider === card.platform)
+        }
+        onSchedule={proposal ? () => onApproveSchedule(card.cardId, proposal.cardId) : undefined}
         messageId={messageId}
         draftState={draftState}
         onDraftChanged={onDraftChanged}
@@ -188,6 +201,8 @@ export function ContentAgentCard({
 
 function DraftCard({
   card,
+  previewAccount,
+  onSchedule,
   messageId,
   draftState,
   onDraftChanged,
@@ -197,6 +212,8 @@ function DraftCard({
   mediaAssets,
 }: {
   card: Extract<Card, { type: "draft" }>;
+  previewAccount?: SchedulerConnection;
+  onSchedule?: () => void | Promise<void>;
   messageId: string;
   draftState?: AgentDraftState;
   onDraftChanged?: () => void | Promise<unknown>;
@@ -258,8 +275,20 @@ function DraftCard({
           onChange={(e) => setBody(e.target.value)}
           className="content-document-input mt-3"
         />
-      ) : (
+      ) : !["post", "carousel"].includes(card.format) ? (
         <ContentMarkdown text={card.body} />
+      ) : (
+        <ContentDraftPreview
+          platform={card.platform}
+          body={card.body}
+          title={card.title}
+          assets={Object.fromEntries(
+            (draftState?.mediaIds || card.mediaIds || [])
+              .filter((id) => backgrounds[id])
+              .map((id) => [id, backgrounds[id]]),
+          )}
+          connection={previewAccount}
+        />
       )}
       {carousel && (
         <ContentCarouselDraft
@@ -280,6 +309,7 @@ function DraftCard({
         <ContentDraftImages
           draftRef={{ messageId, cardId: card.cardId, revision }}
           slideCount={carousel ? card.slides?.length || 0 : 0}
+          showPreview={false}
           onChanged={onDraftChanged}
           onAssets={setBackgrounds}
         />
@@ -357,6 +387,23 @@ function DraftCard({
                 {pending === "prepare" ? "Preparing visuals…" : "Prepare visuals"}
               </button>
             )}
+            {onSchedule && (
+              <button
+                type="button"
+                className="content-action content-action-primary"
+                disabled={!ready || Boolean(pending)}
+                title="Approve this draft and add it to the proposed schedule"
+                data-hover-guide="Approve this draft and add it to the proposed schedule"
+                onClick={() =>
+                  void run("schedule", async () => {
+                    await onSchedule();
+                    await onDraftChanged?.();
+                  })
+                }
+              >
+                {pending === "schedule" ? "Scheduling…" : "Approve & schedule"}
+              </button>
+            )}
             {["post", "carousel"].includes(card.format) && (
               <button
                 type="button"
@@ -389,36 +436,37 @@ function DraftCard({
           {error}
         </p>
       )}
-      {(card.mediaIds || []).map((id) => {
-        const asset = mediaAssets.find((m) => m.id === id);
-        // Historical script/thread formats do not mount the owned-image loader.
-        const ownedUrl =
-          backgrounds[id] ||
-          (!imageControlsSupported && asset?.type === "image" ? asset.url : undefined);
-        return asset?.type === "video" || ownedUrl ? (
-          <figure key={id} className="my-4">
-            {asset?.type === "video" ? (
-              <video
-                src={asset.url}
-                controls
-                className="max-h-80 rounded-lg"
-                aria-label={asset.title}
-              />
-            ) : (
-              <img
-                src={ownedUrl}
-                alt={asset?.title || "Currently attached draft image"}
-                className="max-h-80 rounded-lg object-contain"
-              />
-            )}
-            <figcaption className="mt-1 text-xs text-neutral-500">
-              {asset?.type === "video"
-                ? asset.title
-                : `Currently attached image${asset?.title ? ` · ${asset.title}` : ""}`}
-            </figcaption>
-          </figure>
-        ) : null;
-      })}
+      {!imageControlsSupported &&
+        (card.mediaIds || []).map((id) => {
+          const asset = mediaAssets.find((m) => m.id === id);
+          // Historical script/thread formats do not mount the owned-image loader.
+          const ownedUrl =
+            backgrounds[id] ||
+            (!imageControlsSupported && asset?.type === "image" ? asset.url : undefined);
+          return asset?.type === "video" || ownedUrl ? (
+            <figure key={id} className="my-4">
+              {asset?.type === "video" ? (
+                <video
+                  src={asset.url}
+                  controls
+                  className="max-h-80 rounded-lg"
+                  aria-label={asset.title}
+                />
+              ) : (
+                <img
+                  src={ownedUrl}
+                  alt={asset?.title || "Currently attached draft image"}
+                  className="max-h-80 rounded-lg object-contain"
+                />
+              )}
+              <figcaption className="mt-1 text-xs text-neutral-500">
+                {asset?.type === "video"
+                  ? asset.title
+                  : `Currently attached image${asset?.title ? ` · ${asset.title}` : ""}`}
+              </figcaption>
+            </figure>
+          ) : null;
+        })}
       <p className={`mt-2 ${micro.mutedXs}`}>{card.rationale}</p>
       {card.sourceUrls.some(isSafeSourceUrl) && (
         <ul aria-label="Draft sources" className={`mt-2 space-y-1 ${micro.mutedXs}`}>

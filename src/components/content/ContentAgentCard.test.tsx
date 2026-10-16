@@ -285,7 +285,9 @@ it.each(["twitter", "linkedin"] as const)(
     expect(
       await screen.findByRole("img", { name: "Currently attached draft image" }),
     ).toHaveAttribute("src", "https://bento.surf/new-owned.jpg");
-    expect(screen.getByText("Currently attached image")).toBeVisible();
+    expect(
+      screen.getByLabelText(`${platform === "twitter" ? "X" : "LinkedIn"} draft preview`),
+    ).toBeVisible();
   },
 );
 

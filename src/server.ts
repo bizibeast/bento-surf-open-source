@@ -189,6 +189,7 @@ let serverEntryPromise: Promise<ServerEntry> | undefined;
 
 const RUNTIME_STRING_BINDING_PREFIXES = [
   "APIMART_",
+  "PEXELS_",
   "SUPABASE_",
   "VITE_",
   "DODO_",

@@ -139,3 +139,28 @@ describe("cancellation dialog", () => {
     });
   });
 });
+
+it("explains immediate trial cancellation and does not offer to restart the ended trial", async () => {
+  vi.mocked(cancelMyRenewal).mockResolvedValue({
+    ...billing,
+    plan: "free",
+    status: "canceled",
+    cancelAtPeriodEnd: false,
+  });
+  render(
+    <RetentionCancellationDialog
+      open
+      onOpenChange={vi.fn()}
+      plan="creator"
+      billing={{ ...billing, status: "trialing" }}
+    />,
+  );
+  expect(
+    screen.getByText(/Confirming cancellation ends your trial access immediately/),
+  ).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Skip and continue cancelling" }));
+  expect(await screen.findByText(/Your trial ends immediately when you confirm/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Confirm cancellation" }));
+  expect(await screen.findByText("Your trial has ended")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Keep my plan" })).not.toBeInTheDocument();
+});

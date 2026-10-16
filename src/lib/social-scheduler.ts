@@ -1009,10 +1009,28 @@ export const socialPostInputSchema = z
     connectionIds: z.array(z.string().uuid()).max(20),
     media: z.array(schedulerMediaSchema).max(10).default([]),
     providerSettings: z.record(z.string(), z.record(z.string(), z.unknown())).default({}),
+    connectionOverrides: z
+      .record(
+        z.string().uuid(),
+        z
+          .object({
+            bodyOverride: z.string().max(X_LONG_POST_LIMIT),
+            mentions: z.array(z.unknown()).max(20).optional(),
+          })
+          .strict(),
+      )
+      .optional(),
     publishNow: z.boolean().default(false),
     asDraft: z.boolean().default(false),
   })
   .superRefine((value, context) => {
+    if (
+      Object.keys(value.connectionOverrides || {}).some((id) => !value.connectionIds.includes(id))
+    )
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Choose the destination before customizing its text.",
+      });
     for (const [provider, settings] of Object.entries(value.providerSettings)) {
       if (settings.mentions !== undefined) {
         const mentionBody =
@@ -1144,6 +1162,9 @@ export const socialPostInputSchema = z
     }
     if (
       !value.body &&
+      !Object.values(value.connectionOverrides || {}).some((settings) =>
+        settings.bodyOverride.trim(),
+      ) &&
       !Object.values(value.providerSettings).some(
         (settings) => typeof settings.bodyOverride === "string" && settings.bodyOverride.trim(),
       ) &&

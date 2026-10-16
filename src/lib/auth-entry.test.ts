@@ -3,13 +3,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const authMocks = vi.hoisted(() => ({
   getClaims: vi.fn(),
   signOut: vi.fn(),
+  refreshSession: vi.fn(),
   maybeSingle: vi.fn(),
   from: vi.fn(),
 }));
 
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
-    auth: { getClaims: authMocks.getClaims, signOut: authMocks.signOut },
+    auth: {
+      getClaims: authMocks.getClaims,
+      signOut: authMocks.signOut,
+      refreshSession: authMocks.refreshSession,
+    },
     from: authMocks.from,
   },
 }));
@@ -83,7 +88,10 @@ describe("auth entry recovery", () => {
   });
 
   it("keeps login available when cached session claims are invalid", async () => {
-    authMocks.getClaims.mockResolvedValue({ data: null, error: new Error("expired") });
+    authMocks.getClaims.mockResolvedValue({
+      data: null,
+      error: { name: "AuthSessionMissingError" },
+    });
 
     await expect(redirectAuthenticatedVisitor()).resolves.toBeUndefined();
     expect(authMocks.from).not.toHaveBeenCalled();
@@ -102,14 +110,32 @@ describe("auth entry recovery", () => {
     expect(authMocks.signOut).not.toHaveBeenCalled();
   });
 
-  it("clears a session when PostgREST rejects its JWT", async () => {
+  it("refreshes a session once when PostgREST rejects an expired access token", async () => {
     authMocks.getClaims.mockResolvedValue({ data: { claims: { sub: "user-1" } }, error: null });
-    authMocks.maybeSingle.mockResolvedValue({
-      data: null,
-      error: { code: "PGRST301", message: "No suitable key or wrong key type" },
+    authMocks.maybeSingle
+      .mockResolvedValueOnce({
+        data: null,
+        error: { code: "PGRST301", message: "JWT expired" },
+      })
+      .mockResolvedValueOnce({ data: { onboarded: true }, error: null });
+    authMocks.refreshSession.mockResolvedValue({
+      data: { session: { user: { id: "user-1" } } },
+      error: null,
     });
 
-    await expect(redirectAuthenticatedVisitor()).resolves.toBeUndefined();
-    expect(authMocks.signOut).toHaveBeenCalledWith({ scope: "local" });
+    await expect(redirectAuthenticatedVisitor()).rejects.toMatchObject({
+      options: { to: "/link" },
+    });
+    expect(authMocks.refreshSession).toHaveBeenCalledTimes(1);
+    expect(authMocks.signOut).not.toHaveBeenCalled();
   });
+});
+
+it("does not turn a temporary auth outage into a login prompt", async () => {
+  authMocks.getClaims.mockResolvedValue({
+    data: null,
+    error: { name: "AuthRetryableFetchError", status: 503 },
+  });
+  await expect(redirectAuthenticatedVisitor()).rejects.toMatchObject({ status: 503 });
+  expect(authMocks.signOut).not.toHaveBeenCalled();
 });

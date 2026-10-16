@@ -1,3 +1,4 @@
+import type { SchedulerConnection } from "@/lib/social-scheduler";
 import type { AgentDraftEdit } from "@/lib/content-carousel";
 import { storedContentAgentResultSchema } from "@/lib/content-agent-proactive";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -69,6 +70,7 @@ const starters = [
 
 export function ContentAgent({
   threads,
+  previewAccounts = [],
   agentName = "Bento",
   agentThreadId,
   onPinThread,
@@ -108,6 +110,7 @@ export function ContentAgent({
   onDraftChanged,
 }: {
   threads: ContentAgentThread[];
+  previewAccounts?: SchedulerConnection[];
   agentName: string;
   agentThreadId: string | null;
   onPinThread: (threadId: string, pinned: boolean) => void | Promise<void>;
@@ -644,6 +647,7 @@ export function ContentAgent({
                           key={card.cardId}
                           messageId={message.id}
                           card={card}
+                          previewAccounts={previewAccounts}
                           draftState={
                             parsed.data.draftStates?.[
                               card.type === "schedule_proposal" ? card.draftCardId : card.cardId

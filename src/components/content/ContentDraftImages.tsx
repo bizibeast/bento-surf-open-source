@@ -12,12 +12,14 @@ import type { ImageDraftRef } from "@/lib/content-agent-images.server";
 type DraftImages = Awaited<ReturnType<typeof getAgentDraftImages>>;
 export function ContentDraftImages({
   draftRef,
+  showPreview = true,
   slideCount,
   onChanged,
   onAssets,
   onReady,
 }: {
   draftRef: ImageDraftRef;
+  showPreview?: boolean;
   slideCount: number;
   onChanged?: () => void | Promise<unknown>;
   onAssets: (assets: Record<string, string>) => void;
@@ -89,7 +91,8 @@ export function ContentDraftImages({
   }
   return (
     <section aria-label="Draft images" className="my-3 space-y-3">
-      {slideCount === 0 &&
+      {showPreview &&
+        slideCount === 0 &&
         state &&
         Object.entries(state.assets).map(([id, url]) => (
           <img
