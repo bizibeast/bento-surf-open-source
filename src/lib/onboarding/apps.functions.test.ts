@@ -1,6 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   completed: false,
+  dismissed: false,
   resultCount: 0,
   from: vi.fn(),
   upsert: vi.fn(),
@@ -29,6 +30,7 @@ import { getAppGuide } from "./apps.functions";
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.completed = false;
+  mocks.dismissed = false;
   mocks.resultCount = 0;
   mocks.upsert.mockImplementation(async () => {
     mocks.completed = true;
@@ -40,7 +42,10 @@ beforeEach(() => {
         table === "profiles"
           ? { display_name: "Ari" }
           : table === "app_onboarding_progress"
-            ? { completed_at: mocks.completed ? "2026-10-16T00:00:00Z" : null }
+            ? {
+                completed_at: mocks.completed ? "2026-10-16T00:00:00Z" : null,
+                dismissed_at: mocks.dismissed ? "2026-10-16T00:00:00Z" : null,
+              }
             : { status: "applied", brief: {} },
       count: mocks.resultCount,
       error: null,
@@ -61,6 +66,18 @@ it("keeps completed setup hidden after example records are removed and skips pro
   mocks.completed = true;
   const guide = await getAppGuide({ data: { appId: "newsletter" } });
   expect(guide.complete).toBe(true);
+  expect(guide.showInitially).toBe(false);
+  expect(mocks.from.mock.calls.map(([table]) => table)).toEqual([
+    "profiles",
+    "app_onboarding_progress",
+    "onboarding_sessions",
+  ]);
+  expect(mocks.upsert).not.toHaveBeenCalled();
+});
+it("skips readiness scans for a permanently dismissed guide", async () => {
+  mocks.dismissed = true;
+  const guide = await getAppGuide({ data: { appId: "newsletter" } });
+  expect(guide.dismissed).toBe(true);
   expect(guide.showInitially).toBe(false);
   expect(mocks.from.mock.calls.map(([table]) => table)).toEqual([
     "profiles",
