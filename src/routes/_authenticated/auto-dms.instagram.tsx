@@ -1,3 +1,5 @@
+import { InstagramPublicRepliesEditor } from "@/components/InstagramPublicRepliesEditor";
+import { INSTAGRAM_AUTO_DM_DEFAULTS as autoDmDefaults } from "@/lib/instagram-auto-dm-defaults";
 import { AutoDmActivityRow } from "@/components/AutoDmDetails";
 import { AutoDmDetailActions } from "@/components/AutoDmDetailDialog";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
@@ -114,28 +116,27 @@ type Draft = {
   enabled: boolean;
 };
 
-const DEFAULT_PUBLIC_REPLY_MESSAGES =
-  "Sent it to your DMs ✨\nCheck your messages 💌\nOn its way 🙌";
+const DEFAULT_PUBLIC_REPLY_MESSAGES = autoDmDefaults.publicReplyMessages.join("\n");
 
 const EMPTY_DRAFT: Draft = {
   connectionId: "",
   name: "Send link from comments",
   triggerType: "comment_keyword",
-  keywords: "link",
+  keywords: autoDmDefaults.keyword,
   excludedKeywords: "",
   matchType: "contains",
   mediaScope: "any",
   mediaIds: [],
-  replyMessage: "Thanks for commenting! Here is the link you asked for ✨",
+  replyMessage: autoDmDefaults.replyMessage,
   publicReplyEnabled: false,
   publicReplyMessages: DEFAULT_PUBLIC_REPLY_MESSAGES,
-  openingMessage: "Thanks for your comment! I have it ready for you.",
-  confirmationButtonLabel: "Send it",
+  openingMessage: autoDmDefaults.openingMessage,
+  confirmationButtonLabel: autoDmDefaults.confirmationButtonLabel,
   emailCaptureEnabled: false,
-  emailPromptMessage: "What’s the best email address to send this to?",
+  emailPromptMessage: autoDmDefaults.emailPromptMessage,
   emailMarketingConsentEnabled: false,
   followGateEnabled: false,
-  followPromptMessage: "Follow this account, then tap I’ve followed.",
+  followPromptMessage: autoDmDefaults.followPromptMessage,
   followMaxRechecks: 3,
   followFailAction: "send_anyway",
   replyButtonLabel: "",
@@ -1556,28 +1557,13 @@ function AutomationEditor({
                   />
                 </div>
                 {draft.publicReplyEnabled && (
-                  <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                    {publicReplyFields(draft.publicReplyMessages).map((reply, index) => (
-                      <Field key={index} label={`Public reply ${index + 1}`}>
-                        <input
-                          value={reply}
-                          maxLength={300}
-                          onChange={(event) => {
-                            const replies = publicReplyFields(draft.publicReplyMessages);
-                            replies[index] = event.target.value.replace(/\n/g, " ");
-                            setDraft({ ...draft, publicReplyMessages: replies.join("\n") });
-                          }}
-                          className={inputClass}
-                          placeholder={
-                            index === 0
-                              ? "Sent it to your DMs ✨"
-                              : index === 1
-                                ? "Check your messages 💌"
-                                : "On its way 🙌"
-                          }
-                        />
-                      </Field>
-                    ))}
+                  <div className="mt-4">
+                    <InstagramPublicRepliesEditor
+                      value={draft.publicReplyMessages.split("\n")}
+                      onChange={(replies) =>
+                        setDraft({ ...draft, publicReplyMessages: replies.join("\n") })
+                      }
+                    />
                   </div>
                 )}
               </div>
@@ -2169,10 +2155,6 @@ function splitLines(value: string) {
     .map((item) => item.trim())
     .filter(Boolean)
     .slice(0, 3);
-}
-
-function publicReplyFields(value: string) {
-  return [...value.split("\n").slice(0, 3), "", "", ""].slice(0, 3);
 }
 
 const inputClass = micro.input;
