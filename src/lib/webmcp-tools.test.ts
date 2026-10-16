@@ -20,7 +20,7 @@ describe("authenticated WebMCP tools", () => {
 
   it("exposes every authenticated operation with unique names", () => {
     const tools = createAuthenticatedWebMcpTools(vi.fn());
-    expect(tools).toHaveLength(40);
+    expect(tools).toHaveLength(41);
     expect(new Set(tools.map((tool) => tool.name)).size).toBe(tools.length);
     expect(tools.map((tool) => tool.name)).toEqual(
       expect.arrayContaining([

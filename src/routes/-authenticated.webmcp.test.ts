@@ -52,18 +52,20 @@ describe("authenticated WebMCP route coverage", () => {
 
   it("keeps shared mutations scoped to the current workspace", () => {
     expect(authenticatedWebMcpToolNames("/store")).toEqual(
-      new Set(["get_bento_overview", ...WEBMCP_TOOLS_BY_ROUTE.store]),
+      new Set(["get_bento_overview", "read_workspace_data", ...WEBMCP_TOOLS_BY_ROUTE.store]),
     );
     expect(authenticatedWebMcpToolNames("/auto-dms/instagram")).toEqual(
-      new Set(["get_bento_overview", ...WEBMCP_TOOLS_BY_ROUTE["auto-dms"]]),
+      new Set(["get_bento_overview", "read_workspace_data", ...WEBMCP_TOOLS_BY_ROUTE["auto-dms"]]),
     );
     expect(authenticatedWebMcpToolNames("/email-marketing")).toEqual(
-      new Set(["get_bento_overview", "manage_audience"]),
+      new Set(["get_bento_overview", "read_workspace_data", "manage_audience"]),
     );
     expect(authenticatedWebMcpToolNames("/content")).toEqual(
-      new Set(["get_bento_overview", ...WEBMCP_TOOLS_BY_ROUTE.content]),
+      new Set(["get_bento_overview", "read_workspace_data", ...WEBMCP_TOOLS_BY_ROUTE.content]),
     );
-    expect(authenticatedWebMcpToolNames("/admin")).toEqual(new Set(["get_bento_overview"]));
+    expect(authenticatedWebMcpToolNames("/admin")).toEqual(
+      new Set(["get_bento_overview", "read_workspace_data"]),
+    );
   });
 
   it("requires approval and honors cancellation before workspace navigation", async () => {

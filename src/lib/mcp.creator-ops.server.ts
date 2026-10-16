@@ -61,8 +61,11 @@ import {
 } from "./community.functions";
 import { normalizeCommunityResources } from "./community-member";
 import { editableProfileColumns, updateProfileForCreator } from "./profile.functions";
-import { analyticsDays } from "./plans";
-import { historyStart, rangeStart } from "./analytics.functions";
+import {
+  mcpAnalyticsWindow,
+  SOCIAL_ACCOUNT_FIELDS,
+  SOCIAL_POST_FIELDS,
+} from "./mcp-workspace-data.server";
 import { enforceRequestRateLimit } from "./request-security.server";
 import { ensureReferralAccount } from "./referral.functions";
 import { isReferralCode } from "./referrals";
@@ -1615,21 +1618,16 @@ export async function getAnalyticsWorkspace(
   context: CreatorMcpContext,
   input: { range: "today" | "3d" | "7d" | "30d" | "90d" | "all" },
 ) {
-  const { data: profile, error: profileError } = await context.supabase
-    .from("profiles")
-    .select("account_timezone,analytics_timezone")
-    .eq("id", context.userId)
-    .single();
-  if (profileError) throw new Error("Analytics timezone could not be loaded.");
-  const timeZone = profile.account_timezone || profile.analytics_timezone || "UTC";
-  let start = rangeStart(input.range, timeZone);
-  const plan = await getPlan(context.userId);
-  const days = analyticsDays(plan);
-  if (days !== null) {
-    const floor = historyStart(days, timeZone);
-    if (!start || start < floor) start = floor;
-  }
+  const { timeZone, start, startTimestamp, historyDays } = await mcpAnalyticsWindow(
+    context,
+    input.range,
+  );
   const admin = supabaseAdmin as any;
+  let contentQuery = admin
+    .from("social_content_insights")
+    .select(SOCIAL_POST_FIELDS)
+    .eq("user_id", context.userId);
+  if (startTimestamp) contentQuery = contentQuery.gte("published_at", startTimestamp);
   const [analytics, social, content] = await Promise.all([
     (context.supabase as any).rpc("get_creator_analytics", {
       p_start_date: start,
@@ -1637,16 +1635,11 @@ export async function getAnalyticsWorkspace(
     }),
     admin
       .from("social_analytics_snapshots")
-      .select("*")
+      .select(SOCIAL_ACCOUNT_FIELDS)
       .eq("user_id", context.userId)
-      .order("captured_at", { ascending: false })
+      .order("fetched_at", { ascending: false })
       .limit(100),
-    admin
-      .from("social_content_insights")
-      .select("*")
-      .eq("user_id", context.userId)
-      .order("published_at", { ascending: false })
-      .limit(100),
+    contentQuery.order("published_at", { ascending: false }).limit(100),
   ]);
   if (analytics.error || social.error || content.error) {
     throw new Error("Analytics workspace could not be loaded.");
@@ -1654,6 +1647,14 @@ export async function getAnalyticsWorkspace(
   return {
     range: input.range,
     timeZone,
+    effectiveStart: start,
+    historyDays,
+    dataAccess: {
+      tool: "read_workspace_data",
+      collections: ["social_accounts", "social_posts", "social_history"],
+      recentPostLimit: 100,
+      note: "Snapshots are the latest stored values; use social_history for time-series rows. No provider refresh is performed.",
+    },
     site: analytics.data || {},
     socialSnapshots: social.data || [],
     socialContent: content.data || [],

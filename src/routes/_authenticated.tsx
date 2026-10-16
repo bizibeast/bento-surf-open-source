@@ -127,7 +127,11 @@ export const WEBMCP_TOOLS_BY_ROUTE: Record<string, readonly string[]> = {
 
 export function authenticatedWebMcpToolNames(pathname: string) {
   const route = pathname.split("/").filter(Boolean)[0] || "home";
-  return new Set(["get_bento_overview", ...(WEBMCP_TOOLS_BY_ROUTE[route] || [])]);
+  return new Set([
+    "get_bento_overview",
+    "read_workspace_data",
+    ...(WEBMCP_TOOLS_BY_ROUTE[route] || []),
+  ]);
 }
 
 export function createOpenWorkspaceWebMcpTool(

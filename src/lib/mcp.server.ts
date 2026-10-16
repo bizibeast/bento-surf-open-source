@@ -92,6 +92,9 @@ import {
   routineMutationSchema,
 } from "./mcp.content-ops.server";
 
+import { readWorkspaceData } from "./mcp-workspace-data.server";
+import { readWorkspaceDataSchema, WORKSPACE_DATA_DESCRIPTION } from "./mcp-workspace-data";
+
 const MCP_PATH = "/mcp";
 // ChatGPT's app dashboard scans this endpoint from the browser. Other origins
 // stay rejected so a DNS-rebinding page cannot call the MCP server.
@@ -843,6 +846,7 @@ async function resolvePostMedia(userId: string, ids: string[]) {
 }
 
 export const defaultBentoMcpOperations = {
+  readWorkspaceData,
   findPostStockPhotos,
   importPostStockPhoto,
   resolvePostMedia,
@@ -1602,6 +1606,7 @@ export function createBentoAppTools(
     origin,
     operations,
     () => context,
+    false,
   );
   // Chat recursion and arbitrary URL/base64 imports are not Agent operations.
   // The authenticated attachment picker handles uploads with storage limits.
@@ -1617,8 +1622,16 @@ function registerBentoTools(
   origin: string,
   operations: BentoMcpOperations,
   creatorContext: () => CreatorMcpContext,
+  includeReadableData = true,
 ) {
   const userId = userIdFrom(authInfo);
+  const readResult = (message: string, data: Record<string, unknown>) => {
+    const result = textResult(message, data);
+    // Older MCP clients only pass text blocks to the model. Internal Agent reads
+    // already consume structuredContent, so avoid duplicating its token usage.
+    if (includeReadableData) result.content.push({ type: "text", text: JSON.stringify(data) });
+    return result;
+  };
   server.registerTool(
     "get_bento_overview",
     {
@@ -1629,20 +1642,35 @@ function registerBentoTools(
     },
     async () => {
       const overview = await operations.getBentoOverview(userId, origin);
-      return textResult("Loaded the Bento workspace overview.", { overview });
+      return readResult("Loaded the Bento workspace overview.", { overview });
     },
+  );
+
+  server.registerTool(
+    "read_workspace_data",
+    {
+      title: "Read stored workspace data",
+      description: WORKSPACE_DATA_DESCRIPTION,
+      inputSchema: readWorkspaceDataSchema,
+      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+    },
+    async (input) =>
+      readResult("Loaded stored workspace data.", {
+        data: await operations.readWorkspaceData(creatorContext(), input),
+      }),
   );
 
   server.registerTool(
     "get_content_brain",
     {
       title: "Get Content Brain",
-      description: "Load the creator's Content profile, Brain documents, and indexing status.",
+      description:
+        "Load the creator's content profile, voice and Brain document previews, connected sources, and indexing status. Use read_workspace_data (brain_items or brain_sources) for all documents and full text by ID.",
       inputSchema: z.object({}),
       annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     },
     async () =>
-      textResult("Loaded Content Brain.", { brain: await operations.getMcpContentBrain(userId) }),
+      readResult("Loaded Content Brain.", { brain: await operations.getMcpContentBrain(userId) }),
   );
 
   server.registerTool(
@@ -1674,7 +1702,7 @@ function registerBentoTools(
       annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     },
     async (input) =>
-      textResult("Loaded Brain Media.", {
+      readResult("Loaded Brain Media.", {
         media: await operations.getMcpContentMedia(userId, input),
       }),
   );
@@ -1698,12 +1726,13 @@ function registerBentoTools(
     "get_content_routines",
     {
       title: "Get Content Routines",
-      description: "Load routines, schedules, and recent activity for the signed-in creator.",
+      description:
+        "Load routines, schedules, instructions, and recent activity for the signed-in creator. Use read_workspace_data (routines or routine_runs) to page through all stored records.",
       inputSchema: z.object({}),
       annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     },
     async () =>
-      textResult("Loaded Content Routines.", {
+      readResult("Loaded Content Routines.", {
         routines: await operations.getMcpContentRoutines(userId),
       }),
   );
@@ -1755,12 +1784,13 @@ function registerBentoTools(
     "get_content_discover",
     {
       title: "Get Content Discover",
-      description: "Load personalized Discover recommendations, tracked creators, and preferences.",
+      description:
+        "Load stored Discover recommendations, tracked creators, preferences and freshness. No refresh or scraping. Use read_workspace_data (discover_items, optionally savedOnly) for all recommendations and bookmarks.",
       inputSchema: z.object({ creatorId: z.uuid().optional() }),
       annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     },
     async ({ creatorId }) =>
-      textResult("Loaded Content Discover.", {
+      readResult("Loaded Content Discover.", {
         discover: await operations.getMcpContentDiscover(userId, creatorId),
       }),
   );
@@ -2340,7 +2370,7 @@ function registerBentoTools(
     {
       title: "Get analytics workspace",
       description:
-        "Load site analytics, social account snapshots, and recent social-content performance.",
+        "Load site analytics, latest social account snapshots, and recent post performance from stored data. Use read_workspace_data (social_accounts, social_posts or social_history) for all records within your plan history limit. Never refresh providers merely to read.",
       inputSchema: z.object({
         range: z.enum(["today", "3d", "7d", "30d", "90d", "all"]).default("30d"),
       }),
@@ -2348,7 +2378,7 @@ function registerBentoTools(
     },
     async (input) => {
       const analytics = await operations.getAnalyticsWorkspace(creatorContext(), input);
-      return textResult("Loaded Bento analytics.", { analytics });
+      return readResult("Loaded Bento analytics.", { analytics });
     },
   );
 
@@ -2421,7 +2451,7 @@ export function createBentoMcpServer(
     { name: "bento", version: "1.0.0" },
     {
       instructions:
-        "Use stable IDs returned by list tools. List accounts before posting or creating Auto-DMs. For one piece of content on several networks create ONE social post with all connectionIds, shared media uploaded once, and connectionOverrides[connectionId].bodyOverride for each caption. YouTube titleOverride/description/youtubePrivacy go in providerSettings.youtube. Edit by passing the existing post id; do not split or duplicate drafts for different captions. For local videos over 8 MB use begin_media_upload and its binary chunk instructions, not large base64 JSON or compression. Read skill://bento/bento/references/tools.md for complete examples. Publish now or delete only when the user explicitly requested that external action.",
+        "Use stable IDs returned by list tools. Before content planning or writing, read get_content_brain, get_content_routines, get_analytics_workspace and get_content_discover as relevant. These expose the creator voice, publishing cadence, performance and current stored signals. For full documents, imported source text, older runs, bookmarks and social history use read_workspace_data, follow nextCursor, and read truncated text by id. Empty or stale stored data is not permission to start paid refreshes. List accounts before posting or creating Auto-DMs. For one piece of content on several networks create ONE social post with all connectionIds, shared media uploaded once, and connectionOverrides[connectionId].bodyOverride for each caption. YouTube titleOverride/description/youtubePrivacy go in providerSettings.youtube. Edit by passing the existing post id; do not split or duplicate drafts for different captions. For local videos over 8 MB use begin_media_upload and its binary chunk instructions, not large base64 JSON or compression. Read skill://bento/bento/references/tools.md for complete examples. Publish now or delete only when the user explicitly requested that external action.",
       capabilities: { extensions: { "io.modelcontextprotocol/skills": {} } },
     },
   );

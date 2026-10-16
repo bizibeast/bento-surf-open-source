@@ -151,7 +151,7 @@ describe("WebMCP read result projection", () => {
     );
   });
 
-  it("retains current analytics fields without internal or provider IDs", () => {
+  it("retains analytics context and record IDs for full detail reads, without provider payloads", () => {
     const result = sanitizeBentoWebMcpReadResult("get_analytics_workspace", {
       range: "30d",
       timeZone: "Asia/Kolkata",
@@ -193,12 +193,19 @@ describe("WebMCP read result projection", () => {
     expect(result).toMatchObject({
       site: { totalViews: 10 },
       socialSnapshots: [{ provider: "instagram", followers: 100, reach: 150 }],
-      socialContent: [{ provider: "instagram", content_type: "video", views: 50, likes: 5 }],
+      socialContent: [
+        {
+          id: "internal-row",
+          connection_id: "internal-connection",
+          provider: "instagram",
+          content_type: "video",
+          views: 50,
+          likes: 5,
+        },
+      ],
     });
     expect((result as { site: { hourly: unknown[] } }).site.hourly).toHaveLength(24);
-    expect(JSON.stringify(result)).not.toMatch(
-      /visitor_hash|internal-connection|internal-row|provider-post-id|metadata/,
-    );
+    expect(JSON.stringify(result)).not.toMatch(/visitor_hash|provider-post-id|metadata/);
   });
 
   it("bounds Content Agent conversations and omits private media and provider payloads", () => {
@@ -273,7 +280,7 @@ describe("WebMCP read result projection", () => {
     expect(JSON.stringify(result)).not.toContain("private-owner-id");
   });
 
-  it("projects Brain, Media, Routines, and Discover without private connection details", () => {
+  it("retains Brain and Discover provenance and Media URLs without credentials or raw provider errors", () => {
     const brain = sanitizeBentoWebMcpReadResult("get_content_brain", {
       profile: { goal: "reach_growth", nicheKeywords: ["design"], privateField: "secret" },
       items: [
@@ -330,16 +337,19 @@ describe("WebMCP read result projection", () => {
       preferences: { language: "en", region: "global", internalId: "secret" },
     });
 
-    expect(brain).toMatchObject({ items: [{ id: "brain-1", content: "Be clear" }] });
+    expect(brain).toMatchObject({
+      items: [{ id: "brain-1", content: "Be clear", sourceUrl: "https://private.example" }],
+      sources: [{ displayName: "owner@example.com" }],
+    });
     expect(media).toMatchObject({ photos: [{ id: "photo-1", tags: ["portrait"] }] });
     expect(routines).toMatchObject({ activity: [{ id: "run-1", status: "failed" }] });
     expect(discover).toMatchObject({ discover: { trends: [{ id: "trend-1" }] } });
     expect(JSON.stringify({ brain, media, routines, discover })).not.toMatch(
-      /private\.example|owner@example|private-provider-error|webhookSecret|internalId|metadata/,
+      /private-provider-error|webhookSecret|internalId|metadata/,
     );
   });
 
-  it("projects one self-hosted Discover recommendation without its source URL or metadata", () => {
+  it("projects one self-hosted Discover recommendation with its source but without credentials", () => {
     const result = sanitizeBentoWebMcpReadResult("get_content_discover", {
       recommendation: {
         id: "recommendation-1",
@@ -357,7 +367,8 @@ describe("WebMCP read result projection", () => {
       id: "recommendation-1",
       sourceName: "Public source",
       metricValue: 100,
+      sourceUrl: "https://private.example/source",
     });
-    expect(JSON.stringify(result)).not.toMatch(/private\.example|providerToken|metadata/);
+    expect(JSON.stringify(result)).not.toMatch(/providerToken|metadata/);
   });
 });

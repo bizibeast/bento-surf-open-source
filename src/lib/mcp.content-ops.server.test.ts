@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   rpc: vi.fn(),
   requireContentWorkspace: vi.fn(),
   listContentAgentThreadsForWorkspace: vi.fn(),
+  resolveDiscoverCreator: vi.fn(),
 }));
 
 vi.mock("@/integrations/supabase/client.server", () => ({
@@ -16,9 +17,13 @@ vi.mock("./content-access.server", () => ({
 vi.mock("./content-agent-identity.server", () => ({
   listContentAgentThreadsForWorkspace: mocks.listContentAgentThreadsForWorkspace,
 }));
+vi.mock("./content-discover-creator.server", () => ({
+  resolveDiscoverCreator: mocks.resolveDiscoverCreator,
+}));
 
 import {
   getMcpContentAgent,
+  getMcpContentDiscover,
   manageMcpContentBrain,
   manageMcpContentMedia,
   manageMcpContentRoutine,
@@ -49,6 +54,34 @@ describe("Content MCP ownership", () => {
     mocks.rpc.mockReset();
     mocks.requireContentWorkspace.mockReset();
     mocks.listContentAgentThreadsForWorkspace.mockReset();
+    mocks.resolveDiscoverCreator.mockReset();
+  });
+
+  it("reads stored Discover attribution without profile enrichment or provider payloads", async () => {
+    const row = query({
+      data: {
+        id: itemId,
+        title: "A useful trend",
+        summary: "Stored context",
+        source_url: "https://example.com/post",
+        metadata: {
+          author: "Creator",
+          authorUrl: "https://example.com/creator",
+          api_key: "secret",
+        },
+      },
+      error: null,
+    });
+    mocks.from.mockReturnValue(row);
+    const result = await getMcpContentDiscover(userId, itemId);
+    expect(result).toMatchObject({
+      creator: { author: "Creator" },
+      recommendation: { id: itemId, summary: "Stored context" },
+    });
+    expect(row.conditions).toContainEqual(["user_id", userId]);
+    expect(row.conditions).toContainEqual(["id", itemId]);
+    expect(mocks.resolveDiscoverCreator).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain("secret");
   });
 
   it("lists bounded owned Agent chats with pin and unread state", async () => {
