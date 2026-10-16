@@ -6,7 +6,11 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { requirePlanEntitlement } from "./plan.server";
 import { enforceRequestRateLimit } from "./request-security.server";
 import { runAiJson } from "./ai-json.server";
-import { SOCIAL_PROVIDER_DEFINITIONS, isPublicSocialProvider } from "./social-scheduler";
+import {
+  SOCIAL_PROVIDER_DEFINITIONS,
+  isPublicSocialProvider,
+  socialConnectionCanPublish,
+} from "./social-scheduler";
 import { getMediaBucket, mediaObjectUrl, validateMediaObjectKey } from "./r2-storage.server";
 import { registerAgentMedia, resolveOwnedAgentMedia } from "./content-agent-media.server";
 import {
@@ -273,7 +277,7 @@ export const getAgentPreviewAccounts = createServerFn({ method: "GET" })
     const { data, error } = await (supabaseAdmin as any)
       .from("social_connections")
       .select(
-        "id,provider,provider_handle,provider_display_name,provider_avatar_url,status,created_at",
+        "id,provider,provider_handle,provider_display_name,provider_avatar_url,status,created_at,scopes,reauth_required",
       )
       .eq("user_id", context.userId)
       .eq("status", "active")
@@ -290,7 +294,17 @@ export const getAgentPreviewAccounts = createServerFn({ method: "GET" })
         avatarUrl: row.provider_avatar_url || null,
         status: row.status,
         connectedAt: row.created_at,
-        canPublish: false,
-        publishBlockReason: null,
+        canPublish: socialConnectionCanPublish(
+          row.provider,
+          row.scopes,
+          row.status,
+          Boolean(row.reauth_required),
+        ),
+        publishBlockReason: row.reauth_required
+          ? "Reconnect this account before publishing."
+          : row.provider === "instagram" &&
+              !socialConnectionCanPublish(row.provider, row.scopes, row.status, false)
+            ? "Reconnect Instagram from the scheduler and approve publishing access."
+            : null,
       })) as import("./social-scheduler").SchedulerConnection[];
   });

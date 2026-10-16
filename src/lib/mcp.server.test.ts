@@ -564,6 +564,8 @@ describe("Bento MCP tools", () => {
       get_content_brain: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
       manage_content_brain: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
       get_content_media: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      resolve_post_media: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      search_stock_photos: { readOnlyHint: true, openWorldHint: true, destructiveHint: false },
       manage_content_media: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
       get_content_routines: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
       manage_content_routine: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
