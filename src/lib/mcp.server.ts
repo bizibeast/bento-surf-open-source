@@ -1,3 +1,4 @@
+import { scheduledPostAutoDmSchemas } from "./scheduled-post-auto-dm";
 /* eslint-disable @typescript-eslint/no-explicit-any -- MCP spans service-role tables generated after migrations deploy. */
 import { createClient } from "@supabase/supabase-js";
 import { createMcpHandler, McpServer, type AuthInfo } from "@modelcontextprotocol/server";
@@ -877,8 +878,13 @@ const socialProviderSettingsSchema = z
       })
       .passthrough()
       .optional(),
+    facebook: z
+      .object({ scheduledAutoDm: scheduledPostAutoDmSchemas.facebook.nullable().optional() })
+      .passthrough()
+      .optional(),
     twitter: z
       .object({
+        scheduledAutoDm: scheduledPostAutoDmSchemas.twitter.nullable().optional(),
         autoRepost: z
           .object({
             afterHours: z.number().int().min(1).max(168),
@@ -1260,35 +1266,61 @@ async function sha256(value: string) {
   return `sha256:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
-export function createBentoMcpServer(
-  authInfo: AuthInfo,
+/** The web Agent and remote MCP clients share these schemas and service boundaries. */
+export type BentoAppTool = {
+  name: string;
+  title: string;
+  description: string;
+  readOnly: boolean;
+  inputSchema: z.ZodType;
+  execute: (input: unknown) => Promise<any>;
+};
+
+export function createBentoAppTools(
+  context: CreatorMcpContext & { accessToken: string },
   origin: string,
   operations: BentoMcpOperations = defaultBentoMcpOperations,
+): Map<string, BentoAppTool> {
+  const tools = new Map<string, BentoAppTool>();
+  const registry = {
+    registerTool(name: string, config: any, callback: (input: any) => Promise<any>) {
+      tools.set(name, {
+        name,
+        title: config.title || name,
+        description: config.description || "",
+        readOnly: config.annotations?.readOnlyHint === true,
+        inputSchema: config.inputSchema,
+        execute: async (input: unknown) => callback(config.inputSchema.parse(input)),
+      });
+    },
+  } as unknown as Pick<McpServer, "registerTool">;
+  registerBentoTools(
+    registry,
+    {
+      token: context.accessToken,
+      clientId: "bento-agent",
+      scopes: [],
+      extra: { userId: context.userId },
+    },
+    origin,
+    operations,
+    () => context,
+  );
+  // Chat recursion and arbitrary URL/base64 imports are not Agent operations.
+  // The authenticated attachment picker handles uploads with storage limits.
+  tools.delete("manage_content_agent");
+  tools.delete("upload_media");
+  return tools;
+}
+
+function registerBentoTools(
+  server: Pick<McpServer, "registerTool">,
+  authInfo: AuthInfo,
+  origin: string,
+  operations: BentoMcpOperations,
+  creatorContext: () => CreatorMcpContext,
 ) {
   const userId = userIdFrom(authInfo);
-  let cachedCreatorContext: CreatorMcpContext | undefined;
-  const creatorContext = (): CreatorMcpContext => {
-    if (cachedCreatorContext) return cachedCreatorContext;
-    const publishableKey = process.env.SUPABASE_PUBLISHABLE_KEY?.trim();
-    if (!publishableKey) throw new Error("SUPABASE_PUBLISHABLE_KEY is not configured.");
-    cachedCreatorContext = {
-      userId,
-      supabase: createClient<Database>(configuredSupabaseUrl(), publishableKey, {
-        global: { headers: { Authorization: `Bearer ${authInfo.token}` } },
-        auth: { storage: undefined, persistSession: false, autoRefreshToken: false },
-      }),
-    };
-    return cachedCreatorContext;
-  };
-  const server = new McpServer(
-    { name: "bento", version: "1.0.0" },
-    {
-      instructions:
-        "Use stable IDs returned by list tools. List accounts before posting or creating Auto-DMs. Publish now or delete only when the user explicitly requested that external action.",
-      capabilities: { extensions: { "io.modelcontextprotocol/skills": {} } },
-    },
-  );
-
   server.registerTool(
     "get_bento_overview",
     {
@@ -1512,7 +1544,7 @@ export function createBentoMcpServer(
     {
       title: "Create social post",
       description:
-        "Create or edit a social draft, schedule it, or publish now. providerSettings supports Instagram Trial Reels and scheduled Auto DM (public replies, email, follow gate, link button), YouTube title, description, visibility and thumbnail, TikTok privacy and interactions, and auto repost.",
+        "Create or edit a social draft, schedule it, or publish now. providerSettings supports Instagram Trial Reels and scheduled Auto DM (public replies, email, follow gate, link button), X and Facebook scheduledAutoDm, YouTube title, description, visibility and thumbnail, TikTok privacy and interactions, and auto repost.",
       inputSchema: z.object({
         id: z.uuid().optional(),
         body: z.string().max(25_000),
@@ -1520,6 +1552,7 @@ export function createBentoMcpServer(
         connectionIds: z.array(z.uuid()).max(20),
         media: z.array(mediaSchema).max(10).default([]),
         providerSettings: socialProviderSettingsSchema,
+        connectionOverrides: socialPostInputSchema.shape.connectionOverrides,
         mode: z.enum(["draft", "schedule", "publish_now"]),
         scheduledAt: z.iso.datetime({ offset: true }).optional(),
         timezone: z.string().min(1).max(100).default("UTC"),
@@ -1531,6 +1564,7 @@ export function createBentoMcpServer(
         throw new Error("scheduledAt is required in schedule mode.");
       const post = await operations.saveSocialPostForUser(userId, {
         ...input,
+        scheduledAt: input.scheduledAt || null,
         asDraft: mode === "draft",
         publishNow: mode === "publish_now",
       });
@@ -2002,6 +2036,38 @@ export function createBentoMcpServer(
       return textResult(`Completed Earn action: ${input.action}.`, { result });
     },
   );
+}
+
+export function createBentoMcpServer(
+  authInfo: AuthInfo,
+  origin: string,
+  operations: BentoMcpOperations = defaultBentoMcpOperations,
+) {
+  const userId = userIdFrom(authInfo);
+  let cachedCreatorContext: CreatorMcpContext | undefined;
+  const creatorContext = (): CreatorMcpContext => {
+    if (cachedCreatorContext) return cachedCreatorContext;
+    const publishableKey = process.env.SUPABASE_PUBLISHABLE_KEY?.trim();
+    if (!publishableKey) throw new Error("SUPABASE_PUBLISHABLE_KEY is not configured.");
+    cachedCreatorContext = {
+      userId,
+      supabase: createClient<Database>(configuredSupabaseUrl(), publishableKey, {
+        global: { headers: { Authorization: `Bearer ${authInfo.token}` } },
+        auth: { storage: undefined, persistSession: false, autoRefreshToken: false },
+      }),
+    };
+    return cachedCreatorContext;
+  };
+  const server = new McpServer(
+    { name: "bento", version: "1.0.0" },
+    {
+      instructions:
+        "Use stable IDs returned by list tools. List accounts before posting or creating Auto-DMs. Publish now or delete only when the user explicitly requested that external action.",
+      capabilities: { extensions: { "io.modelcontextprotocol/skills": {} } },
+    },
+  );
+
+  registerBentoTools(server, authInfo, origin, operations, creatorContext);
 
   server.registerResource(
     "bento-skill",

@@ -540,6 +540,7 @@ export function isPremiumPattern(id: string): boolean {
 export function uploadLimitMb(kind: string, plan: PlanId | boolean): number {
   const limits = planLimits(plan);
   if (kind === "product_file") return limits.productAssetUploadMb;
+  if (kind === "agent_file") return Math.min(8, limits.imageUploadMb);
   return kind === "video" || kind === "audio" ? limits.videoUploadMb : limits.imageUploadMb;
 }
 

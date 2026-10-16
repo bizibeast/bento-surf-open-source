@@ -1,3 +1,6 @@
+import type { AgentToolContext } from "./content-agent-tools.server";
+import type { AgentAppAction } from "./content-agent-app-actions";
+import { loadAgentAttachments } from "./content-agent-attachments.server";
 import { recordContentEvent } from "./content-workspace-analytics.server";
 import { storedContentAgentResultSchema } from "./content-agent-proactive";
 import {
@@ -36,7 +39,6 @@ import { loadExistingContentSources } from "./content-existing-sources.server";
 import {
   contentMediaAssetSchema,
   contentMediaSearchTerms,
-  relevantContentMedia,
   type ContentMediaAsset,
 } from "./content-media";
 
@@ -61,6 +63,7 @@ export type ContentAgentContext = {
   feedback: Array<Record<string, unknown>>;
   history?: Array<Record<string, unknown>>;
   media?: ContentMediaAsset[];
+  referenceSources?: EditorialContext["sources"];
 };
 
 export type ContentAgentDependencies = {
@@ -352,7 +355,7 @@ export function sampleBrainSourcePosts(
   }));
 }
 
-const CONTENT_AGENT_OUTPUT_RULES = `Return exactly one JSON object with the top-level keys "action", "message", "cards", and "memories". Never use a wrapper such as postIdea, result, response, or data.
+export const CONTENT_AGENT_OUTPUT_RULES = `Return exactly one JSON object with the top-level keys "action", "message", "cards", and "memories". Never use a wrapper such as postIdea, result, response, or data.
 "action" must be one of answer, research, draft, brain_proposal, weekly_plan, or schedule_proposal. "message" must be a concise string. "cards" must be an array and may be empty.
 For a content idea, use an idea card shaped exactly as {"type":"idea","cardId":"idea-1","title":"...","premise":"...","format":"...","takeaway":"...","sourceUrls":[]}.
 For a request to write a post, return action draft and the complete requested post in a draft card: {"type":"draft","cardId":"draft-1","platform":"linkedin","format":"post","title":"...","body":"The finished post","visualBrief":null,"sourceUrls":[],"rationale":"The useful angle","mediaIds":[]}. Match the creator's confirmed Brain voice and top post formatting. Never use an em dash in a post, title or carousel slide. Choose the requested platform and format. Never substitute a weekly_plan card for requested post copy, and never say a draft is ready unless its draft card is present. For scheduling, include both its draft card and a schedule_proposal card that references the draftCardId. Use only the card fields allowed by the supplied JSON schema.
@@ -671,7 +674,13 @@ async function loadContentWorkspaceContext(
           )
         : [];
     })(),
-    history: history.map((message: any) => ({ role: message.role, content: message.content })),
+    history: history.map((message: any) => ({
+      messageId: message.id,
+      role: message.role,
+      content: message.content,
+      ...(message.payload?.attachments ? { attachments: message.payload.attachments } : {}),
+      ...(message.payload?.appActions ? { proposedActions: message.payload.appActions } : {}),
+    })),
   };
 }
 
@@ -707,6 +716,7 @@ export function editorialContextFromAgent(
     platform,
     brain: context.brain,
     sources: [
+      ...(context.referenceSources || []),
       ...(request
         ? [
             {
@@ -977,6 +987,8 @@ export async function runContentAgentTurn(
     userId: string;
     threadId?: string | null;
     text: string;
+    attachmentIds?: string[];
+    toolContext?: AgentToolContext;
     revision?: { messageId: string; cardId: string };
   },
   dependencies: ContentAgentDependencies = defaultDependencies,
@@ -989,6 +1001,7 @@ export async function runContentAgentTurn(
 }> {
   const text = input.text.trim();
   if (!text || text.length > 20_000) throw new Error("Write a message up to 20,000 characters.");
+  const attachments = await loadAgentAttachments(input.userId, input.attachmentIds || []);
   const generationStartedAt = Date.now();
   const context = await dependencies.loadContext(input.userId, input.threadId, text);
   const inferredReference =
@@ -1019,11 +1032,68 @@ export async function runContentAgentTurn(
     threadId: context.threadId,
     role: "user",
     content: text,
+    ...(attachments.length
+      ? { payload: { attachments: attachments.map(({ extractedText: _, ...item }) => item) } }
+      : {}),
   });
+  const previousIds = [...(context.history || [])]
+    .reverse()
+    .flatMap((message) =>
+      Array.isArray(message.attachments)
+        ? message.attachments
+            .map((a: any) => a.id)
+            .filter((id: unknown): id is string => typeof id === "string")
+        : [],
+    );
+  const remainingIds = [...new Set(previousIds)]
+    .filter((id) => !attachments.some((a) => a.id === id))
+    .slice(0, 4 - attachments.length);
+  const references = [...attachments];
+  if (remainingIds.length) {
+    try {
+      references.push(...(await loadAgentAttachments(input.userId, remainingIds)));
+    } catch {
+      /* Missing old references are not supplied as usable media or context. */
+    }
+  }
+  for (const attachment of references) {
+    if (attachment.mediaId && attachment.url) {
+      context.media = [
+        ...(context.media || []).filter((item) => item.id !== attachment.mediaId),
+        {
+          id: attachment.mediaId,
+          type: attachment.mimeType.startsWith("video/") ? "video" : "image",
+          url: attachment.url,
+          title: attachment.name,
+          caption: attachment.extractedText.slice(0, 2000),
+          tags: [],
+          provider: "upload",
+          role: "attachment",
+          mimeType: attachment.mimeType,
+          sourceUrl: null,
+        },
+      ];
+    }
+  }
+  context.referenceSources = references
+    .filter((a) => a.extractedText.trim())
+    .map((a) => ({
+      id: `attachment:${a.id}`,
+      title: `Creator-provided reference: ${a.name}`,
+      text: a.extractedText,
+      occurredAt: null,
+      external: false,
+    }));
+  if (revisionTarget)
+    revisionTarget.sources = editorialContextFromAgent(context, text).sources.filter(
+      (source) =>
+        revisionTarget.sourceIds.includes(source.id) ||
+        Boolean(source.url && revisionTarget.sourceUrls.includes(source.url)),
+    );
   const prompt = buildContentAgentInput({
     userText:
       context.threadKind === "agent"
-        ? `${text}\nThis is the named head-of-content conversation. Draft only twitter/post, linkedin/post or instagram/carousel. For video requests offer a topic/angle; explain that broader draft formats are available in New chat.`
+        ? `${text}\nThis is the named head-of-content conversation. Draft only twitter/post, linkedin/post or instagram/carousel. Automatic video creation is unavailable. Explicitly requested scheduling of an existing uploaded video is supported using app tools; only infer its content from the supplied transcript or description.`
         : text,
     brain: context.brain,
     recommendations: context.recommendations,
@@ -1031,13 +1101,62 @@ export async function runContentAgentTurn(
     scheduler: context.scheduler,
     performance: context.performance,
     feedback: context.feedback,
-    history: context.history,
+    history: (context.history || []).map(({ attachments: oldAttachments, ...entry }) => ({
+      ...entry,
+      ...(Array.isArray(oldAttachments)
+        ? {
+            attachedFileNames: oldAttachments.map((a: any) => a.name),
+            note: "Only files in the current attachments context are available.",
+          }
+        : {}),
+    })),
     media: context.media,
   });
   const generationPrompt = revisionTarget
     ? JSON.stringify({ ...JSON.parse(prompt), revisionTarget })
     : prompt;
-  const result = contentAgentResultSchema.parse(await dependencies.generate(generationPrompt));
+  let actionOutcomes: unknown[] = [];
+  const actionMessages = (context.history || [])
+    .filter((m) => Array.isArray(m.proposedActions))
+    .map((m) => m.messageId)
+    .filter((id): id is string => typeof id === "string");
+  if (input.toolContext && actionMessages.length) {
+    const outcomes = await (supabaseAdmin as any)
+      .from("content_agent_app_actions")
+      .select("id,message_id,tool_name,status,result,error_message")
+      .eq("user_id", input.userId)
+      .in("message_id", actionMessages)
+      .limit(20);
+    if (outcomes.error)
+      actionOutcomes = [
+        {
+          status: "unknown",
+          message: "Action status could not be loaded. Do not claim completion.",
+        },
+      ];
+    else actionOutcomes = outcomes.data || [];
+  }
+  const enrichedPrompt = JSON.stringify({
+    ...JSON.parse(generationPrompt),
+    currentTime: new Date().toISOString(),
+    timezone: context.scheduler.timezone || "UTC",
+    attachments: references,
+    actionOutcomes,
+  });
+  let appActions: AgentAppAction[] = [];
+  let generated: unknown;
+  if (input.toolContext) {
+    const { generateAgentWithTools } = await import("./content-agent-tools.server");
+    const prepared = await generateAgentWithTools(
+      enrichedPrompt,
+      input.toolContext,
+      `You are Bento's head of content and monetization. Answer the newest request directly. Use confirmed Brain voice and context; no em dashes in newly written posts. ${CONTENT_AGENT_OUTPUT_RULES}`,
+      aiEnv(),
+    );
+    generated = prepared.result;
+    appActions = prepared.actions;
+  } else generated = await dependencies.generate(enrichedPrompt);
+  const result = contentAgentResultSchema.parse(generated);
   const turnOutputs: EditorialOutput[] = [];
   const requestedPairs = requestedDraftPairs(
     [
@@ -1200,9 +1319,7 @@ export async function runContentAgentTurn(
   const selectedIds = new Set(
     result.cards.flatMap((card) => (card.type === "draft" ? card.mediaIds || [] : [])),
   );
-  const ownedAssets = relevantContentMedia(text, context.media || []).filter((asset) =>
-    selectedIds.has(asset.id),
-  );
+  const ownedAssets = (context.media || []).filter((asset) => selectedIds.has(asset.id));
   if (ownedAssets.length !== selectedIds.size)
     throw new Error("Agent selected media that is not in your library. Try again.");
   delete result.mediaAssets;
@@ -1212,8 +1329,12 @@ export async function runContentAgentTurn(
     threadId: context.threadId,
     role: "assistant",
     content: result.message,
-    payload: result,
+    payload: { ...result, ...(appActions.length ? { appActions } : {}) },
   });
+  if (appActions.length) {
+    const { saveAgentAppActions } = await import("./content-agent-tools.server");
+    await saveAgentAppActions(input.userId, messageId, appActions);
+  }
   await dependencies.cleanupMessages(input.userId, context.threadId, 100);
   const noMemory = /(?:do not|don't|never)\s+(?:save|store|remember)/i.test(text);
   const memories = noMemory

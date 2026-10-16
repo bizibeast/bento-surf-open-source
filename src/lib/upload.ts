@@ -1,7 +1,8 @@
 import { supabase } from "@/integrations/supabase/client";
 import { optimizeImageUpload, type OptimizableImageKind } from "@/lib/image-upload";
 
-type UploadKind = "avatar" | "image" | "video" | "audio" | "file" | "cover" | "product_file";
+type UploadKind =
+  "avatar" | "image" | "video" | "audio" | "file" | "cover" | "product_file" | "agent_file";
 
 type UploadOptions = {
   optimize?: boolean;
@@ -99,7 +100,7 @@ function contentTypeForUpload(file: File, kind: UploadKind) {
     if (extension === "webp") return "image/webp";
     if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
   }
-  if (kind === "file" || kind === "product_file") {
+  if (kind === "file" || kind === "product_file" || kind === "agent_file") {
     if (extension === "pdf") return "application/pdf";
   }
   return typed || "application/octet-stream";
@@ -160,7 +161,11 @@ async function uploadSinglePut(
     size?: number;
     error?: string;
   } | null;
-  if (!response.ok || !payload?.key || (kind !== "product_file" && !payload.publicUrl)) {
+  if (
+    !response.ok ||
+    !payload?.key ||
+    (!["product_file", "agent_file"].includes(kind) && !payload.publicUrl)
+  ) {
     throw new Error(payload?.error || `Upload failed (${response.status})`);
   }
   options?.onProgress?.(1);
@@ -264,7 +269,7 @@ async function uploadMultipart(
     if (
       !completeResponse.ok ||
       !completed?.key ||
-      (kind !== "product_file" && !completed.publicUrl)
+      (!["product_file", "agent_file"].includes(kind) && !completed.publicUrl)
     ) {
       throw new Error(completed?.error || `Upload failed (${completeResponse.status})`);
     }
@@ -311,7 +316,10 @@ export async function uploadFileResult(file: File, kind: UploadKind, options?: U
   return uploadSinglePut(preparedFile, kind, token, contentType, options);
 }
 
-export async function uploadFile(file: File, kind: Exclude<UploadKind, "product_file">) {
+export async function uploadFile(
+  file: File,
+  kind: Exclude<UploadKind, "product_file" | "agent_file">,
+) {
   const result = await uploadFileResult(file, kind);
   if (!result.publicUrl) throw new Error("Upload did not return a public URL");
   return result.publicUrl;

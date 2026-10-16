@@ -1,3 +1,4 @@
+import { agentAppActionSchema } from "./content-agent-app-actions";
 import { z } from "zod";
 import { agentDraftStateSchema } from "./content-carousel";
 import { contentAgentResultSchema } from "./content-agent";
@@ -27,6 +28,7 @@ export const proactiveMetadataSchema = z.object({
     .default([]),
 });
 export const storedContentAgentResultSchema = contentAgentResultSchema.extend({
+  appActions: z.array(agentAppActionSchema).max(3).optional(),
   proactive: proactiveMetadataSchema.optional(),
   draftStates: z.record(z.string(), agentDraftStateSchema).optional(),
 });

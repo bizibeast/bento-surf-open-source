@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { loadAgentAttachments } from "./content-agent-attachments.server";
+vi.mock("./content-agent-attachments.server", () => ({
+  loadAgentAttachments: vi.fn().mockResolvedValue([]),
+}));
 import { generateEditorialDraft } from "./content-editorial.server";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { requireContentWorkspace } from "./content-access.server";
@@ -103,6 +107,65 @@ function dependencies(): ContentAgentDependencies {
 }
 
 describe("content Agent server", () => {
+  it("passes an attached reference to both the conversational model and the editorial evidence checker", async () => {
+    const attachment = {
+      id: "00000000-0000-4000-8000-000000000001",
+      key: "private/users/creator/agent/brief.txt",
+      name: "brief.txt",
+      mimeType: "text/plain",
+      size: 50,
+      mediaId: null,
+      url: null,
+      extractedText: "The workshop is for new founders on Saturday.",
+    };
+    vi.mocked(loadAgentAttachments).mockResolvedValueOnce([attachment]);
+    const d = dependencies();
+    const draft = {
+      type: "draft",
+      cardId: "draft",
+      platform: "linkedin",
+      format: "post",
+      title: "Workshop",
+      body: "A workshop for new founders.",
+      sourceUrls: [],
+      rationale: "From the brief",
+      visualBrief: null,
+    };
+    vi.mocked(d.generate).mockResolvedValue({
+      action: "draft",
+      message: "Review this",
+      cards: [draft],
+    });
+    d.generateEditorial = vi
+      .fn()
+      .mockResolvedValue({ status: "ready", card: draft, issues: [], message: "Ready" });
+    await runContentAgentTurn(
+      {
+        userId: "creator",
+        text: "Draft a LinkedIn post from the brief",
+        attachmentIds: [attachment.id],
+      },
+      d,
+    );
+    expect(
+      JSON.parse(vi.mocked(d.generate).mock.calls[0][0]).attachments[0].extractedText,
+    ).toContain("Saturday");
+    expect(vi.mocked(d.generateEditorial).mock.calls[0][0].sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: `attachment:${attachment.id}`,
+          text: attachment.extractedText,
+        }),
+      ]),
+    );
+    expect(d.saveMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: "user",
+        payload: { attachments: [expect.objectContaining({ name: "brief.txt", url: null })] },
+      }),
+    );
+  });
+
   it.each(["idea", "weekly_plan"])(
     "recovers a requested post when the model returns only a %s",
     async (type) => {

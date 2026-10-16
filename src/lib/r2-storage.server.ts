@@ -30,6 +30,7 @@ const UPLOAD_KINDS = [
   "file",
   "cover",
   "product_file",
+  "agent_file",
 ] as const;
 
 export type UploadKind = (typeof UPLOAD_KINDS)[number];
@@ -456,6 +457,17 @@ function validateContentType(kind: UploadKind, value: string | null, extension: 
   ) {
     return null;
   }
+  if (
+    kind === "agent_file" &&
+    !(
+      (extension === "pdf" && contentType === "application/pdf") ||
+      (["txt", "md", "csv"].includes(extension) &&
+        ["text/plain", "text/markdown", "text/csv", "application/octet-stream"].includes(
+          contentType,
+        ))
+    )
+  )
+    return null;
   if (kind === "avatar" || kind === "image" || kind === "cover") {
     if (!IMAGE_EXTENSIONS[contentType]?.has(extension)) return null;
   }
@@ -599,9 +611,11 @@ function objectKeyForUpload(
   const prefix =
     kind === "avatar"
       ? `avatars/${userId}`
-      : kind === "product_file"
-        ? `private/users/${userId}/store`
-        : `users/${userId}/${kind}`;
+      : kind === "agent_file"
+        ? `private/users/${userId}/agent`
+        : kind === "product_file"
+          ? `private/users/${userId}/store`
+          : `users/${userId}/${kind}`;
   return `${prefix}/${Date.now()}-${crypto.randomUUID()}${multipartSize ? `-mpu-${multipartSize}` : ""}.${extension}`;
 }
 
@@ -689,14 +703,15 @@ async function createMultipartUpload(
 
   const key = objectKeyForUpload(userId, kindHeader, extension, declaredSize);
   const originalFilename = sanitizeOriginalFilename(request.headers.get("x-bento-file-name"));
-  const disposition =
-    kindHeader === "file" || kindHeader === "product_file"
-      ? `attachment; filename="download.${extension}"`
-      : undefined;
+  const disposition = ["file", "product_file", "agent_file"].includes(kindHeader)
+    ? `attachment; filename="download.${extension}"`
+    : undefined;
   const multipart = await env.MEDIA_BUCKET.createMultipartUpload(key, {
     httpMetadata: {
       contentType,
-      cacheControl: kindHeader === "product_file" ? "private, no-store" : IMMUTABLE_CACHE_CONTROL,
+      cacheControl: ["product_file", "agent_file"].includes(kindHeader)
+        ? "private, no-store"
+        : IMMUTABLE_CACHE_CONTROL,
       contentDisposition: disposition,
     },
     customMetadata: {
@@ -709,8 +724,9 @@ async function createMultipartUpload(
   return Response.json({
     key: multipart.key,
     uploadId: multipart.uploadId,
-    publicUrl:
-      kindHeader === "product_file" ? null : mediaObjectUrl(key, new URL(request.url).origin),
+    publicUrl: ["product_file", "agent_file"].includes(kindHeader)
+      ? null
+      : mediaObjectUrl(key, new URL(request.url).origin),
   });
 }
 
@@ -953,10 +969,9 @@ async function uploadMedia(
 
   const key = objectKeyForUpload(userId, kindHeader, extension);
   const originalFilename = sanitizeOriginalFilename(request.headers.get("x-bento-file-name"));
-  const disposition =
-    kindHeader === "file" || kindHeader === "product_file"
-      ? `attachment; filename="download.${extension}"`
-      : undefined;
+  const disposition = ["file", "product_file", "agent_file"].includes(kindHeader)
+    ? `attachment; filename="download.${extension}"`
+    : undefined;
   const inspectedBody = await inspectUploadBody(request.body, contentType, extension);
   if (!inspectedBody) return jsonError("File contents do not match the declared file type", 415);
 
@@ -968,8 +983,9 @@ async function uploadMedia(
       env.MEDIA_BUCKET.put(key, fixed.readable, {
         httpMetadata: {
           contentType,
-          cacheControl:
-            kindHeader === "product_file" ? "private, no-store" : IMMUTABLE_CACHE_CONTROL,
+          cacheControl: ["product_file", "agent_file"].includes(kindHeader)
+            ? "private, no-store"
+            : IMMUTABLE_CACHE_CONTROL,
           contentDisposition: disposition,
         },
         customMetadata: {
@@ -1007,8 +1023,9 @@ async function uploadMedia(
   return Response.json(
     {
       key,
-      publicUrl:
-        kindHeader === "product_file" ? null : mediaObjectUrl(key, new URL(request.url).origin),
+      publicUrl: ["product_file", "agent_file"].includes(kindHeader)
+        ? null
+        : mediaObjectUrl(key, new URL(request.url).origin),
       size: object.size,
     },
     { status: 201 },

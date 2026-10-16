@@ -819,6 +819,54 @@ describe("R2 upload boundary", () => {
     expect(read?.status).toBe(404);
   });
 
+  it("keeps Agent references private and rejects documents larger than 8 MB", async () => {
+    const { bucket, put } = mockBucket();
+    const headers = {
+      "content-length": String(PDF_BYTES.length),
+      "content-type": "application/pdf",
+      "x-bento-file-extension": "pdf",
+      "x-bento-file-size": String(PDF_BYTES.length),
+      "x-bento-upload-kind": "agent_file",
+    };
+    const upload = await handleR2StorageRequest(
+      new Request("https://test.bento.surf/api/storage/upload", {
+        method: "PUT",
+        headers,
+        body: PDF_BYTES,
+      }),
+      { MEDIA_BUCKET: bucket },
+      { waitUntil: vi.fn() },
+      { authenticate: async () => "user-123", getPlan: async () => "store" },
+    );
+    expect(upload?.status).toBe(201);
+    const payload = (await upload!.json()) as { key: string; publicUrl: string | null };
+    expect(payload.publicUrl).toBeNull();
+    expect(payload.key).toMatch(/^private\/users\/user-123\/agent\//);
+    const read = await handleR2StorageRequest(
+      new Request(`https://test.bento.surf/cdn/${payload.key}`),
+      { MEDIA_BUCKET: bucket },
+      { waitUntil: vi.fn() },
+    );
+    expect(read?.status).toBe(404);
+    expect(put).toHaveBeenCalledOnce();
+    const oversized = await handleR2StorageRequest(
+      new Request("https://test.bento.surf/api/storage/upload", {
+        method: "PUT",
+        headers: {
+          ...headers,
+          "content-length": String(9 * 1024 * 1024),
+          "x-bento-file-size": String(9 * 1024 * 1024),
+        },
+        body: PDF_BYTES,
+      }),
+      { MEDIA_BUCKET: bucket },
+      { waitUntil: vi.fn() },
+      { authenticate: async () => "user-123", getPlan: async () => "store" },
+    );
+    expect(oversized?.status).toBe(413);
+    expect(put).toHaveBeenCalledOnce();
+  });
+
   it("accepts the browser file-size header when Content-Length is unavailable", async () => {
     const { bucket, put } = mockBucket();
     const response = await handleR2StorageRequest(
