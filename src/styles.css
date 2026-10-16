@@ -732,6 +732,31 @@ textarea {
     padding-left: 2.75rem !important;
     padding-right: 1rem !important;
   }
+
+  .scheduler-schedule-actions > button {
+    border-radius: 0 !important;
+    height: auto !important;
+    min-height: 2.5rem;
+  }
+
+  /* Keep native keyboard/mobile pickers, with an inset chevron and room for text.
+     The important padding also overrides the shared authenticated form shorthand. */
+  select.scheduler-select {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    background-size: 1rem;
+    padding-right: 2.5rem !important;
+    text-overflow: ellipsis;
+  }
+
+  @media (forced-colors: active) {
+    select.scheduler-select {
+      appearance: auto;
+      background-image: none;
+    }
+  }
 }
 
 /* The authenticated sidebar changes the Link editor's usable width without

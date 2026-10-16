@@ -73,8 +73,7 @@ export function SchedulerActionButton({
           className={cn(
             className,
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
-            blocked &&
-              "cursor-help bg-muted text-muted-foreground shadow-none hover:translate-y-0 hover:bg-muted",
+            blocked && "cursor-help opacity-60 shadow-none hover:translate-y-0",
           )}
           onPointerEnter={(event) => {
             if (event.pointerType === "touch" || !blocked) return;

@@ -71,6 +71,7 @@ export async function fetchPublicFollowingSafeRedirects(
   initialUrl: URL,
   fetcher: typeof fetch,
   headers: Record<string, string>,
+  timeoutMs = 6_000,
 ): Promise<{ response: Response; finalUrl: URL }> {
   let current = initialUrl;
   for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect += 1) {
@@ -78,9 +79,10 @@ export async function fetchPublicFollowingSafeRedirects(
       method: "GET",
       redirect: "manual",
       headers,
-      signal: AbortSignal.timeout(6_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (response.status < 300 || response.status >= 400) return { response, finalUrl: current };
+    await response.body?.cancel().catch(() => undefined);
     if (redirect === MAX_REDIRECTS) throw new Error("Too many redirects");
     const location = response.headers.get("location");
     if (!location) throw new Error("Invalid redirect");

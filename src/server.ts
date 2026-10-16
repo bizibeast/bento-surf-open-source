@@ -950,6 +950,11 @@ export default {
       }
     }
 
+    if (path === "/api/mcp-media-upload") {
+      const { handleMcpMediaUpload } = await import("./lib/mcp-media-upload.server");
+      return withDeploymentHeaders(await handleMcpMediaUpload(request, env, ctx), env, request);
+    }
+
     const creatorRedirect = await guardCreatorDocument(request);
     if (creatorRedirect) return withDeploymentHeaders(creatorRedirect, env, request);
 

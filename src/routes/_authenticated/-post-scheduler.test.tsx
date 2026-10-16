@@ -146,6 +146,42 @@ describe("publishing calendar slots", () => {
     ),
   ).flat();
 
+  it.each(["week", "month"] as const)(
+    "places an 8:57 post inside the 9 AM slot in %s view without changing its timestamp",
+    async (view) => {
+      const date = new Date().toISOString().slice(0, 10);
+      const post = {
+        id: "11111111-1111-4111-8111-111111111112",
+        status: "scheduled",
+        title: "Naturally timed post",
+        body: "Still publishing at 8:57",
+        scheduledAt: `${date}T08:57:00.000Z`,
+        createdAt: new Date().toISOString(),
+        timezone: "UTC",
+        targets: [],
+        media: [],
+      } as SchedulerPost;
+      renderScheduler({
+        ...schedulerData,
+        posts: [post],
+        postingSchedule: { timezone: "UTC", slots, naturalOffset: true },
+      });
+      await screen.findByRole("heading", { name: "Drafts" });
+      if (view === "month") fireEvent.click(screen.getByRole("button", { name: "month" }));
+      const calendar = screen.getByRole("grid", { name: `${view} publishing calendar` });
+      const day = within(calendar)
+        .getAllByRole("gridcell")
+        .find((cell) => within(cell).queryByText(post.title!))!;
+      const slot = within(day).getByRole("button", { name: "9:00 AM" }).parentElement!;
+      expect(within(slot).getByText(post.title!)).toBeVisible();
+      expect(within(slot).getByText("8:57 AM")).toBeVisible();
+      expect(within(slot).getByText("Drop another post")).toBeVisible();
+      expect(within(calendar).getAllByText(post.title!)).toHaveLength(1);
+      expect(saveSocialPost).not.toHaveBeenCalled();
+      expect(post.scheduledAt).toBe(`${date}T08:57:00.000Z`);
+    },
+  );
+
   it("expands every slot on one day and keeps the extra slots available for draft drops", async () => {
     const draft = {
       id: "11111111-1111-4111-8111-111111111112",
@@ -813,6 +849,7 @@ describe("scheduler compose close protection", () => {
     const compose = await screen.findByRole("dialog", { name: "Create a post" });
     fireEvent.click(within(compose).getByRole("button", { name: "LinkedIn: LinkedIn account" }));
     fireEvent.click(within(compose).getByRole("button", { name: "X: X account" }));
+    expect(within(compose).queryByRole("button", { name: "All networks" })).toBeNull();
     expect(within(compose).getByText("X format")).toBeVisible();
     fireEvent.click(
       within(compose).getByRole("button", { name: "Edit LinkedIn: LinkedIn account" }),
@@ -839,6 +876,22 @@ describe("scheduler compose close protection", () => {
       within(compose).getByRole("button", { name: "Edit LinkedIn: LinkedIn account" }),
     );
     expect(within(compose).getByRole("textbox")).toHaveValue("LinkedIn version");
+
+    // Removing the active account must select a remaining destination, not leave a
+    // hidden shared-text editor that can overwrite its customized copy.
+    fireEvent.click(within(compose).getByRole("button", { name: "LinkedIn: LinkedIn account" }));
+    expect(within(compose).getByRole("button", { name: "Edit X: X account" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(within(compose).getByRole("textbox")).toHaveValue("X version");
+    fireEvent.click(within(compose).getByRole("switch", { name: "Sync" }));
+    fireEvent.click(within(compose).getByRole("button", { name: "LinkedIn: LinkedIn account" }));
+    expect(within(compose).getByRole("textbox")).toHaveValue("X version");
+    expect(within(compose).getByRole("switch", { name: "Sync" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
   });
 
   it("selects a Facebook Page mention without changing the X copy", async () => {

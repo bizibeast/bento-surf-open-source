@@ -28,6 +28,7 @@ export const BENTO_WEBMCP_READ_OPERATIONS = [
 
 export const BENTO_WEBMCP_WRITE_OPERATIONS = [
   "upload_media",
+  "begin_media_upload",
   "create_social_post",
   "save_auto_dm_automation",
   "set_auto_dm_enabled",
@@ -1097,6 +1098,15 @@ export const runBentoWebMcpWrite = createServerFn({ method: "POST" })
     };
     const input = data.input;
     switch (data.operation) {
+      case "begin_media_upload": {
+        const { beginMcpMediaUpload, beginMediaUploadSchema } =
+          await import("./mcp-media-upload.server");
+        return beginMcpMediaUpload(
+          context.userId,
+          process.env.VITE_APP_URL || "http://localhost:8080",
+          beginMediaUploadSchema.parse(input),
+        );
+      }
       case "upload_media": {
         const mediaInput = webMcpUploadInputSchema.parse(input);
         return defaultBentoMcpOperations.uploadMedia(

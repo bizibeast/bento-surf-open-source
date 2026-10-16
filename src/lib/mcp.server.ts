@@ -5,6 +5,11 @@ import { scheduledPostAutoDmSchemas } from "./scheduled-post-auto-dm";
 import { createClient } from "@supabase/supabase-js";
 import { createMcpHandler, McpServer, type AuthInfo } from "@modelcontextprotocol/server";
 import { z } from "zod-v4";
+import {
+  beginMcpMediaUpload,
+  beginMediaUploadSchema,
+  mcpMediaOrigin,
+} from "./mcp-media-upload.server";
 import type { Database } from "@/integrations/supabase/types";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import {
@@ -546,7 +551,7 @@ function decodeBase64(value: string) {
   const normalized = value.replace(/^data:[^;]+;base64,/, "").replace(/\s/g, "");
   if (normalized.length > Math.ceil((MAX_MCP_MEDIA_BYTES * 4) / 3) + 4) {
     throw new Error(
-      "Media is too large for MCP upload. Use Bento's upload screen for larger files.",
+      "Inline base64 is limited to 25 MB. Call begin_media_upload and upload the original file in binary chunks; do not compress it to fit MCP JSON.",
     );
   }
   let binary: string;
@@ -555,7 +560,10 @@ function decodeBase64(value: string) {
   } catch {
     throw new Error("Media base64 is invalid.");
   }
-  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  // Uint8Array.from(string, callback) first materializes the iterable into a
+  // huge intermediate array. A 21 MB video can exhaust the Worker's memory.
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
   if (!bytes.length || bytes.length > MAX_MCP_MEDIA_BYTES) {
     throw new Error("Media must be between 1 byte and 25 MB.");
   }
@@ -586,18 +594,50 @@ async function uploadMedia(
     kind: UploadKind;
   },
 ) {
-  let bytes: Uint8Array;
+  if (Boolean(input.sourceUrl) === Boolean(input.base64))
+    throw new Error("Provide exactly one of sourceUrl or base64.");
+  origin = mcpMediaOrigin(origin);
+  let body: BodyInit;
+  let size: number;
   if (input.sourceUrl) {
     const url = parsePublicHttpUrl(input.sourceUrl, { allowNonStandardPort: false });
     if (!url) throw new Error("Use a public HTTP or HTTPS media URL.");
-    const { response } = await fetchPublicFollowingSafeRedirects(url, fetch, {
-      Accept: input.mimeType,
-      "User-Agent": "Bento-MCP/1.0 (+http://localhost:8080)",
-    });
+    const { response } = await fetchPublicFollowingSafeRedirects(
+      url,
+      fetch,
+      {
+        Accept: input.mimeType,
+        "User-Agent": "Bento-MCP/1.0 (+http://localhost:8080)",
+      },
+      120_000,
+    );
     if (!response.ok) throw new Error("Bento could not download media from that URL.");
-    bytes = await readResponseBytes(response, MAX_MCP_MEDIA_BYTES);
+    const declaredSize = Number(response.headers.get("content-length"));
+    if (
+      Number.isSafeInteger(declaredSize) &&
+      declaredSize > 0 &&
+      response.body &&
+      !response.headers.get("content-encoding")
+    ) {
+      // Stream large URL imports through the normal plan/quota/signature checks.
+      body = response.body;
+      size = declaredSize;
+    } else {
+      try {
+        const bytes = await readResponseBytes(response, MAX_MCP_MEDIA_BYTES);
+        body = new Blob([bytes as Uint8Array<ArrayBuffer>]);
+        size = bytes.byteLength;
+      } catch {
+        await response.body?.cancel().catch(() => undefined);
+        throw new Error(
+          "This media URL does not provide a usable file size. Download the original file and use begin_media_upload for chunked upload.",
+        );
+      }
+    }
   } else if (input.base64) {
-    bytes = decodeBase64(input.base64);
+    const bytes = decodeBase64(input.base64);
+    body = new Blob([bytes as Uint8Array<ArrayBuffer>]);
+    size = bytes.byteLength;
   } else {
     throw new Error("Provide sourceUrl or base64 media.");
   }
@@ -610,12 +650,14 @@ async function uploadMedia(
     headers: {
       Authorization: `Bearer ${authInfo.token}`,
       "Content-Type": input.mimeType,
-      "Content-Length": String(bytes.byteLength),
+      "Content-Length": String(size),
       "X-Bento-File-Extension": extension,
-      "X-Bento-File-Size": String(bytes.byteLength),
+      "X-Bento-File-Size": String(size),
+      "X-Bento-File-Name": encodeURIComponent(input.fileName),
       "X-Bento-Upload-Kind": input.kind,
     },
-    body: new Blob([new Uint8Array(bytes)], { type: input.mimeType }),
+    body,
+    ...{ duplex: "half" },
   });
   const env = globalThis.__env__;
   if (!env?.MEDIA_BUCKET) throw new Error("Bento media storage is unavailable.");
@@ -626,6 +668,7 @@ async function uploadMedia(
     { authenticate: async () => userIdFrom(authInfo) },
   );
   if (!response?.ok) {
+    await request.body?.cancel().catch(() => undefined);
     const payload = (await response?.json().catch(() => null)) as { error?: string } | null;
     throw new Error(payload?.error || "Media could not be uploaded.");
   }
@@ -815,6 +858,7 @@ export const defaultBentoMcpOperations = {
   listProducts,
   listBookings,
   uploadMedia,
+  beginMcpMediaUpload,
   getStoreWorkspace,
   mutateProduct,
   mutateDiscount,
@@ -1563,6 +1607,7 @@ export function createBentoAppTools(
   // The authenticated attachment picker handles uploads with storage limits.
   tools.delete("manage_content_agent");
   tools.delete("upload_media");
+  tools.delete("begin_media_upload");
   return tools;
 }
 
@@ -1759,7 +1804,7 @@ function registerBentoTools(
     {
       title: "Upload media to Bento",
       description:
-        "Import one public media URL or small base64 payload into Bento. Returns media for create_social_post; use Bento UI for files over 25 MB.",
+        "Import one public media URL (streamed within plan and remaining storage limits) or inline base64 up to 25 MB. Prefer begin_media_upload for local videos over 8 MB; never compress just to fit MCP. Returns media to reuse in ONE create_social_post with all selected accounts.",
       inputSchema: z.object({
         sourceUrl: z.url().optional(),
         base64: z.string().optional(),
@@ -1773,6 +1818,24 @@ function registerBentoTools(
       const media = await operations.uploadMedia(authInfo, origin, input as any);
       return textResult("Uploaded media to Bento.", { media });
     },
+  );
+
+  server.registerTool(
+    "begin_media_upload",
+    {
+      title: "Start a large media upload",
+      description:
+        "Upload an original local video or other file without putting it in MCP JSON. Checks plan and remaining storage, then returns a private two-hour upload credential and exact HTTP instructions. Use file/HTTP tools to PUT 8 MiB binary parts, then POST their ETags to complete and obtain media for create_social_post. DELETE cancels the unfinished upload. No account token is needed. If this client cannot read files or send HTTP, ask the user to attach it in Bento; do not pretend it was uploaded.",
+      inputSchema: beginMediaUploadSchema,
+      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
+    },
+    async (input) =>
+      textResult(
+        "Upload prepared. Send the original bytes and complete before attaching to a post.",
+        {
+          upload: await operations.beginMcpMediaUpload(userId, origin, input),
+        },
+      ),
   );
 
   server.registerTool(
@@ -1840,7 +1903,9 @@ function registerBentoTools(
           })
           .optional(),
         providerSettings: socialProviderSettingsSchema,
-        connectionOverrides: socialPostInputSchema.shape.connectionOverrides,
+        connectionOverrides: socialPostInputSchema.shape.connectionOverrides.describe(
+          'Per-account settings keyed by a selected connection UUID, e.g. {"<x-connection-id>":{"bodyOverride":"X caption"},"<instagram-connection-id>":{"bodyOverride":"Instagram caption"}}. Keep these in ONE post. YouTube titleOverride/description/youtubePrivacy belong in providerSettings.youtube.',
+        ),
         mode: z.enum(["draft", "schedule", "publish_now"]),
         scheduledAt: z.iso.datetime({ offset: true }).optional(),
         timezone: z.string().min(1).max(100).default("UTC"),
@@ -2356,7 +2421,7 @@ export function createBentoMcpServer(
     { name: "bento", version: "1.0.0" },
     {
       instructions:
-        "Use stable IDs returned by list tools. List accounts before posting or creating Auto-DMs. Publish now or delete only when the user explicitly requested that external action.",
+        "Use stable IDs returned by list tools. List accounts before posting or creating Auto-DMs. For one piece of content on several networks create ONE social post with all connectionIds, shared media uploaded once, and connectionOverrides[connectionId].bodyOverride for each caption. YouTube titleOverride/description/youtubePrivacy go in providerSettings.youtube. Edit by passing the existing post id; do not split or duplicate drafts for different captions. For local videos over 8 MB use begin_media_upload and its binary chunk instructions, not large base64 JSON or compression. Read skill://bento/bento/references/tools.md for complete examples. Publish now or delete only when the user explicitly requested that external action.",
       capabilities: { extensions: { "io.modelcontextprotocol/skills": {} } },
     },
   );

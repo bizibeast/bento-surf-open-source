@@ -281,7 +281,7 @@ export function SchedulerMediaPicker({
                 <label className="block space-y-1 text-sm font-medium">
                   <span>Photo source</span>
                   <select
-                    className={inputClass}
+                    className={`scheduler-select ${inputClass}`}
                     value={stockProvider}
                     disabled={pending}
                     title="Choose where to search for stock photos"
