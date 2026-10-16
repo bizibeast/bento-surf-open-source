@@ -38,7 +38,7 @@ function Guide({ app, workspaceId }: { app: AppGuide; workspaceId: string }) {
       return { previous };
     },
     onSuccess: () => {
-      captureProductEvent("app_setup_dismissed", { app_id: app.id, flow_version: 1 });
+      captureProductEvent("app_setup_skipped", { app_id: app.id, flow_version: 1, permanent: true });
     },
     onError: (_error, _variables, context) => {
       if (context?.previous) queryClient.setQueryData(queryKey, context.previous);
