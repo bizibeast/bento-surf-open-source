@@ -293,6 +293,8 @@ const bentoMcpToolAnnotations = {
   list_social_accounts: readOnlyAnnotations,
   upload_media: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
   list_social_posts: readOnlyAnnotations,
+  search_stock_photos: { readOnlyHint: true, openWorldHint: true, destructiveHint: false },
+  resolve_post_media: readOnlyAnnotations,
   create_social_post: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
   list_auto_dm_automations: readOnlyAnnotations,
   save_auto_dm_automation: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
@@ -720,13 +722,11 @@ describe("Bento MCP tools", () => {
       { ...defaultBentoMcpOperations, saveSocialPostForUser: save },
     );
     for (const mode of ["draft", "publish_now"]) {
-      await tools
-        .get("create_social_post")!
-        .execute({
-          body: "Review this post",
-          mode,
-          connectionIds: mode === "draft" ? [] : ["00000000-0000-4000-8000-000000000001"],
-        });
+      await tools.get("create_social_post")!.execute({
+        body: "Review this post",
+        mode,
+        connectionIds: mode === "draft" ? [] : ["00000000-0000-4000-8000-000000000001"],
+      });
     }
     expect(save).toHaveBeenCalledTimes(2);
     expect(save).toHaveBeenNthCalledWith(
@@ -978,5 +978,58 @@ describe("Bento MCP tools", () => {
       expect.objectContaining({ userId: authInfo.extra?.userId }),
       { action: "set_public_page", enabled: true },
     );
+  });
+});
+
+it("imports the selected free photo only at execution and schedules all tailored destinations together", async () => {
+  const media = {
+    key: "users/owner/stock.jpg",
+    url: "https://example.com/stock.jpg",
+    mimeType: "image/jpeg",
+    name: "Stock photo",
+    size: 1024,
+  };
+  const importPhoto = vi
+    .fn()
+    .mockResolvedValue({ media, credit: { name: "Sam", url: "https://pixabay.com/photos/42" } });
+  const save = vi.fn(async (_userId: string, input: unknown) => ({
+    id: "saved",
+    input: socialPostInputSchema.parse(input),
+  }));
+  const tools = createBentoAppTools(
+    { userId: String(authInfo.extra!.userId), accessToken: authInfo.token, supabase: {} as any },
+    "https://app.bento.surf",
+    {
+      ...defaultBentoMcpOperations,
+      importPostStockPhoto: importPhoto,
+      saveSocialPostForUser: save,
+    },
+  );
+  const ids = ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"];
+  await tools
+    .get("create_social_post")!
+    .execute({
+      body: "Shared",
+      mode: "schedule",
+      scheduledAt: "2099-10-22T18:00:00Z",
+      timezone: "Asia/Kolkata",
+      connectionIds: ids,
+      connectionOverrides: {
+        [ids[0]]: { bodyOverride: "LinkedIn version" },
+        [ids[1]]: { bodyOverride: "X version" },
+      },
+      stockPhoto: { id: 42, provider: "pixabay" },
+    });
+  expect(importPhoto).toHaveBeenCalledWith(authInfo.extra!.userId, 42, "pixabay");
+  expect(save).toHaveBeenCalledOnce();
+  expect(save.mock.calls[0][1]).toMatchObject({
+    media: [media],
+    connectionIds: ids,
+    connectionOverrides: {
+      [ids[0]]: { bodyOverride: "LinkedIn version" },
+      [ids[1]]: { bodyOverride: "X version" },
+    },
+    scheduledAt: "2099-10-22T18:00:00Z",
+    asDraft: false,
   });
 });

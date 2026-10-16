@@ -1,3 +1,5 @@
+import { searchStockPhotos, importStockPhoto, type StockProvider } from "./scheduler-stock.server";
+import { resolveOwnedAgentMedia } from "./content-agent-media.server";
 import { scheduledPostAutoDmSchemas } from "./scheduled-post-auto-dm";
 /* eslint-disable @typescript-eslint/no-explicit-any -- MCP spans service-role tables generated after migrations deploy. */
 import { createClient } from "@supabase/supabase-js";
@@ -778,7 +780,29 @@ async function manageScheduler(userId: string, input: unknown) {
   return getSchedulerWorkspace(userId);
 }
 
+async function findPostStockPhotos(userId: string, query: string) {
+  await requirePlanEntitlement(userId, "postScheduler", "Upgrade to Creator to use stock photos.");
+  await enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "stock-search", userId);
+  return (await searchStockPhotos(query, 1)).slice(0, 6);
+}
+async function importPostStockPhoto(userId: string, id: number, provider: StockProvider) {
+  await requirePlanEntitlement(userId, "postScheduler", "Upgrade to Creator to use stock photos.");
+  await enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "stock-import", userId);
+  return importStockPhoto(userId, id, provider);
+}
+async function resolvePostMedia(userId: string, ids: string[]) {
+  await requirePlanEntitlement(
+    userId,
+    "postScheduler",
+    "Upgrade to Creator to prepare post media.",
+  );
+  return resolveOwnedAgentMedia(userId, ids);
+}
+
 export const defaultBentoMcpOperations = {
+  findPostStockPhotos,
+  importPostStockPhoto,
+  resolvePostMedia,
   getBentoOverview,
   listSocialAccounts,
   listSocialPosts,
@@ -1540,17 +1564,52 @@ function registerBentoTools(
   );
 
   server.registerTool(
+    "search_stock_photos",
+    {
+      title: "Find free post photos",
+      description:
+        "Find up to six free stock photos for a generic topic. Never use stock as proof of the creator's own product, face, customer or event. Pass a returned id/provider to create_social_post.stockPhoto to import it on approval. No paid fallback.",
+      inputSchema: z.object({ query: z.string().trim().min(3).max(100) }),
+      annotations: { readOnlyHint: true, openWorldHint: true, destructiveHint: false },
+    },
+    async ({ query }) =>
+      textResult("Found stock photo options.", {
+        photos: await operations.findPostStockPhotos(userId, query),
+      }),
+  );
+  server.registerTool(
+    "resolve_post_media",
+    {
+      title: "Prepare owned post media",
+      description:
+        "Resolve up to ten owned Brain/Agent image IDs into verified publishing media. Use exact IDs returned by get_content_media or current context.",
+      inputSchema: z.object({ ids: z.array(z.uuid()).min(1).max(10) }),
+      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+    },
+    async ({ ids }) =>
+      textResult("Verified owned post media.", {
+        media: await operations.resolvePostMedia(userId, ids),
+      }),
+  );
+
+  server.registerTool(
     "create_social_post",
     {
       title: "Create social post",
       description:
-        "Create or edit a social draft, schedule it, or publish now. providerSettings supports Instagram Trial Reels and scheduled Auto DM (public replies, email, follow gate, link button), X and Facebook scheduledAutoDm, YouTube title, description, visibility and thumbnail, TikTok privacy and interactions, and auto repost.",
+        "Create or edit a social draft, schedule it, or publish now. For multiple networks use ONE action with all connectionIds and tailored connectionOverrides[id].bodyOverride. Optional stockPhoto imports one selected free photo when executing. providerSettings supports Instagram Trial Reels and scheduled Auto DM (public replies, email, follow gate, link button), X and Facebook scheduledAutoDm, YouTube title, description, visibility and thumbnail, TikTok privacy and interactions, and auto repost.",
       inputSchema: z.object({
         id: z.uuid().optional(),
         body: z.string().max(25_000),
         title: z.string().max(300).default(""),
         connectionIds: z.array(z.uuid()).max(20),
         media: z.array(mediaSchema).max(10).default([]),
+        stockPhoto: z
+          .object({
+            id: z.number().int().positive(),
+            provider: z.enum(["pixabay", "pexels", "commons"]),
+          })
+          .optional(),
         providerSettings: socialProviderSettingsSchema,
         connectionOverrides: socialPostInputSchema.shape.connectionOverrides,
         mode: z.enum(["draft", "schedule", "publish_now"]),
@@ -1559,9 +1618,15 @@ function registerBentoTools(
       }),
       annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
     },
-    async ({ mode, ...input }) => {
+    async ({ mode, stockPhoto, ...input }) => {
+      if (stockPhoto && input.media.length)
+        throw new Error("Choose either your attached media or one stock photo.");
       if (mode === "schedule" && !input.scheduledAt)
         throw new Error("scheduledAt is required in schedule mode.");
+      if (stockPhoto)
+        input.media = [
+          (await operations.importPostStockPhoto(userId, stockPhoto.id, stockPhoto.provider)).media,
+        ];
       const post = await operations.saveSocialPostForUser(userId, {
         ...input,
         scheduledAt: input.scheduledAt || null,
