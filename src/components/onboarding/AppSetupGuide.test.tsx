@@ -39,6 +39,14 @@ beforeEach(() => {
   });
 });
 describe("per-app setup progress", () => {
+  it("does not flash a banner while loading an already-completed guide", async () => {
+    state.ready = true;
+    const view = mount();
+    expect(view.container).toBeEmptyDOMElement();
+    await waitFor(() => expect(state.get).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(view.container).toBeEmptyDOMElement();
+  });
   it("saves dismissal, stays collapsed on resume and can be reopened", async () => {
     const first = mount();
     fireEvent.click(await screen.findByRole("button", { name: /Use Newsletter below/ }));
@@ -61,11 +69,15 @@ describe("per-app setup progress", () => {
       }),
     );
   });
-  it("marks results ready only after rechecking the real app records", async () => {
+  it("removes the guide automatically when rechecking confirms completion", async () => {
     mount();
     expect(await screen.findByText("0/3 ready")).toBeInTheDocument();
     state.ready = true;
     fireEvent.click(screen.getByRole("button", { name: "Check my progress" }));
-    await waitFor(() => expect(screen.getByText("3/3 ready")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "Newsletter setup guide" }),
+      ).not.toBeInTheDocument(),
+    );
   });
 });

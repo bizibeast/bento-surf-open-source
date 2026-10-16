@@ -77,7 +77,20 @@ describe("AppSidebar", () => {
     const profile = within(sidebar).getByRole("button", { name: "Open workspace menu" });
     expect(earn).toHaveAttribute("href", "/earn");
     expect(earn.compareDocumentPosition(profile) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(within(sidebar).queryByRole("link", { name: "Home" })).not.toBeInTheDocument();
+    const home = within(navigation).getByRole("link", { name: "Home" });
+    expect(home).toHaveAttribute("href", "/home");
+    expect(
+      home.compareDocumentPosition(within(navigation).getByRole("button", { name: "Create" })) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("keeps Home discoverable and active in the collapsed sidebar", () => {
+    routerState.pathname = "/home";
+    renderSidebar(true);
+    const home = screen.getByRole("link", { name: "Home" });
+    expect(home).toHaveAttribute("aria-current", "page");
+    expect(home).toHaveAttribute("title", "Home");
   });
 
   it("opens the current section and toggles other sections independently", () => {
@@ -202,6 +215,7 @@ describe("AppSidebar", () => {
 
     const dialog = screen.getByRole("dialog", { name: "App navigation" });
     const navigation = within(dialog).getByRole("navigation", { name: "Creator tools" });
+    expect(within(dialog).getByRole("link", { name: "Home" })).toHaveAttribute("href", "/home");
     expect(dialog).toHaveClass("h-dvh", "overflow-hidden");
     expect(navigation).toHaveClass("min-h-0", "overflow-y-auto", "overscroll-contain");
     expect(within(navigation).queryByRole("link", { name: "Earn" })).not.toBeInTheDocument();

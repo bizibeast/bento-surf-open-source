@@ -8,7 +8,7 @@ import {
 } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTheme } from "next-themes";
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { getFeaturebaseIdentity } from "@/lib/featurebase.functions";
 import { requireAuthenticatedCreator } from "@/lib/auth-entry";
 import { getMyProfile } from "@/lib/profile.functions";
@@ -185,7 +185,30 @@ function AuthLayout() {
   const navigate = useNavigate();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const location = useRouterState({ select: (state) => state.location });
+  const pathname = location.pathname;
+  const contentSearch = location.search as { tab?: string; routines?: boolean };
+  const agentChat =
+    pathname === "/content" && contentSearch.tab === "agent" && !contentSearch.routines;
+  const contentViewport = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!agentChat) return;
+    const element = contentViewport.current;
+    const viewport = window.visualViewport;
+    if (!element || !viewport) return;
+    const resize = () => {
+      // Mobile keyboards resize the visual viewport, including on browsers
+      // where dvh continues to include the area behind the keyboard.
+      if (viewport.scale === 1) element.style.height = `${viewport.height}px`;
+    };
+    resize();
+    viewport.addEventListener("resize", resize);
+    return () => {
+      viewport.removeEventListener("resize", resize);
+      element.style.removeProperty("height");
+    };
+  }, [agentChat]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const { resolvedTheme, setTheme } = useTheme();
   const { data: workspaceSession } = useQuery({
@@ -314,7 +337,10 @@ function AuthLayout() {
               collapsed={sidebarCollapsed}
               onCollapsedChange={setSidebarCollapsed}
             />
-            <div className={`min-w-0 flex-1 pt-14 lg:pt-0 ${compactAppUi ? "app-ui-compact" : ""}`}>
+            <div
+              ref={contentViewport}
+              className={`min-w-0 flex-1 pt-14 lg:pt-0 ${agentChat ? "app-agent-viewport flex h-dvh min-h-0 flex-col overflow-hidden" : ""} ${compactAppUi ? "app-ui-compact" : ""}`}
+            >
               <AppSetupGuide workspaceId={workspaceSession?.workspaceId} />
               <Outlet />
             </div>

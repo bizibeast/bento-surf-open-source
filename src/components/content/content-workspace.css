@@ -211,11 +211,25 @@
   margin-top: 0;
 }
 
+.app-agent-viewport > .app-setup-guide {
+  max-height: 32dvh;
+  overflow-y: auto;
+}
+.agent-route,
+.agent-route-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
 /* Content chat occupies the app's available viewport, without a repeated AppHeader. */
 .agent-shell {
   display: grid;
   grid-template-columns: 256px minmax(0, 1fr);
-  height: calc(100dvh - 3.5rem);
+  flex: 1;
   min-height: 0;
   overflow: hidden;
 }
@@ -444,6 +458,7 @@
   overflow-x: hidden;
   padding: 8px 28px 24px;
   scrollbar-width: thin;
+  overscroll-behavior-y: contain;
 }
 .agent-brain-hint {
   margin: 0 auto;
@@ -525,11 +540,6 @@
 .agent-settings-section {
   padding-top: 20px;
   border-top: 1px solid var(--border);
-}
-@media (min-width: 1024px) {
-  .agent-shell {
-    height: 100dvh;
-  }
 }
 @media (max-width: 767px) {
   .agent-shell,
