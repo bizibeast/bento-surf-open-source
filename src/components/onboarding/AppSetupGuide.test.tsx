@@ -1,10 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-const state = vi.hoisted(() => ({ dismissed: false, ready: false, get: vi.fn(), save: vi.fn() }));
-vi.mock("@tanstack/react-router", () => ({
-  useRouterState: () => ({ pathname: "/email-marketing", search: {} }),
+const state = vi.hoisted(() => ({
+  dismissed: new Set<string>(),
+  pathname: "/email-marketing",
+  ready: false,
+  get: vi.fn(),
+  save: vi.fn(),
+  error: vi.fn(),
 }));
+vi.mock("@tanstack/react-router", () => ({
+  useRouterState: () => ({ pathname: state.pathname, search: {} }),
+}));
+vi.mock("sonner", () => ({ toast: { error: state.error } }));
 vi.mock("@/lib/onboarding/apps.functions", () => ({
   getAppGuide: state.get,
   setAppGuideDismissed: state.save,
@@ -23,18 +31,19 @@ function mount() {
 }
 beforeEach(() => {
   vi.clearAllMocks();
-  state.dismissed = false;
+  state.dismissed.clear();
+  state.pathname = "/email-marketing";
   state.ready = false;
-  state.get.mockImplementation(async () => ({
+  state.get.mockImplementation(async ({ data }) => ({
     allowed: true,
     readiness: state.ready ? { publication: true, issue: true, published_issue: true } : {},
     complete: state.ready,
-    dismissed: state.dismissed,
-    showInitially: !state.dismissed && !state.ready,
+    dismissed: state.dismissed.has(data.appId),
+    showInitially: !state.dismissed.has(data.appId) && !state.ready,
     context: { audience: "New creators" },
   }));
   state.save.mockImplementation(async ({ data }) => {
-    state.dismissed = data.dismissed;
+    if (data.dismissed) state.dismissed.add(data.appId);
     return { ok: true };
   });
 });
@@ -47,27 +56,63 @@ describe("per-app setup progress", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(view.container).toBeEmptyDOMElement();
   });
-  it("saves dismissal, stays collapsed on resume and can be reopened", async () => {
-    const first = mount();
-    fireEvent.click(await screen.findByRole("button", { name: /Use Newsletter below/ }));
-    await waitFor(() =>
-      expect(state.save).toHaveBeenCalledWith({ data: { appId: "newsletter", dismissed: true } }),
-    );
-    first.unmount();
+  it("keeps collapse separate from permanent dismissal", async () => {
     mount();
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /Get started with Newsletter/ })).toHaveAttribute(
-        "aria-expanded",
-        "false",
-      ),
+    fireEvent.click(await screen.findByRole("button", { name: /Use Newsletter below/ }));
+    expect(screen.getByRole("button", { name: /Get started with Newsletter/ })).toHaveAttribute(
+      "aria-expanded",
+      "false",
     );
     fireEvent.click(screen.getByRole("button", { name: /Get started with Newsletter/ }));
     expect(await screen.findByRole("button", { name: /Use Newsletter below/ })).toBeInTheDocument();
+    expect(state.save).not.toHaveBeenCalled();
+  });
+  it("removes a closed guide and keeps it hidden with a fresh query cache", async () => {
+    const first = mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss Newsletter setup guide" }));
     await waitFor(() =>
-      expect(state.save).toHaveBeenLastCalledWith({
-        data: { appId: "newsletter", dismissed: false },
-      }),
+      expect(state.save).toHaveBeenCalledWith({ data: { appId: "newsletter", dismissed: true } }),
     );
+    await waitFor(() => expect(first.container).toBeEmptyDOMElement());
+    first.unmount();
+    const second = mount();
+    expect(second.container).toBeEmptyDOMElement();
+    await waitFor(() => expect(state.get).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(second.container).toBeEmptyDOMElement();
+    second.unmount();
+    state.pathname = "/store";
+    mount();
+    expect(
+      await screen.findByRole("button", { name: /Get started with Store/ }),
+    ).toBeInTheDocument();
+  });
+  it("can close a collapsed guide without reopening it", async () => {
+    state.get.mockResolvedValue({
+      allowed: true,
+      readiness: {},
+      complete: false,
+      dismissed: false,
+      showInitially: false,
+      context: {},
+    });
+    const view = mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss Newsletter setup guide" }));
+    await waitFor(() => expect(view.container).toBeEmptyDOMElement());
+    expect(state.save).toHaveBeenCalledWith({ data: { appId: "newsletter", dismissed: true } });
+  });
+  it("restores the guide and explains a save failure so dismissal can be retried", async () => {
+    state.save.mockRejectedValueOnce(new Error("offline"));
+    const view = mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss Newsletter setup guide" }));
+    await waitFor(() =>
+      expect(state.error).toHaveBeenCalledWith(
+        "The guide could not be dismissed. Please try again.",
+      ),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss Newsletter setup guide" }));
+    await waitFor(() => expect(view.container).toBeEmptyDOMElement());
+    expect(state.save).toHaveBeenCalledTimes(2);
   });
   it("removes the guide automatically when rechecking confirms completion", async () => {
     mount();

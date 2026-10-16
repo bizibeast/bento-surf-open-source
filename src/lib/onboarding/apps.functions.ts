@@ -163,7 +163,7 @@ export const getAppGuide = createServerFn({ method: "GET" })
     const keys = [...new Set(app.steps.map((item) => item.proof))];
     const alreadyComplete = Boolean(progress.data?.completed_at);
     const results =
-      allowed && !alreadyComplete
+      allowed && !alreadyComplete && !progress.data?.dismissed_at
         ? await Promise.all(keys.map(async (key) => [key, await proof(key)] as const))
         : [];
     const readiness = Object.fromEntries(results);

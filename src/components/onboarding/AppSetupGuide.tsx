@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouterState } from "@tanstack/react-router";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowDown, Check, ChevronDown, Compass, Loader2, RefreshCw } from "lucide-react";
+import { ArrowDown, Check, ChevronDown, Compass, Loader2, RefreshCw, X } from "lucide-react";
 import { toast } from "sonner";
 import { appGuideForLocation, type AppGuide } from "@/lib/onboarding/apps";
 import { getAppGuide, setAppGuideDismissed } from "@/lib/onboarding/apps.functions";
@@ -18,12 +18,32 @@ export function AppSetupGuide({ workspaceId }: { workspaceId?: string }) {
 }
 function Guide({ app, workspaceId }: { app: AppGuide; workspaceId: string }) {
   const reduced = useReducedMotion();
+  const queryClient = useQueryClient();
+  const queryKey = ["app-setup", workspaceId, app.id];
   const [expanded, setExpanded] = useState<boolean | null>(null);
   const query = useQuery({
-    queryKey: ["app-setup", workspaceId, app.id],
+    queryKey,
     queryFn: () => getAppGuide({ data: { appId: app.id } }),
-    staleTime: (query) => (query.state.data?.complete ? Infinity : 15000),
+    staleTime: (query) =>
+      query.state.data?.complete || query.state.data?.dismissed ? Infinity : 15000,
     refetchOnWindowFocus: true,
+  });
+  const dismiss = useMutation({
+    mutationFn: () => setAppGuideDismissed({ data: { appId: app.id, dismissed: true } }),
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey });
+      const previous = queryClient.getQueryData<Awaited<ReturnType<typeof getAppGuide>>>(queryKey);
+      if (previous)
+        queryClient.setQueryData(queryKey, { ...previous, dismissed: true, showInitially: false });
+      return { previous };
+    },
+    onSuccess: () => {
+      captureProductEvent("app_setup_dismissed", { app_id: app.id, flow_version: 1 });
+    },
+    onError: (_error, _variables, context) => {
+      if (context?.previous) queryClient.setQueryData(queryKey, context.previous);
+      toast.error("The guide could not be dismissed. Please try again.");
+    },
   });
   const open = expanded ?? query.data?.showInitially ?? false;
   const complete = app.steps.filter((step) => query.data?.readiness[step.proof]).length;
@@ -31,50 +51,65 @@ function Guide({ app, workspaceId }: { app: AppGuide; workspaceId: string }) {
     if (query.data?.complete)
       captureProductEvent("app_setup_complete", { app_id: app.id, flow_version: 1 });
   }, [app.id, query.data?.complete]);
-  async function toggle(value: boolean) {
+  function toggle(value: boolean) {
     setExpanded(value);
     captureProductEvent(value ? "app_setup_resumed" : "app_setup_skipped", {
       app_id: app.id,
       flow_version: 1,
     });
-    try {
-      await setAppGuideDismissed({ data: { appId: app.id, dismissed: !value } });
-    } catch {
-      toast.error("Your guide preference could not be saved.");
-    }
   }
   // Completed onboarding is a milestone, not a permanent banner. Avoid a
   // loading flash on every app visit while its saved progress is checked.
-  if (query.isPending || query.data?.complete) return null;
+  if (
+    query.isPending ||
+    query.data?.complete ||
+    query.data?.dismissed ||
+    dismiss.isPending ||
+    dismiss.isSuccess
+  )
+    return null;
 
   return (
     <section
       aria-label={`${app.name} setup guide`}
       className="app-setup-guide mx-4 mt-4 shrink-0 overflow-hidden rounded-2xl border border-primary/15 bg-card shadow-sm sm:mx-6"
     >
-      <button
-        onClick={() => void toggle(!open)}
-        aria-expanded={open}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
-      >
-        <span className="rounded-lg bg-primary/10 p-2 text-primary">
-          {complete === 3 ? <Check className="size-4" /> : <Compass className="size-4" />}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block text-sm font-semibold">
-            {complete === 3
-              ? `${app.name}: your first result is ready`
-              : `Get started with ${app.name}`}
+      <div className="flex items-center">
+        <button
+          onClick={() => void toggle(!open)}
+          aria-expanded={open}
+          className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+        >
+          <span className="rounded-lg bg-primary/10 p-2 text-primary">
+            {complete === 3 ? <Check className="size-4" /> : <Compass className="size-4" />}
           </span>
-          <span className="mt-0.5 block truncate text-xs text-muted-foreground">{app.benefit}</span>
-        </span>
-        <span className="hidden text-xs text-muted-foreground sm:block">
-          {query.data ? `${complete}/3 ready` : "Setup guide"}
-        </span>
-        <ChevronDown
-          className={`size-4 transition-transform motion-reduce:transition-none ${open ? "rotate-180" : ""}`}
-        />
-      </button>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold">
+              {complete === 3
+                ? `${app.name}: your first result is ready`
+                : `Get started with ${app.name}`}
+            </span>
+            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+              {app.benefit}
+            </span>
+          </span>
+          <span className="hidden text-xs text-muted-foreground sm:block">
+            {query.data ? `${complete}/3 ready` : "Setup guide"}
+          </span>
+          <ChevronDown
+            className={`size-4 transition-transform motion-reduce:transition-none ${open ? "rotate-180" : ""}`}
+          />
+        </button>
+        <button
+          type="button"
+          onClick={() => dismiss.mutate()}
+          aria-label={`Dismiss ${app.name} setup guide`}
+          title="Dismiss this guide permanently"
+          className="mr-2 flex size-11 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        >
+          <X className="size-4" aria-hidden="true" />
+        </button>
+      </div>
       <AnimatePresence initial={false}>
         {open && (
           <motion.div
@@ -157,7 +192,7 @@ function Guide({ app, workspaceId }: { app: AppGuide; workspaceId: string }) {
                   Check my progress
                 </button>
                 <span className="text-xs text-muted-foreground">
-                  You can reopen this guide anytime.
+                  Close this guide with × to hide it permanently.
                 </span>
               </div>
             </div>
