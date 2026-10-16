@@ -1123,7 +1123,7 @@ export async function runContentAgentTurn(
   if (input.toolContext && actionMessages.length) {
     const outcomes = await (supabaseAdmin as any)
       .from("content_agent_app_actions")
-      .select("id,message_id,tool_name,status,result,error_message")
+      .select("id,message_id,tool_name,status,result,error_message,arguments,updated_at")
       .eq("user_id", input.userId)
       .in("message_id", actionMessages)
       .limit(20);

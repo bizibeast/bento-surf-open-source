@@ -4,15 +4,12 @@ import { Check, LoaderCircle } from "lucide-react";
 import {
   getContentAgentActionStates,
   reviewContentAgentAction,
+  editContentAgentPostAction,
 } from "@/lib/content-agent.functions";
 import type { AgentAppAction, AgentAppActionState } from "@/lib/content-agent-app-actions";
-import { ProviderPostPreview } from "@/components/scheduler/ProviderPostPreview";
-import {
-  SOCIAL_PROVIDER_DEFINITIONS,
-  schedulerMediaSchema,
-  type SchedulerConnection,
-  type SchedulerMedia,
-} from "@/lib/social-scheduler";
+import { AgentPostReview } from "./AgentPostReview";
+import type { AgentPostEdit } from "@/lib/content-agent-app-actions";
+import { SOCIAL_PROVIDER_DEFINITIONS, type SchedulerConnection } from "@/lib/social-scheduler";
 import { micro } from "@/lib/micro-app-ui";
 
 function label(key: string) {
@@ -91,8 +88,11 @@ export function ContentAgentAppActions({
         : false,
   });
   const review = useMutation({
-    mutationFn: ({ id, dismiss }: { id: string; dismiss: boolean }) =>
-      reviewContentAgentAction({ data: { id, dismiss } }),
+    onError: () => {
+      void client.invalidateQueries({ queryKey: key });
+    },
+    mutationFn: ({ id, dismiss, revision }: { id: string; dismiss: boolean; revision?: string }) =>
+      reviewContentAgentAction({ data: { id, dismiss, revision } }),
     onSuccess: async (result) => {
       client.setQueryData(key, (rows: AgentAppActionState[] | undefined) =>
         rows?.map((row) => (row.id === result.id ? { ...row, ...result } : row)),
@@ -117,7 +117,23 @@ export function ContentAgentAppActions({
           error={
             review.isError && review.variables?.id === action.id ? review.error.message : undefined
           }
-          onReview={(dismiss) => review.mutate({ id: action.id, dismiss })}
+          onReview={(dismiss) =>
+            review.mutate({
+              id: action.id,
+              dismiss,
+              revision: status.data?.find((row) => row.id === action.id)?.revision,
+            })
+          }
+          onEdit={async (edit) => {
+            const revision = status.data?.find((row) => row.id === action.id)?.revision;
+            if (!revision) throw new Error("Refresh this review before editing.");
+            const updated = await editContentAgentPostAction({
+              data: { id: action.id, revision, edit },
+            });
+            client.setQueryData(key, (rows: AgentAppActionState[] | undefined) =>
+              rows?.map((row) => (row.id === updated.id ? updated : row)),
+            );
+          }}
           onRefresh={() => void status.refetch()}
         />
       ))}
@@ -134,6 +150,7 @@ function ActionReview({
   error,
   onReview,
   onRefresh,
+  onEdit,
 }: {
   action: AgentAppAction;
   accounts: SchedulerConnection[];
@@ -144,45 +161,10 @@ function ActionReview({
   error?: string;
   onReview: (dismiss: boolean) => void;
   onRefresh: () => void;
+  onEdit: (edit: AgentPostEdit) => Promise<unknown>;
 }) {
-  const args = action.arguments;
-  const connections = Array.isArray(args.connectionIds)
-    ? accounts.filter((a) => (args.connectionIds as string[]).includes(a.id))
-    : [];
-  const [previewId, setPreviewId] = useState(connections[0]?.id);
-  const connection = connections.find((a) => a.id === previewId) || connections[0];
+  const args = state?.arguments || action.arguments;
   const isPost = action.tool === "create_social_post";
-  const media = (Array.isArray(args.media) ? args.media : []).flatMap((item) => {
-    const parsed = schedulerMediaSchema.safeParse(item);
-    return parsed.success ? [parsed.data] : [];
-  });
-  const providerSettings =
-    args.providerSettings &&
-    typeof args.providerSettings === "object" &&
-    !Array.isArray(args.providerSettings)
-      ? args.providerSettings
-      : {};
-  const settingsValue = connection ? providerSettings[connection.provider] : null;
-  const settings =
-    settingsValue && typeof settingsValue === "object" && !Array.isArray(settingsValue)
-      ? settingsValue
-      : {};
-  const overrides =
-    args.connectionOverrides &&
-    typeof args.connectionOverrides === "object" &&
-    !Array.isArray(args.connectionOverrides)
-      ? args.connectionOverrides
-      : {};
-  const overrideValue = connection ? overrides[connection.id] : null;
-  const override =
-    overrideValue && typeof overrideValue === "object" && !Array.isArray(overrideValue)
-      ? overrideValue
-      : {};
-  const postBody = String(override.bodyOverride ?? settings.bodyOverride ?? args.body ?? "");
-  const getMedia = (value: unknown): SchedulerMedia | null => {
-    const result = schedulerMediaSchema.safeParse(value);
-    return result.success ? result.data : null;
-  };
   const pending = state?.status === "pending";
   const completed = state?.status === "completed";
   const heading = isPost
@@ -192,81 +174,37 @@ function ActionReview({
         ? "Publish this post"
         : "Save this draft"
     : action.title;
-  const time = typeof args.scheduledAt === "string" ? new Date(args.scheduledAt) : null;
-  let when = "";
-  if (time && Number.isFinite(time.getTime())) {
-    try {
-      when =
-        new Intl.DateTimeFormat(undefined, {
-          dateStyle: "medium",
-          timeStyle: "short",
-          timeZone: String(args.timezone || "UTC"),
-        }).format(time) + ` (${args.timezone || "UTC"})`;
-    } catch {
-      when = String(args.scheduledAt);
-    }
-  }
   return (
     <article
       className="min-w-0 rounded-2xl border border-border bg-card p-4 sm:p-5"
       aria-label={heading}
     >
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <h3 className="flex-1 text-base font-semibold">{heading}</h3>
-        <span className="text-xs text-muted-foreground">
-          {completed
-            ? "Completed"
-            : state?.status === "dismissed"
-              ? "Dismissed"
-              : state?.status === "running"
-                ? "Processing"
-                : state?.status === "failed"
-                  ? "Needs attention"
-                  : "Ready for review"}
-        </span>
-      </div>
-      {isPost && (
-        <>
-          {when && <p className="mb-3 text-sm font-medium">{when}</p>}
-          <div className="mb-3 flex flex-wrap gap-2" aria-label="Post destinations">
-            {connections.map((a) => (
-              <button
-                key={a.id}
-                type="button"
-                onClick={() => setPreviewId(a.id)}
-                aria-pressed={connection?.id === a.id}
-                title={`Preview ${SOCIAL_PROVIDER_DEFINITIONS[a.provider].name}: ${a.displayName || a.handle}`}
-                className="rounded-full border border-border px-3 py-1.5 text-xs aria-pressed:bg-muted"
-              >
-                {SOCIAL_PROVIDER_DEFINITIONS[a.provider].name} · {a.displayName || a.handle}
-              </button>
-            ))}
-          </div>
-          {connection ? (
-            <ProviderPostPreview
-              connection={connection}
-              body={postBody}
-              title={String(settings.titleOverride || args.title || "")}
-              media={media}
-              youtubeThumbnail={getMedia(settings.thumbnail)}
-              youtubeFormat={
-                settings.youtubeFormat === "short" || settings.youtubeFormat === "video"
-                  ? settings.youtubeFormat
-                  : null
-              }
-              instagramCover={getMedia(settings.cover)}
-              tiktokPrivacy={String(settings.privacyLevel || "SELF_ONLY")}
-              youtubePrivacy={String(settings.youtubePrivacy || "private")}
-              redditCommunity={String(settings.community || "")}
-              redditKind={settings.kind === "link" ? "link" : "self"}
-              redditUrl={String(settings.url || "")}
-            />
-          ) : (
-            <p className="whitespace-pre-wrap break-words text-sm leading-7">
-              {String(args.body || "")}
-            </p>
-          )}
-        </>
+      {isPost ? (
+        <AgentPostReview
+          post={args}
+          accounts={accounts}
+          stockPhoto={action.stockPhoto}
+          status={state?.status || "running"}
+          busy={busy}
+          disabled={loading || unavailable || !state?.revision}
+          onApprove={() => onReview(false)}
+          onEdit={onEdit}
+        />
+      ) : (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <h3 className="flex-1 text-base font-semibold">{heading}</h3>
+          <span className="text-xs text-muted-foreground">
+            {completed
+              ? "Completed"
+              : state?.status === "dismissed"
+                ? "Dismissed"
+                : state?.status === "running"
+                  ? "Processing"
+                  : state?.status === "failed"
+                    ? "Needs attention"
+                    : "Ready for review"}
+          </span>
+        </div>
       )}
       <details className="mt-4" open={!isPost}>
         <summary className="cursor-pointer text-sm font-medium">
@@ -298,23 +236,25 @@ function ActionReview({
       <div className="mt-4 flex flex-wrap items-center gap-2">
         {pending && (
           <>
-            <button
-              type="button"
-              className={micro.btnPrimary}
-              disabled={busy || loading || unavailable}
-              onClick={() => onReview(false)}
-            >
-              {busy ? (
-                <LoaderCircle className="size-4 animate-spin" />
-              ) : (
-                <Check className="size-4" />
-              )}
-              {args.mode === "publish_now"
-                ? "Approve & publish"
-                : args.mode === "schedule"
-                  ? "Approve & schedule"
-                  : "Approve action"}
-            </button>
+            {!isPost && (
+              <button
+                type="button"
+                className={micro.btnPrimary}
+                disabled={busy || loading || unavailable || !state?.revision}
+                onClick={() => onReview(false)}
+              >
+                {busy ? (
+                  <LoaderCircle className="size-4 animate-spin" />
+                ) : (
+                  <Check className="size-4" />
+                )}
+                {args.mode === "publish_now"
+                  ? "Approve & publish"
+                  : args.mode === "schedule"
+                    ? "Approve & schedule"
+                    : "Approve action"}
+              </button>
+            )}
             <button
               type="button"
               className={micro.btnSoft}
@@ -325,7 +265,7 @@ function ActionReview({
             </button>
           </>
         )}
-        {(unavailable || state?.status === "running") && (
+        {(unavailable || error || state?.status === "running") && (
           <button type="button" className={micro.btnSoft} onClick={onRefresh}>
             Refresh status
           </button>

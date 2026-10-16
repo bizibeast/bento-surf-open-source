@@ -11,12 +11,14 @@ vi.mock("./ai-json.server", () => ({
 import {
   generateAgentWithTools,
   approveAgentAppAction,
+  editAgentPostAction,
   agentActionErrorMessage,
   agentEntityLabels,
   AGENT_TOOL_STEP_LIMIT,
 } from "./content-agent-tools.server";
 import type { BentoAppTool } from "./mcp.server";
 const id = "00000000-0000-4000-8000-000000000001";
+const revision = "2026-10-16T12:00:00.000Z";
 const context = { userId: id, accessToken: "user-jwt", supabase: {} as any };
 const reply = { action: "answer", message: "Prepared", cards: [], memories: [], toolRequest: null };
 const call = (name: string, args = {}) => ({
@@ -125,6 +127,7 @@ describe("Agent tool execution", () => {
   });
 });
 function database(row: any, messageExists = true) {
+  row.updated_at ||= revision;
   mocks.from.mockImplementation((table: string) => {
     const filters: Record<string, unknown> = {};
     let update: any;
@@ -184,8 +187,8 @@ describe("Agent action approvals", () => {
       arguments: {},
     });
     const results = await Promise.all([
-      approveAgentAppAction(context, id),
-      approveAgentAppAction(context, id),
+      approveAgentAppAction(context, id, false, revision),
+      approveAgentAppAction(context, id, false, revision),
     ]);
     expect(write.execute).toHaveBeenCalledOnce();
     expect(results.some((r) => r.status === "completed")).toBe(true);
@@ -201,12 +204,14 @@ describe("Agent action approvals", () => {
       tool_name: "save",
       arguments: {},
     });
-    await expect(approveAgentAppAction(context, id)).rejects.toThrow("unavailable");
+    await expect(approveAgentAppAction(context, id, false, revision)).rejects.toThrow(
+      "unavailable",
+    );
     database(
       { id, user_id: id, message_id: id, status: "pending", tool_name: "save", arguments: {} },
       false,
     );
-    await expect(approveAgentAppAction(context, id)).rejects.toThrow("expired");
+    await expect(approveAgentAppAction(context, id, false, revision)).rejects.toThrow("expired");
     expect(write.execute).not.toHaveBeenCalled();
   });
   it("dismisses without mutation and does not retry failed writes", async () => {
@@ -220,7 +225,7 @@ describe("Agent action approvals", () => {
       tool_name: "save",
       arguments: {},
     });
-    expect((await approveAgentAppAction(context, id, true)).status).toBe("dismissed");
+    expect((await approveAgentAppAction(context, id, true, revision)).status).toBe("dismissed");
     expect(write.execute).not.toHaveBeenCalled();
     database({
       id,
@@ -231,8 +236,197 @@ describe("Agent action approvals", () => {
       arguments: {},
     });
     vi.mocked(write.execute).mockRejectedValue(new Error("Platform permission is missing"));
-    expect((await approveAgentAppAction(context, id)).message).toContain("permission");
-    await approveAgentAppAction(context, id);
+    expect((await approveAgentAppAction(context, id, false, revision)).message).toContain(
+      "permission",
+    );
+    await approveAgentAppAction(context, id, false, revision);
     expect(write.execute).toHaveBeenCalledOnce();
+  });
+});
+
+describe("one request to multiple network posts", () => {
+  const other = "00000000-0000-4000-8000-000000000002";
+  const photo = {
+    id: 42,
+    provider: "pixabay",
+    previewUrl: "https://cdn.pixabay.com/photo.jpg",
+    url: "https://pixabay.com/photos/42",
+    photographer: "Sam",
+    description: "A pottery studio",
+  };
+  const args = {
+    body: "Workshop Saturday",
+    connectionIds: [id, other],
+    connectionOverrides: {
+      [id]: { bodyOverride: "A LinkedIn workshop story" },
+      [other]: { bodyOverride: "A short X update" },
+    },
+    mode: "schedule",
+    scheduledAt: "2099-10-22T18:00:00Z",
+    timezone: "UTC",
+    stockPhoto: { id: 42, provider: "pixabay" },
+  };
+  it("prepares tailored captions and a real stock selection without importing or scheduling before approval", async () => {
+    const read = tool("search_stock_photos", true),
+      write = tool("create_social_post", false);
+    read.inputSchema = z.object({ query: z.string() });
+    write.inputSchema = z.object({}).passthrough();
+    vi.mocked(read.execute).mockResolvedValue({ structuredContent: { photos: [photo] } });
+    const generate = vi
+      .fn()
+      .mockResolvedValueOnce(call(read.name, { query: "pottery studio" }))
+      .mockResolvedValueOnce(call(write.name, args));
+    const result = await generateAgentWithTools(
+      JSON.stringify({
+        request: "Write for LinkedIn and X with a stock photo",
+        scheduler: {
+          connections: [
+            { id, provider: "linkedin", status: "active" },
+            { id: other, provider: "twitter", status: "active" },
+          ],
+        },
+      }),
+      context,
+      "rules",
+      {},
+      {
+        tools: new Map([
+          [read.name, read],
+          [write.name, write],
+        ]),
+        generate,
+      },
+    );
+    expect(result.actions).toHaveLength(1);
+    expect(result.actions[0]).toMatchObject({ arguments: args, stockPhoto: photo });
+    expect(write.execute).not.toHaveBeenCalled();
+    expect(read.execute).toHaveBeenCalledTimes(1);
+  });
+  it("rejects invented stock images and unknown destinations", async () => {
+    const write = tool("create_social_post", false);
+    write.inputSchema = z.object({}).passthrough();
+    const generate = vi
+      .fn()
+      .mockResolvedValueOnce(call(write.name, args))
+      .mockResolvedValueOnce(reply);
+    expect(
+      (
+        await generateAgentWithTools(
+          "{}",
+          context,
+          "rules",
+          {},
+          { tools: new Map([[write.name, write]]), generate },
+        )
+      ).actions,
+    ).toEqual([]);
+    expect(JSON.stringify(generate.mock.calls[1][0].input.observations)).toContain("Never invent");
+    const unknown = vi
+      .fn()
+      .mockResolvedValueOnce(call(write.name, { ...args, stockPhoto: undefined }))
+      .mockResolvedValueOnce(reply);
+    expect(
+      (
+        await generateAgentWithTools(
+          JSON.stringify({ scheduler: { connections: [] } }),
+          context,
+          "rules",
+          {},
+          { tools: new Map([[write.name, write]]), generate: unknown },
+        )
+      ).actions,
+    ).toEqual([]);
+    expect(write.execute).not.toHaveBeenCalled();
+  });
+  it("caps stock searches at one per turn, including different queries", async () => {
+    const read = tool("search_stock_photos", true);
+    read.inputSchema = z.object({ query: z.string() });
+    const generate = vi
+      .fn()
+      .mockResolvedValueOnce(call(read.name, { query: "pottery" }))
+      .mockResolvedValueOnce(call(read.name, { query: "ceramics" }))
+      .mockResolvedValueOnce(reply);
+    await generateAgentWithTools(
+      "{}",
+      context,
+      "rules",
+      {},
+      { tools: new Map([[read.name, read]]), generate },
+    );
+    expect(read.execute).toHaveBeenCalledTimes(1);
+  });
+  it("persists one network's edit and schedule while preserving other captions and Auto DM settings", async () => {
+    const write = tool("create_social_post", false);
+    write.inputSchema = z.object({}).passthrough();
+    mocks.tools.mockReturnValue(new Map([[write.name, write]]));
+    const row = {
+      id,
+      user_id: id,
+      message_id: id,
+      status: "pending",
+      tool_name: write.name,
+      updated_at: revision,
+      arguments: {
+        ...args,
+        stockPhoto: undefined,
+        mode: "draft",
+        providerSettings: { twitter: { custom: "preserved" } },
+      },
+    };
+    database(row);
+    const result = await editAgentPostAction(context, id, revision, {
+      connectionId: id,
+      body: "A better LinkedIn post",
+    });
+    expect(result.arguments?.connectionOverrides).toEqual({
+      [id]: { bodyOverride: "A better LinkedIn post" },
+      [other]: { bodyOverride: "A short X update" },
+    });
+    expect(result.arguments?.providerSettings).toEqual({ twitter: { custom: "preserved" } });
+    expect(write.execute).not.toHaveBeenCalled();
+    await expect(approveAgentAppAction(context, id, false, revision)).rejects.toThrow("changed");
+    expect((await approveAgentAppAction(context, id, false, result.revision)).status).toBe(
+      "completed",
+    );
+    expect(write.execute).toHaveBeenCalledWith(
+      expect.objectContaining({ connectionOverrides: result.arguments?.connectionOverrides }),
+    );
+  });
+  it("does not edit foreign, stale, completed or expired reviews", async () => {
+    const write = tool("create_social_post", false);
+    write.inputSchema = z.object({}).passthrough();
+    mocks.tools.mockReturnValue(new Map([[write.name, write]]));
+    for (const variant of [
+      { user_id: "other" },
+      { status: "completed" },
+      { updated_at: "stale" },
+    ]) {
+      database({
+        id,
+        user_id: id,
+        message_id: id,
+        status: "pending",
+        tool_name: write.name,
+        arguments: args,
+        ...variant,
+      });
+      await expect(
+        editAgentPostAction(context, id, revision, { connectionId: id, body: "Changed" }),
+      ).rejects.toThrow();
+    }
+    database(
+      {
+        id,
+        user_id: id,
+        message_id: id,
+        status: "pending",
+        tool_name: write.name,
+        arguments: args,
+      },
+      false,
+    );
+    await expect(
+      editAgentPostAction(context, id, revision, { connectionId: id, body: "Changed" }),
+    ).rejects.toThrow("expired");
   });
 });

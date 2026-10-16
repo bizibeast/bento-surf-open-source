@@ -1,4 +1,8 @@
-import { agentAppActionStateSchema, type AgentAppActionState } from "./content-agent-app-actions";
+import {
+  agentPostEditSchema,
+  agentAppActionStateSchema,
+  type AgentAppActionState,
+} from "./content-agent-app-actions";
 import { AGENT_ATTACHMENT_LIMIT } from "./content-agent-attachments";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Agent rows are validated before use. */
 import { createServerFn } from "@tanstack/react-start";
@@ -418,7 +422,15 @@ export const prepareContentAgentAttachment = createServerFn({ method: "POST" })
 
 export const reviewContentAgentAction = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator((input) => z.object({ id: uuid, dismiss: z.boolean().default(false) }).parse(input))
+  .validator((input) =>
+    z
+      .object({
+        id: uuid,
+        dismiss: z.boolean().default(false),
+        revision: z.string().max(100).optional(),
+      })
+      .parse(input),
+  )
   .handler(async ({ context, data }) => {
     await requireContentWorkspace(context.userId);
     await enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "agent-app-action", context.userId);
@@ -427,6 +439,7 @@ export const reviewContentAgentAction = createServerFn({ method: "POST" })
       { userId: context.userId, supabase: context.supabase, accessToken: context.accessToken },
       data.id,
       data.dismiss,
+      data.revision,
     );
   });
 
@@ -437,7 +450,7 @@ export const getContentAgentActionStates = createServerFn({ method: "GET" })
     await requireContentWorkspace(context.userId);
     const { data: rows, error } = await (supabaseAdmin as any)
       .from("content_agent_app_actions")
-      .select("id,status,result,error_message")
+      .select("id,status,result,error_message,arguments,updated_at")
       .eq("user_id", context.userId)
       .eq("message_id", data.messageId)
       .limit(3);
@@ -447,7 +460,32 @@ export const getContentAgentActionStates = createServerFn({ method: "GET" })
       agentAppActionStateSchema.parse({
         id: row.id,
         status: row.status,
+        revision: row.updated_at,
+        arguments: row.arguments,
         message: row.error_message || row.result?.message || null,
       }),
     ) as AgentAppActionState[];
+  });
+
+export const editContentAgentPostAction = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input) =>
+    z
+      .object({ id: uuid, revision: z.string().min(1).max(100), edit: agentPostEditSchema })
+      .parse(input),
+  )
+  .handler(async ({ context, data }) => {
+    await requireContentWorkspace(context.userId);
+    await enforceRequestRateLimit(
+      "EXPENSIVE_API_RATE_LIMITER",
+      "agent-app-action-edit",
+      context.userId,
+    );
+    const { editAgentPostAction } = await import("./content-agent-tools.server");
+    return editAgentPostAction(
+      { userId: context.userId, supabase: context.supabase, accessToken: context.accessToken },
+      data.id,
+      data.revision,
+      data.edit,
+    );
   });
