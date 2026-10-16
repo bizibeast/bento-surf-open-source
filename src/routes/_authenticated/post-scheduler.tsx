@@ -1,3 +1,5 @@
+import { InstagramPublicRepliesEditor } from "@/components/InstagramPublicRepliesEditor";
+import { INSTAGRAM_AUTO_DM_DEFAULTS as autoDmDefaults } from "@/lib/instagram-auto-dm-defaults";
 import { SchedulerMediaPicker } from "@/components/scheduler/SchedulerMediaPicker";
 import { XCommunityPicker } from "@/components/scheduler/XCommunityPicker";
 import { xCommunityFromSettings, recentXCommunities, type XCommunity } from "@/lib/x-community";
@@ -699,22 +701,20 @@ function SchedulerPage() {
   const [autoDmTrigger, setAutoDmTrigger] = useState<"comment_keyword" | "any_comment">(
     "comment_keyword",
   );
-  const [autoDmKeyword, setAutoDmKeyword] = useState("");
+  const [autoDmKeyword, setAutoDmKeyword] = useState(autoDmDefaults.keyword);
   const [autoDmExcludedKeywords, setAutoDmExcludedKeywords] = useState("");
   const [autoDmMatchType, setAutoDmMatchType] = useState<"contains" | "exact">("contains");
-  const [autoDmOpening, setAutoDmOpening] = useState("");
-  const [autoDmReply, setAutoDmReply] = useState("");
-  const [autoDmButton, setAutoDmButton] = useState("Send it");
+  const [autoDmOpening, setAutoDmOpening] = useState(autoDmDefaults.openingMessage);
+  const [autoDmReply, setAutoDmReply] = useState(autoDmDefaults.replyMessage);
+  const [autoDmButton, setAutoDmButton] = useState(autoDmDefaults.confirmationButtonLabel);
   const [autoDmPublicReply, setAutoDmPublicReply] = useState(false);
-  const [autoDmPublicReplies, setAutoDmPublicReplies] = useState("Sent it to your DMs ✨");
+  const [autoDmPublicReplies, setAutoDmPublicReplies] = useState<string[]>([
+    ...autoDmDefaults.publicReplyMessages,
+  ]);
   const [autoDmEmail, setAutoDmEmail] = useState(false);
-  const [autoDmEmailPrompt, setAutoDmEmailPrompt] = useState(
-    "What’s the best email address to send this to?",
-  );
+  const [autoDmEmailPrompt, setAutoDmEmailPrompt] = useState(autoDmDefaults.emailPromptMessage);
   const [autoDmFollow, setAutoDmFollow] = useState(false);
-  const [autoDmFollowPrompt, setAutoDmFollowPrompt] = useState(
-    "Follow this account, then tap I’ve followed.",
-  );
+  const [autoDmFollowPrompt, setAutoDmFollowPrompt] = useState(autoDmDefaults.followPromptMessage);
   const [autoDmFollowChecks, setAutoDmFollowChecks] = useState(3);
   const [autoDmFollowFail, setAutoDmFollowFail] = useState<"send_anyway" | "withhold">(
     "send_anyway",
@@ -887,31 +887,39 @@ function SchedulerPage() {
     setInstagramTrialReel(instagram.trialReel === true);
     setAutoDmEnabled(savedAutoDm.success);
     setAutoDmTrigger(savedAutoDm.success ? savedAutoDm.data.triggerType : "comment_keyword");
-    setAutoDmKeyword(savedAutoDm.success ? savedAutoDm.data.keyword : "");
+    setAutoDmKeyword(savedAutoDm.success ? savedAutoDm.data.keyword : autoDmDefaults.keyword);
     setAutoDmExcludedKeywords(
       savedAutoDm.success ? savedAutoDm.data.excludedKeywords.join(", ") : "",
     );
     setAutoDmMatchType(savedAutoDm.success ? savedAutoDm.data.matchType : "contains");
-    setAutoDmOpening(savedAutoDm.success ? savedAutoDm.data.openingMessage : "");
-    setAutoDmReply(savedAutoDm.success ? savedAutoDm.data.replyMessage : "");
-    setAutoDmButton(savedAutoDm.success ? savedAutoDm.data.confirmationButtonLabel : "Send it");
+    setAutoDmOpening(
+      savedAutoDm.success ? savedAutoDm.data.openingMessage : autoDmDefaults.openingMessage,
+    );
+    setAutoDmReply(
+      savedAutoDm.success ? savedAutoDm.data.replyMessage : autoDmDefaults.replyMessage,
+    );
+    setAutoDmButton(
+      savedAutoDm.success
+        ? savedAutoDm.data.confirmationButtonLabel
+        : autoDmDefaults.confirmationButtonLabel,
+    );
     setAutoDmPublicReply(savedAutoDm.success && savedAutoDm.data.publicReplyEnabled);
     setAutoDmPublicReplies(
       savedAutoDm.success
-        ? savedAutoDm.data.publicReplyMessages.join("\n")
-        : "Sent it to your DMs ✨",
+        ? [...savedAutoDm.data.publicReplyMessages]
+        : [...autoDmDefaults.publicReplyMessages],
     );
     setAutoDmEmail(savedAutoDm.success && savedAutoDm.data.emailCaptureEnabled);
     setAutoDmEmailPrompt(
       savedAutoDm.success
-        ? savedAutoDm.data.emailPromptMessage || ""
-        : "What’s the best email address to send this to?",
+        ? savedAutoDm.data.emailPromptMessage || autoDmDefaults.emailPromptMessage
+        : autoDmDefaults.emailPromptMessage,
     );
     setAutoDmFollow(savedAutoDm.success && savedAutoDm.data.followGateEnabled);
     setAutoDmFollowPrompt(
       savedAutoDm.success
         ? savedAutoDm.data.followPromptMessage
-        : "Follow this account, then tap I’ve followed.",
+        : autoDmDefaults.followPromptMessage,
     );
     setAutoDmFollowChecks(savedAutoDm.success ? savedAutoDm.data.followMaxRechecks : 3);
     setAutoDmFollowFail(savedAutoDm.success ? savedAutoDm.data.followFailAction : "send_anyway");
@@ -1091,9 +1099,11 @@ function SchedulerPage() {
       setAutoDmReply(scheduledAutoDm.data.replyMessage);
       setAutoDmButton(scheduledAutoDm.data.confirmationButtonLabel);
       setAutoDmPublicReply(scheduledAutoDm.data.publicReplyEnabled);
-      setAutoDmPublicReplies(scheduledAutoDm.data.publicReplyMessages.join("\n"));
+      setAutoDmPublicReplies([...scheduledAutoDm.data.publicReplyMessages]);
       setAutoDmEmail(scheduledAutoDm.data.emailCaptureEnabled);
-      setAutoDmEmailPrompt(scheduledAutoDm.data.emailPromptMessage || "");
+      setAutoDmEmailPrompt(
+        scheduledAutoDm.data.emailPromptMessage || autoDmDefaults.emailPromptMessage,
+      );
       setAutoDmFollow(scheduledAutoDm.data.followGateEnabled);
       setAutoDmFollowPrompt(scheduledAutoDm.data.followPromptMessage);
       setAutoDmFollowChecks(scheduledAutoDm.data.followMaxRechecks);
@@ -1483,7 +1493,6 @@ function SchedulerPage() {
                 confirmationButtonLabel: autoDmButton.trim(),
                 publicReplyEnabled: autoDmPublicReply,
                 publicReplyMessages: autoDmPublicReplies
-                  .split("\n")
                   .map((reply) => reply.trim())
                   .filter(Boolean),
                 emailCaptureEnabled: autoDmEmail,
@@ -3950,25 +3959,25 @@ function SchedulerPage() {
                                     <input
                                       type="checkbox"
                                       checked={autoDmPublicReply}
-                                      onChange={(event) =>
-                                        setAutoDmPublicReply(event.target.checked)
-                                      }
+                                      onChange={(event) => {
+                                        setAutoDmPublicReply(event.target.checked);
+                                        if (
+                                          event.target.checked &&
+                                          !autoDmPublicReplies.some((reply) => reply.trim())
+                                        ) {
+                                          setAutoDmPublicReplies([
+                                            ...autoDmDefaults.publicReplyMessages,
+                                          ]);
+                                        }
+                                      }}
                                     />
                                     Reply publicly to matching comments
                                   </label>
                                   {autoDmPublicReply && (
-                                    <label className="block text-xs font-semibold text-muted-foreground">
-                                      Public replies (one per line, up to three)
-                                      <textarea
-                                        value={autoDmPublicReplies}
-                                        onChange={(event) =>
-                                          setAutoDmPublicReplies(event.target.value)
-                                        }
-                                        rows={3}
-                                        placeholder="Sent it to your DMs ✨"
-                                        className={`mt-1 ${micro.input}`}
-                                      />
-                                    </label>
+                                    <InstagramPublicRepliesEditor
+                                      value={autoDmPublicReplies}
+                                      onChange={setAutoDmPublicReplies}
+                                    />
                                   )}
                                   <label className="flex items-center gap-2 text-xs font-semibold">
                                     <input

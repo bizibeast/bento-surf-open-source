@@ -1,3 +1,4 @@
+import { INSTAGRAM_AUTO_DM_DEFAULTS as autoDmDefaults } from "@/lib/instagram-auto-dm-defaults";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { AnchorHTMLAttributes, ComponentType, ReactNode } from "react";
@@ -1521,6 +1522,13 @@ describe("scheduler compose close protection", () => {
         name: /Auto DM after this Instagram post goes live/i,
       }),
     );
+    expect(within(compose).getByLabelText("Keyword")).toHaveValue(autoDmDefaults.keyword);
+    expect(within(compose).getByLabelText("Opening message")).toHaveValue(
+      autoDmDefaults.openingMessage,
+    );
+    expect(within(compose).getByLabelText("DM after they tap Send it")).toHaveValue(
+      autoDmDefaults.replyMessage,
+    );
     fireEvent.change(within(compose).getByRole("textbox", { name: "Keyword" }), {
       target: { value: "GUIDE" },
     });
@@ -1533,9 +1541,20 @@ describe("scheduler compose close protection", () => {
     fireEvent.click(
       within(compose).getByRole("checkbox", { name: "Reply publicly to matching comments" }),
     );
-    fireEvent.change(within(compose).getByRole("textbox", { name: /Public replies/i }), {
-      target: { value: "Check your DMs\nSent the guide" },
+    expect(within(compose).getByLabelText("Public reply 1")).toHaveValue(
+      autoDmDefaults.publicReplyMessages[0],
+    );
+    expect(within(compose).getByLabelText("Public reply 2")).toHaveValue(
+      autoDmDefaults.publicReplyMessages[1],
+    );
+    expect(within(compose).getByLabelText("Public reply 3")).toHaveValue(
+      autoDmDefaults.publicReplyMessages[2],
+    );
+    fireEvent.click(within(compose).getByText("Paste comma-separated replies"));
+    fireEvent.change(within(compose).getByLabelText("Reply list"), {
+      target: { value: "Check your DMs, Sent the guide\nOn its way" },
     });
+    fireEvent.click(within(compose).getByRole("button", { name: "Apply reply list" }));
     fireEvent.click(
       within(compose).getByRole("checkbox", { name: "Ask them to follow before delivery" }),
     );
@@ -1562,7 +1581,7 @@ describe("scheduler compose close protection", () => {
               replyMessage: "Here is the guide",
               confirmationButtonLabel: "Send it",
               publicReplyEnabled: true,
-              publicReplyMessages: ["Check your DMs", "Sent the guide"],
+              publicReplyMessages: ["Check your DMs", "Sent the guide", "On its way"],
               emailCaptureEnabled: true,
               followGateEnabled: true,
               replyButtonLabel: "Get guide",
@@ -2272,4 +2291,51 @@ it("keeps the autosave failure reason visible until the next successful save", a
     timeout: 3000,
   });
   expect(within(compose).getByText("Saved", { exact: true })).toBeVisible();
+});
+
+it("preserves saved Instagram replies and custom messages instead of replacing them with defaults", async () => {
+  const connection = { ...missingAvatar, avatarUrl: "https://bento.surf/avatar.png" };
+  const scheduledAutoDm = {
+    triggerType: "comment_keyword",
+    keyword: "custom",
+    openingMessage: "Your custom opening",
+    replyMessage: "Your custom delivery",
+    publicReplyEnabled: true,
+    publicReplyMessages: ["Thanks, check your inbox!", "Your resource is ready"],
+  };
+  const data = {
+    ...schedulerData,
+    connections: [connection],
+    posts: [feedbackDraft([connection], { instagram: { scheduledAutoDm } })],
+  };
+  renderScheduler(data);
+  vi.mocked(saveSocialPost).mockResolvedValue(data as never);
+  const compose = await openFeedbackDraft();
+  expect(within(compose).getByLabelText("Keyword")).toHaveValue("custom");
+  expect(within(compose).getByLabelText("Opening message")).toHaveValue("Your custom opening");
+  expect(within(compose).getByLabelText("DM after they tap Send it")).toHaveValue(
+    "Your custom delivery",
+  );
+  expect(within(compose).getByLabelText("Public reply 1")).toHaveValue("Thanks, check your inbox!");
+  expect(within(compose).getByLabelText("Public reply 2")).toHaveValue("Your resource is ready");
+  expect(within(compose).getByLabelText("Public reply 3")).toHaveValue("");
+  fireEvent.change(within(compose).getByLabelText("Opening message"), {
+    target: { value: "Updated opening" },
+  });
+  await waitFor(
+    () =>
+      expect(saveSocialPost).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          providerSettings: expect.objectContaining({
+            instagram: expect.objectContaining({
+              scheduledAutoDm: expect.objectContaining({
+                ...scheduledAutoDm,
+                openingMessage: "Updated opening",
+              }),
+            }),
+          }),
+        }),
+      }),
+    { timeout: 3000 },
+  );
 });
