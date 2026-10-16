@@ -12,6 +12,7 @@ import {
   generateAgentWithTools,
   approveAgentAppAction,
   agentActionErrorMessage,
+  agentEntityLabels,
   AGENT_TOOL_STEP_LIMIT,
 } from "./content-agent-tools.server";
 import type { BentoAppTool } from "./mcp.server";
@@ -153,6 +154,17 @@ function database(row: any, messageExists = true) {
   });
 }
 describe("Agent action approvals", () => {
+  it("labels reviewed targets from owned records while ignoring secret data", () => {
+    expect(
+      agentEntityLabels([
+        {
+          products: [{ id, title: "Founder's workshop" }],
+          secret: { id: "00000000-0000-4000-8000-000000000002", name: "Hidden" },
+        },
+      ]),
+    ).toEqual({ [id]: "Founder's workshop" });
+  });
+
   it("formats field errors without raw validator JSON", () => {
     const parsed = z
       .object({ replyText: z.string().min(1, "Add the DM reply") })

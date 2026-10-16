@@ -4,6 +4,7 @@ export const agentAppActionSchema = z.object({
   tool: z.string().max(100),
   title: z.string().max(200),
   arguments: z.record(z.string(), z.json()),
+  labels: z.record(z.string().uuid(), z.string().max(160)).optional(),
 });
 export type AgentAppAction = z.infer<typeof agentAppActionSchema>;
 export const agentAppActionStateSchema = z.object({

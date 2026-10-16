@@ -76,6 +76,37 @@ function safeValue(value: unknown): unknown {
       .map(([k, v]) => [k, safeValue(v)]),
   );
 }
+/** Names come from owned context/tool reads, never from a model-authored action summary. */
+export function agentEntityLabels(values: unknown[]) {
+  const labels: Record<string, string> = {};
+  function visit(value: unknown, depth: number) {
+    if (!value || depth > 7 || Object.keys(labels).length >= 100) return;
+    if (Array.isArray(value)) {
+      for (const item of value.slice(0, 100)) visit(item, depth + 1);
+      return;
+    }
+    if (typeof value !== "object") return;
+    const record = value as Record<string, unknown>;
+    const name = [
+      record.name,
+      record.title,
+      record.displayName,
+      record.display_name,
+      record.handle,
+    ].find((v) => typeof v === "string" && v.trim());
+    if (
+      typeof record.id === "string" &&
+      z.string().uuid().safeParse(record.id).success &&
+      typeof name === "string"
+    )
+      labels[record.id] = name.slice(0, 160);
+    for (const [key, child] of Object.entries(record))
+      if (!/(token|secret|password|credential)/i.test(key)) visit(child, depth + 1);
+  }
+  for (const value of values) visit(value, 0);
+  return labels;
+}
+
 function toolSchema(tool: BentoAppTool) {
   return mcpZod.toJSONSchema(tool.inputSchema, { unrepresentable: "any" });
 }
@@ -104,6 +135,7 @@ export async function generateAgentWithTools(
       .map((name) => [name, toolSchema(tools.get(name)!)]),
   );
   const observations: any[] = [];
+  const labelSources: unknown[] = [JSON.parse(prompt)];
   const seen = new Set<string>();
   const started = Date.now();
   for (let step = 0; step < AGENT_TOOL_STEP_LIMIT && Date.now() - started < 60000; step++) {
@@ -183,6 +215,11 @@ export async function generateAgentWithTools(
           tool: tool.name,
           title: tool.title,
           arguments: input,
+          labels: Object.fromEntries(
+            Object.entries(agentEntityLabels(labelSources)).filter(([id]) =>
+              JSON.stringify(input).includes(id),
+            ),
+          ),
         });
         return {
           result: {
@@ -196,7 +233,9 @@ export async function generateAgentWithTools(
         };
       }
       const outcome = await boundedRead(tool.execute(input), 10000);
-      const cleaned = JSON.stringify(safeValue(outcome));
+      const safe = safeValue(outcome);
+      labelSources.push(safe);
+      const cleaned = JSON.stringify(safe);
       observations.push({
         tool: tool.name,
         result: cleaned.slice(0, 24000),

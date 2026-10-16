@@ -22,7 +22,15 @@ function label(key: string) {
     .replace(/^./, (s) => s.toUpperCase())
     .replace(/\bDm\b/g, "DM");
 }
-function Details({ value, accounts }: { value: unknown; accounts: SchedulerConnection[] }) {
+function Details({
+  value,
+  accounts,
+  labels = {},
+}: {
+  value: unknown;
+  accounts: SchedulerConnection[];
+  labels?: Record<string, string>;
+}) {
   if (value === null || value === undefined) return <span>None</span>;
   if (typeof value === "boolean") return <span>{value ? "On" : "Off"}</span>;
   if (Array.isArray(value))
@@ -31,7 +39,7 @@ function Details({ value, accounts }: { value: unknown; accounts: SchedulerConne
         {value.length
           ? value.map((item, i) => (
               <div key={i}>
-                <Details value={item} accounts={accounts} />
+                <Details value={item} accounts={accounts} labels={labels} />
               </div>
             ))
           : "None"}
@@ -46,7 +54,7 @@ function Details({ value, accounts }: { value: unknown; accounts: SchedulerConne
             <div key={key}>
               <dt className="text-xs font-medium text-muted-foreground">{label(key)}</dt>
               <dd className="mt-1 whitespace-pre-wrap break-words text-sm">
-                <Details value={item} accounts={accounts} />
+                <Details value={item} accounts={accounts} labels={labels} />
               </dd>
             </div>
           ))}
@@ -57,7 +65,7 @@ function Details({ value, accounts }: { value: unknown; accounts: SchedulerConne
     <span>
       {account
         ? `${SOCIAL_PROVIDER_DEFINITIONS[account.provider].name}: ${account.displayName || account.handle}`
-        : String(value)}
+        : labels[String(value)] || String(value)}
     </span>
   );
 }
@@ -265,7 +273,7 @@ function ActionReview({
           {isPost ? "Review all settings, media and Auto DMs" : "Review details"}
         </summary>
         <div className="mt-3 max-h-80 overflow-y-auto rounded-xl bg-muted/50 p-3">
-          <Details value={args} accounts={accounts} />
+          <Details value={args} accounts={accounts} labels={action.labels} />
         </div>
       </details>
       {(state?.message || error) && (
