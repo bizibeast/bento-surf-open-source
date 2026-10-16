@@ -1168,10 +1168,10 @@ export const socialPostInputSchema = z
             path: ["providerSettings", "instagram", "scheduledAutoDm", ...issue.path],
           });
         }
-      } else if (!value.media.some((item) => item.mimeType.startsWith("video/"))) {
+      } else if (!value.media.some((item) => /^(image|video)\//.test(item.mimeType))) {
         context.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "Add an Instagram video to schedule an auto DM.",
+          message: "Add an Instagram photo, carousel or video to schedule an auto DM.",
         });
       }
     }

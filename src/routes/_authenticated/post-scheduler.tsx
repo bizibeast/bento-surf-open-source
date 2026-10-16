@@ -1,6 +1,8 @@
 import { SchedulerMediaPicker } from "@/components/scheduler/SchedulerMediaPicker";
 import { XCommunityPicker } from "@/components/scheduler/XCommunityPicker";
 import { xCommunityFromSettings, recentXCommunities, type XCommunity } from "@/lib/x-community";
+import { SchedulerAutoRepost } from "@/components/scheduler/SchedulerAutoRepost";
+import { repostPreferences, repostSettings } from "@/lib/scheduler-repost";
 import { SchedulerRewrite } from "@/components/scheduler/SchedulerRewrite";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -719,10 +721,12 @@ function SchedulerPage() {
   );
   const [autoDmLinkLabel, setAutoDmLinkLabel] = useState("");
   const [autoDmLinkUrl, setAutoDmLinkUrl] = useState("");
-  const [autoRepostEnabled, setAutoRepostEnabled] = useState(false);
-  const [repostAfterHours, setRepostAfterHours] = useState(24);
-  const [removeRepost, setRemoveRepost] = useState(false);
-  const [removeRepostAfterHours, setRemoveRepostAfterHours] = useState(48);
+  const [reposts, setReposts] = useState(() => ({
+    twitter: repostPreferences(null),
+    linkedin: repostPreferences(null),
+  }));
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [autosaveError, setAutosaveError] = useState<string | null>(null);
   const [instagramGraduationStrategy, setInstagramGraduationStrategy] =
     useState<InstagramTrialGraduationStrategy>("MANUAL");
   const [tiktokCoverMs, setTiktokCoverMs] = useState(1_000);
@@ -735,7 +739,6 @@ function SchedulerPage() {
     blocks: [{ kind: "text", type: "unstyled", text: "" }],
   });
   const [redditUrl, setRedditUrl] = useState("");
-  const [previewConnectionId, setPreviewConnectionId] = useState("");
   const [composeOpen, setComposeOpen] = useState(false);
   const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
   const [discardPromptOpen, setDiscardPromptOpen] = useState(false);
@@ -841,7 +844,7 @@ function SchedulerPage() {
     [],
   );
 
-  const resetComposeForm = () => {
+  const resetComposeForm = (preferences = lastUsedSettings) => {
     initialComposeFingerprintRef.current = null;
     autosavedFingerprintRef.current = null;
     failedAutosaveFingerprintRef.current = null;
@@ -860,13 +863,10 @@ function SchedulerPage() {
     setXCommunities({});
     setSelected([]);
     setScheduledAt(defaultScheduleInput(schedulerTimeZone));
-    const tiktok = lastUsedSettings.tiktok || {};
-    const youtube = lastUsedSettings.youtube || {};
-    const instagram = lastUsedSettings.instagram || {};
+    const tiktok = preferences.tiktok || {};
+    const youtube = preferences.youtube || {};
+    const instagram = preferences.instagram || {};
     const savedAutoDm = scheduledInstagramAutoDmSchema.safeParse(instagram.scheduledAutoDm);
-    const savedRepost = autoRepostSchema.safeParse(
-      lastUsedSettings.twitter?.autoRepost ?? lastUsedSettings.linkedin?.autoRepost,
-    );
     setTiktokPrivacy(typeof tiktok.privacyLevel === "string" ? tiktok.privacyLevel : "");
     setTiktokAllowComment(tiktok.disableComment === false);
     setTiktokAllowDuet(tiktok.disableDuet === false);
@@ -917,14 +917,12 @@ function SchedulerPage() {
     setAutoDmFollowFail(savedAutoDm.success ? savedAutoDm.data.followFailAction : "send_anyway");
     setAutoDmLinkLabel(savedAutoDm.success ? savedAutoDm.data.replyButtonLabel || "" : "");
     setAutoDmLinkUrl(savedAutoDm.success ? savedAutoDm.data.replyButtonUrl || "" : "");
-    setAutoRepostEnabled(savedRepost.success);
-    setRepostAfterHours(savedRepost.success ? savedRepost.data.afterHours : 24);
-    setRemoveRepost(savedRepost.success && savedRepost.data.removeAfterHours != null);
-    setRemoveRepostAfterHours(
-      savedRepost.success
-        ? (savedRepost.data.removeAfterHours ?? Math.max(48, savedRepost.data.afterHours + 1))
-        : 48,
-    );
+    setReposts({
+      twitter: repostPreferences(preferences.twitter?.autoRepost),
+      linkedin: repostPreferences(preferences.linkedin?.autoRepost),
+    });
+    setSubmitError(null);
+    setAutosaveError(null);
     setInstagramGraduationStrategy(
       instagram.graduationStrategy === "SS_PERFORMANCE" ? "SS_PERFORMANCE" : "MANUAL",
     );
@@ -932,22 +930,19 @@ function SchedulerPage() {
       typeof tiktok.videoCoverTimestampMs === "number" ? tiktok.videoCoverTimestampMs : 1_000,
     );
     setRedditCommunity(
-      typeof lastUsedSettings.reddit?.community === "string"
-        ? lastUsedSettings.reddit.community
-        : "",
+      typeof preferences.reddit?.community === "string" ? preferences.reddit.community : "",
     );
-    setRedditKind(lastUsedSettings.reddit?.kind === "link" ? "link" : "self");
-    setXPostKind(lastUsedSettings.twitter?.kind === "article" ? "article" : "post");
+    setRedditKind(preferences.reddit?.kind === "link" ? "link" : "self");
+    setXPostKind(preferences.twitter?.kind === "article" ? "article" : "post");
     setXArticle({ cover: null, blocks: [{ kind: "text", type: "unstyled", text: "" }] });
     setRedditUrl("");
     setUploadError(null);
-    setPreviewConnectionId("");
     setEditingPostId(null);
     setComposeWasOpenedForEdit(false);
     setEditingPostStatus(null);
     setSavedProviderSettings(
       Object.fromEntries(
-        Object.entries(lastUsedSettings).map(([provider, settings]) => [
+        Object.entries(preferences).map(([provider, settings]) => [
           provider,
           {
             ...settings,
@@ -1015,25 +1010,14 @@ function SchedulerPage() {
         toast.dismiss(notice);
       }
     }
-    resetComposeForm();
     const settings = Object.fromEntries(
       post.targets.map((target) => [target.provider, target.providerSettings || {}]),
     ) as SocialProviderSettings;
+    resetComposeForm(settings);
     const tiktok = settings.tiktok || {};
     const youtube = settings.youtube || {};
     const instagram = settings.instagram || {};
     const reddit = settings.reddit || {};
-    const savedRepost = autoRepostSchema.safeParse(
-      settings.linkedin?.autoRepost ?? settings.twitter?.autoRepost,
-    );
-    if (savedRepost.success) {
-      setAutoRepostEnabled(true);
-      setRepostAfterHours(savedRepost.data.afterHours);
-      setRemoveRepost(savedRepost.data.removeAfterHours != null);
-      setRemoveRepostAfterHours(
-        savedRepost.data.removeAfterHours ?? Math.max(48, savedRepost.data.afterHours + 1),
-      );
-    }
     setEditingPostId(post.id);
     setComposeWasOpenedForEdit(true);
     setEditingPostStatus(post.status);
@@ -1078,7 +1062,6 @@ function SchedulerPage() {
     setPlatformTitles(savedTitles);
     setMedia(post.media);
     setSelected(post.targets.map((target) => target.connectionId));
-    setPreviewConnectionId(post.targets[0]?.connectionId || "");
     setScheduledAt(
       post.scheduledAt
         ? isoToZonedDateTimeInput(post.scheduledAt, schedulerTimeZone)
@@ -1325,13 +1308,6 @@ function SchedulerPage() {
       : selectedConnections.find((connection) => connection.provider === "twitter");
   const isXArticle = Boolean(activeProvider === "twitter" && xPostKind === "article");
   const instagramSelected = connectedProviders.includes("instagram");
-  const repostProviders = useMemo(
-    () =>
-      selectedConnections
-        .map((connection) => connection.provider)
-        .filter((provider) => provider === "linkedin" || provider === "twitter"),
-    [selectedConnections],
-  );
   const usesCaption = schedulerUsesCaption(connectedProviders);
   const currentMentions = activeProvider
     ? validSocialMentions(
@@ -1493,7 +1469,7 @@ function SchedulerPage() {
         trialReel: instagramReelCover && instagramTrialReel,
         graduationStrategy: instagramGraduationStrategy,
         scheduledAutoDm:
-          autoDmEnabled && hasVideo && instagramSelected
+          autoDmEnabled && instagramSelected
             ? {
                 triggerType: autoDmTrigger,
                 keyword: autoDmKeyword.trim(),
@@ -1535,23 +1511,11 @@ function SchedulerPage() {
         xCommunity: null,
         kind: xPostKind,
         article: xPostKind === "article" ? xArticle : undefined,
-        autoRepost:
-          autoRepostEnabled && repostProviders.includes("twitter")
-            ? {
-                afterHours: repostAfterHours,
-                removeAfterHours: removeRepost ? removeRepostAfterHours : null,
-              }
-            : null,
+        autoRepost: repostSettings(reposts.twitter),
       },
       linkedin: {
         ...savedProviderSettings.linkedin,
-        autoRepost:
-          autoRepostEnabled && repostProviders.includes("linkedin")
-            ? {
-                afterHours: repostAfterHours,
-                removeAfterHours: removeRepost ? removeRepostAfterHours : null,
-              }
-            : null,
+        autoRepost: repostSettings(reposts.linkedin),
       },
     };
     for (const provider of Object.keys(settings)) {
@@ -1590,11 +1554,7 @@ function SchedulerPage() {
     autoDmFollowFail,
     autoDmLinkLabel,
     autoDmLinkUrl,
-    autoRepostEnabled,
-    repostAfterHours,
-    removeRepost,
-    removeRepostAfterHours,
-    repostProviders,
+    reposts,
     hasVideo,
     instagramSelected,
     instagramCover,
@@ -1720,31 +1680,40 @@ function SchedulerPage() {
     }
     closeCompose();
   };
-  const providerErrors = Object.assign(
-    {},
-    ...selectedConnections.map((connection) =>
-      validatePostForProviders(
-        body,
-        media,
-        [connection.provider],
-        title,
-        {
-          ...providerSettings,
-          [connection.provider]: {
-            ...providerSettings[connection.provider],
-            ...connectionOverrides?.[connection.id],
+  const accountErrors = selectedConnections.flatMap((connection) => {
+    const label = `${SOCIAL_PROVIDER_DEFINITIONS[connection.provider].name} (${connection.displayName || connection.handle})`;
+    const error = !connection.canPublish
+      ? connection.publishBlockReason || "Reconnect this account before posting."
+      : validatePostForProviders(
+          body,
+          media,
+          [connection.provider],
+          title,
+          {
+            ...providerSettings,
+            [connection.provider]: {
+              ...providerSettings[connection.provider],
+              ...connectionOverrides?.[connection.id],
+            },
           },
-        },
-        connection.xCapabilities,
-        tiktokDirectPostAudited,
-      ),
-    ),
+          connection.xCapabilities,
+          tiktokDirectPostAudited,
+        )[connection.provider];
+    return error
+      ? [
+          {
+            connectionId: connection.id,
+            provider: connection.provider,
+            message: `${label}: ${error}`,
+          },
+        ]
+      : [];
+  });
+  const providerErrors = Object.fromEntries(
+    accountErrors.map((error) => [error.provider, error.message]),
   ) as Partial<Record<SocialProvider, string>>;
   const mediaCompatibility = schedulerMediaCompatibility(connectedProviders);
-  const previewConnection =
-    selectedConnections.find((connection) => connection.id === previewConnectionId) ||
-    selectedConnections[0] ||
-    null;
+  const previewConnection = activeConnection || selectedConnections[0] || null;
   const editorUsesCaption = schedulerUsesCaption(activeProviders);
   const editorCaptionLimit = schedulerCaptionLimit(
     activeProviders,
@@ -1928,6 +1897,7 @@ function SchedulerPage() {
       asDraft?: boolean;
       scheduledAtOverride?: string;
     }) => {
+      setSubmitError(null);
       const scheduledIso =
         scheduledAtOverride || zonedDateTimeInputToIso(scheduledAt, schedulerTimeZone);
       if (!publishNow && !asDraft && !scheduledIso) throw new Error("Choose a valid publish time.");
@@ -1969,7 +1939,12 @@ function SchedulerPage() {
         );
       }
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "Could not save post"),
+    onError: (error) => {
+      const message =
+        error instanceof Error ? error.message : "Could not save post. Please try again.";
+      setSubmitError(message);
+      toast.error(message);
+    },
   });
 
   useEffect(() => {
@@ -2031,11 +2006,15 @@ function SchedulerPage() {
           autosavedFingerprintRef.current = persistedFingerprint;
           initialComposeFingerprintRef.current = persistedFingerprint;
           setAutosaveStatus("saved");
+          setAutosaveError(null);
         })
         .catch((error) => {
           failedAutosaveFingerprintRef.current = fingerprint;
           setAutosaveStatus("error");
-          toast.error(error instanceof Error ? error.message : "Could not save draft");
+          const message =
+            error instanceof Error ? error.message : "Could not save draft. Please try again.";
+          setAutosaveError(`Draft not saved: ${message}`);
+          toast.error(message);
         })
         .finally(() => {
           autosaveInFlightRef.current = false;
@@ -2587,26 +2566,75 @@ function SchedulerPage() {
       replacePendingThumbnail(target === "youtube" ? "instagram" : "youtube", null);
   }
 
-  const canSubmit =
-    !uploading &&
-    !uploadError &&
-    selected.length > 0 &&
-    hasPostContent &&
-    Object.keys(providerErrors).length === 0 &&
-    (!autoDmEnabled ||
-      !hasVideo ||
-      scheduledInstagramAutoDmSchema.safeParse(providerSettings.instagram.scheduledAutoDm)
-        .success) &&
-    (!autoRepostEnabled ||
-      repostProviders.length === 0 ||
-      autoRepostSchema.safeParse({
-        afterHours: repostAfterHours,
-        removeAfterHours: removeRepost ? removeRepostAfterHours : null,
-      }).success) &&
-    !save.isPending &&
-    autosaveStatus !== "saving" &&
-    !(primaryVideo && !videoMeta && (needsYouTubeTitle || tiktokSelected)) &&
-    (!tiktokSelected || (tiktokCreatorInfo.isSuccess && tiktokPrivacyOptions.length > 0));
+  const postingBlockers: { message: string; connectionId?: string }[] = [...accountErrors];
+  if (!selected.length)
+    postingBlockers.push({ message: "Select at least one account to post to." });
+  if (selected.some((id) => !selectedConnections.some((connection) => connection.id === id)))
+    postingBlockers.push({
+      message:
+        "A saved destination is no longer connected. Reconnect it or clear the selection and choose another account.",
+    });
+  if (!hasPostContent)
+    postingBlockers.push({ message: "Add post text or media before publishing." });
+  if (uploading) postingBlockers.push({ message: "Wait for the media upload to finish." });
+  if (uploadError)
+    postingBlockers.push({ message: "Resolve or dismiss the media upload error below." });
+  if (instagramSelected && autoDmEnabled) {
+    const result = scheduledInstagramAutoDmSchema.safeParse(
+      providerSettings.instagram.scheduledAutoDm,
+    );
+    if (!result.success) {
+      const labels: Record<string, string> = {
+        openingMessage: "Opening message",
+        replyMessage: "DM reply",
+        keyword: "Comment keyword",
+        replyButtonUrl: "Destination URL",
+        replyButtonLabel: "Link button text",
+        confirmationButtonLabel: "Confirmation button",
+        publicReplyMessages: "Public replies",
+        excludedKeywords: "Excluded keywords",
+        emailPromptMessage: "Email prompt",
+        followPromptMessage: "Follow prompt",
+      };
+      for (const issue of result.error.issues)
+        postingBlockers.push({
+          message: `Instagram Auto DM · ${labels[String(issue.path[0])] || "Settings"}: ${issue.message}`,
+          connectionId: selectedConnections.find((c) => c.provider === "instagram")?.id,
+        });
+    }
+  }
+  for (const provider of ["twitter", "linkedin"] as const) {
+    const connection = selectedConnections.find((c) => c.provider === provider);
+    if (
+      connection &&
+      reposts[provider].enabled &&
+      !autoRepostSchema.safeParse(repostSettings(reposts[provider])).success
+    )
+      postingBlockers.push({
+        message: `${SOCIAL_PROVIDER_DEFINITIONS[provider].name} auto-repost: choose 1–168 hours, and remove the repost later than that (up to 336 hours).`,
+        connectionId: connection.id,
+      });
+  }
+  if (save.isPending) postingBlockers.push({ message: "Your post is being saved. Please wait." });
+  if (autosaveStatus === "saving") postingBlockers.push({ message: "Saving your latest changes…" });
+  if (primaryVideo && !videoMeta && (needsYouTubeTitle || tiktokSelected))
+    postingBlockers.push({
+      message:
+        "Reading the video details. If this does not finish, remove the video and upload it again.",
+    });
+  if (tiktokSelected && (!tiktokCreatorInfo.isSuccess || !tiktokPrivacyOptions.length))
+    postingBlockers.push({
+      message: tiktokCreatorInfo.isError
+        ? "TikTok account settings could not be loaded. Reconnect TikTok or remove it from this post."
+        : "Waiting for TikTok to provide your posting permissions and visibility options.",
+    });
+  const canSubmit = postingBlockers.length === 0;
+  const scheduleIso = zonedDateTimeInputToIso(scheduledAt, schedulerTimeZone);
+  const scheduleError =
+    !scheduleIso || new Date(scheduleIso).getTime() < Date.now() + 60_000
+      ? "To schedule, choose a time at least one minute in the future. You can still publish now."
+      : null;
+  const postingBlockerText = postingBlockers.map((issue) => issue.message).join("\n");
   const canSaveDraft =
     !uploading &&
     hasPostContent &&
@@ -2876,7 +2904,6 @@ function SchedulerPage() {
                                 );
                                 if (!selected.includes(connection.id)) {
                                   setEditorConnectionId(connection.id);
-                                  setPreviewConnectionId(connection.id);
                                 }
                               }}
                             />
@@ -2981,41 +3008,6 @@ function SchedulerPage() {
                               </button>
                             )}
                           </div>
-                          {activeConnection && !isXArticle && (
-                            <SchedulerRewrite
-                              key={activeConnection.id}
-                              connection={activeConnection}
-                              body={
-                                activeProvider === "youtube" && usesCaption
-                                  ? youtubeDescription
-                                  : editorBody
-                              }
-                              onApply={(text) => {
-                                if (activeProvider === "youtube" && usesCaption) {
-                                  updateEditorBody(text);
-                                  return;
-                                }
-                                setSync(false);
-                                setBodyOverrides((current) => ({
-                                  ...current,
-                                  [activeConnection.id]: text,
-                                }));
-                                setAccountMentions((current) => ({
-                                  ...current,
-                                  [activeConnection.id]: remapSocialMentions(
-                                    editorBody,
-                                    text,
-                                    validSocialMentions(
-                                      editorBody,
-                                      activeConnection.provider,
-                                      current[activeConnection.id] ||
-                                        savedProviderSettings[activeConnection.provider]?.mentions,
-                                    ),
-                                  ),
-                                }));
-                              }}
-                            />
-                          )}
                           {activeProvider === "twitter" && selectedXConnection && (
                             <div className="mt-5 rounded-2xl border border-border/70 bg-white p-4">
                               <p className="text-xs font-semibold text-muted-foreground">
@@ -3834,7 +3826,35 @@ function SchedulerPage() {
                             </label>
                           )}
 
-                          {activeProvider === "instagram" && hasVideo && (
+                          {(activeProvider === "instagram" ||
+                            activeProvider === "twitter" ||
+                            activeProvider === "facebook") && (
+                            <section
+                              className="mt-5 rounded-2xl border border-border/70 bg-white/70 p-4"
+                              aria-label="Auto DM settings"
+                            >
+                              <p className="text-sm font-semibold">
+                                {SOCIAL_PROVIDER_DEFINITIONS[activeProvider].name} Auto DM
+                              </p>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                Manage comment, reply and message automations. For X and Facebook,
+                                select a specific post after it is published, or use an account-wide
+                                rule.
+                              </p>
+                              <a
+                                href={`/auto-dms/${activeProvider}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="mt-2 inline-flex items-center gap-2 text-sm font-semibold text-primary"
+                                title="Open Auto DM settings in a new tab; your draft stays here"
+                              >
+                                Manage {SOCIAL_PROVIDER_DEFINITIONS[activeProvider].name} Auto DM{" "}
+                                <ExternalLink className="size-3.5" />
+                              </a>
+                            </section>
+                          )}
+
+                          {activeProvider === "instagram" && (
                             <div className="mt-5 rounded-2xl border border-border/70 bg-white/70 p-4">
                               <label className="flex items-center gap-3 text-sm font-semibold">
                                 <input
@@ -3842,10 +3862,10 @@ function SchedulerPage() {
                                   checked={autoDmEnabled}
                                   onChange={(event) => setAutoDmEnabled(event.target.checked)}
                                 />
-                                Auto DM after this Instagram video goes live
+                                Auto DM after this Instagram post goes live
                               </label>
                               <p className="mt-1 text-xs text-muted-foreground">
-                                The automation starts only when Instagram confirms the video is
+                                The automation starts only when Instagram confirms the post is
                                 published.
                               </p>
                               {autoDmEnabled && (
@@ -4067,84 +4087,16 @@ function SchedulerPage() {
                             </div>
                           )}
 
-                          {activeProvider === "twitter" && repostProviders.includes("twitter") && (
-                            <div className="mt-5 rounded-2xl border border-border/70 bg-white/70 p-4">
-                              <label className="flex items-center gap-3 text-sm font-semibold">
-                                <input
-                                  type="checkbox"
-                                  checked={autoRepostEnabled}
-                                  onChange={(event) => setAutoRepostEnabled(event.target.checked)}
-                                />
-                                Auto-repost on{" "}
-                                {repostProviders
-                                  .map((provider) => (provider === "twitter" ? "X" : "LinkedIn"))
-                                  .join(" and ")}
-                              </label>
-                              <p className="mt-1 text-xs text-muted-foreground">
-                                Repost the original post on each selected platform after it goes
-                                live.
-                              </p>
-                              {autoRepostEnabled && (
-                                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                                  <label className="block text-xs font-semibold text-muted-foreground">
-                                    Repost after (hours)
-                                    <input
-                                      type="number"
-                                      min={1}
-                                      max={168}
-                                      step={1}
-                                      value={repostAfterHours}
-                                      onChange={(event) => {
-                                        const hours = Number(event.target.value);
-                                        setRepostAfterHours(hours);
-                                        setRemoveRepostAfterHours((current) =>
-                                          Math.max(current, hours + 1),
-                                        );
-                                      }}
-                                      className={`mt-1 ${micro.input}`}
-                                    />
-                                  </label>
-                                  <div className="sm:col-span-2">
-                                    <label className="flex items-center gap-2 text-xs font-semibold">
-                                      <input
-                                        type="checkbox"
-                                        checked={removeRepost}
-                                        onChange={(event) => setRemoveRepost(event.target.checked)}
-                                      />
-                                      Remove the repost later
-                                    </label>
-                                  </div>
-                                  {removeRepost && (
-                                    <label className="block text-xs font-semibold text-muted-foreground">
-                                      Remove after (total hours from original post)
-                                      <input
-                                        type="number"
-                                        min={repostAfterHours + 1}
-                                        max={336}
-                                        step={1}
-                                        value={removeRepostAfterHours}
-                                        onChange={(event) =>
-                                          setRemoveRepostAfterHours(Number(event.target.value))
-                                        }
-                                        className={`mt-1 ${micro.input}`}
-                                      />
-                                    </label>
-                                  )}
-                                  <p className="text-xs text-muted-foreground sm:col-span-2">
-                                    The original post stays published. For example, 24 and 48 hours
-                                    means repost one day after publishing and remove that repost one
-                                    day later.
-                                  </p>
-                                </div>
-                              )}
-                            </div>
+                          {(activeProvider === "twitter" || activeProvider === "linkedin") && (
+                            <SchedulerAutoRepost
+                              network={activeProvider === "twitter" ? "X" : "LinkedIn"}
+                              value={reposts[activeProvider]}
+                              onChange={(value) =>
+                                setReposts((current) => ({ ...current, [activeProvider]: value }))
+                              }
+                            />
                           )}
 
-                          {activeProvider && providerErrors[activeProvider] && (
-                            <div className="mt-5 rounded-2xl bg-rose-500/10 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
-                              {providerErrors[activeProvider]}
-                            </div>
-                          )}
                           {activeProvider === "tiktok" && (
                             <p className="mt-4 text-xs text-muted-foreground">
                               By posting, you agree to TikTok&apos;s{" "}
@@ -4188,8 +4140,6 @@ function SchedulerPage() {
                               ? (platformTitles[previewConnection.provider] ?? title)
                               : title
                           }
-                          connections={selectedConnections}
-                          onSelect={setPreviewConnectionId}
                           xPostKind={xPostKind}
                           xArticle={xArticle}
                           xCommunity={
@@ -4210,6 +4160,58 @@ function SchedulerPage() {
                     </div>
 
                     <div className="shrink-0 border-t border-border/70 bg-[#f7f8fc] px-4 py-2 sm:px-5">
+                      {(postingBlockers.length > 0 || scheduleError) && (
+                        <div
+                          id="scheduler-posting-feedback"
+                          role="status"
+                          aria-live="polite"
+                          className="mb-2 max-h-24 overflow-y-auto rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950"
+                        >
+                          <p className="font-semibold">
+                            {postingBlockers.length
+                              ? "Before you can post"
+                              : "Choose a schedule time"}
+                          </p>
+                          <ul className="mt-1 space-y-1">
+                            {postingBlockers.map((issue, index) => (
+                              <li key={`${issue.message}-${index}`}>
+                                {issue.connectionId ? (
+                                  <button
+                                    type="button"
+                                    className="text-left underline underline-offset-2"
+                                    onClick={() => setEditorConnectionId(issue.connectionId!)}
+                                  >
+                                    {issue.message}
+                                  </button>
+                                ) : (
+                                  issue.message
+                                )}
+                              </li>
+                            ))}
+                            {scheduleError && <li>{scheduleError}</li>}
+                          </ul>
+                        </div>
+                      )}
+                      {(submitError || autosaveError) && (
+                        <div
+                          role="alert"
+                          className="mb-2 flex items-start gap-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800"
+                        >
+                          <p className="min-w-0 flex-1 break-words">
+                            {submitError || autosaveError}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSubmitError(null);
+                              setAutosaveError(null);
+                            }}
+                            className="shrink-0 underline"
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      )}
                       {uploadError && (
                         <div
                           role="alert"
@@ -4265,7 +4267,7 @@ function SchedulerPage() {
                           </div>
                         </div>
                       )}
-                      <div className="flex min-w-0 flex-wrap items-center gap-2 lg:flex-nowrap">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
                         <button
                           type="button"
                           onClick={openMediaPicker}
@@ -4285,6 +4287,41 @@ function SchedulerPage() {
                           )}
                           Add media
                         </button>
+                        {activeConnection && !isXArticle && (
+                          <SchedulerRewrite
+                            key={activeConnection.id}
+                            connection={activeConnection}
+                            body={
+                              activeProvider === "youtube" && usesCaption
+                                ? youtubeDescription
+                                : editorBody
+                            }
+                            onApply={(text) => {
+                              if (activeProvider === "youtube" && usesCaption) {
+                                updateEditorBody(text);
+                                return;
+                              }
+                              setSync(false);
+                              setBodyOverrides((current) => ({
+                                ...current,
+                                [activeConnection.id]: text,
+                              }));
+                              setAccountMentions((current) => ({
+                                ...current,
+                                [activeConnection.id]: remapSocialMentions(
+                                  editorBody,
+                                  text,
+                                  validSocialMentions(
+                                    editorBody,
+                                    activeConnection.provider,
+                                    current[activeConnection.id] ||
+                                      savedProviderSettings[activeConnection.provider]?.mentions,
+                                  ),
+                                ),
+                              }));
+                            }}
+                          />
+                        )}
                         <input
                           ref={mediaInputRef}
                           type="file"
@@ -4321,7 +4358,9 @@ function SchedulerPage() {
                           <div className="flex flex-1 overflow-hidden rounded-lg bg-[#ff922b] text-white shadow-sm lg:flex-none">
                             <button
                               type="button"
-                              disabled={!canSubmit}
+                              disabled={!canSubmit || Boolean(scheduleError)}
+                              title={postingBlockerText || scheduleError || "Schedule this post"}
+                              aria-describedby="scheduler-posting-feedback"
                               onClick={() => save.mutate({ publishNow: false })}
                               className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 px-3 text-xs font-semibold transition-colors hover:bg-[#f58218] disabled:opacity-45"
                             >
@@ -4330,6 +4369,8 @@ function SchedulerPage() {
                             <button
                               type="button"
                               disabled={!canSubmit}
+                              title={postingBlockerText || "Schedule at the next posting slot"}
+                              aria-describedby="scheduler-posting-feedback"
                               onClick={scheduleAtNextSlot}
                               aria-label="Schedule at the next posting slot"
                               className="inline-flex h-9 items-center border-l border-white/25 px-2 transition-colors hover:bg-[#f58218] disabled:opacity-45"
@@ -4340,6 +4381,8 @@ function SchedulerPage() {
                           <button
                             type="button"
                             disabled={!canSubmit}
+                            title={postingBlockerText || "Publish this post now"}
+                            aria-describedby="scheduler-posting-feedback"
                             onClick={() => save.mutate({ publishNow: true })}
                             aria-busy={publishingNow}
                             className={`${micro.btnPrimary} h-9 min-w-0 flex-1 px-3 text-xs lg:flex-none`}
@@ -4460,8 +4503,6 @@ function SchedulerPage() {
 
 function PlatformPostPreview({
   activeConnection,
-  connections,
-  onSelect,
   body,
   title,
   xPostKind,
@@ -4479,8 +4520,6 @@ function PlatformPostPreview({
   onAvatarError,
 }: {
   activeConnection: SchedulerConnection | null;
-  connections: SchedulerConnection[];
-  onSelect: (id: string) => void;
   body: string;
   title: string;
   xPostKind: "post" | "article";
@@ -4509,32 +4548,6 @@ function PlatformPostPreview({
       className="min-w-0 overflow-hidden border-t border-border/70 pt-3 lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:border-l lg:border-t-0 lg:py-0 lg:pl-4"
       aria-label="Live preview"
     >
-      <div className="shrink-0 pb-3">
-        <p className="mb-2 text-xs font-semibold text-muted-foreground">Preview</p>
-        <div className="flex flex-wrap gap-1.5" aria-label="Preview destination">
-          {connections.map((connection) => {
-            const Icon = PROVIDER_ICONS[connection.provider];
-            const label = `${SOCIAL_PROVIDER_DEFINITIONS[connection.provider].name}: ${connection.displayName}`;
-            return (
-              <button
-                key={connection.id}
-                type="button"
-                aria-label={`Preview ${label}`}
-                title={label}
-                data-hover-guide={label}
-                aria-pressed={activeConnection?.id === connection.id}
-                onClick={() => onSelect(connection.id)}
-                className={`inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs ${activeConnection?.id === connection.id ? "border-primary/40 bg-primary/10 text-primary" : "border-border bg-white text-muted-foreground"}`}
-              >
-                <Icon className="size-3 shrink-0" />
-                <span className="max-w-36 truncate">
-                  {connection.displayName || connection.handle}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
       {activeConnection?.provider === "twitter" && xPostKind === "article" ? (
         <div
           data-testid="x-article-preview-scroll"
@@ -5539,7 +5552,7 @@ function AccountChip({
     <button
       type="button"
       onClick={onToggle}
-      disabled={!connection.canPublish}
+      disabled={!connection.canPublish && !selected}
       title={
         connection.publishBlockReason ||
         `${SOCIAL_PROVIDER_DEFINITIONS[connection.provider].name}: ${connection.displayName}`
