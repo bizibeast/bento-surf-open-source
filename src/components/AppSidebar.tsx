@@ -8,6 +8,7 @@ import {
   ChevronDown,
   Clock3,
   Compass,
+  House,
   BadgeDollarSign,
   Bot,
   Link2,
@@ -31,6 +32,7 @@ import type { WorkspaceSession } from "@/lib/workspace-session.server";
 type AppNavItem = {
   label: string;
   to:
+    | "/home"
     | "/link"
     | "/store"
     | "/priority-dm"
@@ -151,6 +153,13 @@ export const APP_NAV_GROUPS: ReadonlyArray<AppNavGroup> = [
     ],
   },
 ];
+
+const HOME_NAV_ITEM: AppNavItem = {
+  label: "Home",
+  to: "/home",
+  icon: House,
+  description: "Workspace overview and next steps",
+};
 
 const EARN_NAV_ITEM: AppNavItem = {
   label: "Earn",
@@ -318,6 +327,12 @@ function SidebarPanel({
         aria-label="Creator tools"
       >
         <div className="space-y-1">
+          <SidebarLink
+            {...HOME_NAV_ITEM}
+            active={pathname === "/home"}
+            collapsed={collapsed}
+            onNavigate={onNavigate}
+          />
           {APP_NAV_GROUPS.map((group) => {
             const open = openGroups.has(group.label);
             const GroupIcon = group.icon;
@@ -421,7 +436,7 @@ function SidebarLink({
       onClick={onNavigate}
       aria-label={label}
       aria-current={active ? "page" : undefined}
-      title={collapsed ? label : undefined}
+      title={label}
       className={`flex min-h-9 items-center gap-2.5 rounded-[8px] px-2.5 text-xs font-medium transition-[background-color,border-color,color,box-shadow] duration-150 ${
         active
           ? "border border-border/70 bg-card text-foreground shadow-sm"

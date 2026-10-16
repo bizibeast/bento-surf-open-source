@@ -22,7 +22,7 @@ function Guide({ app, workspaceId }: { app: AppGuide; workspaceId: string }) {
   const query = useQuery({
     queryKey: ["app-setup", workspaceId, app.id],
     queryFn: () => getAppGuide({ data: { appId: app.id } }),
-    staleTime: 15000,
+    staleTime: (query) => (query.state.data?.complete ? Infinity : 15000),
     refetchOnWindowFocus: true,
   });
   const open = expanded ?? query.data?.showInitially ?? false;
@@ -43,10 +43,14 @@ function Guide({ app, workspaceId }: { app: AppGuide; workspaceId: string }) {
       toast.error("Your guide preference could not be saved.");
     }
   }
+  // Completed onboarding is a milestone, not a permanent banner. Avoid a
+  // loading flash on every app visit while its saved progress is checked.
+  if (query.isPending || query.data?.complete) return null;
+
   return (
     <section
       aria-label={`${app.name} setup guide`}
-      className="mx-4 mt-4 overflow-hidden rounded-2xl border border-primary/15 bg-card shadow-sm sm:mx-6"
+      className="app-setup-guide mx-4 mt-4 shrink-0 overflow-hidden rounded-2xl border border-primary/15 bg-card shadow-sm sm:mx-6"
     >
       <button
         onClick={() => void toggle(!open)}

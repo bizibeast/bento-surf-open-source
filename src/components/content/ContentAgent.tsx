@@ -167,10 +167,11 @@ export function ContentAgent({
   const [editedTitle, setEditedTitle] = useState("");
   const [threadActionError, setThreadActionError] = useState("");
   const [threadActionPending, setThreadActionPending] = useState(false);
-  const messageEnd = useRef<HTMLDivElement>(null);
+  const messageList = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    messageEnd.current?.scrollIntoView?.({ block: "end" });
-  }, [messages.length, sending]);
+    const list = messageList.current;
+    if (list) list.scrollTop = list.scrollHeight;
+  }, [messages.length, sending, activeThreadId]);
 
   useEffect(() => {
     if (seed) setText(seed);
@@ -545,24 +546,26 @@ export function ContentAgent({
             <Settings2 className="size-4" />
           </button>
         </header>
-        {brainEmpty && (
-          <div className="agent-brain-hint">
-            <p className="font-semibold text-foreground">Give {agentName} your starting context.</p>
-            <p className={`mt-1 ${micro.mutedXs}`}>
-              {agentName} can suggest editable stories, voice rules, and strategy from your own
-              posts.
-            </p>
-            <button
-              type="button"
-              onClick={() => void onBuildBrain()}
-              className={`${micro.btnPrimary} mt-3`}
-            >
-              <Sparkles className="size-4" /> Build my Brain from my posts
-            </button>
-          </div>
-        )}
+        <div ref={messageList} className="agent-messages" aria-live="polite">
+          {brainEmpty && (
+            <div className="agent-brain-hint">
+              <p className="font-semibold text-foreground">
+                Give {agentName} your starting context.
+              </p>
+              <p className={`mt-1 ${micro.mutedXs}`}>
+                {agentName} can suggest editable stories, voice rules, and strategy from your own
+                posts.
+              </p>
+              <button
+                type="button"
+                onClick={() => void onBuildBrain()}
+                className={`${micro.btnPrimary} mt-3`}
+              >
+                <Sparkles className="size-4" /> Build my Brain from my posts
+              </button>
+            </div>
+          )}
 
-        <div className="agent-messages" aria-live="polite">
           {loadError ? (
             <div className="m-auto text-center">
               <p role="alert" className="text-sm text-muted-foreground">
@@ -689,7 +692,6 @@ export function ContentAgent({
               )}
             </div>
           )}
-          <div ref={messageEnd} />
         </div>
 
         <div className="agent-composer-area">

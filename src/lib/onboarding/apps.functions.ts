@@ -161,11 +161,14 @@ export const getAppGuide = createServerFn({ method: "GET" })
       }
     }
     const keys = [...new Set(app.steps.map((item) => item.proof))];
-    const results = allowed
-      ? await Promise.all(keys.map(async (key) => [key, await proof(key)] as const))
-      : [];
+    const alreadyComplete = Boolean(progress.data?.completed_at);
+    const results =
+      allowed && !alreadyComplete
+        ? await Promise.all(keys.map(async (key) => [key, await proof(key)] as const))
+        : [];
     const readiness = Object.fromEntries(results);
-    const complete = allowed && app.steps.every((item) => readiness[item.proof]);
+    const complete =
+      alreadyComplete || (allowed && app.steps.every((item) => readiness[item.proof]));
     if (complete && !progress.data?.completed_at) {
       const { error } = await db
         .from("app_onboarding_progress")

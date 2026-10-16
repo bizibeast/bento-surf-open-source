@@ -622,7 +622,9 @@ export function ContentPage({
       className={
         tab === "discover"
           ? "discover-shell"
-          : "content-workspace min-h-[calc(100dvh-3.5rem)] lg:min-h-screen"
+          : tab === "agent" && !showRoutines
+            ? "content-workspace agent-route"
+            : "content-workspace min-h-[calc(100dvh-3.5rem)] lg:min-h-screen"
       }
     >
       {(tab !== "agent" || showRoutines) && (
@@ -638,8 +640,16 @@ export function ContentPage({
           }
         />
       )}
-      <div className={tab === "discover" ? "discover-shell-main" : ""}>
-        <div>
+      <div
+        className={
+          tab === "discover"
+            ? "discover-shell-main"
+            : tab === "agent" && !showRoutines
+              ? "agent-route-body"
+              : ""
+        }
+      >
+        <div className={tab === "agent" && !showRoutines ? "agent-route-body" : undefined}>
           {tab === "discover" && <DiscoverPreferences onSaved={() => researchDiscover(true)} />}
           {tab === "discover" &&
             (discover.isError && !discover.data ? (
