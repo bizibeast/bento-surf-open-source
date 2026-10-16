@@ -1370,7 +1370,10 @@ describe("scheduler compose close protection", () => {
       name: "Preparing a high-quality video",
     });
     expect(progress).toHaveAttribute("aria-valuenow", "33");
-    expect(within(compose).getByRole("button", { name: "Publish now" })).toBeDisabled();
+    expect(within(compose).getByRole("button", { name: "Publish now" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
     expect(uploadFileResult).not.toHaveBeenCalled();
     finish?.();
     await within(compose).findByRole("button", { name: "Remove large.mp4" });
@@ -2143,8 +2146,12 @@ it("allows the saved X/LinkedIn video draft despite a previous Instagram Auto DM
   renderScheduler(data);
   vi.mocked(saveSocialPost).mockResolvedValue(data as never);
   const compose = await openFeedbackDraft();
-  expect(within(compose).getByRole("button", { name: "Publish now" })).toBeEnabled();
-  expect(within(compose).getByRole("button", { name: "Schedule" })).toBeEnabled();
+  expect(within(compose).getByRole("button", { name: "Publish now" })).not.toHaveAttribute(
+    "aria-disabled",
+  );
+  expect(within(compose).getByRole("button", { name: "Schedule" })).not.toHaveAttribute(
+    "aria-disabled",
+  );
   expect(within(compose).getByRole("checkbox", { name: "Auto-repost on X" })).toBeChecked();
   fireEvent.click(within(compose).getByRole("button", { name: "Edit LinkedIn: linkedin" }));
   expect(
@@ -2175,12 +2182,12 @@ it("shows another network's blocker at the action buttons and opens its editor f
   renderScheduler({ ...schedulerData, connections, posts: [feedbackDraft(connections)] });
   const compose = await openFeedbackDraft();
   const publish = within(compose).getByRole("button", { name: "Publish now" });
-  expect(publish).toBeDisabled();
-  expect(publish).toHaveAttribute(
-    "title",
-    expect.stringContaining("Instagram needs an image or video"),
-  );
-  const feedback = compose.querySelector("#scheduler-posting-feedback") as HTMLElement;
+  expect(publish).toHaveAttribute("aria-disabled", "true");
+  expect(compose.querySelector("#scheduler-posting-feedback")).toBeNull();
+  expect(screen.queryByRole("dialog", { name: "To publish this post" })).toBeNull();
+  fireEvent.pointerEnter(publish, { pointerType: "mouse" });
+  const feedback = await screen.findByRole("dialog", { name: "To publish this post" });
+  expect(feedback).toHaveTextContent("Instagram needs an image or video");
   fireEvent.click(
     within(feedback).getByRole("button", { name: /Instagram needs an image or video/ }),
   );
@@ -2206,13 +2213,17 @@ it("lets an expired selected account be removed while explaining why it blocks p
     posts: [feedbackDraft([connection])],
   });
   const compose = await openFeedbackDraft();
-  expect(compose.querySelector("#scheduler-posting-feedback")).toHaveTextContent(
+  const publish = within(compose).getByRole("button", { name: "Publish now" });
+  fireEvent.focus(publish);
+  expect(await screen.findByRole("dialog", { name: "To publish this post" })).toHaveTextContent(
     "Reconnect LinkedIn to publish.",
   );
+  fireEvent.click(screen.getByRole("button", { name: "Close posting requirements" }));
   const account = within(compose).getByRole("button", { name: "LinkedIn: Bizibeast" });
   expect(account).toBeEnabled();
   fireEvent.click(account);
-  expect(compose.querySelector("#scheduler-posting-feedback")).toHaveTextContent(
+  fireEvent.click(publish);
+  expect(await screen.findByRole("dialog", { name: "To publish this post" })).toHaveTextContent(
     "Select at least one account",
   );
 });
@@ -2232,11 +2243,23 @@ it("keeps publish now available for a past schedule and retains server rejection
   fireEvent.change(within(compose).getByLabelText("Publish at"), {
     target: { value: "2020-01-01T12:00" },
   });
-  expect(within(compose).getByRole("button", { name: "Schedule" })).toBeDisabled();
-  expect(within(compose).getByRole("button", { name: "Publish now" })).toBeEnabled();
-  expect(compose.querySelector("#scheduler-posting-feedback")).toHaveTextContent(
+  expect(within(compose).getByRole("button", { name: "Schedule" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  expect(within(compose).getByRole("button", { name: "Publish now" })).not.toHaveAttribute(
+    "aria-disabled",
+  );
+  vi.mocked(saveSocialPost).mockClear();
+  fireEvent.click(within(compose).getByRole("button", { name: "Schedule" }));
+  expect(await screen.findByRole("dialog", { name: "To schedule this post" })).toHaveTextContent(
     "at least one minute in the future",
   );
+  expect(saveSocialPost).not.toHaveBeenCalled();
+  expect(
+    within(compose).getByRole("button", { name: "Schedule at the next posting slot" }),
+  ).not.toHaveAttribute("aria-disabled");
+  fireEvent.click(screen.getByRole("button", { name: "Close posting requirements" }));
   vi.mocked(saveSocialPost).mockRejectedValueOnce(
     new Error("LinkedIn rejected the attachment. Upload a new file."),
   );
@@ -2355,12 +2378,23 @@ it("restores an incomplete Auto DM draft and explains missing access without blo
   ).toBeChecked();
   expect(within(compose).getByLabelText("Keywords (comma separated)")).toHaveValue("draft-keyword");
   expect(within(compose).getByLabelText("DM reply")).toHaveValue("");
-  expect(compose.querySelector("#scheduler-posting-feedback")).toHaveTextContent("Reconnect X");
-  expect(within(compose).getByRole("button", { name: "Schedule" })).toBeDisabled();
+  vi.mocked(saveSocialPost).mockClear();
+  fireEvent.click(within(compose).getByRole("button", { name: "Schedule" }));
+  const requirements = await screen.findByRole("dialog", { name: "To schedule this post" });
+  expect(requirements).toHaveTextContent("Reconnect X");
+  expect(within(requirements).getAllByRole("listitem").length).toBeGreaterThanOrEqual(2);
+  expect(saveSocialPost).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Close posting requirements" }));
+  expect(within(compose).getByRole("button", { name: "Schedule" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   fireEvent.click(
     within(compose).getByRole("checkbox", { name: "Auto DM after this X post goes live" }),
   );
-  expect(within(compose).getByRole("button", { name: "Schedule" })).toBeEnabled();
+  expect(within(compose).getByRole("button", { name: "Schedule" })).not.toHaveAttribute(
+    "aria-disabled",
+  );
 });
 
 it("keeps the autosave failure reason visible until the next successful save", async () => {
