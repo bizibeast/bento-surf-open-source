@@ -70,6 +70,7 @@ vi.mock("@/lib/scheduler-assist.functions", () => ({
     cursor: null,
     stockAvailable: true,
     stockProvider: "commons",
+    stockProviders: ["commons"],
   })),
   findSchedulerStockPhotos: vi.fn(),
   addSchedulerStockPhoto: vi.fn(),

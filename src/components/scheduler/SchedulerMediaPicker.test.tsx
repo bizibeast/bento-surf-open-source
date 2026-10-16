@@ -4,6 +4,7 @@ import { SchedulerMediaPicker } from "./SchedulerMediaPicker";
 const m = vi.hoisted(() => ({
   library: vi.fn(),
   stock: vi.fn(),
+  importStock: vi.fn(),
   settings: vi.fn(),
   generate: vi.fn(),
   job: vi.fn(),
@@ -11,7 +12,7 @@ const m = vi.hoisted(() => ({
 vi.mock("@/lib/scheduler-assist.functions", () => ({
   getSchedulerPhotoLibrary: m.library,
   findSchedulerStockPhotos: m.stock,
-  addSchedulerStockPhoto: vi.fn(),
+  addSchedulerStockPhoto: m.importStock,
   getSchedulerImageSettings: m.settings,
   generateSchedulerImage: m.generate,
   getSchedulerImageJob: m.job,
@@ -34,6 +35,7 @@ beforeEach(() => {
     cursor: null,
     stockAvailable: true,
     stockProvider: "commons",
+    stockProviders: ["commons"],
   });
   m.settings.mockResolvedValue({
     available: true,
@@ -107,4 +109,62 @@ it("does not search on every keystroke", async () => {
     target: { value: "coffee" },
   });
   expect(m.stock).not.toHaveBeenCalled();
+});
+
+it("selects a configured stock source, credits Pixabay, imports the chosen result and clears stale pagination", async () => {
+  m.library.mockResolvedValue({
+    photos: [photo],
+    cursor: null,
+    stockAvailable: true,
+    stockProvider: "pixabay",
+    stockProviders: ["pixabay", "commons"],
+  });
+  m.stock.mockResolvedValue([
+    {
+      provider: "pixabay",
+      id: 42,
+      url: "https://pixabay.com/photos/coffee-42/",
+      photographer: "A photographer",
+      previewUrl: "https://cdn.pixabay.com/photo/coffee.jpg",
+      description: "Coffee",
+    },
+  ]);
+  m.importStock.mockResolvedValue({ media: photo });
+  const onSelect = vi.fn();
+  render(
+    <SchedulerMediaPicker
+      open
+      onOpenChange={vi.fn()}
+      onUpload={vi.fn()}
+      onSelect={onSelect}
+      initialPrompt=""
+    />,
+  );
+  await screen.findByRole("button", { name: "Add My photo" });
+  fireEvent.click(screen.getByRole("button", { name: /Stock photos/ }));
+  expect(screen.getByRole("combobox", { name: "Photo source" })).toHaveValue("pixabay");
+  fireEvent.change(screen.getByRole("textbox", { name: "Search stock photos" }), {
+    target: { value: "coffee" },
+  });
+  expect(m.stock).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  expect(
+    await screen.findByRole("link", { name: "Photo by A photographer · Pixabay" }),
+  ).toHaveAttribute("href", "https://pixabay.com/photos/coffee-42/");
+  expect(m.stock).toHaveBeenCalledWith({ data: { query: "coffee", page: 1, provider: "pixabay" } });
+  fireEvent.click(screen.getByRole("button", { name: "Coffee" }));
+  await waitFor(() => expect(onSelect).toHaveBeenCalledWith(photo));
+  expect(m.importStock).toHaveBeenCalledWith({ data: { id: 42, provider: "pixabay" } });
+  fireEvent.change(screen.getByRole("combobox", { name: "Photo source" }), {
+    target: { value: "commons" },
+  });
+  expect(screen.queryByRole("img", { name: "Coffee" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "More results" })).not.toBeInTheDocument();
+  expect(m.stock).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await waitFor(() =>
+    expect(m.stock).toHaveBeenCalledWith({
+      data: { query: "coffee", page: 1, provider: "commons" },
+    }),
+  );
 });

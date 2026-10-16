@@ -18,7 +18,16 @@ import {
 } from "@/lib/scheduler-assist.functions";
 import { uploadFileResult } from "@/lib/upload";
 import type { SchedulerMedia } from "@/lib/social-scheduler";
-import type { StockPhoto } from "@/lib/scheduler-stock.server";
+import type { StockPhoto, StockProvider } from "@/lib/scheduler-stock.server";
+
+const stockSources: Record<StockProvider, { name: string; url: string }> = {
+  pixabay: { name: "Pixabay", url: "https://pixabay.com" },
+  pexels: { name: "Pexels", url: "https://www.pexels.com" },
+  commons: {
+    name: "Wikimedia Commons (public domain / CC0)",
+    url: "https://commons.wikimedia.org",
+  },
+};
 
 type Source = "upload" | "library" | "stock" | "ai";
 const sources = [
@@ -50,7 +59,8 @@ export function SchedulerMediaPicker({
   const [photos, setPhotos] = useState<SchedulerMedia[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const [stockProvider, setStockProvider] = useState("commons");
+  const [stockProvider, setStockProvider] = useState<StockProvider>("commons");
+  const [stockProviders, setStockProviders] = useState<StockProvider[]>(["commons"]);
   const [stockPage, setStockPage] = useState(1);
   const [stockAvailable, setStockAvailable] = useState<boolean | null>(null);
   const [stockQuery, setStockQuery] = useState("");
@@ -87,7 +97,12 @@ export function SchedulerMediaPicker({
     setPhotos((old) => (next ? [...old, ...result.photos] : result.photos));
     setCursor(result.cursor);
     setStockAvailable(result.stockAvailable);
-    setStockProvider(result.stockProvider);
+    setStockProviders(result.stockProviders);
+    if (stockAvailable === null || !result.stockProviders.includes(stockProvider)) {
+      setStockProvider(result.stockProvider);
+      setStock(null);
+      setStockPage(1);
+    }
     setLoaded(true);
   }
   useEffect(() => {
@@ -262,6 +277,29 @@ export function SchedulerMediaPicker({
           )}
           {source === "stock" && (
             <section className="space-y-4">
+              {stockProviders.length > 1 && (
+                <label className="block space-y-1 text-sm font-medium">
+                  <span>Photo source</span>
+                  <select
+                    className={inputClass}
+                    value={stockProvider}
+                    disabled={pending}
+                    title="Choose where to search for stock photos"
+                    onChange={(e) => {
+                      setStockProvider(e.target.value as StockProvider);
+                      setStock(null);
+                      setStockPage(1);
+                      setError("");
+                    }}
+                  >
+                    {stockProviders.map((provider) => (
+                      <option key={provider} value={provider}>
+                        {stockSources[provider].name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <form
                 className="flex gap-2"
                 onSubmit={(e) => {
@@ -269,7 +307,9 @@ export function SchedulerMediaPicker({
                   void act(async () => {
                     setStockPage(1);
                     setStock(
-                      await findSchedulerStockPhotos({ data: { query: stockQuery, page: 1 } }),
+                      await findSchedulerStockPhotos({
+                        data: { query: stockQuery, page: 1, provider: stockProvider },
+                      }),
                     );
                   });
                 }}
@@ -280,7 +320,12 @@ export function SchedulerMediaPicker({
                   minLength={3}
                   maxLength={100}
                   value={stockQuery}
-                  onChange={(e) => setStockQuery(e.target.value)}
+                  disabled={pending}
+                  onChange={(e) => {
+                    setStockQuery(e.target.value);
+                    setStock(null);
+                    setStockPage(1);
+                  }}
                   className={inputClass}
                 />
                 <button
@@ -300,24 +345,18 @@ export function SchedulerMediaPicker({
               <p className="text-xs text-muted-foreground">
                 Free photos via{" "}
                 <a
-                  href={
-                    stockProvider === "pexels"
-                      ? "https://www.pexels.com"
-                      : "https://commons.wikimedia.org"
-                  }
+                  href={stockSources[stockProvider].url}
                   target="_blank"
                   rel="noreferrer"
                   className="underline"
                 >
-                  {stockProvider === "pexels"
-                    ? "Pexels"
-                    : "Wikimedia Commons (public domain / CC0)"}
+                  {stockSources[stockProvider].name}
                 </a>
                 . Check the linked source for usage details.
               </p>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                 {stock?.map((photo) => (
-                  <div key={photo.id}>
+                  <div key={`${photo.provider}:${photo.id}`}>
                     <button
                       type="button"
                       disabled={pending}
@@ -346,13 +385,12 @@ export function SchedulerMediaPicker({
                       rel="noreferrer"
                       className="mt-1 block truncate text-[11px] text-muted-foreground underline"
                     >
-                      Photo by {photo.photographer} ·{" "}
-                      {photo.provider === "pexels" ? "Pexels" : "Commons"}
+                      Photo by {photo.photographer} · {stockSources[photo.provider].name}
                     </a>
                   </div>
                 ))}
               </div>
-              {stock && stockPage < 5 && (
+              {!!stock?.length && stockPage < 5 && (
                 <button
                   type="button"
                   disabled={pending}
@@ -361,7 +399,9 @@ export function SchedulerMediaPicker({
                     void act(async () => {
                       const next = stockPage + 1;
                       setStock(
-                        await findSchedulerStockPhotos({ data: { query: stockQuery, page: next } }),
+                        await findSchedulerStockPhotos({
+                          data: { query: stockQuery, page: next, provider: stockProvider },
+                        }),
                       );
                       setStockPage(next);
                     })

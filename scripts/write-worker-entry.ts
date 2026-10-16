@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { redactWorkerQueryStrings } from "./worker-observability";
 import { parseConfigFileTextToJson } from "typescript";
 
 const serverEntryNames = ["ssr.mjs", "index.mjs"] as const;
@@ -114,7 +115,7 @@ Object.assign(generatedWrangler, safeDeploymentConfig, {
     directory: "../public",
   },
 });
-await writeFile(generatedWranglerPath, `${JSON.stringify(generatedWrangler, null, 2)}\n`, "utf8");
+await writeFile(generatedWranglerPath, `${JSON.stringify(redactWorkerQueryStrings(generatedWrangler), null, 2)}\n`, "utf8");
 
 console.log(
   "Generated Cloudflare Worker entry and configured Wrangler to forward fetch, queue, and scheduled handlers.",
