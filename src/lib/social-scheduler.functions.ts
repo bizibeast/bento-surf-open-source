@@ -587,6 +587,11 @@ export async function saveSocialPostForUser(
     ...data.connectionOverrides?.[connection.id],
   });
   for (const connection of checkedConnections) {
+    if (
+      connection.provider !== "twitter" &&
+      data.connectionOverrides?.[connection.id]?.xCommunity != null
+    )
+      throw new Error("Community destinations are only available for X accounts.");
     const settings = {
       ...data.providerSettings,
       [connection.provider]: settingsForConnection(connection),
