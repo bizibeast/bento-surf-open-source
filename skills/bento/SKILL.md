@@ -1,6 +1,6 @@
 ---
 name: bento
-description: Operate a creator's Bento workspace through MCP, including pages and links, Store products and growth tools, Calendar sessions and availability, communities, social publishing, and Auto-DMs.
+description: Operate a creator's Bento workspace through MCP, including Content Brain, Media, Routines, Agent, Discover, pages, Store, Calendar, communities, social publishing, and Auto-DMs.
 ---
 
 # Bento
@@ -34,3 +34,7 @@ Creating a product validates its plan, payment provider, delivery assets, calend
 For Calendar work, call `get_calendar_workspace`. Use `manage_calendar` for availability and the public calendar. Create or edit sessions through `manage_product` with kind `coaching_call`; its `settings` contain duration, timezone, availability, and meeting details.
 
 For Community work, call `get_community_workspace` before `manage_community`. Inviting/restoring a member or publishing a creator post can send real email notifications, so require an explicit request. Confirm all delete actions unless already explicit.
+
+For Content work, call `get_content_brain`, `get_content_media`, or `get_content_routines` first. `manage_content_brain` edits the Content profile and Brain documents. `manage_content_media` adds an existing Bento image/video upload to Brain, fetches a connected post, manages folders, and sets up to four hero images. Upload with `upload_media` and pass its returned `key` to `manage_content_media` with `register_upload`. `manage_content_routine` creates or edits routine schedules and pauses or resumes them. Use `get_content_agent` and `manage_content_agent` for Agent conversations, drafts, and proposals. Approve scheduling proposals only when the user explicitly asks to create the posts.
+
+For Discover, call `get_content_discover` before `manage_content_discover` to review recommendations, feedback, saved items, tracked creators, and preferences. Refresh is an expensive action; call it when the user requests fresh ideas.

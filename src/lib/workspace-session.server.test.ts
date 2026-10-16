@@ -91,12 +91,12 @@ describe("workspace resolution", () => {
     });
   });
 
-  it("does not select a locked workspace", async () => {
+  it("selects an owned locked workspace for billing and data recovery", async () => {
     mocks.memberships[1] = membership(ids.second, "locked", "2026-02-01T00:00:00.000Z");
 
     const session = await resolveWorkspace(ids.auth, ids.second);
 
-    expect(session.workspaceId).toBe(ids.original);
+    expect(session.workspaceId).toBe(ids.second);
     expect(session.workspaces.find((workspace) => workspace.id === ids.second)?.status).toBe(
       "locked",
     );
@@ -108,6 +108,20 @@ describe("workspace resolution", () => {
     await expect(resolveWorkspace(ids.auth)).resolves.toMatchObject({
       workspaceId: ids.original,
       appTheme: "light",
+    });
+  });
+  it("allows recovery when the owner's only workspace is locked", async () => {
+    mocks.memberships = [membership(ids.original, "locked", "2026-01-01T00:00:00Z")];
+    await expect(resolveWorkspace(ids.auth)).resolves.toMatchObject({
+      workspaceId: ids.original,
+      workspace: { status: "locked" },
+    });
+  });
+  it("allows a pending owned workspace to finish preparation before checkout", async () => {
+    mocks.memberships[1] = membership(ids.second, "pending", "2026-02-01T00:00:00Z");
+    await expect(resolveWorkspace(ids.auth, ids.second)).resolves.toMatchObject({
+      workspaceId: ids.second,
+      workspace: { status: "pending" },
     });
   });
 });

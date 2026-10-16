@@ -1,3 +1,4 @@
+import { reserveProviderUsage, ProviderBudgetError } from "./provider-budget.server";
 import { RequestHttpError, enforceTurnstileRequest } from "./request-security.server";
 import { BACKGROUND_REMOVAL_API_PATH } from "./free-image-tools";
 
@@ -83,6 +84,8 @@ export async function handleBackgroundRemovalRequest(
   if (!env.IMAGES) return jsonError("Background removal is temporarily unavailable", 503);
 
   try {
+    await reserveProviderUsage("public_background_removals");
+    await reserveProviderUsage("image_transformations");
     const transformed = await env.IMAGES.input(request.body)
       .transform({ segment: "foreground" })
       .output({ format: "image/png" });
@@ -93,7 +96,8 @@ export async function handleBackgroundRemovalRequest(
     headers.set("content-type", "image/png");
     headers.set("vary", "origin");
     return new Response(response.body, { status: response.status, headers });
-  } catch {
+  } catch (error) {
+    if (error instanceof ProviderBudgetError) return jsonError(error.message, 429);
     return jsonError("The image background could not be removed. Try another image.", 502);
   }
 }

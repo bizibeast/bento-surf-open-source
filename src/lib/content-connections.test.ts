@@ -27,6 +27,38 @@ describe("Content knowledge source normalization", () => {
     expect(JSON.stringify(record)).not.toContain("must-not-leak");
   });
 
+  it.each(["2026-10-12T18:36:22+00:00", "2026-10-13T00:06:22+05:30"])(
+    "accepts source timestamps with a timezone offset: %s",
+    (occurredAt) => {
+      const source = normalizeContentSource({
+        provider: "github",
+        externalItemId: "commit-1",
+        type: "commit",
+        title: "Update",
+        text: "Repository activity",
+        occurredAt,
+      });
+
+      expect(source.occurredAt).toBe(occurredAt);
+    },
+  );
+
+  it.each(["2026-10-12T18:36:22", "2026-13-12T18:36:22+00:00", "not a timestamp"])(
+    "rejects invalid or unzoned source timestamps: %s",
+    (occurredAt) => {
+      expect(() =>
+        normalizeContentSource({
+          provider: "github",
+          externalItemId: "commit-1",
+          type: "commit",
+          title: "Update",
+          text: "Repository activity",
+          occurredAt,
+        }),
+      ).toThrow();
+    },
+  );
+
   it("rejects non-HTTPS canonical source URLs", () => {
     expect(() =>
       normalizeContentSource({

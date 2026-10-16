@@ -1,3 +1,4 @@
+import { reserveProviderUsage } from "./provider-budget.server";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { readResponseText } from "./request-security.server";
 
@@ -156,6 +157,7 @@ export async function fetchRenderedSocialHtml(url: string) {
     throw new SocialPreviewSourceError("Browser Run daily budget exhausted", "blocked");
   }
 
+  await reserveProviderUsage("browser_milliseconds", 30000);
   const response = await env.BROWSER.quickAction("content", {
     url,
     userAgent:
@@ -167,7 +169,8 @@ export async function fetchRenderedSocialHtml(url: string) {
     cacheTTL: 0,
     rejectResourceTypes: ["image", "media", "font"],
   });
-  const rawBrowserMs = Number(response.headers.get("x-browser-ms-used"));
+  const rawHeader = response.headers.get("x-browser-ms-used");
+  const rawBrowserMs = rawHeader === null ? NaN : Number(rawHeader);
   const browserMs = Number.isFinite(rawBrowserMs) && rawBrowserMs >= 0 ? rawBrowserMs : undefined;
   await reconcileBrowserBudget(browserMs);
   if (!response.ok) {

@@ -53,6 +53,11 @@ function InstagramCallback() {
           setMessage(result.failureMessage);
           return;
         }
+        if (window.sessionStorage.getItem("bentoOnboardingSocialReturn")) {
+          window.sessionStorage.removeItem("bentoOnboardingSocialReturn");
+          void navigate({ to: "/onboarding", replace: true });
+          return;
+        }
         setStatus("success");
         setMessage("Instagram connected. Your account is ready to use in Bento.");
         window.sessionStorage.removeItem("instagramConnectionReturnTo");

@@ -106,6 +106,7 @@ function LoginPage() {
 
       <form
         onSubmit={handleSubmit}
+        method="post"
         noValidate
         className="space-y-4"
         toolname="bento_prepare_sign_in"

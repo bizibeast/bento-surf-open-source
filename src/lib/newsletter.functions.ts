@@ -200,11 +200,7 @@ export const createNewsletterPublication = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) => newsletterPublicationInput.parse(input))
   .handler(async ({ data, context }) => {
-    await requirePlanEntitlement(
-      context.userId,
-      "emailMarketing",
-      "Upgrade to use Email Marketing.",
-    );
+    await requirePlanEntitlement(context.userId, "emailMarketing", "Upgrade to use Newsletter.");
     const db = supabaseAdmin as any;
     const { data: existing, error: existingError } = await db
       .from("newsletter_publications")
@@ -262,11 +258,7 @@ export const updateNewsletterPublication = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) => newsletterPublicationInput.extend({ publicationId: uuid }).parse(input))
   .handler(async ({ data, context }) => {
-    await requirePlanEntitlement(
-      context.userId,
-      "emailMarketing",
-      "Upgrade to use Email Marketing.",
-    );
+    await requirePlanEntitlement(context.userId, "emailMarketing", "Upgrade to use Newsletter.");
     const { publicationId, ...publicationInput } = data;
     const { data: publication, error } = await (supabaseAdmin as any)
       .from("newsletter_publications")
@@ -491,11 +483,7 @@ export const saveNewsletterPublication = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) => newsletterPublicationInput.parse(input))
   .handler(async ({ data, context }) => {
-    await requirePlanEntitlement(
-      context.userId,
-      "emailMarketing",
-      "Upgrade to use Email Marketing.",
-    );
+    await requirePlanEntitlement(context.userId, "emailMarketing", "Upgrade to use Newsletter.");
     const slug = uniquePublicationSlug(data.title, []);
     if (!slug) throw new Error("Publication title must include a letter or number.");
     const db = supabaseAdmin as any;
@@ -558,11 +546,7 @@ export const saveNewsletterIssue = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ data, context }) => {
-    await requirePlanEntitlement(
-      context.userId,
-      "emailMarketing",
-      "Upgrade to use Email Marketing.",
-    );
+    await requirePlanEntitlement(context.userId, "emailMarketing", "Upgrade to use Newsletter.");
     const db = supabaseAdmin as any;
     const { data: publication, error: publicationError } = await db
       .from("newsletter_publications")
@@ -630,11 +614,7 @@ export const deleteNewsletterDraft = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) => z.object({ id: uuid, publicationId: uuid }).parse(input))
   .handler(async ({ data, context }) => {
-    await requirePlanEntitlement(
-      context.userId,
-      "emailMarketing",
-      "Upgrade to use Email Marketing.",
-    );
+    await requirePlanEntitlement(context.userId, "emailMarketing", "Upgrade to use Newsletter.");
     const { data: deleted, error } = await (supabaseAdmin as any)
       .from("audience_campaigns")
       .delete()

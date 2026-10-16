@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   brainItemInputSchema,
+  completeContentStrategy,
+  buildContentStrategy,
   contentProfileSchema,
   groupBrainItems,
+  profileDocuments,
   mergeBrainSuggestions,
   type BrainItem,
 } from "./content-brain";
@@ -22,6 +25,15 @@ const confirmedVoice: BrainItem = {
 };
 
 describe("content Brain", () => {
+  it("requires complete weighted strategy pillars instead of accepting a generic summary", () => {
+    const strategy = buildContentStrategy("twitter", contentProfileSchema.parse({}), []);
+    expect(completeContentStrategy(strategy)).toBe(true);
+    expect(completeContentStrategy(strategy.replace("45%", "55%"))).toBe(false);
+    expect(completeContentStrategy("## Content Pillars\nCore Message: Startup inspiration")).toBe(
+      false,
+    );
+  });
+
   it("rejects unsafe or unbounded source data", () => {
     expect(() =>
       brainItemInputSchema.parse({
@@ -114,4 +126,23 @@ describe("content Brain", () => {
       link: [],
     });
   });
+});
+
+it("recognizes legacy profile titles, removes duplicate display content, and retains distinct memories", () => {
+  const human: BrainItem = {
+    ...confirmedVoice,
+    kind: "profile",
+    title: "My Human Profile",
+    content: "# My Human\n\nI build creator tools.",
+  };
+  const duplicate = { ...human, id: "duplicate", title: "My Human" };
+  const memory = {
+    ...human,
+    id: "memory",
+    title: "My preference",
+    content: "Use concrete examples.",
+  };
+  const documents = profileDocuments([human, duplicate, memory]);
+  expect(documents.humanContent).toBe("I build creator tools.");
+  expect(documents.memories.map((item) => item.id)).toEqual(["memory"]);
 });

@@ -77,11 +77,37 @@ describe("ContentRoutines", () => {
     for (const label of [
       "Nightly niche brief",
       "Fill my schedule",
-      "Morning ready email",
-      "Weekly performance review",
+      "Morning draft check-in",
+      "Weekly strategy review",
     ]) {
       expect(screen.getByRole("heading", { name: label })).toBeVisible();
     }
     expect(screen.queryByLabelText(/cron/i)).not.toBeInTheDocument();
   });
+});
+
+it("shows why legacy routines are paused and restricts new outputs to reviewable formats", () => {
+  render(
+    <ContentRoutines
+      routines={[
+        {
+          ...routines[0],
+          enabled: false,
+          platforms: ["youtube"],
+          schedule: { ...routines[0].schedule, outputMode: "schedule" },
+        },
+      ]}
+      timezone="UTC"
+      onSave={vi.fn()}
+      onPause={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  expect(screen.getByRole("switch", { name: "Resume Fill my schedule" })).toHaveTextContent(
+    /Review this routine/,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /Fill my schedule Drafts/ }));
+  expect(screen.queryByText("Schedule automatically")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Youtube")).not.toBeInTheDocument();
+  expect(screen.getByText(/Each post needs your approval/)).toBeVisible();
 });

@@ -22,7 +22,7 @@ export type WorkspaceSession = {
 
 export class WorkspaceAccessError extends Error {
   constructor() {
-    super("No active Bento workspace is available.");
+    super("No owned Bento workspace is available.");
     this.name = "WorkspaceAccessError";
   }
 }
@@ -152,7 +152,10 @@ export async function resolveWorkspace(
     ];
   });
   const active = workspaces.filter((workspace) => workspace.status === "active");
-  const workspace = active.find((candidate) => candidate.id === requestedId) ?? active[0];
+  // Ownership is independent from paid access. Owners must be able to resume
+  // pending setup and manage billing/export after access expires.
+  const workspace =
+    workspaces.find((candidate) => candidate.id === requestedId) ?? active[0] ?? workspaces[0];
   if (!workspace) throw new WorkspaceAccessError();
 
   return {

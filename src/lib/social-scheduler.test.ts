@@ -359,18 +359,39 @@ describe("social scheduler validation", () => {
       }).tiktok,
     ).toContain("branded content");
     expect(
-      validatePostForProviders("hello", [video], ["tiktok"], "", {
-        tiktok: {
-          privacyLevel: "PUBLIC_TO_EVERYONE",
-          videoDurationSeconds: 61,
-          maxVideoPostDurationSec: 60,
+      validatePostForProviders(
+        "hello",
+        [video],
+        ["tiktok"],
+        "",
+        {
+          tiktok: {
+            privacyLevel: "PUBLIC_TO_EVERYONE",
+            videoDurationSeconds: 61,
+            maxVideoPostDurationSec: 60,
+          },
         },
-      }).tiktok,
+        null,
+        true,
+      ).tiktok,
     ).toContain("60 seconds");
     expect(
       validatePostForProviders("hello", [video], ["tiktok"], "", {
         tiktok: { privacyLevel: "SELF_ONLY" },
       }),
+    ).toEqual({});
+  });
+
+  it("rejects public TikTok posts until the Direct Post audit is approved", () => {
+    const settings = { tiktok: { privacyLevel: "PUBLIC_TO_EVERYONE" } };
+    expect(validatePostForProviders("hello", [video], ["tiktok"], "", settings).tiktok).toContain(
+      "Direct Post audit",
+    );
+    expect(
+      validatePostForProviders("hello", [video], ["tiktok"], "", settings, null, false).tiktok,
+    ).toContain("Direct Post audit");
+    expect(
+      validatePostForProviders("hello", [video], ["tiktok"], "", settings, null, true),
     ).toEqual({});
   });
 
@@ -715,6 +736,42 @@ describe("social scheduler validation", () => {
 });
 
 describe("social post drafts", () => {
+  it("keeps platform mentions only when their saved text still matches", () => {
+    const input = {
+      body: "Shared copy",
+      scheduledAt: null,
+      connectionIds: ["11111111-1111-4111-8111-111111111111"],
+      asDraft: true,
+      providerSettings: {
+        facebook: {
+          bodyOverride: "Hi @Acme",
+          mentions: [
+            {
+              provider: "facebook",
+              id: "12345",
+              name: "Acme",
+              handle: null,
+              text: "@Acme",
+              start: 3,
+              end: 8,
+              kind: "page",
+              verified: true,
+            },
+          ],
+        },
+      },
+    };
+    expect(socialPostInputSchema.safeParse(input).success).toBe(true);
+    expect(
+      socialPostInputSchema.safeParse({
+        ...input,
+        providerSettings: {
+          facebook: { ...input.providerSettings.facebook, bodyOverride: "Hi @Other" },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
   it("allows saving a draft without a publish time", () => {
     expect(
       socialPostInputSchema.parse({

@@ -60,3 +60,8 @@ export function isConfiguredInstanceHostname(
   );
   return [appOrigin, publicOrigin].some((origin) => new URL(origin).hostname === value);
 }
+
+export function isBentoLandingHost(hostname: string | null): boolean {
+  const hosts = [process.env.VITE_PUBLIC_URL, process.env.VITE_APP_URL, "http://localhost:8080", "http://127.0.0.1:8080"];
+  return hosts.some((origin) => { try { return new URL(origin || "").hostname === hostname; } catch { return false; } });
+}

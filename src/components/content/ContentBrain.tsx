@@ -1,5 +1,6 @@
+import { STRATEGY_PLATFORMS, type StrategyPlatform } from "@/lib/content-brain";
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
-import { ChevronRight, Image, Plus, RefreshCw, Search } from "lucide-react";
+import { ChevronRight, Eye, Image, Plus, RefreshCw, Search } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,6 +16,7 @@ import { ContentDocument, ContentMarkdown } from "./ContentDocument";
 import {
   buildContentStrategy,
   groupBrainItems,
+  profileDocuments,
   type BrainItem,
   type BrainItemInput,
   type ContentProfile,
@@ -35,6 +37,8 @@ export type ContentBrainPhoto = {
   provider: string;
   type?: "image" | "video";
   role?: "attachment" | "thumbnail";
+  folderId?: string | null;
+  heroSlot?: number | null;
 
   caption?: string;
   tags?: string[];
@@ -56,7 +60,7 @@ const sections: Array<[Section, string]> = [
   ["strategy", "Strategy"],
   ["story", "Stories"],
   ["file", "Files"],
-  ["photo", "Photos"],
+  ["photo", "Media"],
   ["skill", "Skills"],
   ["library", "Library"],
   ["sources", "Sources"],
@@ -65,6 +69,8 @@ const providers: Record<string, string> = {
   twitter: "X",
   linkedin: "LinkedIn",
   instagram: "Instagram",
+  threads: "Threads",
+  facebook: "Facebook",
   youtube: "YouTube",
   tiktok: "TikTok",
   notion: "Notion",
@@ -77,13 +83,30 @@ const providers: Record<string, string> = {
 
 export function ContentBrain({
   profile,
+  items,
   initialSection = "profile",
   initialItemId = null,
-  initialPlatform = "twitter",
+  initialPlatform = STRATEGY_PLATFORMS.find((provider) =>
+    items.some(
+      (item) =>
+        item.kind === "strategy" &&
+        item.title.toLowerCase().startsWith(`${providers[provider].toLowerCase()} strategy`),
+    ),
+  ) ?? "twitter",
   onNavigate,
-  items,
   sources,
   photos = [],
+  folders = [],
+  mediaPending = 0,
+  manualMediaCount = 0,
+  mediaUsedBytes = 0,
+  importBudget = null,
+  mediaLoading = false,
+  mediaHasMore = false,
+  onLoadMoreMedia,
+  onRefreshMedia,
+  onReviewOldMedia,
+  humanSummary = "",
   indexing,
   onMediaSearch,
   building = false,
@@ -94,15 +117,44 @@ export function ContentBrain({
   onLock,
   onDelete,
   onUpload,
+  onImportPost,
+  onCreateFolder,
+  onRenameFolder,
+  onDeleteFolder,
+  onMoveMedia,
+  onSetHero,
 }: {
   profile: ContentProfile;
+  humanSummary?: string;
   initialSection?: Section;
   initialItemId?: string | null;
-  initialPlatform?: "twitter" | "linkedin";
-  onNavigate?: (section: Section, item: string | null, platform: "twitter" | "linkedin") => void;
+  initialPlatform?: StrategyPlatform;
+  onNavigate?: (section: Section, item: string | null, platform: StrategyPlatform) => void;
   items: BrainItem[];
   sources: ContentBrainSource[];
   photos?: ContentBrainPhoto[];
+  folders?: { id: string; name: string }[];
+  mediaPending?: number;
+  manualMediaCount?: number;
+  mediaUsedBytes?: number;
+  importBudget?: {
+    paused: boolean;
+    daily_limit: number;
+    monthly_limit: number;
+    day_start: string;
+    day_used: number;
+    month_start: string;
+    month_used: number;
+  } | null;
+  mediaLoading?: boolean;
+  mediaHasMore?: boolean;
+  onLoadMoreMedia?: () => void;
+  onRefreshMedia?: () => void;
+  onReviewOldMedia?: () => Promise<{
+    itemCount: number;
+    possibleBytes: number;
+    items: Array<{ id: string; title: string; provider: string; byteSize: number }>;
+  }>;
   indexing?: {
     status: string;
     indexedAt: string | null;
@@ -119,17 +171,44 @@ export function ContentBrain({
   onLock: (id: string, locked: boolean) => void | Promise<void>;
   onDelete: (id: string) => void | Promise<void>;
   onUpload: (file: File, kind: "file" | "photo") => void | Promise<void>;
+  onImportPost?: (url: string) => Promise<void>;
+  onCreateFolder?: (name: string) => Promise<void>;
+  onRenameFolder?: (id: string, name: string) => Promise<void>;
+  onDeleteFolder?: (id: string) => Promise<void>;
+  onMoveMedia?: (id: string, folderId: string | null) => Promise<void>;
+  onSetHero?: (slot: number, id: string | null) => Promise<void>;
 }) {
   const [section, setSection] = useState<Section>(initialSection);
   const [selected, setSelected] = useState<string | null>(initialItemId);
   const [search, setSearch] = useState("");
-  const [platform, setPlatform] = useState<"twitter" | "linkedin">(initialPlatform);
+  const [platform, setPlatform] = useState<StrategyPlatform>(initialPlatform);
   const [newTitle, setNewTitle] = useState("");
   const [newContent, setNewContent] = useState("");
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [mediaFilter, setMediaFilter] = useState<"image" | "video">("image");
+  const [folderFilter, setFolderFilter] = useState<string | null>(null);
+  const [postLink, setPostLink] = useState("");
+  const [folderName, setFolderName] = useState("");
+  const [mediaBusy, setMediaBusy] = useState(false);
+  const [oldMediaPreview, setOldMediaPreview] = useState<{
+    itemCount: number;
+    possibleBytes: number;
+    items: Array<{ id: string; title: string; provider: string; byteSize: number }>;
+  } | null>(null);
+  const runMediaAction = async (action: () => Promise<void>) => {
+    if (mediaBusy) return;
+    setMediaBusy(true);
+    setError("");
+    try {
+      await action();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Media could not be updated.");
+    } finally {
+      setMediaBusy(false);
+    }
+  };
   useEffect(() => {
     setSection(initialSection);
     setSelected(initialItemId);
@@ -140,8 +219,7 @@ export function ContentBrain({
     onNavigate?.(section, id, platform);
   };
   const grouped = useMemo(() => groupBrainItems(items), [items]);
-  const human = grouped.profile.find((item) => item.title === "My Human");
-  const memories = grouped.profile.filter((item) => item.id !== human?.id);
+  const { human, humanContent, memories } = profileDocuments(items);
   const visible =
     section === "library"
       ? [...grouped.inspiration, ...grouped.link]
@@ -216,21 +294,9 @@ export function ContentBrain({
   const upload = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.currentTarget.files || []);
     event.currentTarget.value = "";
-    for (const file of files)
-      await onUpload(file, file.type.startsWith("image/") ? "photo" : "file");
+    for (const file of files) await onUpload(file, section === "photo" ? "photo" : "file");
   };
-  const photoItems: ContentBrainPhoto[] = [
-    ...grouped.photo
-      .filter((item) => item.sourceUrl)
-      .map((item) => ({
-        id: item.id,
-        title: item.title,
-        url: item.sourceUrl!,
-        sourceUrl: null,
-        provider: "upload",
-      })),
-    ...photos,
-  ].filter((photo, index, all) => all.findIndex((other) => other.url === photo.url) === index);
+  const photoItems: ContentBrainPhoto[] = photos;
   const activePhoto = photoItems.find((photo) => photo.id === selected);
   return (
     <section
@@ -307,7 +373,7 @@ export function ContentBrain({
               className={`mb-5 text-xs leading-5 ${indexing.status === "error" ? "text-red-700" : "text-neutral-500"}`}
             >
               {indexing.status === "pending" || indexing.status === "running"
-                ? "Learning from your connected posts and indexing media…"
+                ? "Learning from your connected posts…"
                 : indexing.status === "error"
                   ? indexing.error || "Source indexing will retry shortly."
                   : `${indexing.sourceCount} source posts indexed · ${indexing.mediaCount} reusable assets imported`}
@@ -320,8 +386,8 @@ export function ContentBrain({
                 (section === "strategy" ? `${providers[platform]} Strategy` : title)}
             </h2>
             {section === "strategy" && (
-              <div className="flex gap-1" aria-label="Strategy platform">
-                {(["twitter", "linkedin"] as const).map((provider) => (
+              <div className="flex flex-wrap gap-1" aria-label="Strategy platform">
+                {STRATEGY_PLATFORMS.map((provider) => (
                   <button
                     key={provider}
                     type="button"
@@ -333,7 +399,7 @@ export function ContentBrain({
                     }}
                     className={`rounded-lg px-3 py-2 text-sm ${platform === provider ? "bg-neutral-100" : "text-neutral-500"}`}
                   >
-                    {provider === "twitter" ? "𝕏" : "in"}
+                    {providers[provider]}
                   </button>
                 ))}
               </div>
@@ -345,9 +411,13 @@ export function ContentBrain({
                 <input
                   type="file"
                   multiple
-                  aria-label={`Upload ${section === "photo" ? "photos" : "files"}`}
+                  aria-label={`Upload ${section === "photo" ? "media" : "files"}`}
                   className="sr-only"
-                  accept={section === "photo" ? "image/*" : "image/*,.pdf,.txt,.md"}
+                  accept={
+                    section === "photo"
+                      ? "image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm"
+                      : "image/*,.pdf,.txt,.md"
+                  }
                   onChange={upload}
                 />
               </label>
@@ -356,9 +426,9 @@ export function ContentBrain({
           {section === "profile" ? (
             <>
               <ContentDocument
-                key={human?.id || "human"}
+                key="human"
                 label="My Human"
-                value={human?.content || ""}
+                value={humanContent || humanSummary}
                 placeholder="Everything Bento should know about you - background, product facts, audience notes, offers, positioning, examples to remember…"
                 onSave={(content) => saveText(human, "profile", "My Human", content)}
               />
@@ -380,14 +450,23 @@ export function ContentBrain({
                   />
                 ))
               ) : (
-                <p className="text-sm text-neutral-400">
-                  No memories yet. Tell Agent about yourself or refresh from your posts.
-                </p>
+                <ContentDocument
+                  label="Bento Memories"
+                  value=""
+                  placeholder="What should Bento remember? Click here to add a fact, preference, or lesson."
+                  onSave={(content) => saveText(undefined, "profile", "Bento Memories", content)}
+                />
               )}
               <details className="mt-10 border-t border-neutral-100 pt-5">
                 <summary className="cursor-pointer text-sm text-neutral-500">
-                  Publishing settings
+                  <span className="inline-flex items-center gap-2">
+                    <Eye className="size-4" /> Publishing settings
+                  </span>
                 </summary>
+                <p className="mt-2 text-xs leading-5 text-neutral-500">
+                  Your topics, weekly targets, and timezone guide Discover and Agent. Choose whether
+                  each routine saves drafts or schedules posts in Routines.
+                </p>
                 <ProfileSettings
                   key={JSON.stringify(profile)}
                   profile={profile}
@@ -400,12 +479,12 @@ export function ContentBrain({
               const item = grouped.strategy.find((candidate) =>
                 platform === "twitter"
                   ? /\b(x|twitter)\b/i.test(candidate.title)
-                  : /linkedin/i.test(candidate.title),
+                  : candidate.title.toLowerCase().includes(providers[platform].toLowerCase()),
               );
               return (
                 <>
                   <ContentDocument
-                    key={`${platform}:${item?.id || "new"}`}
+                    key={platform}
                     label={`${providers[platform]} Strategy`}
                     value={item?.content || buildContentStrategy(platform, profile, items)}
                     onSave={(content) =>
@@ -445,6 +524,105 @@ export function ContentBrain({
             </>
           ) : section === "photo" ? (
             <>
+              {error && (
+                <p role="alert" className="mb-4 text-sm text-red-700">
+                  {error}
+                </p>
+              )}
+              <p className="mb-4 text-xs leading-5 text-neutral-500">
+                Bento saves up to 10 top post images or covers per connected platform. Add up to 50
+                more with uploads or connected post links. Media storage is capped at 1 GB; you can
+                create 20 folders and choose 4 hero images.
+              </p>
+              <p className="mb-4 text-xs text-neutral-500">
+                {manualMediaCount}/50 manual media · {folders.length}/20 folders ·{" "}
+                {(mediaUsedBytes / (1024 * 1024)).toFixed(1)} MB/1 GB used
+                {mediaPending ? ` · ${mediaPending} importing` : ""}
+              </p>
+              {onRefreshMedia && (
+                <button type="button" onClick={onRefreshMedia} className="mb-4 text-xs underline">
+                  Refresh Media
+                </button>
+              )}
+              {mediaPending > 0 &&
+                importBudget &&
+                (importBudget.paused ||
+                  (importBudget.day_start === new Date().toISOString().slice(0, 10) &&
+                    importBudget.day_used >= importBudget.daily_limit) ||
+                  (importBudget.month_start === new Date().toISOString().slice(0, 7) + "-01" &&
+                    importBudget.month_used >= importBudget.monthly_limit)) && (
+                  <p className="mb-4 text-xs text-amber-700">
+                    Media imports are waiting for the shared import budget to reset (UTC).
+                  </p>
+                )}
+              {onReviewOldMedia && (
+                <div className="mb-4 text-xs text-neutral-500">
+                  <button
+                    type="button"
+                    className="underline"
+                    onClick={() =>
+                      void runMediaAction(async () => setOldMediaPreview(await onReviewOldMedia()))
+                    }
+                  >
+                    Review old imports
+                  </button>
+                  {oldMediaPreview && (
+                    <div className="mt-2">
+                      <p>
+                        {oldMediaPreview.itemCount} older files may use{" "}
+                        {(oldMediaPreview.possibleBytes / (1024 * 1024)).toFixed(1)} MB. This review
+                        does not delete anything.
+                      </p>
+                      <ul className="mt-2 space-y-1">
+                        {oldMediaPreview.items.map((item) => (
+                          <li key={item.id}>
+                            {item.title} · {providers[item.provider] || item.provider} ·{" "}
+                            {(item.byteSize / (1024 * 1024)).toFixed(1)} MB
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="mb-6 grid grid-cols-4 gap-2" aria-label="Hero images">
+                {[1, 2, 3, 4].map((slot) => {
+                  const hero = photoItems.find((photo) => photo.heroSlot === slot);
+                  return (
+                    <div key={slot} className="min-w-0 rounded-lg border border-neutral-200 p-2">
+                      <p className="mb-2 text-xs font-medium">Hero {slot}</p>
+                      {hero ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => selectItem(hero.id)}
+                            className="w-full"
+                          >
+                            <img
+                              src={hero.url}
+                              alt={hero.title}
+                              className="aspect-square w-full rounded object-cover"
+                            />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={mediaBusy}
+                            className="mt-1 text-xs underline"
+                            onClick={() => void runMediaAction(() => onSetHero!(slot, null))}
+                          >
+                            Remove
+                          </button>
+                        </>
+                      ) : (
+                        <p className="text-xs text-neutral-400">Choose an image</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="mb-5 text-xs text-neutral-500">
+                Hero images are saved as references for future AI image creation.
+              </p>
               {activePhoto ? (
                 <>
                   {activePhoto.type === "video" ? (
@@ -482,11 +660,181 @@ export function ContentBrain({
                       Original post
                     </a>
                   )}
+                  <div className="mt-5 flex flex-wrap items-center gap-3">
+                    <label className="text-xs">
+                      Folder{" "}
+                      <select
+                        aria-label="Media folder"
+                        className="content-field mt-1"
+                        value={activePhoto.folderId || ""}
+                        disabled={mediaBusy}
+                        onChange={(event) =>
+                          void runMediaAction(() =>
+                            onMoveMedia!(activePhoto.id, event.target.value || null),
+                          )
+                        }
+                      >
+                        <option value="">Unfiled</option>
+                        {folders.map((folder) => (
+                          <option key={folder.id} value={folder.id}>
+                            {folder.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {activePhoto.type !== "video" && (
+                      <label className="text-xs">
+                        Hero image{" "}
+                        <select
+                          aria-label="Hero slot"
+                          className="content-field mt-1"
+                          value={activePhoto.heroSlot || ""}
+                          disabled={mediaBusy}
+                          onChange={(event) =>
+                            void runMediaAction(() =>
+                              onSetHero!(
+                                Number(event.target.value || activePhoto.heroSlot),
+                                event.target.value ? activePhoto.id : null,
+                              ),
+                            )
+                          }
+                        >
+                          <option value="">None</option>
+                          {[1, 2, 3, 4].map((slot) => (
+                            <option key={slot} value={slot}>
+                              Hero {slot}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                  </div>
                 </>
               ) : (
                 <>
+                  <form
+                    className="mb-5 flex gap-2"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void runMediaAction(async () => {
+                        await onImportPost!(postLink);
+                        setPostLink("");
+                      });
+                    }}
+                  >
+                    <input
+                      type="url"
+                      required
+                      aria-label="Connected post link"
+                      placeholder="Paste a link to your connected post"
+                      className="content-field"
+                      value={postLink}
+                      onChange={(event) => setPostLink(event.target.value)}
+                    />
+                    <button
+                      type="submit"
+                      disabled={mediaBusy || !postLink.trim()}
+                      className="content-action"
+                    >
+                      Import
+                    </button>
+                  </form>
                   <p className="mb-5 text-xs text-neutral-500">
-                    {photoItems.filter((photo) => (photo.type || "image") === mediaFilter).length}{" "}
+                    Post links must already be in your connected Social Insights. Bento fetches one
+                    image, cover, or video from each requested post.
+                  </p>
+                  <div className="mb-4 flex flex-wrap gap-2" aria-label="Media folders">
+                    <button
+                      type="button"
+                      className="content-action"
+                      aria-pressed={folderFilter === null}
+                      onClick={() => setFolderFilter(null)}
+                    >
+                      All media
+                    </button>
+                    {folders.map((folder) => (
+                      <button
+                        type="button"
+                        key={folder.id}
+                        className="content-action"
+                        aria-pressed={folderFilter === folder.id}
+                        onClick={() => setFolderFilter(folder.id)}
+                      >
+                        {folder.name}
+                      </button>
+                    ))}
+                  </div>
+                  <form
+                    className="mb-5 flex gap-2"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void runMediaAction(async () => {
+                        await onCreateFolder!(folderName);
+                        setFolderName("");
+                      });
+                    }}
+                  >
+                    <input
+                      className="content-field"
+                      aria-label="New folder name"
+                      maxLength={80}
+                      placeholder="New folder"
+                      value={folderName}
+                      onChange={(event) => setFolderName(event.target.value)}
+                    />
+                    <button
+                      type="submit"
+                      disabled={mediaBusy || !folderName.trim() || folders.length >= 20}
+                      className="content-action"
+                    >
+                      Create folder
+                    </button>
+                  </form>
+                  {folderFilter && (
+                    <div className="mb-5 flex gap-2">
+                      <button
+                        type="button"
+                        className="content-action"
+                        disabled={mediaBusy}
+                        onClick={() => {
+                          const name = window.prompt(
+                            "Rename folder",
+                            folders.find((folder) => folder.id === folderFilter)?.name || "",
+                          );
+                          if (name?.trim())
+                            void runMediaAction(() => onRenameFolder!(folderFilter, name.trim()));
+                        }}
+                      >
+                        Rename folder
+                      </button>
+                      <button
+                        type="button"
+                        className="content-action"
+                        disabled={mediaBusy}
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              "Delete this folder? Its media will remain in your library.",
+                            )
+                          )
+                            void runMediaAction(async () => {
+                              await onDeleteFolder!(folderFilter);
+                              setFolderFilter(null);
+                            });
+                        }}
+                      >
+                        Delete folder
+                      </button>
+                    </div>
+                  )}
+                  <p className="mb-5 text-xs text-neutral-500">
+                    {
+                      photoItems.filter(
+                        (photo) =>
+                          (photo.type || "image") === mediaFilter &&
+                          (!folderFilter || photo.folderId === folderFilter),
+                      ).length
+                    }{" "}
                     {mediaFilter === "image" ? "photos" : "videos"} · Indexed from connected posts
                     and your uploads
                   </p>
@@ -517,6 +865,7 @@ export function ContentBrain({
                   <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-6">
                     {photoItems
                       .filter((photo) => (photo.type || "image") === mediaFilter)
+                      .filter((photo) => !folderFilter || photo.folderId === folderFilter)
                       .filter((photo) =>
                         onMediaSearch
                           ? true
@@ -551,7 +900,17 @@ export function ContentBrain({
                         </button>
                       ))}
                   </div>
-                  {!photoItems.length && (
+                  {mediaHasMore && (
+                    <button
+                      type="button"
+                      onClick={onLoadMoreMedia}
+                      className="mt-4 rounded-lg border px-4 py-2 text-sm"
+                    >
+                      Load more Media
+                    </button>
+                  )}
+                  {mediaLoading && <p className="mt-5 text-sm text-neutral-500">Loading Media…</p>}
+                  {!photoItems.length && !mediaLoading && (
                     <p className="mt-5 text-sm text-neutral-500">
                       <Image className="mb-3 size-6" />
                       Upload photos or refresh your connected profiles in{" "}
@@ -667,7 +1026,20 @@ export function ContentBrain({
                   />
                 ))
               )}
-              {!filtered.length && (
+              {!visible.length && section === "instruction" && (
+                <>
+                  <h3 className="mb-3 text-lg font-semibold">Writing voice</h3>
+                  <ContentDocument
+                    label="Writing voice"
+                    value=""
+                    placeholder="Describe how you write: tone, sentence length, words to use, and things to avoid. Click here to start."
+                    onSave={(content) =>
+                      saveText(undefined, "instruction", "Writing voice", content)
+                    }
+                  />
+                </>
+              )}
+              {!filtered.length && section !== "instruction" && (
                 <p className="py-6 text-sm text-neutral-400">
                   {visible.length
                     ? "No matching items."
@@ -757,10 +1129,11 @@ export function ContentBrain({
 
 function storyPoint(content: string) {
   return (
+    content.match(/(?:^|\n)#{1,6}\s+Point\s*\n+\s*([^\n]+)/i)?.[1] ||
     content.match(/(?:^|\n)(?:[-*]\s*)?(?:\*\*)?Point:(?:\*\*)?\s*([^\n]+)/i)?.[1] ||
     content
       .split("\n")
-      .find((line) => line.trim())
+      .find((line) => line.trim() && !line.trim().startsWith("#"))
       ?.slice(0, 220) ||
     ""
   );
@@ -882,6 +1255,9 @@ function ProfileSettings({
   onSave: (value: ContentProfile) => void | Promise<void>;
 }) {
   const [value, setValue] = useState(profile);
+  const [keywords, setKeywords] = useState(profile.nicheKeywords.join(", "));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   return (
     <div className="mt-5 space-y-4 text-sm">
       <label className="block">
@@ -901,16 +1277,8 @@ function ProfileSettings({
         Niche topics
         <input
           className="content-field mt-1"
-          value={value.nicheKeywords.join(", ")}
-          onChange={(event) =>
-            setValue({
-              ...value,
-              nicheKeywords: event.target.value
-                .split(",")
-                .map((word) => word.trim().toLowerCase())
-                .filter(Boolean),
-            })
-          }
+          value={keywords}
+          onChange={(event) => setKeywords(event.target.value)}
         />
       </label>
       <div className="grid gap-3 sm:grid-cols-3">
@@ -951,9 +1319,35 @@ function ProfileSettings({
           ))}
         </div>
       </fieldset>
-      <button type="button" className="content-action" onClick={() => void onSave(value)}>
-        Save settings
+      <button
+        type="button"
+        className="content-action"
+        disabled={saving}
+        onClick={async () => {
+          setSaving(true);
+          setError("");
+          try {
+            await onSave({
+              ...value,
+              nicheKeywords: keywords
+                .split(",")
+                .map((word) => word.trim().toLowerCase())
+                .filter(Boolean),
+            });
+          } catch (cause) {
+            setError(cause instanceof Error ? cause.message : "Could not save settings.");
+          } finally {
+            setSaving(false);
+          }
+        }}
+      >
+        {saving ? "Saving…" : "Save settings"}
       </button>
+      {error && (
+        <p role="alert" className="text-sm text-red-700">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

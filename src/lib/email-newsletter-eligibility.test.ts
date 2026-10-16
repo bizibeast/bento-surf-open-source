@@ -4,7 +4,10 @@ const mocks = vi.hoisted(() => ({
   from: vi.fn(),
   rpc: vi.fn(),
   fetch: vi.fn(),
+  entitlement: vi.fn(),
 }));
+
+vi.mock("./plan.server", () => ({ hasPlanEntitlement: mocks.entitlement }));
 
 vi.mock("@/integrations/supabase/client.server", () => ({
   supabaseAdmin: {
@@ -67,6 +70,7 @@ const lifecycleRow = {
 describe("newsletter send-time eligibility", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.entitlement.mockResolvedValue(true);
     process.env.EMAIL_DELIVERY_MODE = "production";
     process.env.RESEND_API_KEY = "resend-key";
     process.env.RESEND_FROM_EMAIL = "Bento <hello@example.com>";
@@ -91,7 +95,7 @@ describe("newsletter send-time eligibility", () => {
     await expect(marketingAllowedForOutbox(lifecycleRow as never)).resolves.toBe(false);
   });
 
-  it("uses only the final campaign authorization RPC before provider POST", async () => {
+  it("checks billing and final campaign authorization before provider POST", async () => {
     const order: string[] = [];
     const tables: string[] = [];
     mocks.from.mockImplementation((table: string) => {
@@ -125,6 +129,28 @@ describe("newsletter send-time eligibility", () => {
     await expect(processEmailOutbox(1)).resolves.toEqual({ claimed: 1, sent: 1, configured: true });
     expect(order).toEqual(["authorize", "provider-post"]);
     expect(tables).toEqual(["email_outbox"]);
+    expect(mocks.entitlement).toHaveBeenCalledWith(row.payload.creatorId, "emailMarketing");
+  });
+
+  it("suppresses a queued campaign when workspace sending access has expired", async () => {
+    mocks.entitlement.mockResolvedValue(false);
+    mocks.from.mockImplementation((table: string) => {
+      if (table === "email_outbox") return query(null);
+      throw new Error(`Unexpected table ${table}`);
+    });
+    mocks.rpc.mockImplementation((name: string) => {
+      if (name === "claim_email_outbox") return Promise.resolve({ data: [row], error: null });
+      if (name === "update_audience_campaign_recipient_status")
+        return Promise.resolve({ data: 1, error: null });
+      throw new Error(`Unexpected RPC ${name}`);
+    });
+    await expect(processEmailOutbox(1)).resolves.toEqual({ claimed: 1, sent: 0, configured: true });
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.rpc).toHaveBeenCalledWith("update_audience_campaign_recipient_status", {
+      p_email_outbox_id: row.id,
+      p_status: "suppressed",
+      p_skip_reason: "Workspace sending access is paused.",
+    });
   });
 
   it("does not POST when final campaign authorization finds global suppression", async () => {

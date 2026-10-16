@@ -1,7 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { McpSetupPage } from "./mcp.setup";
+import { createFileRoute, lazyRouteComponent } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/_authenticated/mcp")({
   head: () => ({ meta: [{ title: "MCP | bento.surf" }] }),
-  component: McpSetupPage,
+  component: lazyRouteComponent(() => import("./-mcp-setup-page"), "McpSetupPage"),
 });

@@ -727,7 +727,8 @@ textarea {
     height: 2.625rem !important;
   }
 
-  .app-ui-rectangular input.integration-search-input {
+  .app-ui-rectangular input.integration-search-input,
+  .app-ui-rectangular input.content-search-input {
     padding-left: 2.75rem !important;
     padding-right: 1rem !important;
   }

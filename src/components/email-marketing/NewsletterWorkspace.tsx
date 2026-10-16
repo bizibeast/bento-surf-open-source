@@ -57,7 +57,7 @@ export function NewsletterWorkspace({
       <section className="rounded-2xl border border-black/[0.06] bg-white p-5 text-center shadow-sm">
         <h2 className="font-ui-display text-2xl">Publish newsletters</h2>
         <p className="mx-auto mt-2 max-w-lg text-sm text-[#17213a]/48">
-          Email marketing is available on the Creator plan.
+          Newsletter is available on Creator and Creator Plus.
         </p>
         <Link
           to="/settings"

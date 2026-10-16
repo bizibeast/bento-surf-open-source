@@ -115,9 +115,12 @@ export function IntegrationsOverview({
     (data?.contentConnections || []) as Array<TelegramConnectionView & { provider: string }>
   ).find((connection) => connection.provider === "telegram");
   const knowledgeProviders: ContentProvider[] = ["notion", "granola", "github", "slack"];
-  const contentConnections = (data?.contentConnections || []) as Array<
-    KnowledgeConnectionView & { provider: string }
-  >;
+  // The API lists oldest first; reconnecting should manage the newest active workspace.
+  const contentConnections = (
+    (data?.contentConnections || []) as Array<KnowledgeConnectionView & { provider: string }>
+  )
+    .slice()
+    .reverse();
   const refreshOverview = () =>
     void queryClient.invalidateQueries({ queryKey: ["integration-overview"] });
   const normalizedQuery = query.trim().toLowerCase();
@@ -189,6 +192,10 @@ export function IntegrationsOverview({
                     key={provider}
                     provider={provider}
                     connection={
+                      contentConnections.find(
+                        (connection) =>
+                          connection.provider === provider && connection.status === "active",
+                      ) ||
                       contentConnections.find((connection) => connection.provider === provider) ||
                       null
                     }

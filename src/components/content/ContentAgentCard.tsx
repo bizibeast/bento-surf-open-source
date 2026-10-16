@@ -3,7 +3,20 @@ import { ExternalLink } from "lucide-react";
 import type { ContentMediaAsset } from "@/lib/content-media";
 import type { ContentAgentCard as Card } from "@/lib/content-agent";
 import { ContentMarkdown } from "./ContentDocument";
+import { ContentDraftImages } from "./ContentDraftImages";
+import { ContentCarouselDraft } from "./ContentCarouselDraft";
+import { carouselReady, type AgentDraftState, type AgentDraftEdit } from "@/lib/content-carousel";
+import { prepareContentAgentDraft, handoffAgentDraft } from "@/lib/content-agent.functions";
 import { micro } from "@/lib/micro-app-ui";
+
+function isSafeSourceUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
 
 export function ContentAgentCard({
   messageId,
@@ -15,6 +28,8 @@ export function ContentAgentCard({
   onRegenerateDraft,
   onApproveSchedule,
   onSaveDraft,
+  draftState,
+  onDraftChanged,
 }: {
   messageId: string;
   card: Card;
@@ -24,8 +39,12 @@ export function ContentAgentCard({
   onRejectDraft: (cardId: string, reason: string) => void | Promise<void>;
   onRegenerateDraft: (cardId: string, reason: string) => void | Promise<void>;
   onApproveSchedule: (draftCardId: string, scheduleCardId: string) => void | Promise<void>;
-  onSaveDraft?: (cardId: string, body: string) => void | Promise<void>;
+  onSaveDraft?: (cardId: string, edit: AgentDraftEdit) => void | Promise<void>;
+  draftState?: AgentDraftState;
+  onDraftChanged?: () => void | Promise<unknown>;
 }) {
+  const [schedulePending, setSchedulePending] = useState(false);
+  const [scheduleError, setScheduleError] = useState("");
   if (card.type === "source") {
     return (
       <article className="py-4">
@@ -59,8 +78,11 @@ export function ContentAgentCard({
     return (
       <DraftCard
         card={card}
+        messageId={messageId}
+        draftState={draftState}
+        onDraftChanged={onDraftChanged}
         mediaAssets={mediaAssets}
-        onSave={onSaveDraft ? (body) => onSaveDraft(card.cardId, body) : undefined}
+        onSave={onSaveDraft ? (edit) => onSaveDraft(card.cardId, edit) : undefined}
         onReject={(reason) => onRejectDraft(card.cardId, reason)}
         onRegenerate={(reason) => onRegenerateDraft(card.cardId, reason)}
       />
@@ -129,13 +151,36 @@ export function ContentAgentCard({
         />
         <button
           type="button"
-          disabled={!draft}
+          disabled={
+            !draft ||
+            schedulePending ||
+            (draft.type === "draft" &&
+              draft.platform === "instagram" &&
+              !carouselReady(draft.slides || [], draftState))
+          }
           className="content-action content-action-primary mt-3"
-          onClick={() => void onApproveSchedule(card.draftCardId, card.cardId)}
+          onClick={async () => {
+            setSchedulePending(true);
+            setScheduleError("");
+            try {
+              await onApproveSchedule(card.draftCardId, card.cardId);
+            } catch (error) {
+              setScheduleError(
+                error instanceof Error ? error.message : "Could not schedule this draft.",
+              );
+            } finally {
+              setSchedulePending(false);
+            }
+          }}
         >
-          Approve schedule
+          {schedulePending ? "Scheduling…" : "Approve schedule"}
         </button>
       </details>
+      {scheduleError && (
+        <p role="alert" className="text-xs text-red-700">
+          {scheduleError}
+        </p>
+      )}
       <span className="sr-only">Message {messageId}</span>
     </article>
   );
@@ -143,88 +188,216 @@ export function ContentAgentCard({
 
 function DraftCard({
   card,
+  messageId,
+  draftState,
+  onDraftChanged,
   onReject,
   onRegenerate,
   onSave,
   mediaAssets,
 }: {
   card: Extract<Card, { type: "draft" }>;
+  messageId: string;
+  draftState?: AgentDraftState;
+  onDraftChanged?: () => void | Promise<unknown>;
   onReject: (reason: string) => void | Promise<void>;
   onRegenerate: (reason: string) => void | Promise<void>;
-  onSave?: (body: string) => void | Promise<void>;
+  onSave?: (edit: AgentDraftEdit) => void | Promise<void>;
   mediaAssets: ContentMediaAsset[];
 }) {
+  const [backgrounds, setBackgrounds] = useState<Record<string, string>>({});
   const [body, setBody] = useState(card.body);
+  const [slides, setSlides] = useState(card.slides || []);
+  const [editRevision, setEditRevision] = useState(0);
   const [editing, setEditing] = useState(false);
-  const [saveError, setSaveError] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [pending, setPending] = useState("");
+  const [error, setError] = useState("");
   const [feedback, setFeedback] = useState("");
+  const [copied, setCopied] = useState(false);
+  const revision = draftState?.revision || 0;
+  const carousel = card.platform === "instagram" && card.format === "carousel";
+  const imageControlsSupported =
+    ["twitter", "linkedin", "instagram"].includes(card.platform) &&
+    ["post", "carousel"].includes(card.format);
+  const photoRequired = card.platform === "linkedin" || draftState?.photoRequired;
+  const hasPhoto = (draftState?.mediaIds?.length || card.mediaIds?.length || 0) > 0;
+  const ready =
+    (carousel ? carouselReady(card.slides || [], draftState) : !photoRequired || hasPhoto) &&
+    draftState?.preparation !== "visuals_needed";
+  async function run(action: string, work: () => void | Promise<unknown>) {
+    if (pending) return;
+    setPending(action);
+    setError("");
+    try {
+      await work();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Action failed. Please retry.");
+    } finally {
+      setPending("");
+    }
+  }
   return (
-    <article className="py-4">
+    <article className="min-w-0 py-4">
       <p className={micro.eyebrowMuted}>
         {card.platform} · {card.format}
       </p>
       {card.title && <h4 className="mt-1 font-semibold text-[#17213a]">{card.title}</h4>}
+      {(carousel || photoRequired) && (
+        <p className="mt-2 text-xs font-medium" role="status">
+          {ready
+            ? "Images attached · ready for review"
+            : draftState?.preparationNote ||
+              (carousel ? "Preparing carousel slides" : "Add a photo to finish this draft")}
+        </p>
+      )}
       {editing ? (
-        <>
-          <textarea
-            aria-label="Edit draft"
-            value={body}
-            onChange={(event) => setBody(event.target.value)}
-            maxLength={10_000}
-            className="content-document-input mt-3"
-          />
-          <div className="flex gap-2">
+        <textarea
+          aria-label="Edit draft"
+          value={body}
+          maxLength={10000}
+          onChange={(e) => setBody(e.target.value)}
+          className="content-document-input mt-3"
+        />
+      ) : (
+        <ContentMarkdown text={card.body} />
+      )}
+      {carousel && (
+        <ContentCarouselDraft
+          slides={editing ? slides : card.slides || []}
+          editing={editing}
+          backgrounds={backgrounds}
+          onChange={setSlides}
+          branding={draftState?.branding}
+          renderedUrls={
+            !editing && ready
+              ? (draftState?.mediaIds || []).map((id) => backgrounds[id]).filter(Boolean)
+              : undefined
+          }
+          disabled={Boolean(pending)}
+        />
+      )}
+      {!editing && imageControlsSupported && (
+        <ContentDraftImages
+          draftRef={{ messageId, cardId: card.cardId, revision }}
+          slideCount={carousel ? card.slides?.length || 0 : 0}
+          onChanged={onDraftChanged}
+          onAssets={setBackgrounds}
+        />
+      )}
+      <div className="mt-3 flex flex-wrap gap-2">
+        {editing ? (
+          <>
             <button
               type="button"
-              disabled={!body.trim() || saving || !onSave}
               className="content-action"
-              onClick={async () => {
-                setSaving(true);
-                setSaveError("");
-                try {
-                  await onSave?.(body.trim());
+              disabled={Boolean(pending) || !body.trim() || !onSave}
+              onClick={() =>
+                void run("save", async () => {
+                  await onSave?.({
+                    body: body.trim(),
+                    revision: editRevision,
+                    ...(carousel ? { slides } : {}),
+                  });
                   setEditing(false);
-                } catch (error) {
-                  setSaveError(error instanceof Error ? error.message : "Could not save draft.");
-                } finally {
-                  setSaving(false);
-                }
-              }}
+                })
+              }
             >
-              {saving ? "Saving…" : "Save draft"}
+              {pending === "save" ? "Saving…" : "Save draft"}
             </button>
             <button
               type="button"
               className="content-action"
-              disabled={saving}
-              onClick={() => {
-                setBody(card.body);
-                setEditing(false);
-              }}
+              disabled={Boolean(pending)}
+              onClick={() => setEditing(false)}
             >
               Cancel
             </button>
-          </div>
-          {saveError && (
-            <p role="alert" className="mt-2 text-xs text-red-700">
-              {saveError}
-            </p>
-          )}
-        </>
-      ) : (
-        <>
-          <ContentMarkdown text={card.body} />
-          <button type="button" className="content-action" onClick={() => setEditing(true)}>
-            Edit draft
-          </button>
-        </>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="content-action"
+              disabled={Boolean(pending)}
+              onClick={() => {
+                setBody(card.body);
+                setSlides(card.slides || []);
+                setEditRevision(revision);
+                setEditing(true);
+                setError("");
+              }}
+            >
+              Edit draft
+            </button>
+            <button
+              type="button"
+              className="content-action"
+              disabled={Boolean(pending)}
+              onClick={() =>
+                void run("copy", async () => {
+                  await navigator.clipboard.writeText(card.body);
+                  setCopied(true);
+                })
+              }
+            >
+              {copied ? "Copied" : "Copy"}
+            </button>
+            {!ready && imageControlsSupported && (
+              <button
+                type="button"
+                className="content-action"
+                disabled={Boolean(pending)}
+                onClick={() =>
+                  void run("prepare", async () => {
+                    await prepareContentAgentDraft({ data: { messageId, cardId: card.cardId } });
+                    await onDraftChanged?.();
+                  })
+                }
+              >
+                {pending === "prepare" ? "Preparing visuals…" : "Prepare visuals"}
+              </button>
+            )}
+            {["post", "carousel"].includes(card.format) && (
+              <button
+                type="button"
+                className="content-action content-action-primary"
+                disabled={(carousel && !ready) || Boolean(pending)}
+                onClick={() =>
+                  void run("handoff", async () => {
+                    const saved = await handoffAgentDraft({
+                      data: { messageId, cardId: card.cardId, revision },
+                    });
+                    if (!saved.socialPostId) throw new Error("Draft could not be opened.");
+                    window.location.assign(
+                      `/post-scheduler?postId=${encodeURIComponent(saved.socialPostId)}`,
+                    );
+                  })
+                }
+              >
+                {pending === "handoff"
+                  ? "Opening…"
+                  : photoRequired && !hasPhoto
+                    ? "Add photo in scheduler"
+                    : "Open in scheduler"}
+              </button>
+            )}
+          </>
+        )}
+      </div>
+      {error && (
+        <p role="alert" className="mt-2 text-xs text-red-700">
+          {error}
+        </p>
       )}
       {(card.mediaIds || []).map((id) => {
-        const asset = mediaAssets.find((media) => media.id === id);
-        return asset ? (
+        const asset = mediaAssets.find((m) => m.id === id);
+        // Historical script/thread formats do not mount the owned-image loader.
+        const ownedUrl =
+          backgrounds[id] ||
+          (!imageControlsSupported && asset?.type === "image" ? asset.url : undefined);
+        return asset?.type === "video" || ownedUrl ? (
           <figure key={id} className="my-4">
-            {asset.type === "video" ? (
+            {asset?.type === "video" ? (
               <video
                 src={asset.url}
                 controls
@@ -233,44 +406,67 @@ function DraftCard({
               />
             ) : (
               <img
-                src={asset.url}
-                alt={asset.title}
+                src={ownedUrl}
+                alt={asset?.title || "Currently attached draft image"}
                 className="max-h-80 rounded-lg object-contain"
               />
             )}
-            <figcaption className="mt-1 text-xs text-neutral-500">{asset.title}</figcaption>
+            <figcaption className="mt-1 text-xs text-neutral-500">
+              {asset?.type === "video"
+                ? asset.title
+                : `Currently attached image${asset?.title ? ` · ${asset.title}` : ""}`}
+            </figcaption>
           </figure>
         ) : null;
       })}
       <p className={`mt-2 ${micro.mutedXs}`}>{card.rationale}</p>
+      {card.sourceUrls.some(isSafeSourceUrl) && (
+        <ul aria-label="Draft sources" className={`mt-2 space-y-1 ${micro.mutedXs}`}>
+          {card.sourceUrls.filter(isSafeSourceUrl).map((url) => (
+            <li key={url}>
+              <a
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="break-all underline"
+              >
+                {url}
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
       {card.visualBrief && <p className={`mt-2 ${micro.mutedXs}`}>Visual: {card.visualBrief}</p>}
-      <label className="mt-4 grid gap-1 text-xs font-medium text-[#17213a]/60">
-        Draft feedback
-        <input
-          value={feedback}
-          onChange={(event) => setFeedback(event.target.value.slice(0, 1_000))}
-          className="content-field"
-          placeholder="What should change?"
-        />
-      </label>
-      <div className="mt-3 flex flex-wrap gap-2">
-        <button
-          type="button"
-          disabled={!feedback.trim()}
-          onClick={() => void onRegenerate(feedback.trim())}
-          className="content-action"
-        >
-          Regenerate draft
-        </button>
-        <button
-          type="button"
-          disabled={!feedback.trim()}
-          onClick={() => void onReject(feedback.trim())}
-          className="content-action"
-        >
-          Reject draft
-        </button>
-      </div>
+      <details className="mt-4">
+        <summary className="cursor-pointer text-xs font-medium">Improve this draft</summary>
+        <label className="mt-3 grid gap-1 text-xs font-medium">
+          Draft feedback
+          <input
+            value={feedback}
+            onChange={(e) => setFeedback(e.target.value.slice(0, 1000))}
+            className="content-field"
+            placeholder="What should change?"
+          />
+        </label>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="content-action"
+            disabled={!feedback.trim() || Boolean(pending) || editing}
+            onClick={() => void run("regenerate", () => onRegenerate(feedback.trim()))}
+          >
+            {pending === "regenerate" ? "Regenerating…" : "Regenerate draft"}
+          </button>
+          <button
+            type="button"
+            className="content-action"
+            disabled={!feedback.trim() || Boolean(pending) || editing}
+            onClick={() => void run("reject", () => onReject(feedback.trim()))}
+          >
+            {pending === "reject" ? "Rejecting…" : "Reject draft"}
+          </button>
+        </div>
+      </details>
     </article>
   );
 }

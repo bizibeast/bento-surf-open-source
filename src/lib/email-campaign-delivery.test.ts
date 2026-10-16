@@ -578,7 +578,7 @@ describe("email campaign delivery", () => {
         kind: "newsletter",
         scheduledAt: "2030-01-02T03:04:00.000Z",
       }),
-    ).rejects.toThrow("Creator plan");
+    ).rejects.toThrow("Creator or Creator Plus");
     expect(mocks.from).not.toHaveBeenCalled();
   });
 
@@ -640,11 +640,11 @@ describe("email campaign delivery", () => {
     mocks.from.mockReturnValue(builder);
     mocks.rpc.mockResolvedValueOnce({
       data: null,
-      error: { code: "P0001", message: "Email Marketing requires the Creator plan." },
+      error: { code: "P0001", message: "Newsletter requires Creator or Creator Plus." },
     });
 
     await expect(processAudienceCampaignDelivery(campaign.id)).rejects.toMatchObject({
-      message: "Email Marketing requires the Creator plan.",
+      message: "Newsletter requires Creator or Creator Plus.",
       retryable: false,
     });
     expect(mocks.rpc).toHaveBeenCalledWith("prepare_audience_campaign_recipients_with_capacity", {

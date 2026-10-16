@@ -1,3 +1,4 @@
+import { reserveProviderUsage } from "./provider-budget.server";
 import { Buffer } from "node:buffer";
 import {
   RequestHttpError,
@@ -280,6 +281,8 @@ export async function transcribeAudioBytes(
   if (!format || !allowedFormats?.includes(format)) return null;
 
   const localGroqApiKey = groqApiKey(env);
+  if (!dependencies.runWhisper && (env.AI || localGroqApiKey))
+    await reserveProviderUsage("transcription_requests");
   let rawResult: unknown;
   if (dependencies.runWhisper) {
     const base64 = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64");
@@ -303,15 +306,8 @@ export async function transcribeAudioBytes(
       );
       if (!normalizeWhisperTranscription(rawResult)) throw new Error("Invalid transcription");
     } catch (error) {
-      if (!localGroqApiKey) throw error;
-      rawResult = await runGroqWhisper(
-        bytes,
-        format,
-        normalizedType,
-        localGroqApiKey,
-        signal,
-        dependencies.fetcher ?? fetch,
-      );
+      // A timed-out/invalid response may still have been charged. No automatic paid fallback.
+      throw error;
     }
   } else if (localGroqApiKey) {
     rawResult = await runGroqWhisper(

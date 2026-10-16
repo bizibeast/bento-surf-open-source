@@ -71,6 +71,47 @@ export function telegramActionId(data: string) {
   return actionPattern.exec(data.trim())?.[1]?.toLowerCase() || null;
 }
 
+type TelegramTextEntity = {
+  type: "bold" | "italic" | "code" | "text_link";
+  offset: number;
+  length: number;
+  url?: string;
+};
+
+/** Native entities avoid Telegram Markdown escaping failures and never interpret raw HTML. */
+export function formatTelegramText(markdown: string) {
+  let text = "";
+  const entities: TelegramTextEntity[] = [];
+  for (const [index, rawLine] of markdown.replace(/\r\n/g, "\n").split("\n").entries()) {
+    if (index) text += "\n";
+    const heading = /^\s{0,3}#{1,6}\s+/.test(rawLine);
+    const line = rawLine.replace(/^\s{0,3}#{1,6}\s+/, "").replace(/^(\s*)[-*]\s+/, "$1• ");
+    const start = text.length;
+    let from = 0;
+    const tokens =
+      /`([^`\n]+)`|\*\*([^*\n]+)\*\*|__([^_\n]+)__|\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)|(?<!\w)\*([^*\n]+)\*(?!\w)/g;
+    for (const match of line.matchAll(tokens)) {
+      text += line.slice(from, match.index);
+      const value = match[1] ?? match[2] ?? match[3] ?? match[4] ?? match[6];
+      const type = match[1] ? "code" : match[4] ? "text_link" : match[6] ? "italic" : "bold";
+      // Telegram rejects code entities nested inside a bold heading.
+      if (!heading || (type !== "bold" && type !== "code"))
+        entities.push({
+          type,
+          offset: text.length,
+          length: value.length,
+          ...(match[5] ? { url: match[5] } : {}),
+        });
+      text += value;
+      from = match.index! + match[0].length;
+    }
+    text += line.slice(from);
+    if (heading && text.length > start)
+      entities.push({ type: "bold", offset: start, length: text.length - start });
+  }
+  return { text, entities: entities.sort((a, b) => a.offset - b.offset || b.length - a.length) };
+}
+
 function renderCard(card: ContentAgentCard) {
   switch (card.type) {
     case "source":
@@ -78,7 +119,7 @@ function renderCard(card: ContentAgentCard) {
     case "idea":
       return `Idea: ${card.title}\n${card.premise}\nFormat: ${card.format}\nTakeaway: ${card.takeaway}${card.sourceUrls.length ? `\nSources: ${card.sourceUrls.join(" ")}` : ""}`;
     case "draft":
-      return `Draft for ${card.platform} (${card.format})${card.title ? `\n${card.title}` : ""}\n${card.body}${card.visualBrief ? `\nVisual: ${card.visualBrief}` : ""}${card.sourceUrls.length ? `\nSources: ${card.sourceUrls.join(" ")}` : ""}`;
+      return `**Draft for ${card.platform === "twitter" ? "X" : card.platform} (${card.format})**${card.title ? `\n${card.title}` : ""}\n\n${card.body}${card.slides?.length ? `\n\n${card.slides.map((slide, index) => `**Slide ${index + 1}: ${slide.heading}**\n${slide.body}`).join("\n\n")}` : ""}${card.sourceUrls.length ? `\n\nSources: ${card.sourceUrls.join(" ")}` : ""}`;
     case "brain_proposal":
       return `Brain suggestion: ${card.title}\n${card.content}${card.sourceUrl ? `\nSource: ${card.sourceUrl}` : ""}`;
     case "weekly_plan":
@@ -93,7 +134,9 @@ function splitTelegramText(text: string) {
   let remaining = text.trim();
   while (remaining.length > 4_096) {
     const newline = remaining.lastIndexOf("\n", 4_096);
-    const splitAt = newline >= 2_048 ? newline : 4_096;
+    let splitAt = newline >= 2_048 ? newline : 4_096;
+    // JavaScript and Telegram entities use UTF-16; do not split an emoji surrogate pair.
+    if (/[\uD800-\uDBFF]/.test(remaining[splitAt - 1])) splitAt--;
     chunks.push(remaining.slice(0, splitAt).trimEnd());
     remaining = remaining.slice(splitAt).trimStart();
   }

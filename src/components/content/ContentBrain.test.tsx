@@ -36,20 +36,79 @@ const handlers = () => ({
 });
 
 describe("ContentBrain", () => {
+  it("shows a story's point instead of Markdown heading syntax in the index", () => {
+    render(
+      <ContentBrain
+        profile={profile}
+        items={[
+          {
+            ...suggestedStory,
+            content: "### Point\nA lesson from startup failure.\n### Hook\nThe first launch.",
+          },
+        ]}
+        sources={[]}
+        {...handlers()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Stories" }));
+    expect(screen.getByText(/A lesson from startup failure/)).toBeVisible();
+    expect(screen.queryByText(/### Point/)).not.toBeInTheDocument();
+  });
+
   it("uploads every selected photo instead of dropping all but the first", async () => {
     const actions = handlers();
     render(<ContentBrain profile={profile} items={[]} sources={[]} {...actions} />);
-    fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+    fireEvent.click(screen.getByRole("button", { name: "Media" }));
     const files = [
       new File(["one"], "one.webp", { type: "image/webp" }),
       new File(["two"], "two.webp", { type: "image/webp" }),
     ];
-    const input = screen.getByLabelText("Upload photos");
+    const input = screen.getByLabelText("Upload media");
     expect(input).toHaveAttribute("multiple");
     fireEvent.change(input, { target: { files } });
     await waitFor(() => expect(actions.onUpload).toHaveBeenCalledTimes(2));
     expect(actions.onUpload).toHaveBeenNthCalledWith(1, files[0], "photo");
     expect(actions.onUpload).toHaveBeenNthCalledWith(2, files[1], "photo");
+  });
+  it("queues a connected post and assigns an uploaded image to a hero slot", async () => {
+    const actions = handlers();
+    const onImportPost = vi.fn().mockResolvedValue(undefined);
+    const onSetHero = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ContentBrain
+        profile={profile}
+        items={[]}
+        sources={[]}
+        photos={[
+          {
+            id: "22222222-2222-4222-8222-222222222222",
+            title: "Launch image",
+            url: "https://example.com/launch.jpg",
+            sourceUrl: null,
+            provider: "upload",
+            type: "image",
+          },
+        ]}
+        onImportPost={onImportPost}
+        onSetHero={onSetHero}
+        {...actions}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Media" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Connected post link" }), {
+      target: { value: "https://www.instagram.com/p/launch" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+    await waitFor(() =>
+      expect(onImportPost).toHaveBeenCalledWith("https://www.instagram.com/p/launch"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Launch image" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Hero slot" }), {
+      target: { value: "2" },
+    });
+    await waitFor(() =>
+      expect(onSetHero).toHaveBeenCalledWith(2, "22222222-2222-4222-8222-222222222222"),
+    );
   });
   it("keeps inferred stories visibly suggested until the creator confirms them", () => {
     const actions = handlers();
@@ -78,7 +137,7 @@ describe("ContentBrain", () => {
     );
   });
 
-  it("automatically creates editable X and LinkedIn strategy documents", () => {
+  it("automatically creates editable X and LinkedIn strategy documents", async () => {
     const actions = handlers();
     render(<ContentBrain profile={profile} items={[]} sources={[]} {...actions} />);
     fireEvent.click(screen.getByRole("button", { name: "Strategy" }));
@@ -86,15 +145,16 @@ describe("ContentBrain", () => {
     expect(
       screen.getByRole("heading", { name: "Creator Content Strategy - One-Pager" }),
     ).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Edit X Strategy" }));
-    expect(
-      (screen.getByRole("textbox", { name: "X Strategy" }) as HTMLTextAreaElement).value,
-    ).toContain("## Posting Rhythm");
+    expect(screen.getByRole("textbox", { name: "X Strategy" })).toHaveTextContent("Posting Rhythm");
     fireEvent.click(screen.getByRole("button", { name: "LinkedIn strategy" }));
-    fireEvent.click(screen.getByRole("button", { name: "Edit LinkedIn Strategy" }));
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(actions.onSaveItem).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: "strategy", title: "LinkedIn Strategy" }),
+    const editor = screen.getByRole("textbox", { name: "LinkedIn Strategy" });
+    editor.innerHTML = "<p>My LinkedIn strategy</p>";
+    fireEvent.input(editor);
+    fireEvent.blur(editor);
+    await waitFor(() =>
+      expect(actions.onSaveItem).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "strategy", title: "LinkedIn Strategy" }),
+      ),
     );
   });
 

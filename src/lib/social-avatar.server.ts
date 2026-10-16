@@ -11,7 +11,7 @@ const AVATAR_HOSTS: Record<SocialProvider, readonly string[]> = {
   tiktok: ["tiktokcdn.com", "tiktokcdn-us.com", "byteoversea.com", "ibytedtos.com"],
   linkedin: ["licdn.com"],
   twitter: ["twimg.com"],
-  youtube: ["ggpht.com", "googleusercontent.com"],
+  youtube: ["ggpht.com", "googleusercontent.com", "ytimg.com"],
   reddit: ["redditstatic.com", "redditmedia.com", "redd.it"],
 };
 
@@ -130,4 +130,27 @@ export async function durableSocialAvatarUrl(input: {
     });
     return input.value;
   }
+}
+
+/** Public Discover creators are shared source data, not a user's connected account. */
+export async function durableDiscoverAvatarUrl(
+  provider: SocialProvider,
+  creatorUrl: string,
+  value: string,
+) {
+  const avatar = await downloadAvatar(provider, value);
+  if (!avatar) return value;
+  const digest = await crypto.subtle.digest("SHA-256", avatar.bytes);
+  const hash = [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  const key = `discover/creator-avatars/${provider}-${hash}`;
+  await getMediaBucket().put(key, avatar.bytes, {
+    httpMetadata: {
+      contentType: avatar.contentType,
+      cacheControl: "public, max-age=31536000, immutable",
+    },
+    customMetadata: { creatorUrl },
+  });
+  return mediaObjectUrl(key, process.env.VITE_APP_URL);
 }

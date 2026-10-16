@@ -1,3 +1,4 @@
+import { hasPlanEntitlement } from "./plan.server";
 import { createServerFn } from "@tanstack/react-start";
 import { setCookie } from "@tanstack/react-start/server";
 import { z } from "zod";
@@ -49,4 +50,21 @@ export const updateAccountPreference = createServerFn({ method: "POST" })
       .single();
     if (error) throw new Error("Theme preference could not be saved.");
     return { appTheme: preference.app_theme as "light" | "dark" };
+  });
+
+export const getCreatorEntryState = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { data, error } = await context.supabase
+      .from("profiles")
+      .select("onboarded")
+      .eq("id", context.userId)
+      .maybeSingle();
+    if (error) throw new Error("Your workspace entry status could not be loaded.");
+    return {
+      workspaceId: context.userId,
+      onboarded: data?.onboarded === true,
+      needsBilling:
+        data?.onboarded === true && !(await hasPlanEntitlement(context.userId, "customFonts")),
+    };
   });

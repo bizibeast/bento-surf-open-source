@@ -8,6 +8,8 @@ export type ContentRoutineSchedule = {
   name?: string;
   instructions?: string;
   catalogKey?: string;
+  reviewReason?: string;
+  outputMode?: "draft" | "schedule";
 };
 
 export type ContentRoutineTemplate =
@@ -93,4 +95,17 @@ export function missingPostingSlots(
     }
   }
   return result;
+}
+
+export const AUTOMATIC_ROUTINE_PLATFORMS = ["twitter", "linkedin", "instagram"] as const;
+export function routineReviewReason(routine: {
+  platforms: string[];
+  schedule: ContentRoutineSchedule;
+}) {
+  return routine.schedule.outputMode === "schedule" ||
+    (routine.platforms || []).some(
+      (platform) => !(AUTOMATIC_ROUTINE_PLATFORMS as readonly string[]).includes(platform),
+    )
+    ? "Review this routine: choose X text, LinkedIn text, or Instagram carousel and save drafts for review before enabling."
+    : routine.schedule.reviewReason || null;
 }

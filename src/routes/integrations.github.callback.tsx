@@ -8,7 +8,11 @@ export const Route = createFileRoute("/integrations/github/callback")({
   ssr: false,
   pendingMs: 0,
   validateSearch: z.object({
-    installation_id: z.string().max(20).optional(),
+    code: z.string().max(4_000).optional(),
+    installation_id: z.coerce
+      .string()
+      .regex(/^[0-9]{1,20}$/)
+      .optional(),
     setup_action: z.string().max(50).optional(),
     state: z.string().max(100).optional(),
   }),
@@ -24,12 +28,12 @@ function GitHubCallback() {
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    if (!search.installation_id || !search.state) {
+    if (!search.code || !search.installation_id || !search.state) {
       setMessage("GitHub App installation was cancelled.");
       return;
     }
     void completeGitHubContentConnection({
-      data: { installationId: search.installation_id, state: search.state },
+      data: { installationId: search.installation_id, code: search.code, state: search.state },
     })
       .then(() =>
         navigate({
@@ -41,7 +45,7 @@ function GitHubCallback() {
       .catch((error) =>
         setMessage(error instanceof Error ? error.message : "GitHub connection failed."),
       );
-  }, [navigate, search.installation_id, search.state]);
+  }, [navigate, search.code, search.installation_id, search.state]);
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#f7f9fd] px-6">

@@ -13,6 +13,7 @@ const RESERVED_APPLICATION_SEGMENTS = new Set([
   "bookings",
   "calendar",
   "community",
+  "content",
   "dashboard",
   "earn",
   "favicon.ico",

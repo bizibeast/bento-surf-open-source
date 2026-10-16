@@ -200,4 +200,142 @@ describe("WebMCP read result projection", () => {
       /visitor_hash|internal-connection|internal-row|provider-post-id|metadata/,
     );
   });
+
+  it("bounds Content Agent conversations and omits private media and provider payloads", () => {
+    const messages = Array.from({ length: 35 }, (_, index) => ({
+      id: `message-${index}`,
+      role: "assistant",
+      content: "A draft is ready.",
+      created_at: "2026-10-14T00:00:00Z",
+      payload: {
+        action: "draft",
+        message: "A draft is ready.",
+        mediaAssets: [{ url: "https://private.example/media", providerToken: "secret" }],
+        cards: [
+          {
+            type: "draft",
+            cardId: "draft-1",
+            platform: "instagram",
+            format: "carousel",
+            body: "Useful draft copy",
+            slides: [{ heading: "Slide one", body: "A useful point", mediaId: "media-1" }],
+            editorial: { angle: "A useful angle", sourceIds: ["private-source-id"] },
+            sourceUrls: ["https://private.example/source"],
+          },
+        ],
+      },
+      provider_reference: "private-provider-reference",
+    }));
+    const result = sanitizeBentoWebMcpReadResult("get_content_agent", {
+      thread: { id: "thread-1", title: "Draft ideas", private_note: "secret" },
+      messages,
+    }) as { messages: unknown[] };
+
+    expect(result.messages).toHaveLength(30);
+    expect(result.messages[0]).toMatchObject({ id: "message-5" });
+    expect(result.messages[0]).toMatchObject({
+      result: {
+        cards: [
+          {
+            cardId: "draft-1",
+            body: "Useful draft copy",
+            slides: [{ heading: "Slide one", mediaId: "media-1" }],
+          },
+        ],
+        mediaAssetCount: 1,
+      },
+    });
+    expect(JSON.stringify(result)).not.toMatch(
+      /private\.example|private-provider-reference|private-source-id|providerToken|private_note/,
+    );
+  });
+
+  it("shows bounded Agent chat pin and unread state without internal thread data", () => {
+    const result = sanitizeBentoWebMcpReadResult("get_content_agent", {
+      threads: Array.from({ length: 60 }, (_, index) => ({
+        id: `thread-${index}`,
+        title: `Chat ${index}`,
+        kind: "chat",
+        pinned_at: index === 0 ? "2026-10-15T00:00:00Z" : null,
+        unread_count: index,
+        last_message_at: "2026-10-15T00:00:00Z",
+        created_at: "2026-10-14T00:00:00Z",
+        user_id: "private-owner-id",
+      })),
+    }) as { threads: unknown[] };
+    expect(result.threads).toHaveLength(50);
+    expect(result.threads[0]).toMatchObject({
+      id: "thread-0",
+      kind: "chat",
+      pinned_at: "2026-10-15T00:00:00Z",
+      unread_count: 0,
+    });
+    expect(JSON.stringify(result)).not.toContain("private-owner-id");
+  });
+
+  it("projects Brain, Media, Routines, and Discover without private connection details", () => {
+    const brain = sanitizeBentoWebMcpReadResult("get_content_brain", {
+      profile: { goal: "reach_growth", nicheKeywords: ["design"], privateField: "secret" },
+      items: [
+        {
+          id: "brain-1",
+          title: "Voice",
+          content: "Be clear",
+          sourceUrl: "https://private.example",
+        },
+      ],
+      sources: [
+        {
+          id: "source-1",
+          provider: "google_calendar",
+          displayName: "owner@example.com",
+          status: "active",
+        },
+      ],
+      indexing: { status: "ready", sourceCount: 3, error: "private-provider-error" },
+    });
+    const media = sanitizeBentoWebMcpReadResult("get_content_media", {
+      photos: [
+        {
+          id: "photo-1",
+          title: "Portrait",
+          url: "https://private.example/image",
+          sourceUrl: "https://private.example/post",
+          tags: ["portrait"],
+        },
+      ],
+      mediaPending: 1,
+      limits: { manualItems: 50, bytes: 1000 },
+    });
+    const routines = sanitizeBentoWebMcpReadResult("get_content_routines", {
+      routines: [{ id: "routine-1", template: "weekly", enabled: true, webhookSecret: "secret" }],
+      activity: [{ id: "run-1", status: "failed", error_message: "private-provider-error" }],
+    });
+    const discover = sanitizeBentoWebMcpReadResult("get_content_discover", {
+      discover: {
+        status: "fresh",
+        trends: [
+          {
+            id: "trend-1",
+            title: "A trend",
+            summary: "Worth reviewing",
+            sourceUrl: "https://private.example/source",
+            metadata: { secret: true },
+          },
+        ],
+        creators: [
+          { id: "creator-1", name: "Creator", profileUrl: "https://private.example/profile" },
+        ],
+      },
+      preferences: { language: "en", region: "global", internalId: "secret" },
+    });
+
+    expect(brain).toMatchObject({ items: [{ id: "brain-1", content: "Be clear" }] });
+    expect(media).toMatchObject({ photos: [{ id: "photo-1", tags: ["portrait"] }] });
+    expect(routines).toMatchObject({ activity: [{ id: "run-1", status: "failed" }] });
+    expect(discover).toMatchObject({ discover: { trends: [{ id: "trend-1" }] } });
+    expect(JSON.stringify({ brain, media, routines, discover })).not.toMatch(
+      /private\.example|owner@example|private-provider-error|webhookSecret|internalId|metadata/,
+    );
+  });
 });

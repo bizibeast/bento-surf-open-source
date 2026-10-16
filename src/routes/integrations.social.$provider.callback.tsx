@@ -60,6 +60,11 @@ function SocialCallback() {
           `${connected} ${definition.name} account${connected === 1 ? "" : "s"} connected.`,
         );
         window.setTimeout(() => {
+          if (window.sessionStorage.getItem("bentoOnboardingSocialReturn")) {
+            window.sessionStorage.removeItem("bentoOnboardingSocialReturn");
+            void navigate({ to: "/onboarding", replace: true });
+            return;
+          }
           const twitterReturn =
             provider === "twitter"
               ? window.sessionStorage.getItem("twitterConnectionReturnTo")

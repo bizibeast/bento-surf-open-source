@@ -4,9 +4,47 @@ import {
   renderTelegramAgentResult,
   telegramActionId,
   telegramStartState,
+  formatTelegramText,
 } from "./telegram";
 
 describe("Telegram protocol", () => {
+  it("renders the agent's Markdown as readable native Telegram entities", () => {
+    const formatted = formatTelegramText(
+      "### Your voice\n\n- You're **bold** and direct.\n- Read [the source](https://example.com/story).\n\nUse `x < 3` safely.",
+    );
+    expect(formatted.text).toBe(
+      "Your voice\n\n• You're bold and direct.\n• Read the source.\n\nUse x < 3 safely.",
+    );
+    const spans = formatted.entities.map((entity) => ({
+      type: entity.type,
+      text: formatted.text.slice(entity.offset, entity.offset + entity.length),
+      url: entity.url,
+    }));
+    expect(spans).toEqual(
+      expect.arrayContaining([
+        { type: "bold", text: "Your voice", url: undefined },
+        { type: "bold", text: "bold", url: undefined },
+        { type: "text_link", text: "the source", url: "https://example.com/story" },
+        { type: "code", text: "x < 3", url: undefined },
+      ]),
+    );
+  });
+
+  it("uses UTF-16 entity offsets and preserves handles, underscores and raw HTML safely", () => {
+    const formatted = formatTelegramText(
+      "👋 **Hello** @some_user <b>literal</b> [unsafe](javascript:alert)",
+    );
+    expect(formatted.text).toContain("@some_user <b>literal</b>");
+    expect(formatted.entities[0]).toMatchObject({ type: "bold", offset: 3, length: 5 });
+    expect(formatted.entities.some((item) => item.url?.startsWith("javascript:"))).toBe(false);
+  });
+  it("avoids invalid code entities nested inside a heading", () => {
+    const formatted = formatTelegramText("### Use `example()` today");
+    expect(formatted.text).toBe("Use example() today");
+    expect(formatted.entities).toEqual([
+      { type: "bold", offset: 0, length: formatted.text.length },
+    ]);
+  });
   it("accepts one bounded private text update", () => {
     expect(
       parseTelegramUpdate({

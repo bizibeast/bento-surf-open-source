@@ -1,3 +1,4 @@
+import { hasPlanEntitlement } from "./plan.server";
 import { loadAutoDmMetrics } from "./auto-dm-metrics.server";
 /* eslint-disable @typescript-eslint/no-explicit-any -- New service-role tables are typed after the migration is deployed. */
 import { createServerFn } from "@tanstack/react-start";
@@ -227,7 +228,7 @@ export const getFacebookAutoDmDashboard = createServerFn({ method: "GET" })
     return {
       ...data,
       locked: !planHasEntitlement(data.plan, "facebookAutoDM"),
-      advancedAutoDm: planHasEntitlement(data.plan, "advancedAutoDM"),
+      advancedAutoDm: await hasPlanEntitlement(context.userId, "advancedAutoDM"),
     };
   });
 
@@ -235,9 +236,9 @@ export const saveFacebookAutoDmAutomation = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) => facebookDmAutomationInputSchema.parse(input))
   .handler(async ({ data, context }) => {
-    const plan = await requireAutoDm(context.userId);
-    if (usesAdvancedAutoDm(data) && !planHasEntitlement(plan, "advancedAutoDM")) {
-      throw new Error("Advanced Auto DMs are included with the Store plan. Upgrade to continue.");
+    await requireAutoDm(context.userId);
+    if (usesAdvancedAutoDm(data) && !(await hasPlanEntitlement(context.userId, "advancedAutoDM"))) {
+      throw new Error("Advanced Auto DMs are included with the Creator plan. Upgrade to continue.");
     }
     await enforceRequestRateLimit(
       "EXPENSIVE_API_RATE_LIMITER",

@@ -49,6 +49,8 @@ describe("public page cache boundary", () => {
       "/store",
       "/calendar",
       "/community",
+      "/content",
+      "/content?tab=agent",
       "/post-scheduler",
       "/social-insights",
       "/auto-dms",

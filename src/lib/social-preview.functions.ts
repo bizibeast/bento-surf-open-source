@@ -1,3 +1,4 @@
+import { reserveProviderUsage } from "./provider-budget.server";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import {
@@ -764,6 +765,7 @@ async function requestInstagramCollection(
   // The async endpoint returns a durable snapshot ID immediately. That lets a
   // later request resume the same job instead of keeping a Worker request open
   // for the synchronous endpoint's one-minute timeout.
+  await reserveProviderUsage("bright_data_requests");
   const url = new URL("https://api.brightdata.com/datasets/v3/trigger");
   url.searchParams.set("dataset_id", BRIGHT_DATA_INSTAGRAM_PROFILE_DATASET_ID);
   url.searchParams.set("include_errors", "true");
@@ -1340,6 +1342,7 @@ export async function fetchLinkedInBrightDataPreview(handle: string): Promise<So
 
   const apiKey = process.env.BRIGHT_DATA_API_KEY?.trim();
   if (!apiKey) throw new SocialPreviewSourceError("Bright Data is not configured", "blocked");
+  await reserveProviderUsage("bright_data_requests");
   const response = await fetch(
     `https://api.brightdata.com/datasets/v3/scrape?dataset_id=${BRIGHT_DATA_LINKEDIN_PROFILE_DATASET_ID}&format=json`,
     {

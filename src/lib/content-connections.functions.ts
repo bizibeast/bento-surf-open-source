@@ -111,7 +111,11 @@ export const completeGitHubContentConnection = createServerFn({ method: "POST" }
   .middleware([requireSupabaseAuth])
   .validator((input) =>
     z
-      .object({ installationId: z.string().regex(/^[0-9]{1,20}$/), state: z.string().uuid() })
+      .object({
+        installationId: z.string().regex(/^[0-9]{1,20}$/),
+        code: z.string().min(1).max(4_000),
+        state: z.string().uuid(),
+      })
       .parse(input),
   )
   .handler(async ({ context, data }) => {

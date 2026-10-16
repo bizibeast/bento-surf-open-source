@@ -1,6 +1,13 @@
 import { createClientOnlyFn } from "@tanstack/react-start";
 import posthog from "posthog-js";
 import { redactSensitivePathname } from "./safe-url";
+import {
+  isHeatmapProductPath,
+  isReplayableProductPath,
+  isTrackedProductPath,
+} from "./posthog-paths";
+
+export { isHeatmapProductPath, isReplayableProductPath, isTrackedProductPath };
 
 export type ProductEventName =
   | "signup_started"
@@ -8,6 +15,14 @@ export type ProductEventName =
   | "login_completed"
   | "username_claimed"
   | "first_block_added"
+  | "app_setup_complete"
+  | "app_setup_resumed"
+  | "app_setup_skipped"
+  | "onboarding_workspace_ready"
+  | "onboarding_preparation_ready"
+  | "onboarding_checkout_started"
+  | "onboarding_first_result_used"
+  | "onboarding_step_completed"
   | "onboarding_completed"
   | "onboarding_plan_selected"
   | "onboarding_upgrade_prompt_viewed"
@@ -45,19 +60,13 @@ let initialized = false;
 let identifiedUserId: string | null = null;
 let replayablePath = false;
 let replayFlagEnabled = false;
+// Stable per tab: avoid recording every paid replay/heatmap session after a broad flag rollout.
+const sampledVisualAnalytics = Math.random() < 0.1;
 let heatmapsEnabled = false;
 let firstTouch: Record<string, string> = {};
 let outboundTrackingAttached = false;
 
 const FIRST_TOUCH_KEY = "bento:first-touch:v1";
-const PRODUCT_ANALYTICS_PATHS = new Set([
-  "/",
-  "/signup",
-  "/login",
-  "/onboarding",
-  "/link",
-  "/analytics",
-]);
 
 function safeCampaignValue(value: string | null): string | null {
   const cleaned = value?.trim().slice(0, 120);
@@ -145,12 +154,13 @@ function attachOutboundLinkTracking() {
 }
 
 function applySessionRecordingState() {
-  if (replayablePath && replayFlagEnabled) posthog.startSessionRecording();
+  if (replayablePath && replayFlagEnabled && sampledVisualAnalytics)
+    posthog.startSessionRecording();
   else posthog.stopSessionRecording();
 }
 
 function applyHeatmapState() {
-  posthog.set_config({ enable_heatmaps: heatmapsEnabled });
+  posthog.set_config({ enable_heatmaps: heatmapsEnabled && sampledVisualAnalytics });
 }
 
 function stripUrlSecrets(value: unknown): unknown {
@@ -176,7 +186,7 @@ function initPostHog(): boolean {
     defaults: "2026-05-30",
     autocapture: false,
     capture_pageview: false,
-    capture_pageleave: true,
+    capture_pageleave: false,
     person_profiles: "identified_only",
     flag_keys: [PRODUCT_FEATURE_FLAGS.sessionReplay],
     feature_flag_request_timeout_ms: 2_000,
@@ -275,24 +285,3 @@ export const isProductFeatureEnabled = createClientOnlyFn((flag: ProductFeatureF
   if (!initPostHog()) return false;
   return posthog.getFeatureFlagResult(flag)?.enabled === true;
 });
-
-export function isTrackedProductPath(pathname: string) {
-  return (
-    PRODUCT_ANALYTICS_PATHS.has(pathname) ||
-    pathname === "/tools" ||
-    pathname.startsWith("/tools/") ||
-    pathname === "/store" ||
-    pathname.startsWith("/p/") ||
-    /^\/@[^/]+\/products\/[^/]+(?:\/success)?\/?$/.test(pathname)
-  );
-}
-
-export function isReplayableProductPath(pathname: string) {
-  return (
-    PRODUCT_ANALYTICS_PATHS.has(pathname) ||
-    (pathname.startsWith("/p/") && !pathname.endsWith("/success")) ||
-    /^\/@[^/]+\/products\/[^/]+\/?$/.test(pathname)
-  );
-}
-
-export const isHeatmapProductPath = isReplayableProductPath;

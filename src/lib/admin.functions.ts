@@ -486,7 +486,7 @@ export const getAdminOverview = createServerFn({ method: "GET" })
       []) as unknown as InstagramAutomationHealthRow[];
     const instagramRuns = (instagramRunsResult.data ?? []) as unknown as InstagramRunHealthRow[];
     const chartCurrency = database.revenue?.[0]?.currency ?? "USD";
-    const planMix = { free: 0, store: 0, creator: 0 };
+    const planMix = { free: 0, store: 0, creator: 0, creator_plus: 0 };
     const plansByUser = new Map<string, PlanId>();
     for (const profile of planMixResult.data ?? []) {
       const profilePlan = normalizePlan(profile.plan_id, Boolean(profile.is_pro));

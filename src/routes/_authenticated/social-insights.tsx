@@ -17,6 +17,7 @@ import {
   Eye,
   ExternalLink,
   Heart,
+  ImageOff,
   LoaderCircle,
   MessageCircle,
   Plus,
@@ -25,6 +26,7 @@ import {
   Trophy,
   UserRoundSearch,
   UsersRound,
+  RefreshCw,
 } from "lucide-react";
 import { FaLinkedinIn } from "react-icons/fa";
 import {
@@ -52,6 +54,7 @@ import { micro } from "@/lib/micro-app-ui";
 import { safeMediaUrl } from "@/lib/safe-url";
 import {
   getSocialAnalytics,
+  refreshSocialAnalytics,
   setPublicSocialInsightsPeriod,
   SOCIAL_INSIGHTS_DISPLAY_PERIODS,
   socialInsightsDisplayPeriodLabel,
@@ -119,11 +122,18 @@ function SocialInsightsPage() {
     staleTime: 5 * 60_000,
     retry: 1,
     refetchInterval: (query) =>
-      query.state.data?.accounts?.some(
-        (account: SocialAnalyticsAccount) => account.initialImportActive,
-      )
-        ? 5_000
+      query.state.data?.accounts?.some((account: SocialAnalyticsAccount) => account.refreshing)
+        ? 15_000
         : false,
+  });
+  const refresh = useMutation({
+    mutationFn: () => refreshSocialAnalytics(),
+    onSuccess: (result) => {
+      queryClient.setQueryData(["social-analytics"], { locked: false, ...result });
+      toast.success("Social insights refresh started");
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Social insights could not refresh"),
   });
   const displayPeriod = useMutation({
     mutationFn: (days: SocialInsightsDisplayPeriodDays) =>
@@ -193,6 +203,8 @@ function SocialInsightsPage() {
             displayPeriodDays={analytics.data.displayPeriodDays}
             savingDisplayPeriod={displayPeriod.isPending}
             onDisplayPeriodChange={(days) => displayPeriod.mutate(days)}
+            refreshing={refresh.isPending}
+            onRefresh={() => refresh.mutate()}
           />
         )}
       </div>
@@ -228,6 +240,8 @@ export function InsightsDashboard({
   displayPeriodDays,
   savingDisplayPeriod,
   onDisplayPeriodChange,
+  refreshing = false,
+  onRefresh,
 }: {
   accounts: SocialAnalyticsAccount[];
   history: SocialAnalyticsHistoryPoint[];
@@ -328,7 +342,19 @@ export function InsightsDashboard({
             <p className={micro.eyebrowMuted}>Connected accounts</p>
             <h2 className="mt-1 font-ui-display text-2xl">Choose an audience</h2>
           </div>
-          <InsightsFreshness accounts={all ? accounts : [selected]} />
+          <div className="flex items-center gap-3">
+            <InsightsFreshness accounts={all ? accounts : [selected]} />
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={refreshing || accounts.some((account) => account.refreshing)}
+              aria-label="Refresh insights"
+              className={`${micro.btnSoft} inline-flex items-center gap-2`}
+            >
+              <RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />
+              <span className="hidden sm:inline">Refresh</span>
+            </button>
+          </div>
         </div>
         <MicroAppTabs
           ariaLabel="Social media view"
@@ -424,18 +450,32 @@ function LinkedInAnalyticsComingSoon({ account }: { account: SocialAnalyticsAcco
 }
 
 function InsightsFreshness({ accounts }: { accounts: SocialAnalyticsAccount[] }) {
+  const allAccounts = accounts.length > 1;
   const lastUpdated = accounts
     .map((account) => account.lastUpdatedAt || account.fetchedAt)
     .filter((value) => Number.isFinite(Date.parse(value)))
-    .sort((left, right) => Date.parse(right) - Date.parse(left))[0];
+    .sort((left, right) => Date.parse(left) - Date.parse(right))[0];
+  const overdue = accounts.some((account) => {
+    const updated = Date.parse(account.lastUpdatedAt || account.fetchedAt);
+    return (
+      account.status === "error" ||
+      (!account.refreshing && Number.isFinite(updated) && Date.now() - updated > 24 * 60 * 60_000)
+    );
+  });
   const nextRefresh = accounts
     .flatMap((account) => (account.nextRefreshAt ? [account.nextRefreshAt] : []))
     .filter((value) => Number.isFinite(Date.parse(value)))
     .sort((left, right) => Date.parse(left) - Date.parse(right))[0];
   return (
     <div className="text-right text-xs text-muted-foreground">
-      <p className="font-semibold text-foreground">Updated every 24 hours</p>
-      {lastUpdated && <p className="mt-0.5">Last updated {formatDateTime(lastUpdated)}</p>}
+      <p className={`font-semibold ${overdue ? "text-rose-700" : "text-foreground"}`}>
+        {overdue ? "Refresh overdue" : "Updated every 24 hours"}
+      </p>
+      {lastUpdated && (
+        <p className="mt-0.5">
+          {allAccounts ? "Oldest update" : "Last updated"} {formatDateTime(lastUpdated)}
+        </p>
+      )}
       {nextRefresh && <p className="mt-0.5">Next refresh {formatDateTime(nextRefresh)}</p>}
     </div>
   );
@@ -536,7 +576,7 @@ function AccountOverview({ account }: { account: SocialAnalyticsAccount }) {
           {account.note}
         </p>
       )}
-      {account.note && (
+      {account.note && account.status !== "error" && (
         <p className="mt-4 text-xs leading-5 text-muted-foreground">{account.note}</p>
       )}
     </MicroAppPanel>
@@ -969,6 +1009,30 @@ function ContentPerformancePanel({
   );
 }
 
+function BestContentThumbnail({ src, contentType }: { src: string | null; contentType: string }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [src]);
+
+  if (!src || failed) {
+    return (
+      <div className="mt-4 flex h-40 w-full flex-col items-center justify-center gap-2 rounded-lg bg-[#f2f5fb] text-xs font-medium text-muted-foreground">
+        <ImageOff className="size-5" aria-hidden="true" />
+        <span>Preview unavailable</span>
+      </div>
+    );
+  }
+
+  return (
+    <DecodedImage
+      src={src}
+      alt={`${contentType} post thumbnail`}
+      loading="lazy"
+      className="mt-4 max-h-80 w-full rounded-lg object-cover"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 function BestContentPanel({
   content,
   provider,
@@ -1041,13 +1105,8 @@ function BestContentPanel({
                     {item.caption}
                   </p>
                 )}
-                {thumbnail && (
-                  <DecodedImage
-                    src={thumbnail}
-                    alt=""
-                    loading="lazy"
-                    className="mt-4 max-h-80 w-full rounded-lg object-cover"
-                  />
+                {(thumbnail || item.contentType !== "text") && (
+                  <BestContentThumbnail src={thumbnail} contentType={item.contentType} />
                 )}
                 <div className="mt-4 flex items-center gap-4 text-xs text-muted-foreground">
                   <span className="flex items-center gap-1">

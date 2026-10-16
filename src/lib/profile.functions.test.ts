@@ -5,6 +5,15 @@ const mocks = vi.hoisted(() => ({
   single: vi.fn(),
   getPlan: vi.fn(),
   eq: vi.fn(),
+  enforceRateLimit: vi.fn(),
+  adminFrom: vi.fn(),
+}));
+vi.mock("@tanstack/react-start/server", () => ({ getRequestHost: () => "localhost:8080" }));
+vi.mock("@/lib/request-security.server", () => ({
+  enforceRequestRateLimit: mocks.enforceRateLimit,
+}));
+vi.mock("@/integrations/supabase/client.server", () => ({
+  supabaseAdmin: { from: mocks.adminFrom },
 }));
 vi.mock("@tanstack/react-start", () => ({
   createServerOnlyFn: (fn: any) => fn,
@@ -45,6 +54,7 @@ import {
   profileUpdateSchema,
   sanitizePublicProfileBlocks,
   updateProfile,
+  getPublicProfileForRequest,
 } from "./profile.functions";
 
 beforeEach(() => {
@@ -74,6 +84,12 @@ it("retains the store plan gate", async () => {
   mocks.getPlan.mockResolvedValue("free");
   await expect(updateProfile({ data: { store_page_enabled: true } })).rejects.toThrow("Upgrade");
   expect(mocks.sync).not.toHaveBeenCalled();
+});
+
+it("serves the Bento homepage without a profile cache, rate limit, or database lookup", async () => {
+  expect(await getPublicProfileForRequest({ data: { segments: [] } })).toBeNull();
+  expect(mocks.enforceRateLimit).not.toHaveBeenCalled();
+  expect(mocks.adminFrom).not.toHaveBeenCalled();
 });
 
 describe("profileUpdateSchema", () => {

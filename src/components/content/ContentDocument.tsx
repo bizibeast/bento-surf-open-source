@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Eye, PencilLine } from "lucide-react";
 import { parsePublicHttpUrl } from "@/lib/safe-url";
 
 function inline(text: string): ReactNode[] {
@@ -142,12 +143,84 @@ export function ContentMarkdown({ text }: { text: string }) {
   return <div className="content-prose">{blocks}</div>;
 }
 
+/** Preserve the rendered document structure when an inline edit is saved. */
+export function documentMarkdown(element: HTMLElement): string {
+  const read = (node: Node): string => {
+    if (node.nodeType === 3) return node.textContent || "";
+    if (!(node instanceof HTMLElement)) return "";
+    const content = Array.from(node.childNodes).map(read).join("");
+    switch (node.tagName) {
+      case "H2":
+        return `\n# ${content}\n\n`;
+      case "H3":
+        return `\n## ${content}\n\n`;
+      case "H4":
+        return `\n### ${content}\n\n`;
+      case "STRONG":
+      case "B":
+        return `**${content}**`;
+      case "EM":
+      case "I":
+        return `*${content}*`;
+      case "BR":
+        return "\n";
+      case "A":
+        return parsePublicHttpUrl(node.getAttribute("href") || "")
+          ? `[${content}](${node.getAttribute("href")})`
+          : content;
+      case "PRE":
+        return `\n\n\`\`\`\n${node.textContent || ""}\n\`\`\`\n\n`;
+      case "CODE":
+        return `\`${content}\``;
+      case "LI":
+        return `${node.parentElement?.tagName === "OL" ? `${Array.from(node.parentElement.children).indexOf(node) + 1}.` : "-"} ${content.trim()}\n`;
+      case "UL":
+      case "OL":
+        return `\n${content}\n`;
+      case "BLOCKQUOTE":
+        return `\n${content
+          .trim()
+          .split("\n")
+          .map((line) => `> ${line}`)
+          .join("\n")}\n\n`;
+      case "HR":
+        return "\n---\n\n";
+      case "TABLE": {
+        const rows = Array.from(node.querySelectorAll("tr")).map(
+          (row) =>
+            `| ${Array.from(row.children)
+              .map((cell) => read(cell).trim())
+              .join(" | ")} |`,
+        );
+        if (rows.length)
+          rows.splice(
+            1,
+            0,
+            `| ${Array.from(node.querySelector("tr")!.children)
+              .map(() => "---")
+              .join(" | ")} |`,
+          );
+        return `\n${rows.join("\n")}\n\n`;
+      }
+      case "P":
+      case "DIV":
+        return `${content}\n\n`;
+      default:
+        return content;
+    }
+  };
+  return Array.from(element.childNodes)
+    .map(read)
+    .join("")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export function ContentDocument({
   label,
   value,
   placeholder,
   onSave,
-  initiallyEditing = false,
 }: {
   label: string;
   value: string;
@@ -155,147 +228,201 @@ export function ContentDocument({
   onSave: (value: string) => void | Promise<void>;
   initiallyEditing?: boolean;
 }) {
+  const [display, setDisplay] = useState(value);
   const [draft, setDraft] = useState(value);
-  const [editing, setEditing] = useState(initiallyEditing || !value);
-  const [saving, setSaving] = useState(false);
+  const [preview, setPreview] = useState(false);
+  const [status, setStatus] = useState("Saved");
   const [error, setError] = useState("");
-  const [undo, setUndo] = useState<string[]>([]);
-  const [redo, setRedo] = useState<string[]>([]);
-  const input = useRef<HTMLTextAreaElement>(null);
-  const dirty = draft !== value;
-  useEffect(() => {
-    setDraft(value);
-  }, [value]);
-  const change = (next: string) => {
-    setUndo((values) => [...values.slice(-99), draft]);
-    setRedo([]);
-    setDraft(next);
-  };
-  const format = (prefix: string, suffix = "") => {
-    const element = input.current;
-    if (!element) return;
-    const { selectionStart: start, selectionEnd: end } = element;
-    change(draft.slice(0, start) + prefix + draft.slice(start, end) + suffix + draft.slice(end));
-    requestAnimationFrame(() => {
-      element.focus();
-      element.setSelectionRange(start + prefix.length, end + prefix.length);
-    });
-  };
+  const input = useRef<HTMLDivElement>(null);
+  const latest = useRef(value);
+  const saved = useRef(value);
+  const saving = useRef(false);
+  const saveHandler = useRef(onSave);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const mounted = useRef(true);
+  saveHandler.current = onSave;
+
   const save = async () => {
-    if (!draft.trim() || saving) return;
-    setSaving(true);
-    setError("");
-    try {
-      await onSave(draft.trim());
-      setEditing(false);
-    } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : "Could not save. Your edits are still here.",
-      );
-    } finally {
-      setSaving(false);
+    clearTimeout(timer.current);
+    if (saving.current || latest.current === saved.current) return;
+    const text = latest.current;
+    if (!text.trim() || text.length > 20_000) {
+      if (mounted.current)
+        setError(
+          !text.trim()
+            ? "Add some text, or delete this item to remove it."
+            : "Keep this document under 20,000 characters.",
+        );
+      return;
     }
+    saving.current = true;
+    if (mounted.current) {
+      setStatus("Saving…");
+      setError("");
+    }
+    try {
+      await saveHandler.current(text);
+      saved.current = text;
+      if (mounted.current) setStatus("Saved");
+    } catch (cause) {
+      if (mounted.current) {
+        setStatus("Not saved");
+        setError(
+          cause instanceof Error ? cause.message : "Could not save. Your edits are still here.",
+        );
+      }
+      return;
+    } finally {
+      saving.current = false;
+    }
+    // Edits made while a request was running must follow it, never race it.
+    if (latest.current !== saved.current) await save();
+  };
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  useEffect(() => {
+    // Refetches must not replace text the creator is still typing.
+    if (latest.current === saved.current && document.activeElement !== input.current) {
+      latest.current = saved.current = value;
+      setDisplay(value);
+      setDraft(value);
+    }
+  }, [value]);
+  useEffect(() => {
+    mounted.current = true;
+    const warn = (event: BeforeUnloadEvent) => {
+      if (latest.current !== saved.current) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => {
+      mounted.current = false;
+      clearTimeout(timer.current);
+      window.removeEventListener("beforeunload", warn);
+      void saveRef.current();
+    };
+  }, []);
+  const changed = () => {
+    if (!input.current) return;
+    const next = documentMarkdown(input.current);
+    latest.current = next;
+    setDraft(next);
+    setError("");
+    setStatus(next === saved.current ? "Saved" : "Unsaved changes");
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => void saveRef.current(), 700);
+  };
+  const format = (command: string, argument?: string) => {
+    input.current?.focus();
+    document.execCommand(command, false, argument);
+    changed();
   };
   return (
     <section className="content-document" aria-label={`${label} document`}>
       <div className="content-document-toolbar">
-        {editing && (
+        {!preview && (
           <div className="flex gap-1" aria-label="Document formatting">
-            <button type="button" aria-label="Heading 1" onClick={() => format("# ")}>
+            <button
+              type="button"
+              aria-label="Heading 1"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => format("formatBlock", "h2")}
+            >
               H₁
             </button>
-            <button type="button" aria-label="Heading 2" onClick={() => format("## ")}>
+            <button
+              type="button"
+              aria-label="Heading 2"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => format("formatBlock", "h3")}
+            >
               H₂
             </button>
-            <button type="button" aria-label="Bold" onClick={() => format("**", "**")}>
+            <button
+              type="button"
+              aria-label="Bold"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => format("bold")}
+            >
               <strong>B</strong>
             </button>
-            <button type="button" aria-label="Italic" onClick={() => format("*", "*")}>
+            <button
+              type="button"
+              aria-label="Italic"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => format("italic")}
+            >
               <em>I</em>
             </button>
-            <button type="button" aria-label="Bullet list" onClick={() => format("- ")}>
-              ≡
-            </button>
             <button
               type="button"
-              aria-label="Undo"
-              disabled={!undo.length}
-              onClick={() => {
-                const prior = undo.at(-1);
-                if (prior !== undefined) {
-                  setRedo((values) => [...values, draft]);
-                  setUndo((values) => values.slice(0, -1));
-                  setDraft(prior);
-                }
-              }}
+              aria-label="Bullet list"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => format("insertUnorderedList")}
             >
-              ↶
-            </button>
-            <button
-              type="button"
-              aria-label="Redo"
-              disabled={!redo.length}
-              onClick={() => {
-                const next = redo.at(-1);
-                if (next !== undefined) {
-                  setUndo((values) => [...values, draft]);
-                  setRedo((values) => values.slice(0, -1));
-                  setDraft(next);
-                }
-              }}
-            >
-              ↷
+              List
             </button>
           </div>
         )}
-        <div className="ml-auto flex gap-2">
-          {editing ? (
-            <>
-              {!!value && (
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={() => {
-                    setDraft(value);
-                    setEditing(false);
-                    setError("");
-                  }}
-                >
-                  Cancel
-                </button>
-              )}
-              <button type="button" disabled={!draft.trim() || saving} onClick={() => void save()}>
-                {saving ? "Saving…" : "Save"}
-              </button>
-            </>
-          ) : (
-            <button type="button" onClick={() => setEditing(true)}>
-              Edit {label}
-            </button>
-          )}
+        <div className="ml-auto flex items-center gap-2">
+          <span role="status" aria-live="polite">
+            {status}
+          </span>
+          <button
+            type="button"
+            aria-label={preview ? `Write ${label}` : `Preview ${label}`}
+            aria-pressed={preview}
+            onClick={() => {
+              void saveRef.current();
+              setDisplay(latest.current);
+              setPreview(!preview);
+            }}
+          >
+            {preview ? <PencilLine className="size-4" /> : <Eye className="size-4" />}
+          </button>
         </div>
       </div>
-      {editing ? (
-        <textarea
-          ref={input}
-          aria-label={label}
-          value={draft}
-          placeholder={placeholder}
-          maxLength={20_000}
-          onChange={(event) => change(event.target.value)}
-          className="content-document-input"
-        />
-      ) : (
-        <ContentMarkdown text={draft} />
-      )}
-      {editing && (
-        <p className="mt-3 text-right text-xs text-neutral-400">
-          {draft.length.toLocaleString()} / 20,000{dirty ? " · Unsaved" : ""}
-        </p>
-      )}
+      <div
+        ref={input}
+        role="textbox"
+        aria-label={label}
+        aria-multiline="true"
+        aria-readonly={preview}
+        contentEditable={!preview}
+        suppressContentEditableWarning
+        tabIndex={0}
+        data-placeholder={placeholder || "Click here and start writing…"}
+        data-empty={!draft.trim()}
+        className="content-document-editor"
+        onInput={changed}
+        onBlur={() => void saveRef.current()}
+        onDrop={(event) => {
+          event.preventDefault();
+          document.execCommand("insertText", false, event.dataTransfer.getData("text/plain"));
+          changed();
+        }}
+        onPaste={(event) => {
+          event.preventDefault();
+          document.execCommand("insertText", false, event.clipboardData.getData("text/plain"));
+          changed();
+        }}
+        onKeyDown={(event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key === "s") {
+            event.preventDefault();
+            void saveRef.current();
+          }
+        }}
+      >
+        <ContentMarkdown text={display} />
+      </div>
       {error && (
         <p role="alert" className="mt-2 text-sm text-red-700">
-          {error}
+          {error}{" "}
+          <button type="button" className="underline" onClick={() => void saveRef.current()}>
+            Retry save
+          </button>
         </p>
       )}
     </section>

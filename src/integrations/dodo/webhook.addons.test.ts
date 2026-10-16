@@ -4,15 +4,61 @@ const mocks = vi.hoisted(() => ({
   captureServerEvent: vi.fn(),
   captureServerException: vi.fn(),
   enqueueBentoBillingEmail: vi.fn(),
+  retrieve: vi.fn(),
+  lifecycle: vi.fn(),
+  lastSubscription: null as Record<string, unknown> | null,
   from: vi.fn(),
   rpc: vi.fn(),
   subscriptionUpsert: vi.fn(),
   profileUpdates: [] as Array<{ id: string; value: Record<string, unknown> }>,
-  currentSubscription: null as null | { dodo_subscription_id: string; status: string },
+  intentInserts: [] as Array<Record<string, unknown>>,
+  currentSubscription: null as null | {
+    dodo_subscription_id: string;
+    status: string;
+    billing_catalog?: string;
+    plan_id?: string;
+    current_period_end?: string;
+  },
+  trialTerms: { days: 7, approvedExtensionEnd: null as string | null },
 }));
 
 vi.mock("@/integrations/supabase/client.server", () => ({
   supabaseAdmin: { from: mocks.from, rpc: mocks.rpc },
+}));
+vi.mock("./client.server", () => ({ dodo: { subscriptions: { retrieve: mocks.retrieve } } }));
+vi.mock("@/lib/billing-sync.server", () => ({
+  withWorkspaceBillingSync: (_id: string, action: (lease: string) => unknown) => action("lease"),
+  applyWorkspaceBillingSnapshot: async (
+    userId: string,
+    _lease: string,
+    snapshot: Record<string, unknown>,
+    lifecycle: Record<string, unknown>,
+  ) => {
+    const saved = await mocks.lifecycle({
+      workspaceId: userId,
+      subscriptionId: snapshot.dodo_subscription_id,
+      ...lifecycle,
+    });
+    mocks.profileUpdates.push({
+      id: userId,
+      value: {
+        plan_id: snapshot.plan_id,
+        billing_catalog: snapshot.billing_catalog,
+        workspace_status:
+          ["active", "trialing"].includes(String(snapshot.status)) ||
+          (saved && Date.parse(saved.toolsStopAt) > Date.now())
+            ? "active"
+            : "locked",
+      },
+    });
+    await mocks.subscriptionUpsert(snapshot, { onConflict: "user_id" });
+  },
+}));
+vi.mock("@/lib/billing-lifecycle.server", () => ({
+  syncWorkspaceBillingLifecycle: mocks.lifecycle,
+}));
+vi.mock("@/lib/billing-trial-terms.server", () => ({
+  readTrialTerms: vi.fn(async () => mocks.trialTerms),
 }));
 vi.mock("@/lib/email.server", () => ({ enqueueBentoBillingEmail: mocks.enqueueBentoBillingEmail }));
 vi.mock("@/lib/posthog.server", () => ({
@@ -48,7 +94,7 @@ function subscriptionEvent(
     | "subscription.expired" = "subscription.active",
   addons?: Array<{ addon_id: string; quantity: number }>,
 ): DodoEvent {
-  return {
+  const event = {
     type,
     timestamp: "2026-09-01T00:00:00.000Z",
     data: {
@@ -60,6 +106,8 @@ function subscriptionEvent(
       ...(addons === undefined ? {} : { addons }),
     },
   };
+  mocks.lastSubscription = event.data;
+  return event;
 }
 
 function workspaceSubscriptionEvent(
@@ -79,13 +127,18 @@ function workspaceSubscriptionEvent(
 }
 
 beforeEach(() => {
+  mocks.lifecycle.mockResolvedValue(null);
+  mocks.retrieve.mockImplementation(async () => mocks.lastSubscription);
   mocks.captureServerEvent.mockResolvedValue(undefined);
   mocks.captureServerException.mockResolvedValue(undefined);
   mocks.enqueueBentoBillingEmail.mockResolvedValue(undefined);
   mocks.rpc.mockResolvedValue({ data: true, error: null });
   mocks.subscriptionUpsert.mockResolvedValue({ error: null });
   mocks.profileUpdates.length = 0;
+  mocks.intentInserts.length = 0;
   mocks.currentSubscription = null;
+  mocks.trialTerms.days = 7;
+  mocks.trialTerms.approvedExtensionEnd = null;
   mocks.from.mockImplementation((table: string) => {
     if (table === "complimentary_plan_grants") {
       const query = {
@@ -125,6 +178,26 @@ beforeEach(() => {
     if (table === "billing_events") {
       return { update: () => ({ eq: async () => ({ error: null }) }) };
     }
+    if (table === "cancellation_intents") {
+      const query = {
+        select: () => query,
+        eq: () => query,
+        is: () => query,
+        order: () => query,
+        maybeSingle: async () => ({ data: null, error: null }),
+        limit: () =>
+          Object.assign(Promise.resolve({ data: [], error: null }), {
+            maybeSingle: async () => ({ data: null, error: null }),
+          }),
+      };
+      return {
+        select: () => query,
+        insert: async (row: Record<string, unknown>) => {
+          mocks.intentInserts.push(row);
+          return { error: null };
+        },
+      };
+    }
     throw new Error(`unexpected table: ${table}`);
   });
   vi.stubEnv("DODO_CREATOR_MONTHLY_PRODUCT_ID", "creator-monthly");
@@ -138,6 +211,58 @@ afterEach(() => {
 });
 
 describe("verified Dodo add-on state", () => {
+  it("treats a voluntary provider pause as paused access, not failed payment", async () => {
+    mocks.currentSubscription = {
+      dodo_subscription_id: "sub_123",
+      status: "active",
+      plan_id: "creator",
+    };
+    const event = subscriptionEvent("creator");
+    event.type = "subscription.paused";
+    event.data.status = "paused";
+    await processVerifiedDodoEvent(event, "voluntary-pause");
+    expect(mocks.subscriptionUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "paused" }),
+      { onConflict: "user_id" },
+    );
+    expect(mocks.lifecycle).toHaveBeenCalledWith(expect.objectContaining({ reason: "paused" }));
+    expect(mocks.profileUpdates).toContainEqual({
+      id: "user_123",
+      value: expect.objectContaining({ workspace_status: "locked" }),
+    });
+  });
+  it("starts grace from the missed due date and preserves the workspace during tool grace", async () => {
+    const due = new Date(Date.now() - 60_000).toISOString();
+    mocks.currentSubscription = {
+      dodo_subscription_id: "sub_123",
+      status: "active",
+      plan_id: "creator",
+      current_period_end: due,
+    };
+    const event = subscriptionEvent("creator");
+    event.data.status = "on_hold";
+    mocks.lifecycle.mockResolvedValueOnce({
+      toolsStopAt: new Date(Date.now() + 3 * 86_400_000).toISOString(),
+    });
+    await processVerifiedDodoEvent(event, "missed-due");
+    expect(mocks.lifecycle).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: "past_due", stoppedAt: due, plan: "creator" }),
+    );
+    expect(mocks.profileUpdates).toContainEqual({
+      id: "user_123",
+      value: expect.objectContaining({ workspace_status: "active" }),
+    });
+  });
+  it("uses provider state to ignore a delayed failure after payment recovery", async () => {
+    const event = subscriptionEvent("creator");
+    mocks.retrieve.mockResolvedValueOnce({ ...event.data, status: "active" });
+    event.type = "subscription.failed";
+    event.data.status = "failed";
+    await processVerifiedDodoEvent(event, "stale-failure");
+    expect(mocks.lifecycle).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: null, plan: "creator" }),
+    );
+  });
   it("activates only the workspace named by purchaser-verified metadata", async () => {
     const workspaceId = "33333333-3333-4333-8333-333333333333";
     const authUserId = "11111111-1111-4111-8111-111111111111";
@@ -175,6 +300,13 @@ describe("verified Dodo add-on state", () => {
       id: workspaceId,
       value: expect.objectContaining({ workspace_status: "locked" }),
     });
+    expect(mocks.intentInserts).toContainEqual(
+      expect.objectContaining({
+        workspace_id: workspaceId,
+        first_attempt: true,
+        cancellation_confirmed_at: expect.any(String),
+      }),
+    );
   });
 
   it("ignores a stale cancellation for a replaced workspace subscription", async () => {
@@ -192,6 +324,186 @@ describe("verified Dodo add-on state", () => {
 
     expect(mocks.subscriptionUpsert).not.toHaveBeenCalled();
     expect(mocks.profileUpdates).toEqual([]);
+  });
+
+  it("does not let a stale active subscription replace the current subscription", async () => {
+    mocks.currentSubscription = {
+      dodo_subscription_id: "sub_new",
+      status: "active",
+      billing_catalog: "2026-10",
+    };
+    await processVerifiedDodoEvent(subscriptionEvent("creator"), "stale-active");
+    expect(mocks.profileUpdates).toEqual([]);
+    expect(mocks.subscriptionUpsert).not.toHaveBeenCalled();
+  });
+  it("retains the current catalog on a product-less cancellation after provider verification", async () => {
+    vi.stubEnv("DODO_CREATOR_39_MONTHLY_PRODUCT_ID", "current-creator");
+    mocks.currentSubscription = {
+      dodo_subscription_id: "sub_123",
+      status: "active",
+      billing_catalog: "2026-10",
+    };
+    mocks.retrieve.mockResolvedValue({
+      subscription_id: "sub_123",
+      status: "cancelled",
+      product_id: "current-creator",
+      metadata: { workspace_id: "user_123", auth_user_id: "owner", billing_catalog: "2026-10" },
+    });
+    const event = subscriptionEvent("creator", "subscription.cancelled");
+    delete event.data.product_id;
+    await processVerifiedDodoEvent(event, "no-product-cancel");
+    expect(mocks.retrieve).toHaveBeenCalledWith("sub_123");
+    expect(mocks.profileUpdates).toContainEqual({
+      id: "user_123",
+      value: expect.objectContaining({ plan_id: "free", billing_catalog: "2026-10" }),
+    });
+  });
+  it("verifies trial checkout authorization before granting Plus trial access", async () => {
+    vi.stubEnv("DODO_CREATOR_39_MONTHLY_PRODUCT_ID", "current-creator");
+    const remote = {
+      subscription_id: "sub_123",
+      status: "active",
+      product_id: "current-creator",
+      created_at: "2030-01-01T00:00:00Z",
+      next_billing_date: "2030-01-08T00:00:00Z",
+      trial_period_days: 7,
+      has_payment_method: true,
+      trial_amount: null,
+      metadata: {
+        workspace_id: "user_123",
+        auth_user_id: "owner",
+        billing_catalog: "2026-10",
+        trial_checkout_key: "secret-checkout-nonce",
+      },
+    };
+    mocks.retrieve.mockResolvedValue(remote);
+    mocks.rpc.mockImplementation(async (name: string) => ({
+      data: name === "claim_bento_trial" ? remote.next_billing_date : true,
+      error: null,
+    }));
+    await processVerifiedDodoEvent({ type: "subscription.active", data: remote }, "verified-trial");
+    expect(mocks.rpc).toHaveBeenCalledWith(
+      "claim_bento_trial",
+      expect.objectContaining({
+        p_checkout_key: "secret-checkout-nonce",
+        p_auth_user_id: "owner",
+        p_workspace_id: "user_123",
+      }),
+    );
+    expect(mocks.subscriptionUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "trialing",
+        plan_id: "creator",
+        billing_catalog: "2026-10",
+        trial_ends_at: remote.next_billing_date,
+      }),
+      { onConflict: "user_id" },
+    );
+  });
+
+  it("grants the new three-day trial only against recorded checkout terms", async () => {
+    vi.stubEnv("DODO_CREATOR_39_MONTHLY_PRODUCT_ID", "current-creator");
+    mocks.trialTerms.days = 3;
+    const remote = {
+      subscription_id: "sub_123",
+      status: "active",
+      product_id: "current-creator",
+      created_at: "2030-01-01T00:00:00Z",
+      next_billing_date: "2030-01-04T00:03:00Z",
+      trial_period_days: 3,
+      has_payment_method: true,
+      trial_amount: null,
+      metadata: {
+        workspace_id: "user_123",
+        auth_user_id: "owner",
+        billing_catalog: "2026-10",
+        trial_checkout_key: "three-day-checkout",
+      },
+    };
+    mocks.retrieve.mockResolvedValue(remote);
+    mocks.rpc.mockImplementation(async (name: string) => ({
+      data: name === "claim_bento_trial" ? remote.next_billing_date : true,
+      error: null,
+    }));
+    await processVerifiedDodoEvent(
+      { type: "subscription.active", data: remote },
+      "three-day-trial",
+    );
+    expect(mocks.subscriptionUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "trialing", trial_ends_at: remote.next_billing_date }),
+      { onConflict: "user_id" },
+    );
+  });
+
+  it.each([
+    { has_payment_method: false },
+    { has_payment_method: undefined },
+    { has_payment_method: true, trial_amount: 500 },
+    { has_payment_method: false, trial_period_days: 14 },
+    { has_payment_method: false, next_billing_date: null },
+    { has_payment_method: true, trial_period_days: 14 },
+    { has_payment_method: true, trial_period_days: 0 },
+    { has_payment_method: true, next_billing_date: null },
+    { has_payment_method: true, next_billing_date: "2030-01-08T00:31:00Z" },
+    {
+      has_payment_method: true,
+      next_billing_date: "2030-02-08T00:00:00Z",
+      previous_billing_date: "2030-01-01T00:00:00Z",
+    },
+  ])("does not grant access for an unverified free card trial: %j", async (trial) => {
+    vi.stubEnv("DODO_CREATOR_39_MONTHLY_PRODUCT_ID", "current-creator");
+    const remote = {
+      subscription_id: "sub_123",
+      status: "active",
+      product_id: "current-creator",
+      created_at: "2030-01-01T00:00:00Z",
+      next_billing_date: "2030-01-08T00:00:00Z",
+      trial_period_days: 7,
+      metadata: {
+        workspace_id: "user_123",
+        auth_user_id: "owner",
+        billing_catalog: "2026-10",
+        trial_checkout_key: "secret-checkout-nonce",
+      },
+      ...trial,
+    };
+    mocks.retrieve.mockResolvedValue(remote);
+    await expect(
+      processVerifiedDodoEvent({ type: "subscription.active", data: remote }, "unsafe-trial"),
+    ).rejects.toThrow("Trial payment requirements");
+    expect(mocks.subscriptionUpsert).not.toHaveBeenCalled();
+    expect(mocks.profileUpdates).toEqual([]);
+    expect(mocks.rpc).not.toHaveBeenCalledWith("claim_bento_trial", expect.anything());
+  });
+
+  it.each([false, true])("accepts a verified paid period (renewed trial: %s)", async (renewal) => {
+    vi.stubEnv("DODO_CREATOR_39_MONTHLY_PRODUCT_ID", "current-creator");
+    const now = Date.now();
+    const day = 86_400_000;
+    const remote = {
+      subscription_id: "sub_123",
+      status: "active",
+      product_id: "current-creator",
+      has_payment_method: true,
+      trial_amount: null,
+      trial_period_days: renewal ? 7 : 0,
+      created_at: new Date(now - 40 * day).toISOString(),
+      previous_billing_date: new Date(now - 3 * day).toISOString(),
+      next_billing_date: new Date(now + 27 * day).toISOString(),
+      metadata: {
+        workspace_id: "user_123",
+        auth_user_id: "owner",
+        billing_catalog: "2026-10",
+        ...(renewal ? { trial_checkout_key: "secret-checkout-nonce" } : {}),
+      },
+    };
+    mocks.retrieve.mockResolvedValue(remote);
+    await processVerifiedDodoEvent({ type: "subscription.active", data: remote }, "paid-period");
+    expect(mocks.subscriptionUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "active", plan_id: "creator", trial_ends_at: null }),
+      { onConflict: "user_id" },
+    );
+    expect(mocks.rpc).not.toHaveBeenCalledWith("claim_bento_trial", expect.anything());
   });
 
   it("maps only configured IDs from an explicit webhook cart", () => {

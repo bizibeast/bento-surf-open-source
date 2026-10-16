@@ -1982,6 +1982,10 @@ export type Database = {
           noindex: boolean;
           onboarded: boolean;
           plan_id: string;
+          billing_catalog: string;
+          billing_lifecycle: Json | null;
+          trial_ends_at: string | null;
+          page_published: boolean;
           pattern: string;
           pattern_settings: Json;
           primary_font: string | null;
@@ -2022,6 +2026,10 @@ export type Database = {
           noindex?: boolean;
           onboarded?: boolean;
           plan_id?: string;
+          billing_catalog?: string;
+          billing_lifecycle?: Json | null;
+          trial_ends_at?: string | null;
+          page_published?: boolean;
           pattern?: string;
           pattern_settings?: Json;
           primary_font?: string | null;
@@ -2062,6 +2070,10 @@ export type Database = {
           noindex?: boolean;
           onboarded?: boolean;
           plan_id?: string;
+          billing_catalog?: string;
+          billing_lifecycle?: Json | null;
+          trial_ends_at?: string | null;
+          page_published?: boolean;
           pattern?: string;
           pattern_settings?: Json;
           primary_font?: string | null;
@@ -2113,6 +2125,222 @@ export type Database = {
           status?: string;
           updated_at?: string;
           user_id?: string | null;
+        };
+        Relationships: [];
+      };
+      seo_articles: {
+        Row: {
+          body: Json;
+          citations: Json;
+          created_at: string;
+          description: string;
+          excerpt: string;
+          faqs: Json;
+          id: string;
+          image_alt: string | null;
+          image_key: string | null;
+          internal_links: Json;
+          performance: Json;
+          published_at: string | null;
+          redirect_to: string | null;
+          slug: string;
+          status: string;
+          title: string;
+          tldr: Json;
+          topic_id: string;
+          updated_at: string;
+          validation_report: Json;
+        };
+        Insert: {
+          body: Json;
+          citations: Json;
+          created_at?: string;
+          description: string;
+          excerpt: string;
+          faqs?: Json;
+          id?: string;
+          image_alt?: string | null;
+          image_key?: string | null;
+          internal_links?: Json;
+          performance?: Json;
+          published_at?: string | null;
+          redirect_to?: string | null;
+          slug: string;
+          status?: string;
+          title: string;
+          tldr: Json;
+          topic_id: string;
+          updated_at?: string;
+          validation_report?: Json;
+        };
+        Update: {
+          body?: Json;
+          citations?: Json;
+          created_at?: string;
+          description?: string;
+          excerpt?: string;
+          faqs?: Json;
+          id?: string;
+          image_alt?: string | null;
+          image_key?: string | null;
+          internal_links?: Json;
+          performance?: Json;
+          published_at?: string | null;
+          redirect_to?: string | null;
+          slug?: string;
+          status?: string;
+          title?: string;
+          tldr?: Json;
+          topic_id?: string;
+          updated_at?: string;
+          validation_report?: Json;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "seo_articles_topic_id_fkey";
+            columns: ["topic_id"];
+            isOneToOne: true;
+            referencedRelation: "seo_topics";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      seo_runs: {
+        Row: {
+          actor_user_id: string | null;
+          article_id: string | null;
+          checkpoints: Json;
+          created_at: string;
+          environment: string;
+          error_summary: string | null;
+          id: string;
+          idempotency_key: string;
+          kind: string;
+          lease_expires_at: string | null;
+          next_retry_at: string | null;
+          notification_sent_at: string | null;
+          provider_usage: Json;
+          publication_date: string | null;
+          publication_slot: string;
+          stage: string;
+          stage_attempts: Json;
+          status: string;
+          topic_id: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          actor_user_id?: string | null;
+          article_id?: string | null;
+          checkpoints?: Json;
+          created_at?: string;
+          environment: string;
+          error_summary?: string | null;
+          id?: string;
+          idempotency_key: string;
+          kind: string;
+          lease_expires_at?: string | null;
+          next_retry_at?: string | null;
+          notification_sent_at?: string | null;
+          provider_usage?: Json;
+          publication_date?: string | null;
+          publication_slot?: string;
+          stage: string;
+          stage_attempts?: Json;
+          status: string;
+          topic_id?: string | null;
+          updated_at?: string;
+        };
+        Update: {
+          actor_user_id?: string | null;
+          article_id?: string | null;
+          checkpoints?: Json;
+          created_at?: string;
+          environment?: string;
+          error_summary?: string | null;
+          id?: string;
+          idempotency_key?: string;
+          kind?: string;
+          lease_expires_at?: string | null;
+          next_retry_at?: string | null;
+          notification_sent_at?: string | null;
+          provider_usage?: Json;
+          publication_date?: string | null;
+          publication_slot?: string;
+          stage?: string;
+          stage_attempts?: Json;
+          status?: string;
+          topic_id?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "seo_runs_actor_user_id_fkey";
+            columns: ["actor_user_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "seo_runs_article_id_fkey";
+            columns: ["article_id"];
+            isOneToOne: false;
+            referencedRelation: "seo_articles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "seo_runs_topic_id_fkey";
+            columns: ["topic_id"];
+            isOneToOne: false;
+            referencedRelation: "seo_topics";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      seo_topics: {
+        Row: {
+          angle: string;
+          cluster_key: string;
+          created_at: string;
+          evidence: Json;
+          id: string;
+          intent: string;
+          normalized_keyword: string;
+          primary_keyword: string;
+          rejection_reason: string | null;
+          score: Json;
+          status: string;
+          target_url: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          angle: string;
+          cluster_key: string;
+          created_at?: string;
+          evidence: Json;
+          id?: string;
+          intent: string;
+          normalized_keyword: string;
+          primary_keyword: string;
+          rejection_reason?: string | null;
+          score: Json;
+          status?: string;
+          target_url?: string | null;
+          updated_at?: string;
+        };
+        Update: {
+          angle?: string;
+          cluster_key?: string;
+          created_at?: string;
+          evidence?: Json;
+          id?: string;
+          intent?: string;
+          normalized_keyword?: string;
+          primary_keyword?: string;
+          rejection_reason?: string | null;
+          score?: Json;
+          status?: string;
+          target_url?: string | null;
+          updated_at?: string;
         };
         Relationships: [];
       };
@@ -2331,6 +2559,8 @@ export type Database = {
           dodo_subscription_id: string | null;
           id: string;
           plan_id: string;
+          billing_catalog: string;
+          trial_ends_at: string | null;
           pending_plan_effective_at: string | null;
           pending_plan_id: string | null;
           retention_offer_expires_at: string | null;
@@ -2357,6 +2587,8 @@ export type Database = {
           dodo_subscription_id?: string | null;
           id?: string;
           plan_id?: string;
+          billing_catalog?: string;
+          trial_ends_at?: string | null;
           pending_plan_effective_at?: string | null;
           pending_plan_id?: string | null;
           retention_offer_expires_at?: string | null;
@@ -2383,6 +2615,8 @@ export type Database = {
           dodo_subscription_id?: string | null;
           id?: string;
           plan_id?: string;
+          billing_catalog?: string;
+          trial_ends_at?: string | null;
           pending_plan_effective_at?: string | null;
           pending_plan_id?: string | null;
           retention_offer_expires_at?: string | null;
@@ -2471,6 +2705,42 @@ export type Database = {
           p_status: string;
           p_update_id: number;
         };
+        Returns: boolean;
+      };
+      append_seo_control_event: {
+        Args: {
+          p_action: string;
+          p_actor_user_id?: string | null;
+          p_environment: string;
+        };
+        Returns: string;
+      };
+      claim_due_seo_runs: {
+        Args: {
+          p_environment: string;
+          p_limit?: number;
+          p_now?: string;
+        };
+        Returns: Database["public"]["Tables"]["seo_runs"]["Row"][];
+      };
+      claim_seo_publication_run: {
+        Args: {
+          p_environment: string;
+          p_now?: string;
+          p_publication_date: string;
+        };
+        Returns: Database["public"]["Tables"]["seo_runs"]["Row"][];
+      };
+      publish_seo_article: {
+        Args: {
+          p_article_id: string;
+          p_published_at?: string;
+          p_run_id: string;
+        };
+        Returns: boolean;
+      };
+      reserve_seo_bright_data_request: {
+        Args: { p_environment: string; p_limit: number; p_month: string };
         Returns: boolean;
       };
       claim_due_content_routines: {
@@ -2675,7 +2945,8 @@ export type Database = {
         | "bento_affiliate"
         | "newsletter";
       commerce_product_status: "draft" | "published" | "archived";
-      subscription_status: "active" | "trialing" | "past_due" | "canceled" | "incomplete";
+      subscription_status:
+        "active" | "trialing" | "past_due" | "paused" | "canceled" | "incomplete";
       theme_mode: "light" | "dark" | "system";
     };
     CompositeTypes: {
@@ -2851,7 +3122,7 @@ export const Constants = {
         "newsletter",
       ],
       commerce_product_status: ["draft", "published", "archived"],
-      subscription_status: ["active", "trialing", "past_due", "canceled", "incomplete"],
+      subscription_status: ["active", "trialing", "past_due", "paused", "canceled", "incomplete"],
       theme_mode: ["light", "dark", "system"],
     },
   },

@@ -1,3 +1,4 @@
+import { reserveXRead } from "./provider-budget.server";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Provider payloads are intentionally normalized at the boundary. */
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
@@ -67,7 +68,10 @@ const SOCIAL_PROVIDER_SCOPES: Record<GenericProvider, readonly string[]> = {
 };
 
 export function socialProviderRequestedScopes(provider: GenericProvider) {
-  return [...SOCIAL_PROVIDER_SCOPES[provider]];
+  const scopes = [...SOCIAL_PROVIDER_SCOPES[provider]];
+  if (provider === "threads" && process.env.THREADS_PROFILE_DISCOVERY_APPROVED === "true")
+    scopes.push("threads_profile_discovery");
+  return scopes;
 }
 
 export function normalizedSocialConnectionScopes(provider: GenericProvider, scope: unknown) {
@@ -206,7 +210,7 @@ export function authorizationUrl(
     },
     threads: {
       base: "https://www.threads.net/oauth/authorize",
-      scope: SOCIAL_PROVIDER_SCOPES.threads.join(","),
+      scope: socialProviderRequestedScopes("threads").join(","),
     },
     tiktok: {
       base: "https://www.tiktok.com/v2/auth/authorize/",
@@ -445,6 +449,7 @@ export async function socialAccountProfiles(
     ];
   }
   if (provider === "twitter") {
+    await reserveXRead("https://api.x.com/2/users/me");
     const data = await get(
       "https://api.x.com/2/users/me?user.fields=profile_image_url,subscription_type,verified_type",
       {
@@ -579,6 +584,9 @@ export const completeSocialConnection = createServerFn({ method: "POST" })
                 value: account.avatar,
               }),
               access_token: await encryptServerSecret(account.token, "social"),
+              ...(data.provider === "facebook"
+                ? { facebook_user_access_token: await encryptServerSecret(accessToken, "social") }
+                : {}),
               refresh_token: refreshToken
                 ? await encryptServerSecret(refreshToken, "social")
                 : null,

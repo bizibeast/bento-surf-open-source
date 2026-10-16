@@ -1,4 +1,5 @@
 import { loadPublicCreatorPage } from "./profile.functions";
+import { isWorkspacePublicBillingAvailable } from "./billing-public.server";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Booking tables are added by the accompanying migration. */
 import { createServerFn } from "@tanstack/react-start";
 import { getRequestHost } from "@tanstack/react-start/server";
@@ -286,7 +287,11 @@ export const getPublicBookingCalendar = createServerFn({ method: "GET" })
           cacheKey,
         )
       : { hit: false as const, value: null };
-    if (cached.hit) return cached.value;
+    if (cached.hit)
+      return cached.value &&
+        (await isWorkspacePublicBillingAvailable(cached.value.chrome.creator.id))
+        ? cached.value
+        : null;
 
     await enforceRequestRateLimit("PUBLIC_API_RATE_LIMITER", "public-booking-calendar");
     const result = await loadPublicBookingCalendar(username);

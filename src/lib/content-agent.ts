@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { carouselSlideSchema, editorialMetadataSchema } from "./content-editorial";
 import { parsePublicHttpUrl } from "./safe-url";
 import { SOCIAL_PROVIDERS } from "./social-scheduler";
 import { quoteContentSourcesForAgent, type NormalizedContentSource } from "./content-connections";
@@ -58,7 +59,9 @@ const draftCardSchema = z
     visualBrief: z.string().trim().max(2_000).nullable().default(null),
     sourceUrls: z.array(publicUrl).max(5).default([]),
     rationale: z.string().trim().min(1).max(2_000),
-    mediaIds: z.array(z.string().uuid()).max(5).optional(),
+    mediaIds: z.array(z.string().uuid()).max(10).optional(),
+    slides: z.array(carouselSlideSchema).max(10).optional(),
+    editorial: editorialMetadataSchema.optional(),
   })
   .strict();
 
@@ -251,7 +254,7 @@ export const contentAgentResponseFormat = {
                   visualBrief: { type: ["string", "null"] },
                   sourceUrls: { type: "array", maxItems: 5, items: { type: "string" } },
                   rationale: { type: "string" },
-                  mediaIds: { type: "array", maxItems: 5, items: { type: "string" } },
+                  mediaIds: { type: "array", maxItems: 10, items: { type: "string" } },
                 },
                 required: [
                   "type",

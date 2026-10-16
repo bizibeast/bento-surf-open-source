@@ -36,6 +36,7 @@ import {
 } from "./lib/analytics-ingest.server";
 import type { AnalyticsEvent } from "./lib/analytics-event";
 import { readPublicPageCache, storePublicPageCache } from "./lib/public-page-cache.server";
+import { guardUnavailablePublicWorkspace } from "./lib/billing-public.server";
 import { handleReferralRedirect } from "./lib/referral.server";
 import {
   enqueueDueReferralReach,
@@ -43,7 +44,6 @@ import {
   reconcileReferralLedger,
   type ReferralQueueMessage,
 } from "./lib/referral-worker.server";
-import { handlePolarWebhook } from "./integrations/polar/webhook.server";
 import { handleDodoCreatorWebhook } from "./integrations/dodo/creator-webhook.server";
 import {
   handleDirectStripeWebhook,
@@ -71,6 +71,7 @@ import {
   auditSocialConnections,
   enqueueDueSocialPosts,
   processSocialPublishMessage,
+  ProviderError,
   type SocialPublishMessage,
 } from "./lib/social-publisher.server";
 import {
@@ -121,8 +122,18 @@ import {
 } from "./lib/telegram.server";
 import { processBookingFollowups } from "./lib/booking-followups.server";
 import { processDueContentIndexes } from "./lib/content-index.server";
+import {
+  processDueContentAgentSignals,
+  scanContentAgentSignals,
+} from "./lib/content-agent-proactive.server";
+import {
+  enqueueDueContentMediaImports,
+  processDueCreatorMediaRankRefreshes,
+  processContentMediaImportMessage,
+  type ContentMediaImportMessage,
+} from "./lib/content-media.server";
 import { processDueContentRoutines } from "./lib/content-routines.server";
-import { routeCanonicalHostname } from "./lib/hostname-routing.server";
+import { routeCanonicalHostname, trailingSlashRedirect } from "./lib/hostname-routing.server";
 import { configuredPublicOrigin } from "./lib/application-urls";
 import { redactSensitivePathname } from "./lib/safe-url";
 import { expireStaleCommerceCheckouts } from "./lib/checkout-recovery.server";
@@ -136,6 +147,7 @@ import {
   renderSitemapIndex,
   renderSitemapUrlSet,
 } from "./lib/seo-sitemap.server";
+import { indexNowKeyResponse } from "./lib/indexnow.server";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -152,6 +164,7 @@ type RuntimeEnv = Env & {
   EMAIL_QUEUE?: Queue<EmailQueueMessage>;
   SOCIAL_PUBLISH_QUEUE?: Queue<SocialPublishMessage>;
   SOCIAL_INSIGHTS_QUEUE?: Queue<SocialInsightsBackfillMessage>;
+  CONTENT_MEDIA_QUEUE?: Queue<ContentMediaImportMessage>;
   REFERRAL_QUEUE?: Queue<ReferralQueueMessage>;
   SOCIAL_PUBLISH_QUEUE_META?: Queue<SocialPublishMessage>;
   SOCIAL_PUBLISH_QUEUE_LINKEDIN?: Queue<SocialPublishMessage>;
@@ -176,6 +189,7 @@ type CloudflareRequest = Request & {
 let serverEntryPromise: Promise<ServerEntry> | undefined;
 
 const RUNTIME_STRING_BINDING_PREFIXES = [
+  "APIMART_",
   "SUPABASE_",
   "VITE_",
   "DODO_",
@@ -215,6 +229,8 @@ const RUNTIME_STRING_BINDING_PREFIXES = [
 ] as const;
 const RUNTIME_STRING_BINDING_NAMES = new Set([
   "APP_ENV",
+  "BENTO_EDITION",
+  "INDEXNOW_KEY",
   "CUSTOM_DOMAINS_ENABLED",
   "FOUNDER_ADMIN_EMAILS",
   "INSTAGRAM_ACCESS_TOKEN",
@@ -251,6 +267,7 @@ function isPrivateApplicationPath(pathname: string) {
     "/link",
     "/settings",
     "/admin",
+    "/blog/preview",
     "/store",
     "/calendar",
     "/community",
@@ -333,11 +350,11 @@ export function withDeploymentHeaders(response: Response, env: unknown, request?
   let contentSecurityPolicy = headers.get("content-security-policy") ?? "";
   for (const directive of [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' https://checkout.razorpay.com https://maps.googleapis.com https://maps.gstatic.com https://static.cloudflareinsights.com https://us-assets.i.posthog.com https://challenges.cloudflare.com https://do.featurebase.app",
+    "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://www.googletagmanager.com https://checkout.razorpay.com https://maps.googleapis.com https://maps.gstatic.com https://static.cloudflareinsights.com https://us-assets.i.posthog.com https://challenges.cloudflare.com https://do.featurebase.app",
     "style-src 'self' 'unsafe-inline' https:",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data: https:",
-    "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://us.i.posthog.com https://cloudflareinsights.com https://*.featurebase.app wss://ws.featurebase.app https://api.razorpay.com https://maps.googleapis.com https://maps.gstatic.com",
+    "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://www.google-analytics.com https://region1.google-analytics.com https://www.googletagmanager.com https://us.i.posthog.com https://cloudflareinsights.com https://*.featurebase.app wss://ws.featurebase.app https://api.razorpay.com https://maps.googleapis.com https://maps.gstatic.com",
     "media-src 'self' blob: https:",
     "frame-src 'self' https:",
     "worker-src 'self' blob:",
@@ -469,6 +486,12 @@ function deploymentHealth(env: unknown) {
     runtimeEnv?.DODO_STORE_YEARLY_PRODUCT_ID &&
     runtimeEnv?.DODO_CREATOR_MONTHLY_PRODUCT_ID &&
     runtimeEnv?.DODO_CREATOR_YEARLY_PRODUCT_ID &&
+    runtimeEnv?.DODO_STORE_19_MONTHLY_PRODUCT_ID &&
+    runtimeEnv?.DODO_CREATOR_39_MONTHLY_PRODUCT_ID &&
+    runtimeEnv?.DODO_CREATOR_PLUS_MONTHLY_PRODUCT_ID &&
+    runtimeEnv?.DODO_STORE_190_YEARLY_PRODUCT_ID &&
+    runtimeEnv?.DODO_CREATOR_390_YEARLY_PRODUCT_ID &&
+    runtimeEnv?.DODO_CREATOR_PLUS_490_YEARLY_PRODUCT_ID &&
     isDodoAddonConfigurationReady(
       (runtimeEnv ?? {}) as unknown as Record<string, string | undefined>,
     ),
@@ -846,15 +869,27 @@ export default {
       return withDeploymentHeaders(canonicalRedirect, env, request);
     }
 
+    const slashRedirect = trailingSlashRedirect(request, env);
+    if (slashRedirect) return withDeploymentHeaders(slashRedirect, env, request);
+
+    const indexNow = indexNowKeyResponse(request, env);
+    if (indexNow) return withDeploymentHeaders(indexNow, env, request);
+
     const path = new URL(request.url).pathname;
     const seoMethod = request.method === "GET" || request.method === "HEAD";
+
     if (seoMethod && (path === "/sitemap.xml" || path.startsWith("/sitemaps/"))) {
       return withDeploymentHeaders(await publicSitemapResponse(request, env, ctx), env, request);
     }
     const seoFile = !seoMethod
       ? undefined
       : path === "/robots.txt"
-        ? [rewritePublicOrigin(robotsTxt, sitemapBaseUrl(env)), "text/plain; charset=utf-8"]
+        ? [
+            true
+              ? rewritePublicOrigin(robotsTxt, sitemapBaseUrl(env))
+              : "User-agent: *\nAllow: /\n",
+            "text/plain; charset=utf-8",
+          ]
         : path === "/llms.txt"
           ? [llmsTxt, "text/plain; charset=utf-8"]
           : undefined;
@@ -901,6 +936,8 @@ export default {
     const referralRedirect = await handleReferralRedirect(request);
     if (referralRedirect) return withDeploymentHeaders(referralRedirect, env, request);
 
+    const unavailablePage = await guardUnavailablePublicWorkspace(request);
+    if (unavailablePage) return withDeploymentHeaders(unavailablePage, env, request);
     const cachedPage = await readPublicPageCache(request, env);
     if (cachedPage) return withDeploymentHeaders(cachedPage, env, request);
 
@@ -992,6 +1029,7 @@ export default {
     }
     if (request.method === "POST" && path.startsWith("/api/webhooks/polar/")) {
       const connectionId = path.slice("/api/webhooks/polar/".length);
+      const { handlePolarWebhook } = await import("./integrations/polar/webhook.server");
       return withDeploymentHeaders(await handlePolarWebhook(request, connectionId), env, request);
     }
     if (request.method === "POST" && path === "/api/webhooks/stripe") {
@@ -1114,6 +1152,7 @@ export default {
       | SocialPublishMessage
       | SocialRepostMessage
       | SocialInsightsBackfillMessage
+      | ContentMediaImportMessage
       | ReferralQueueMessage
       | InstagramDmQueueMessage
       | TwitterDmQueueMessage
@@ -1145,6 +1184,10 @@ export default {
     const socialInsightsMessages = batch.messages.filter(
       (message): message is Message<SocialInsightsBackfillMessage> =>
         "kind" in message.body && message.body.kind === "social_insights_backfill",
+    );
+    const contentMediaMessages = batch.messages.filter(
+      (message): message is Message<ContentMediaImportMessage> =>
+        "kind" in message.body && message.body.kind === "content_media_import",
     );
     const referralMessages = batch.messages.filter(
       (message): message is Message<ReferralQueueMessage> =>
@@ -1180,6 +1223,7 @@ export default {
             body.kind !== "social_publish" &&
             body.kind !== "social_repost" &&
             body.kind !== "social_insights_backfill" &&
+            body.kind !== "content_media_import" &&
             body.kind !== "referral_reach_verify" &&
             body.kind !== "instagram_dm_event" &&
             body.kind !== "instagram_comment_reconcile" &&
@@ -1214,6 +1258,10 @@ export default {
         console.error("[social-insights] historical import failed", {
           messageId: message.id,
           attempt: message.attempts,
+          connectionId: body.connectionId,
+          stage: body.stage,
+          providerCode: error instanceof ProviderError ? error.code : undefined,
+          providerStatus: error instanceof ProviderError ? error.status : undefined,
           error: error instanceof Error ? error.message : "Unknown queue error",
         });
         const disposition = socialInsightsDeliveryDisposition(error, message.attempts);
@@ -1227,6 +1275,20 @@ export default {
           if (disposition === "dead_letter") message.retry();
           else message.ack();
         }
+      }
+    }
+    for (const message of contentMediaMessages) {
+      try {
+        await processContentMediaImportMessage(message.body);
+        await enqueueDueContentMediaImports(env.CONTENT_MEDIA_QUEUE, 1);
+        message.ack();
+      } catch (error) {
+        console.error("[content-media] import failed", {
+          messageId: message.id,
+          attempt: message.attempts,
+          error: error instanceof Error ? error.message : "Unknown queue error",
+        });
+        message.retry({ delaySeconds: Math.min(900, 30 * 2 ** Math.max(0, message.attempts - 1)) });
       }
     }
     for (const message of referralMessages) {
@@ -1306,6 +1368,7 @@ export default {
       audienceCampaignMessages.length +
         emailMessages.length +
         socialInsightsMessages.length +
+        contentMediaMessages.length +
         referralMessages.length +
         instagramDmMessages.length +
         twitterDmMessages.length +
@@ -1323,15 +1386,74 @@ export default {
     env = hydrateRuntimeEnv(env) as RuntimeEnv;
     try {
       if (controller.cron === "0 9 * * *") {
+        const { supabaseAdmin } = await import("./integrations/supabase/client.server");
+        const { error: cleanupError } = await (supabaseAdmin as any).rpc(
+          "cleanup_provider_cost_data",
+        );
+        if (cleanupError) console.warn("Provider cost cache cleanup deferred");
         await enqueueLifecycleEmails();
         await reconcileReferralLedger();
+        return;
       }
-      const audienceCampaignResult = await enqueueDueAudienceCampaigns(env.EMAIL_QUEUE);
-      if (env.EMAIL_QUEUE && (await hasDeliverableEmailOutbox())) {
-        await env.EMAIL_QUEUE.send({ kind: "email_outbox_kick" });
+      // Production checks due publishing each minute. Staging checks it on its
+      // five-minute cron, which is also the only cron that runs maintenance.
+      if (
+        controller.cron === "* * * * *" ||
+        getDeploymentEnvironment(env as unknown as Record<string, unknown>) === "staging"
+      ) {
+        const audienceCampaignResult = await enqueueDueAudienceCampaigns(env.EMAIL_QUEUE);
+        if (env.EMAIL_QUEUE && (await hasDeliverableEmailOutbox())) {
+          await env.EMAIL_QUEUE.send({ kind: "email_outbox_kick" });
+        }
+        const socialResult = await enqueueDueSocialPosts(env.SOCIAL_PUBLISH_QUEUE, env);
+        const socialRepostsDue = await enqueueDueSocialReposts(env);
+        if (socialResult.queued > 0) console.log("[social] queued scheduled posts", socialResult);
+        if (socialRepostsDue.queued > 0)
+          console.log("[social] queued native repost actions", socialRepostsDue);
+        if (audienceCampaignResult.claimed > 0) {
+          console.log("[email] scheduled campaigns queued", audienceCampaignResult);
+        }
       }
-      const socialResult = await enqueueDueSocialPosts(env.SOCIAL_PUBLISH_QUEUE, env);
-      const socialRepostsDue = await enqueueDueSocialReposts(env);
+      // Run production maintenance from the minute trigger itself. Separate
+      // overlapping cron triggers have not reliably delivered the five-minute
+      // event, leaving due Media imports unclaimed.
+      if (
+        controller.cron === "* * * * *" &&
+        new Date(controller.scheduledTime).getUTCMinutes() % 5 !== 0
+      )
+        return;
+
+      try {
+        const { processDueOnboardingGenerations } =
+          await import("./lib/onboarding/generation.server");
+        await processDueOnboardingGenerations();
+      } catch (error) {
+        console.error("[onboarding] preparation recovery failed", error);
+      }
+      try {
+        const { processWorkspaceBillingLifecycle } =
+          await import("./lib/billing-maintenance.server");
+        await processWorkspaceBillingLifecycle();
+      } catch (error) {
+        console.error("[billing-lifecycle] scheduling failed", error);
+        await captureServerException(error, "workspace-billing-lifecycle", { surface: "billing" });
+      }
+      try {
+        const { processDueSubscriptionPauses, enqueueDuePauseReminders } =
+          await import("./lib/cancellation.functions");
+        await enqueueDuePauseReminders();
+        await processDueSubscriptionPauses();
+      } catch (error) {
+        console.error("[billing-pause] automatic resume failed", error);
+        await captureServerException(error, "subscription-pause-resume", { surface: "billing" });
+      }
+      try {
+        const { enqueueDueTrialReminders } = await import("./lib/trial-reminders.server");
+        await enqueueDueTrialReminders();
+      } catch (error) {
+        console.error("[trial-reminder] scheduling failed", error);
+        await captureServerException(error, "trial-reminder-scheduled", { surface: "billing" });
+      }
       const socialInsightsDue = await enqueueDueSocialInsightsRefreshes(env.SOCIAL_INSIGHTS_QUEUE);
       const socialInsightsRecovery = await requeueStaleSocialInsightsBackfills(
         env.SOCIAL_INSIGHTS_QUEUE,
@@ -1355,6 +1477,15 @@ export default {
           surface: "content_brain",
         });
       }
+      try {
+        await processDueCreatorMediaRankRefreshes();
+        await enqueueDueContentMediaImports(env.CONTENT_MEDIA_QUEUE);
+      } catch (error) {
+        console.error("[content-media] queueing failed", error);
+        await captureServerException(error, "content-media-scheduled", {
+          surface: "content_brain",
+        });
+      }
       let contentRoutineResult = null;
       try {
         contentRoutineResult = await processDueContentRoutines();
@@ -1362,6 +1493,22 @@ export default {
         console.error("[content-routines] scheduled processing failed", error);
         await captureServerException(error, "content-routines-scheduled", {
           surface: "content_routines",
+        });
+      }
+      try {
+        await scanContentAgentSignals(3);
+        await processDueContentAgentSignals(1);
+      } catch (error) {
+        await captureServerException(error, "content-agent-proactive-scheduled", {
+          surface: "content_agent",
+        });
+      }
+      try {
+        const { processDueImageJobs } = await import("./lib/content-agent-images.server");
+        await processDueImageJobs(3);
+      } catch (error) {
+        await captureServerException(error, "content-agent-images-scheduled", {
+          surface: "content_agent",
         });
       }
       const fulfillmentResult = await reconcileCommerceFulfillment();
@@ -1394,9 +1541,6 @@ export default {
       if (priorityDmNotificationResult.repaired > 0 || priorityDmNotificationResult.failed > 0) {
         console.log("[email] repaired Priority DM notifications", priorityDmNotificationResult);
       }
-      if (socialResult.queued > 0) console.log("[social] queued scheduled posts", socialResult);
-      if (socialRepostsDue.queued > 0)
-        console.log("[social] queued native repost actions", socialRepostsDue);
       if (socialInsightsDue.queued > 0)
         console.log("[social-insights] daily refreshes queued", socialInsightsDue);
       if (socialInsightsRecovery.queued > 0)
@@ -1429,9 +1573,6 @@ export default {
         facebookHealth.transientFailures > 0
       ) {
         console.log("[facebook-auto-dm] connection health audit", facebookHealth);
-      }
-      if (audienceCampaignResult.claimed > 0) {
-        console.log("[email] scheduled campaigns queued", audienceCampaignResult);
       }
     } catch (error) {
       console.error("[scheduled] background processing failed", error);

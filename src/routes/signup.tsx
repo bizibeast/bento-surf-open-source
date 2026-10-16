@@ -185,6 +185,7 @@ function SignupPage() {
       ) : step === 1 ? (
         <form
           onSubmit={claim}
+          method="post"
           className="max-w-lg"
           toolname="bento_choose_creator_url"
           tooldescription="Fills a creator URL choice for the user to review and continue."
@@ -301,6 +302,7 @@ function SignupPage() {
 
           <form
             onSubmit={handleSignup}
+            method="post"
             noValidate
             className="space-y-4"
             toolname="bento_prepare_account_signup"

@@ -129,7 +129,7 @@ describe("free upload transcription endpoint", () => {
     );
   });
 
-  it("falls back to Groq when Workers AI fails", async () => {
+  it("does not double spend after a Workers AI failure", async () => {
     const ai = { run: vi.fn().mockRejectedValue(new Error("workers unavailable")) };
     const fetcher = vi.fn().mockResolvedValue(
       Response.json({
@@ -146,15 +146,9 @@ describe("free upload transcription endpoint", () => {
       { fetcher },
     );
 
-    expect(response?.status).toBe(200);
+    expect(response?.status).toBe(502);
     expect(ai.run).toHaveBeenCalledOnce();
-    expect(fetcher).toHaveBeenCalledWith(
-      "https://api.groq.com/openai/v1/audio/transcriptions",
-      expect.objectContaining({
-        headers: { Authorization: "Bearer fallback-key" },
-      }),
-    );
-    expect(await response?.json()).toMatchObject({ transcript: "Hello from Groq fallback." });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it("rejects unsupported, spoofed, oversized, mismatched, and cross-origin uploads", async () => {

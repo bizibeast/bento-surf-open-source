@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
 
 import {
   PRODUCTION_SUPABASE_PROJECT_ID,
@@ -6,6 +6,8 @@ import {
   getStagingIsolationErrors,
   stagingResponseHeaders,
 } from "./deployment-environment.server";
+
+afterEach(() => vi.unstubAllEnvs());
 
 const safeStagingEnv = {
   APP_ENV: "staging",
@@ -63,6 +65,7 @@ describe("deployment environment isolation", () => {
   });
 
   it("rejects staging without an explicit Dodo test environment", () => {
+    vi.stubEnv("DODO_PAYMENTS_ENVIRONMENT", "");
     expect(
       getStagingIsolationErrors({
         ...safeStagingEnv,

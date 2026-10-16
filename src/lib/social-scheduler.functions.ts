@@ -1,3 +1,4 @@
+import { xBackgroundReadsEnabled } from "./provider-budget.server";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Scheduler tables land with the paired migration. */
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
@@ -24,6 +25,7 @@ import {
 import {
   accessTokenForConnection,
   loadTikTokCreatorInfo,
+  tiktokDirectPostAudited,
   loadRedditCommunities,
   preflightRedditCommunity,
   type SocialPublishMessage,
@@ -82,6 +84,7 @@ function connectionFromRow(row: any): SchedulerConnection {
 }
 
 async function refreshXConnectionCapabilities(row: any) {
+  if (!xBackgroundReadsEnabled()) return row;
   if (row.provider !== "twitter" || row.status !== "active" || row.reauth_required) return row;
   const previous =
     row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
@@ -91,7 +94,7 @@ async function refreshXConnectionCapabilities(row: any) {
   if (Number.isFinite(checkedAt) && Date.now() - checkedAt < 12 * 60 * 60_000) return row;
   try {
     const token = await accessTokenForConnection(row);
-    const capabilities = await fetchXAccountCapabilities(token);
+    const capabilities = await fetchXAccountCapabilities(token, row);
     const metadata = { ...previous, ...xCapabilitiesMetadata(capabilities) };
     const { error } = await (supabaseAdmin as any)
       .from("social_connections")
@@ -122,6 +125,10 @@ function metric(value: unknown) {
 
 function postFromRow(row: any, insights: Map<string, TargetInsight>): SchedulerPost {
   return {
+    ...(row.settings?.card ? { agentDraft: true } : {}),
+    ...(row.settings?.agentDraftState?.preparationNote && !row.media?.length
+      ? { automationNote: row.settings.agentDraftState.preparationNote }
+      : {}),
     ...(typeof row.settings?.schedulingWarning === "string"
       ? { automationNote: row.settings.schedulingWarning }
       : {}),
@@ -270,6 +277,43 @@ async function schedulerData(userId: string, plan?: PlanId) {
   };
 }
 
+export const getSocialDraftById = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .validator((input) => z.object({ postId: z.string().uuid() }).parse(input))
+  .handler(async ({ context, data }) => {
+    await requireScheduler(context.userId);
+    const { data: post, error } = await (supabaseAdmin as any)
+      .from("social_posts")
+      .select("*, targets:social_post_targets(*)")
+      .eq("user_id", context.userId)
+      .eq("id", data.postId)
+      .maybeSingle();
+    if (error || !post) throw new Error("This scheduler draft is unavailable.");
+    return { post: JSON.stringify(postFromRow(post, new Map())) };
+  });
+
+export const prepareSocialAgentDraft = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input) => z.object({ postId: z.string().uuid() }).parse(input))
+  .handler(async ({ context, data }) => {
+    await requireScheduler(context.userId);
+    await enforceRequestRateLimit(
+      "EXPENSIVE_API_RATE_LIMITER",
+      "agent-prepare-visuals",
+      context.userId,
+    );
+    const { prepareAgentPost } = await import("./content-agent-preparation.server");
+    await prepareAgentPost(context.userId, data.postId);
+    const { data: post, error } = await (supabaseAdmin as any)
+      .from("social_posts")
+      .select("*, targets:social_post_targets(*)")
+      .eq("user_id", context.userId)
+      .eq("id", data.postId)
+      .single();
+    if (error || !post) throw new Error("This scheduler draft is unavailable.");
+    return { post: JSON.stringify(postFromRow(post, new Map())) };
+  });
+
 export const getSocialScheduler = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
@@ -397,7 +441,11 @@ export const saveSocialPost = createServerFn({ method: "POST" })
   .validator((input) => socialPostInputSchema.parse(input))
   .handler(({ context, data }) => saveSocialPostForUser(context.userId, data));
 
-export async function saveSocialPostForUser(userId: string, input: SocialPostInput) {
+export async function saveSocialPostForUser(
+  userId: string,
+  input: SocialPostInput,
+  agentGuard?: { messageId: string; cardId: string; revision: number },
+) {
   const data = socialPostInputSchema.parse(input);
   await requireScheduler(userId);
   await enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "social-post-save", userId);
@@ -544,6 +592,7 @@ export async function saveSocialPostForUser(userId: string, input: SocialPostInp
     data.title,
     data.providerSettings,
     xCapabilitiesFromMetadata(xConnection?.metadata),
+    tiktokDirectPostAudited(),
   );
   if (!data.asDraft && Object.keys(providerErrors).length)
     throw new Error(Object.values(providerErrors)[0]);
@@ -574,21 +623,31 @@ export async function saveSocialPostForUser(userId: string, input: SocialPostInp
     : data.publishNow
       ? new Date().toISOString()
       : data.scheduledAt;
-  const { data: savedTargets, error: saveError } = await db.rpc("save_social_post_atomic", {
-    p_user_id: userId,
-    p_post_id: data.id || null,
-    p_body: data.body,
-    p_title: data.title || null,
-    p_media: data.media,
-    p_scheduled_at: scheduledAt,
-    p_timezone: data.timezone,
-    p_targets: checkedConnections.map((connection: any) => ({
-      connectionId: connection.id,
-      provider: connection.provider,
-      providerSettings: data.providerSettings[connection.provider] || {},
-    })),
-    p_as_draft: Boolean(data.asDraft),
-  });
+  const { data: savedTargets, error: saveError } = await db.rpc(
+    agentGuard ? "save_agent_social_post_atomic" : "save_social_post_atomic",
+    {
+      ...(agentGuard
+        ? {
+            p_message_id: agentGuard.messageId,
+            p_card_id: agentGuard.cardId,
+            p_revision: agentGuard.revision,
+          }
+        : {}),
+      p_user_id: userId,
+      p_post_id: data.id || null,
+      p_body: data.body,
+      p_title: data.title || null,
+      p_media: data.media,
+      p_scheduled_at: scheduledAt,
+      p_timezone: data.timezone,
+      p_targets: checkedConnections.map((connection: any) => ({
+        connectionId: connection.id,
+        provider: connection.provider,
+        providerSettings: data.providerSettings[connection.provider] || {},
+      })),
+      p_as_draft: Boolean(data.asDraft),
+    },
+  );
   if (saveError || !savedTargets?.length) {
     throw new Error(saveError?.message || "The post could not be saved.");
   }

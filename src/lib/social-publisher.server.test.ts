@@ -3,6 +3,7 @@ import {
   buildInstagramMediaParams,
   buildTikTokPostInfo,
   socialPublishQueueBinding,
+  tiktokPrivacyOptionsForAudit,
   targetPostCopy,
   tiktokRetryRemotePostId,
 } from "./social-publisher.server";
@@ -17,6 +18,81 @@ describe("provider queue routing", () => {
       body: "YouTube copy",
       title: "Video title",
     });
+  });
+  it("turns selected Facebook and LinkedIn identities into native publishing syntax", () => {
+    expect(
+      targetPostCopy(
+        { body: "With @Acme" },
+        {
+          mentions: [
+            {
+              provider: "facebook",
+              id: "123",
+              name: "Acme",
+              handle: null,
+              text: "@Acme",
+              start: 5,
+              end: 10,
+              kind: "page",
+              verified: true,
+            },
+          ],
+        },
+        "facebook",
+      ).body,
+    ).toBe("With @[123]");
+    expect(
+      targetPostCopy(
+        { body: "With @Acme" },
+        {
+          mentions: [
+            {
+              provider: "facebook",
+              id: "123",
+              name: "Acme",
+              handle: null,
+              text: "@Acme",
+              start: 5,
+              end: 10,
+              kind: "page",
+              verified: true,
+            },
+          ],
+        },
+        "facebook",
+        [
+          {
+            key: "photo.jpg",
+            url: "https://bento.surf/photo.jpg",
+            name: "photo.jpg",
+            mimeType: "image/jpeg",
+            size: 5,
+          },
+        ],
+      ).body,
+    ).toBe("With @Acme");
+    expect(
+      targetPostCopy(
+        { body: "Hello" },
+        {
+          bodyOverride: "With @Acme",
+          mentions: [
+            {
+              provider: "linkedin",
+              id: "urn:li:organization:42",
+              name: "Acme",
+              handle: null,
+              text: "@Acme",
+              start: 5,
+              end: 10,
+              kind: "page",
+              verified: true,
+            },
+          ],
+        },
+        "linkedin",
+      ).body,
+    ).toBe("With @[Acme](urn:li:organization:42)");
   });
   it("routes providers onto isolated queue bindings", () => {
     expect(socialPublishQueueBinding("instagram")).toBe("SOCIAL_PUBLISH_QUEUE_META");
@@ -44,6 +120,11 @@ describe("Instagram Reels publishing", () => {
 });
 
 describe("TikTok Direct Post", () => {
+  it("offers only private visibility before the Direct Post audit", () => {
+    const options = ["PUBLIC_TO_EVERYONE", "SELF_ONLY", "MUTUAL_FOLLOW_FRIENDS"];
+    expect(tiktokPrivacyOptionsForAudit(options, false)).toEqual(["SELF_ONLY"]);
+    expect(tiktokPrivacyOptionsForAudit(options, true)).toEqual(options);
+  });
   it("sends the creator's AI-generated disclosure", () => {
     expect(
       buildTikTokPostInfo(

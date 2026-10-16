@@ -1,3 +1,9 @@
+import {
+  reserveProviderUsage,
+  reserveXRead,
+  xBackgroundReadsEnabled,
+  ProviderBudgetError,
+} from "./provider-budget.server";
 /* eslint-disable @typescript-eslint/no-explicit-any -- New service-role tables are typed after the migration is deployed. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { decryptServerSecret } from "./secret-crypto.server";
@@ -17,8 +23,8 @@ import {
   readResponseText,
   RequestBodyTooLargeError,
 } from "./request-security.server";
-import { getPlan } from "./plan.server";
-import { planHasEntitlement } from "./plans";
+import { hasPlanEntitlement } from "./plan.server";
+import { usesAdvancedAutoDm } from "./plans";
 import { accessTokenForConnection, ProviderError } from "./social-publisher.server";
 import { captureServerException } from "./posthog.server";
 
@@ -216,6 +222,15 @@ async function xRequest(
   token: string,
   init: RequestInit = {},
 ): Promise<{ status: number; data: any; retryAfterSeconds?: number }> {
+  if (!init.method || init.method === "GET") {
+    try {
+      await reserveXRead(url);
+    } catch (error) {
+      if (error instanceof ProviderBudgetError)
+        throw new TwitterDeliveryError(error.message, "budget_exhausted", false);
+      throw error;
+    }
+  }
   const response = await fetch(url, {
     ...init,
     headers: {
@@ -312,33 +327,34 @@ export async function verifyTwitterAutoDmConnection(connection: {
   if (twitterRequestFailed(me.status, me.data)) {
     throw twitterApiError(me.status, me.data, "X rejected this connection.", me.retryAfterSeconds);
   }
-  const dmProbe = await xRequest(
-    "https://api.x.com/2/dm_events?event_types=MessageCreate&dm_event.fields=id,event_type,sender_id,created_at&max_results=5",
-    token,
-  );
-  if (twitterRequestFailed(dmProbe.status, dmProbe.data)) {
-    throw twitterApiError(
-      dmProbe.status,
-      dmProbe.data,
-      "X did not allow Direct Message access. Reconnect and approve DMs.",
-      dmProbe.retryAfterSeconds,
+  if (xBackgroundReadsEnabled()) {
+    const dmProbe = await xRequest(
+      "https://api.x.com/2/dm_events?event_types=MessageCreate&dm_event.fields=id,event_type,sender_id,created_at&max_results=5",
+      token,
     );
-  }
-  const mentionProbe = await xRequest(
-    `https://api.x.com/2/users/${encodeURIComponent(connection.provider_user_id)}/mentions?max_results=5`,
-    token,
-  );
-  if (twitterRequestFailed(mentionProbe.status, mentionProbe.data)) {
-    throw twitterApiError(
-      mentionProbe.status,
-      mentionProbe.data,
-      "X did not allow mention access for Auto-DM.",
-      mentionProbe.retryAfterSeconds,
+    if (twitterRequestFailed(dmProbe.status, dmProbe.data)) {
+      throw twitterApiError(
+        dmProbe.status,
+        dmProbe.data,
+        "X did not allow Direct Message access. Reconnect and approve DMs.",
+        dmProbe.retryAfterSeconds,
+      );
+    }
+    const mentionProbe = await xRequest(
+      `https://api.x.com/2/users/${encodeURIComponent(connection.provider_user_id)}/mentions?max_results=5`,
+      token,
     );
+    if (twitterRequestFailed(mentionProbe.status, mentionProbe.data)) {
+      throw twitterApiError(
+        mentionProbe.status,
+        mentionProbe.data,
+        "X did not allow mention access for Auto-DM.",
+        mentionProbe.retryAfterSeconds,
+      );
+    }
   }
-  await registerTwitterWebhookSubscription(token, connection.provider_user_id).catch((error) => {
-    console.warn("[twitter-auto-dm] webhook subscription skipped", error);
-  });
+  // Webhook delivery must really be registered when paid recovery polling is disabled.
+  await registerTwitterWebhookSubscription(token, connection.provider_user_id);
   return { fields: [...TWITTER_AUTO_DM_WEBHOOK_FIELDS], verifiedAt: new Date().toISOString() };
 }
 
@@ -405,6 +421,7 @@ async function sendTwitterDm(connection: any, senderId: string | null, text: str
     return { id: `staging-dm-${crypto.randomUUID()}` };
   }
   const token = await tokenForConnection(connection);
+  await reserveProviderUsage("x_write_actions", 1, { workspaceId: connection.user_id });
   const result = await xRequest(
     `https://api.x.com/2/dm_conversations/with/${encodeURIComponent(senderId)}/messages`,
     token,
@@ -542,10 +559,10 @@ async function collectTweetActorEvents({
 }
 
 export async function enqueueTwitterDmReconciliations(queue?: Queue<TwitterDmQueueMessage>) {
-  if (!queue) return { claimed: 0, queued: 0 };
+  if (!queue || !xBackgroundReadsEnabled()) return { claimed: 0, queued: 0 };
   const { data, error } = await (supabaseAdmin as any).rpc("claim_twitter_dm_reconciliations", {
     p_batch_size: 25,
-    p_min_interval_seconds: 300,
+    p_min_interval_seconds: 86400,
   });
   if (error) throw new Error("Unable to claim X missed-event checks.");
   const connectionIds = (Array.isArray(data) ? data : []).flatMap((row: any) =>
@@ -570,6 +587,7 @@ async function processTwitterDmReconciliation(
   connectionId: string,
   queue?: Queue<TwitterDmQueueMessage>,
 ) {
+  if (!xBackgroundReadsEnabled()) return { skipped: true, reason: "paid_reads_disabled" };
   if (!queue) throw new Error("X automation queue is unavailable.");
   const { data: connection, error: connectionError } = await (supabaseAdmin as any)
     .from("social_connections")
@@ -583,7 +601,7 @@ async function processTwitterDmReconciliation(
   if (!connection || !getTwitterConnectionReadiness(connection).ready) {
     return { skipped: true, reason: "connection_not_ready" };
   }
-  if (!planHasEntitlement(await getPlan(String(connection.user_id)), "twitterAutoDM")) {
+  if (!(await hasPlanEntitlement(String(connection.user_id), "twitterAutoDM"))) {
     await (supabaseAdmin as any)
       .from("social_connections")
       .update({
@@ -784,7 +802,7 @@ export async function processTwitterDmQueueMessage(
     await Promise.all(
       [...new Set<string>(connections.map((connection: any) => String(connection.user_id)))].map(
         async (userId) => {
-          if (planHasEntitlement(await getPlan(userId), "twitterAutoDM")) {
+          if (await hasPlanEntitlement(userId, "twitterAutoDM")) {
             eligibleUserIds.add(userId);
           }
         },
@@ -856,6 +874,18 @@ export async function processTwitterDmQueueMessage(
       await updateEvent(eventId, {
         status: "ignored",
         error_code: "connection_missing",
+        processed_at: new Date().toISOString(),
+      });
+      return { ignored: true };
+    }
+    if (
+      !(await hasPlanEntitlement(String(connection.user_id), "twitterAutoDM")) ||
+      (usesAdvancedAutoDm({ excludedKeywords: match.automation.excluded_keywords }) &&
+        !(await hasPlanEntitlement(String(connection.user_id), "advancedAutoDM")))
+    ) {
+      await updateEvent(eventId, {
+        status: "ignored",
+        error_code: "plan_unavailable",
         processed_at: new Date().toISOString(),
       });
       return { ignored: true };

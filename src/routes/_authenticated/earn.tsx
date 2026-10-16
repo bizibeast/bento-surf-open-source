@@ -1,3 +1,4 @@
+import { recordCopiedReferral } from "@/lib/onboarding/apps.functions";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Referral tables ship with the paired migration. */
 import { useEffect, useState, type ComponentType } from "react";
 import { createFileRoute } from "@tanstack/react-router";
@@ -168,7 +169,10 @@ function EarnPage() {
                 onClick={() => {
                   if (editing) codeMutation.mutate();
                   else {
-                    void navigator.clipboard.writeText(data.referralUrl);
+                    void navigator.clipboard
+                      .writeText(data.referralUrl)
+                      .then(() => recordCopiedReferral())
+                      .catch(() => toast.error("Your referral link could not be copied."));
                     toast.success("Referral link copied.");
                   }
                 }}

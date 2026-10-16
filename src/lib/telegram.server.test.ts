@@ -114,6 +114,7 @@ function dependencies(receipts: Record<number, unknown>): TelegramServerDependen
         messageId: ids.message,
         draftCardId: "draft-1",
         scheduleCardId: "schedule-1",
+        revision: 0,
       },
     }),
     approveSchedule: vi.fn().mockResolvedValue(undefined),
@@ -178,6 +179,7 @@ describe("Telegram queued processing", () => {
       messageId: ids.message,
       draftCardId: "draft-1",
       scheduleCardId: "schedule-1",
+      revision: 0,
     });
     expect(deps.answerCallback).toHaveBeenCalledWith("callback-1", "Scheduled.");
   });

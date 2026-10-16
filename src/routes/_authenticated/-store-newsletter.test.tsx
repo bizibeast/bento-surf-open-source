@@ -134,7 +134,7 @@ describe("Store paid newsletter boundary", () => {
     vi.mocked(getMyProfile).mockResolvedValue({ username: "creator" } as never);
   });
 
-  it("redirects the legacy Store Audience tab to Email Marketing Audience", async () => {
+  it("redirects the legacy Store Audience tab to Newsletter Audience", async () => {
     routeState.tab = "audience";
     renderStore();
 
@@ -147,11 +147,11 @@ describe("Store paid newsletter boundary", () => {
     );
   });
 
-  it("manages an existing newsletter in Email Marketing without generic edit controls", async () => {
+  it("manages an existing newsletter in Newsletter without generic edit controls", async () => {
     renderStore();
 
     expect(await screen.findByText(newsletter.title)).toBeVisible();
-    expect(screen.getByRole("link", { name: "Manage in Email Marketing" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Manage in Newsletter" })).toHaveAttribute(
       "href",
       "/email-marketing?section=overview",
     );

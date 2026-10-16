@@ -182,4 +182,399 @@
   margin-bottom: 20px;
 }
 
-.content-workspace textarea[aria-label="Message Agent"] { field-sizing: content; }
+.content-workspace textarea[aria-label="Message Agent"] {
+  field-sizing: content;
+}
+
+.content-document-editor {
+  position: relative;
+  min-height: 80px;
+  padding: 4px 0;
+  cursor: text;
+  overflow-wrap: anywhere;
+}
+.content-document-editor[data-empty="true"]::before {
+  content: attr(data-placeholder);
+  color: #737373;
+  position: absolute;
+  pointer-events: none;
+  font-size: 15px;
+  line-height: 1.8;
+}
+.content-document-editor:focus {
+  outline: none;
+}
+.content-document:focus-within .content-document-toolbar {
+  color: var(--foreground);
+}
+.content-document-editor > .content-prose > :first-child {
+  margin-top: 0;
+}
+
+/* Content chat occupies the app's available viewport, without a repeated AppHeader. */
+.agent-shell {
+  display: grid;
+  grid-template-columns: 256px minmax(0, 1fr);
+  height: calc(100dvh - 3.5rem);
+  min-height: 0;
+  overflow: hidden;
+}
+.agent-shell.agent-collapsed {
+  grid-template-columns: 64px minmax(0, 1fr);
+}
+.agent-desktop-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px 10px;
+  background: color-mix(in oklab, var(--muted), var(--card) 55%);
+  border-right: 1px solid var(--border);
+}
+.agent-collapse,
+.agent-settings-button,
+.agent-mobile-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+.agent-collapse {
+  margin: 0 4px 12px;
+}
+.agent-collapse:hover,
+.agent-settings-button:hover,
+.agent-mobile-trigger:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+.agent-navigation {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  flex: 1;
+}
+.agent-nav-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 12px;
+  text-align: left;
+  border-radius: 10px;
+  color: var(--foreground);
+  font-size: 13px;
+  line-height: 20px;
+}
+.agent-nav-row:hover,
+.agent-nav-row[aria-current="page"] {
+  background: var(--muted);
+}
+.agent-nav-row:disabled {
+  opacity: 0.55;
+}
+.agent-named-row {
+  font-weight: 600;
+  position: relative;
+}
+.agent-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+.agent-unread {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 10px;
+  background: var(--foreground);
+  color: var(--background);
+  font-size: 10px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.agent-collapsed .agent-named-row .agent-unread {
+  position: absolute;
+  right: -3px;
+  top: 0;
+}
+.agent-collapsed .agent-nav-row {
+  justify-content: center;
+  padding-inline: 0;
+}
+.agent-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 8px 4px;
+  color: var(--muted-foreground);
+}
+.agent-search input {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 0;
+  background: transparent;
+  font-size: 12px;
+  outline: none;
+  color: var(--foreground);
+}
+.agent-search input::placeholder {
+  color: var(--muted-foreground);
+}
+.agent-chat-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 2px 16px;
+  scrollbar-width: thin;
+}
+.agent-group-label {
+  margin: 20px 12px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.agent-chat-row {
+  display: flex;
+  align-items: center;
+  position: relative;
+}
+.agent-chat-row > .agent-nav-row {
+  padding-right: 64px;
+}
+.agent-pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  right: 31px;
+  height: 32px;
+  width: 28px;
+  color: var(--muted-foreground);
+  border-radius: 8px;
+  opacity: 0;
+}
+.agent-chat-row:hover .agent-pin,
+.agent-chat-row:focus-within .agent-pin,
+.agent-chat-row:hover .agent-thread-more,
+.agent-chat-row:focus-within .agent-thread-more {
+  opacity: 1;
+}
+.agent-pin:hover,
+.agent-thread-more:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+.agent-thread-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  right: 3px;
+  height: 32px;
+  width: 28px;
+  color: var(--muted-foreground);
+  border-radius: 8px;
+  opacity: 0;
+}
+@media (hover: none) {
+  .agent-pin,
+  .agent-thread-more {
+    opacity: 1;
+  }
+}
+.agent-nav-empty {
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--muted-foreground);
+}
+.agent-load-more {
+  width: 100%;
+  margin-top: 12px;
+  padding: 10px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  border-radius: 8px;
+}
+.agent-load-more:hover {
+  background: var(--muted);
+}
+.agent-load-more:disabled {
+  opacity: 0.5;
+}
+.agent-conversation {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--card);
+}
+.agent-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 60px;
+  padding: 10px 24px;
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+.agent-mobile-trigger {
+  display: none;
+}
+.agent-messages {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px 28px 24px;
+  scrollbar-width: thin;
+}
+.agent-brain-hint {
+  margin: 0 auto;
+  max-width: 768px;
+  padding: 12px 24px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.agent-brain-hint p {
+  color: inherit;
+}
+.agent-brain-hint button {
+  margin-top: 8px;
+}
+.agent-composer-area {
+  flex-shrink: 0;
+  padding: 8px 28px 24px;
+  background: var(--card);
+}
+.agent-composer-field {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 26px;
+  background: var(--muted);
+  padding: 10px 10px 10px 20px;
+}
+.agent-composer-field:focus-within {
+  border-color: var(--muted-foreground);
+}
+.agent-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--foreground);
+  color: var(--background);
+}
+.agent-send:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.agent-settings-dialog {
+  border-radius: 20px;
+}
+.agent-setting-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+}
+.agent-setting-option input {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin-top: 2px;
+  accent-color: var(--foreground);
+}
+.agent-setting-option:has(input:disabled) {
+  opacity: 0.6;
+  cursor: default;
+}
+.agent-setting-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+}
+.agent-setting-description {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.agent-settings-section {
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+@media (min-width: 1024px) {
+  .agent-shell {
+    height: 100dvh;
+  }
+}
+@media (max-width: 767px) {
+  .agent-shell,
+  .agent-shell.agent-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .agent-desktop-sidebar {
+    display: none;
+  }
+  .agent-toolbar {
+    padding: 8px 12px;
+    min-height: 52px;
+  }
+  .agent-mobile-trigger {
+    display: inline-flex;
+  }
+  .agent-messages {
+    padding: 8px 16px 20px;
+  }
+  .agent-composer-area {
+    padding: 8px 12px max(12px, env(safe-area-inset-bottom));
+  }
+  .agent-mobile-drawer {
+    left: 0;
+    top: 0;
+    width: min(320px, calc(100vw - 40px));
+    height: 100dvh;
+    max-height: 100dvh;
+    transform: none;
+    translate: none;
+    border-radius: 0;
+    padding: 60px 16px 20px;
+    background: var(--card);
+    display: flex;
+    flex-direction: column;
+  }
+  .agent-mobile-drawer .agent-navigation {
+    overflow: hidden;
+  }
+  .agent-pin {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-mobile-drawer {
+    animation: none;
+  }
+}

@@ -1,6 +1,18 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, HardDrive, Trash2 } from "lucide-react";
-import { useState } from "react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ChevronLeft,
+  ChevronRight,
+  File,
+  FileAudio,
+  HardDrive,
+  Image as ImageIcon,
+  Play,
+  Trash2,
+  Video,
+} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { micro } from "@/lib/micro-app-ui";
 import {
@@ -88,6 +100,84 @@ function fileCount(count: number) {
   return `${count} ${count === 1 ? "file" : "files"}`;
 }
 
+function mediaType(object: StorageObject) {
+  if (["image", "avatar", "cover"].includes(object.type) || object.type.startsWith("image/"))
+    return "image";
+  if (object.type === "video" || object.type.startsWith("video/")) return "video";
+  if (object.type === "audio" || object.type.startsWith("audio/")) return "audio";
+  return "file";
+}
+
+function StorageThumbnail({ object, onPreview }: { object: StorageObject; onPreview: () => void }) {
+  const [failed, setFailed] = useState(false);
+  const [visible, setVisible] = useState(false);
+  const container = useRef<HTMLSpanElement>(null);
+  const type = mediaType(object);
+  const canPreview = Boolean(object.publicUrl && (type === "image" || type === "video"));
+  useEffect(() => {
+    if (visible || type !== "video" || !container.current) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(container.current);
+    return () => observer.disconnect();
+  }, [type, visible]);
+  const Icon =
+    type === "image" ? ImageIcon : type === "video" ? Video : type === "audio" ? FileAudio : File;
+  const content = (
+    <span
+      ref={container}
+      className="relative flex h-14 w-20 items-center justify-center overflow-hidden rounded-lg bg-[#f2f5fb] text-[#17213a]/45"
+    >
+      {canPreview && !failed ? (
+        type === "image" ? (
+          <img
+            src={`${object.publicUrl}?w=320`}
+            alt=""
+            loading="lazy"
+            onError={() => setFailed(true)}
+            className="size-full object-cover"
+          />
+        ) : (
+          <video
+            src={visible ? `${object.publicUrl}#t=0.1` : undefined}
+            muted
+            playsInline
+            preload="metadata"
+            aria-hidden="true"
+            onError={() => setFailed(true)}
+            className="size-full object-cover"
+          />
+        )
+      ) : (
+        <Icon className="size-5" aria-hidden="true" />
+      )}
+      {type === "video" && canPreview && !failed && (
+        <span className="absolute inset-0 flex items-center justify-center bg-black/20 text-white">
+          <Play className="size-5 fill-current" aria-hidden="true" />
+        </span>
+      )}
+    </span>
+  );
+  return canPreview ? (
+    <button type="button" onClick={onPreview} aria-label={`Preview ${object.name}`}>
+      {content}
+    </button>
+  ) : (
+    content
+  );
+}
+
 export function StorageManager() {
   const [cursor, setCursor] = useState<string | null>(null);
   const [sort, setSort] = useState<StorageSort>({ key: "uploaded", direction: "desc" });
@@ -95,6 +185,7 @@ export function StorageManager() {
   const [selected, setSelected] = useState<string[]>([]);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [failureCount, setFailureCount] = useState(0);
+  const [preview, setPreview] = useState<StorageObject | null>(null);
   const storage = useQuery({
     queryKey: ["storage-manager", sort.key, sort.direction, cursor],
     queryFn: ({ signal }) => getStoragePage(cursor, sort, signal),
@@ -201,12 +292,13 @@ export function StorageManager() {
       <div className={`${micro.card} overflow-hidden`}>
         {data.objects.length ? (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[680px] text-left text-sm">
+            <table className="w-full min-w-[760px] text-left text-sm">
               <thead className="border-b border-black/[0.06] bg-[#f8faff] text-xs text-[#17213a]/52">
                 <tr>
                   <th className="w-12 px-4 py-3">
                     <span className="sr-only">Select</span>
                   </th>
+                  <th className="px-4 py-3 font-semibold">Preview</th>
                   <th className="px-4 py-3 font-semibold">Name</th>
                   <th className="px-4 py-3 font-semibold">Type</th>
                   <th
@@ -281,6 +373,9 @@ export function StorageManager() {
                           className="size-4 rounded border-black/20 accent-[#3478f6]"
                         />
                       </td>
+                      <td className="px-4 py-2">
+                        <StorageThumbnail object={object} onPreview={() => setPreview(object)} />
+                      </td>
                       <td className="max-w-xs truncate px-4 py-3 font-medium text-[#17213a]">
                         {object.name}
                       </td>
@@ -336,6 +431,32 @@ export function StorageManager() {
           </button>
         </div>
       </div>
+
+      <Dialog open={Boolean(preview)} onOpenChange={(open) => !open && setPreview(null)}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="truncate pr-6">{preview?.name}</DialogTitle>
+            <DialogDescription>Stored media preview</DialogDescription>
+          </DialogHeader>
+          {preview?.publicUrl && mediaType(preview) === "image" && (
+            <img
+              src={preview.publicUrl}
+              alt={preview.name}
+              className="max-h-[70vh] w-full object-contain"
+            />
+          )}
+          {preview?.publicUrl && mediaType(preview) === "video" && (
+            <video
+              key={preview.key}
+              src={preview.publicUrl}
+              controls
+              playsInline
+              preload="metadata"
+              className="max-h-[70vh] w-full rounded-lg bg-black"
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent>

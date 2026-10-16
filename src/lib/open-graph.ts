@@ -84,7 +84,7 @@ export type PublicProductHeadData = {
 export function creatorIndexingMeta(profile: {
   noindex?: boolean | null;
   onboarded?: boolean | null;
-}) {
+}, _options?: { surface?: "profile" | "store" }) {
   return profile.noindex === true || profile.onboarded === false
     ? [{ name: "robots", content: "noindex, nofollow, noarchive" }]
     : [];

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { durableSocialAvatarUrl } from "./social-avatar.server";
+import { durableSocialAvatarUrl, durableDiscoverAvatarUrl } from "./social-avatar.server";
 
 const bucket = {
   put: vi.fn().mockResolvedValue({}),
@@ -106,6 +106,31 @@ describe("social connection avatars", () => {
         value,
       }),
     ).resolves.toBe(value);
+    expect(bucket.put).not.toHaveBeenCalled();
+  });
+  it("serves validated public creator photos from Bento instead of an expiring provider URL", async () => {
+    const url = await durableDiscoverAvatarUrl(
+      "instagram",
+      "https://www.instagram.com/creator/",
+      "https://scontent.cdninstagram.com/avatar.jpg",
+    );
+    expect(url).toMatch(
+      /^https:\/\/app\.test\.bento\.surf\/cdn\/discover\/creator-avatars\/instagram-[a-f0-9]{64}$/,
+    );
+    expect(bucket.put).toHaveBeenCalledWith(
+      expect.stringMatching(/^discover\/creator-avatars\//),
+      expect.any(Uint8Array),
+      expect.objectContaining({
+        httpMetadata: expect.objectContaining({ contentType: "image/jpeg" }),
+      }),
+    );
+  });
+  it("never copies an avatar from an unapproved host", async () => {
+    const url = "https://127.0.0.1/private";
+    expect(
+      await durableDiscoverAvatarUrl("instagram", "https://www.instagram.com/creator/", url),
+    ).toBe(url);
+    expect(fetch).not.toHaveBeenCalled();
     expect(bucket.put).not.toHaveBeenCalled();
   });
 });

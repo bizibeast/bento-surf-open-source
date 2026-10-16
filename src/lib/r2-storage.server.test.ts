@@ -5,6 +5,7 @@ const planServerMocks = vi.hoisted(() => {
     profiles: { plan_id: "free", is_pro: false },
     complimentary_plan_grants: null,
     subscriptions: null,
+    creator_r2_usage_cache: null,
   };
   return {
     responses,
@@ -14,7 +15,10 @@ const planServerMocks = vi.hoisted(() => {
           maybeSingle: async () => ({ data: responses[table], error: null }),
         }),
       }),
+      upsert: async () => ({ error: null }),
+      delete: () => ({ eq: async () => ({ error: null }) }),
     })),
+    rpc: vi.fn(async () => ({ error: null })),
   };
 });
 
@@ -26,7 +30,7 @@ const storageAnalyticsMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/integrations/supabase/client.server", () => ({
-  supabaseAdmin: { from: planServerMocks.from },
+  supabaseAdmin: { from: planServerMocks.from, rpc: planServerMocks.rpc },
 }));
 
 vi.mock("./posthog.server", () => storageAnalyticsMocks);
@@ -102,6 +106,118 @@ function mockMultipart(bucket: R2Bucket, completedSize: number) {
 }
 
 describe("R2 media storage paths", () => {
+  it("cancels only an authenticated creator's own unfinished multipart upload", async () => {
+    const { bucket } = mockBucket();
+    const { resumeMultipartUpload } = mockMultipart(bucket, 4);
+    const key = "users/user-123/video/file-mpu-4.mp4";
+    const request = (objectKey: string) =>
+      new Request(
+        `https://bento.surf/api/storage/upload?action=mpu-abort&key=${encodeURIComponent(objectKey)}&uploadId=upload-1`,
+        { method: "POST" },
+      );
+    const response = await handleR2StorageRequest(
+      request(key),
+      { MEDIA_BUCKET: bucket },
+      { waitUntil: vi.fn() },
+      { authenticate: async () => "user-123" },
+    );
+    expect(response?.status).toBe(200);
+    expect(resumeMultipartUpload).toHaveBeenCalledWith(key, "upload-1");
+    expect(resumeMultipartUpload.mock.results[0].value.abort).toHaveBeenCalledOnce();
+    resumeMultipartUpload.mockClear();
+    const rejected = await handleR2StorageRequest(
+      request("users/another-user/video/file-mpu-4.mp4"),
+      { MEDIA_BUCKET: bucket },
+      { waitUntil: vi.fn() },
+      { authenticate: async () => "user-123" },
+    );
+    expect(rejected?.status).toBe(401);
+    expect(resumeMultipartUpload).not.toHaveBeenCalled();
+  });
+
+  it("serves bounded byte ranges for video previews", async () => {
+    const { bucket } = mockBucket();
+    const key = "users/user-123/video/clip.mp4";
+    const size = 4 * 1024 * 1024;
+    bucket.head = vi.fn(async () => storedObject(key, size)) as R2Bucket["head"];
+    bucket.get = vi.fn(async (_key, options) => {
+      const range = options?.range as { offset: number; length: number };
+      return {
+        ...storedObject(key, size),
+        body: new Response(new Uint8Array(range.length)).body,
+        writeHttpMetadata(headers: Headers) {
+          headers.set("content-type", "video/mp4");
+        },
+      };
+    }) as unknown as R2Bucket["get"];
+
+    const response = await handleR2StorageRequest(
+      new Request(`https://bento.surf/cdn/${key}`, { headers: { range: "bytes=0-" } }),
+      { MEDIA_BUCKET: bucket },
+      { waitUntil: vi.fn() },
+    );
+
+    expect(response?.status).toBe(206);
+    expect(response?.headers.get("content-range")).toBe(`bytes 0-1048575/${size}`);
+    expect(response?.headers.get("content-length")).toBe("1048576");
+    expect(response?.headers.get("accept-ranges")).toBe("bytes");
+    expect(bucket.get).toHaveBeenCalledWith(key, {
+      range: { offset: 0, length: 1024 * 1024 },
+    });
+  });
+
+  it("serves a cached WebP preview for a requested image width", async () => {
+    const { bucket } = mockBucket();
+    const key = "users/user-123/image/photo.png";
+    bucket.get = vi.fn(async () => ({
+      ...storedObject(key, PNG_BYTES.length),
+      body: new Response(PNG_BYTES).body,
+      writeHttpMetadata(headers: Headers) {
+        headers.set("content-type", "image/png");
+      },
+    })) as unknown as R2Bucket["get"];
+    const input = vi.fn(() => ({
+      transform: vi.fn(() => ({
+        output: vi.fn(async () => ({ response: () => new Response("webp-preview") })),
+      })),
+    }));
+    const imageBinding = { input } as unknown as ImagesBinding;
+
+    const response = await handleR2StorageRequest(
+      new Request(`https://bento.surf/cdn/${key}?w=640`),
+      { MEDIA_BUCKET: bucket, IMAGES: imageBinding },
+      { waitUntil: vi.fn() },
+    );
+
+    expect(response?.status).toBe(200);
+    expect(response?.headers.get("content-type")).toBe("image/webp");
+    expect(response?.headers.get("content-length")).toBeNull();
+    expect(await response?.text()).toBe("webp-preview");
+    expect(input).toHaveBeenCalledOnce();
+  });
+
+  it("does not transform an unsupported image width", async () => {
+    const { bucket } = mockBucket();
+    const key = "users/user-123/image/photo.png";
+    bucket.get = vi.fn(async () => ({
+      ...storedObject(key, PNG_BYTES.length),
+      body: new Response(PNG_BYTES).body,
+      writeHttpMetadata(headers: Headers) {
+        headers.set("content-type", "image/png");
+      },
+    })) as unknown as R2Bucket["get"];
+    const input = vi.fn();
+
+    const response = await handleR2StorageRequest(
+      new Request(`https://bento.surf/cdn/${key}?w=5000`),
+      { MEDIA_BUCKET: bucket, IMAGES: { input } as unknown as ImagesBinding },
+      { waitUntil: vi.fn() },
+    );
+
+    expect(response?.headers.get("content-type")).toBe("image/png");
+    expect(input).not.toHaveBeenCalled();
+  });
+
   it("accepts safe extensions and rejects path-like values", () => {
     expect(sanitizeFileExtension("WEBP")).toBe("webp");
     expect(sanitizeFileExtension("tar.gz")).toBeNull();
@@ -132,28 +248,28 @@ describe("verified storage allowance", () => {
       { plan_id: "store", is_pro: false },
       null,
       { plan_id: "store", status: "active", storage_addon_units: 0 },
-      5 * 1024,
+      10 * 1024,
     ],
     [
       "Store with seven units",
       { plan_id: "store", is_pro: false },
       null,
       { plan_id: "store", status: "active", storage_addon_units: 7 },
-      75 * 1024,
+      80 * 1024,
     ],
     [
       "Creator with 100 units",
       { plan_id: "creator", is_pro: false },
       null,
       { plan_id: "creator", status: "trialing", storage_addon_units: 100 },
-      1005 * 1024,
+      1050 * 1024,
     ],
     [
       "inactive subscription",
       { plan_id: "store", is_pro: false },
       null,
       { plan_id: "store", status: "canceled", storage_addon_units: 100 },
-      5 * 1024,
+      10 * 1024,
     ],
     [
       "free subscription",
@@ -172,7 +288,7 @@ describe("verified storage allowance", () => {
         expires_at: "2099-01-01T00:00:00.000Z",
       },
       null,
-      5 * 1024,
+      50 * 1024,
     ],
   ])(
     "returns the expected allowance for %s",

@@ -1,3 +1,7 @@
+import { exportOnboardingContent } from "@/lib/onboarding/functions";
+import { BillingLifecycleNotice } from "@/components/billing-lifecycle-notice";
+import { RetentionCancellationDialog } from "@/components/billing/RetentionCancellationDialog";
+import { resumeMyPausedSubscription } from "@/lib/cancellation.functions";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
@@ -12,7 +16,6 @@ import {
   Compass,
   Copy,
   ExternalLink,
-  Gift,
   Globe2,
   Grid2X2,
   HardDrive,
@@ -59,6 +62,7 @@ import {
   PLAN_CONFIG,
   PLAN_ORDER,
   PLAN_PRICING,
+  planLimits,
   planHasEntitlement,
   planName,
   storageAddonPrice,
@@ -68,15 +72,13 @@ import {
   type PlanId,
 } from "@/lib/plans";
 import {
-  acceptMyRetentionOffer,
   cancelMyPlanChange,
-  cancelMyRenewal,
   changeMyPlan,
+  createCheckout,
   createMyBillingPortal,
   getMyBillingOverview,
   resumeMyRenewal,
   updateMyBillingAddons,
-  type CancellationFeedback,
   type MyBillingOverview,
 } from "@/lib/billing.functions";
 import {
@@ -514,28 +516,6 @@ function SettingsPage() {
       toast.error(error instanceof Error ? error.message : "Could not save email preferences"),
   });
 
-  const cancelRenewal = useMutation({
-    mutationFn: (input: { reason: CancellationFeedback; details?: string }) =>
-      cancelMyRenewal({ data: input }),
-    onSuccess: (next) => {
-      queryClient.setQueryData<MyBillingOverview>(["my-billing"], next);
-      toast.success("Renewal cancelled. Your paid access remains active until the date shown.");
-    },
-    onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Could not cancel renewal"),
-  });
-
-  const acceptRetentionOffer = useMutation({
-    mutationFn: (input: { reason: CancellationFeedback; details?: string }) =>
-      acceptMyRetentionOffer({ data: input }),
-    onSuccess: (next) => {
-      queryClient.setQueryData<MyBillingOverview>(["my-billing"], next);
-      toast.success("Three free months were added to your current plan.");
-    },
-    onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Could not apply the offer"),
-  });
-
   const resumeRenewal = useMutation({
     mutationFn: () => resumeMyRenewal(),
     onSuccess: (next) => {
@@ -546,16 +526,35 @@ function SettingsPage() {
       toast.error(error instanceof Error ? error.message : "Could not resume renewal"),
   });
 
+  const resumePause = useMutation({
+    mutationFn: () => resumeMyPausedSubscription(),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["my-billing"] });
+      toast.success("Your Bento plan is active again.");
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Could not resume your plan"),
+  });
+
+  const exportContent = useMutation({
+    mutationFn: () => exportOnboardingContent(),
+    onSuccess: (content) => {
+      const url = URL.createObjectURL(new Blob([content], { type: "application/json" }));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "my-bento-content.json";
+      anchor.click();
+      URL.revokeObjectURL(url);
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Your export could not be prepared."),
+  });
+
   const changePlan = useMutation({
-    mutationFn: (nextPlan: "store" | "creator") => changeMyPlan({ data: { plan: nextPlan } }),
+    mutationFn: (nextPlan: "store" | "creator" | "creator_plus") =>
+      changeMyPlan({ data: { plan: nextPlan } }),
     onSuccess: (result) => {
       setPlanChangeTarget(null);
-      if (result.mode === "checkout") {
-        const destination = safeNavigationHref(result.url);
-        if (!destination) return toast.error("Checkout returned an invalid destination.");
-        window.location.assign(destination);
-        return;
-      }
       const next = result.billing;
       queryClient.setQueryData<MyBillingOverview>(["my-billing"], next);
       toast.success(
@@ -596,6 +595,20 @@ function SettingsPage() {
       toast.error(error instanceof Error ? error.message : "Could not open billing and invoices"),
   });
 
+  const restartPlan = useMutation({
+    mutationFn: (target: PaidPlanId) =>
+      createCheckout({
+        data: { plan: target, period: billing?.billingPeriod ?? "monthly", returnTo: "dashboard" },
+      }),
+    onSuccess: ({ url }) => {
+      const destination = safeNavigationHref(url);
+      if (!destination) return toast.error("Checkout returned an invalid destination.");
+      window.location.assign(destination);
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Could not restart Bento"),
+  });
+
   const selectSection = (section: SectionId) => {
     void navigate({ to: "/settings", search: { section } });
   };
@@ -634,6 +647,7 @@ function SettingsPage() {
   useWebMcpTools(
     createSettingsWebMcpTools({
       refresh: () => queryClient.invalidateQueries(),
+      openCancellationFlow: () => setCancelFlowOpen(true),
       openPaymentSetup: (provider) => {
         if (provider === "stripe") setStripeConnectionOpen(true);
         else if (provider === "dodo") setDodoConnectionOpen(true);
@@ -735,11 +749,29 @@ function SettingsPage() {
                 title="Grow when your Bento is ready"
                 titleRef={sectionTitleRef}
               >
+                {billing?.billingLifecycle && !billing.complimentaryAccessExpiresAt && (
+                  <BillingLifecycleNotice
+                    lifecycle={billing.billingLifecycle}
+                    onBilling={() => openBillingPortal.mutate()}
+                    onResume={() => resumePause.mutate()}
+                    onRestart={() => restartPlan.mutate(billing.billingLifecycle!.plan)}
+                    busy={
+                      openBillingPortal.isPending || resumePause.isPending || restartPlan.isPending
+                    }
+                    onExport={() =>
+                      void navigate({ to: "/settings", search: { section: "account" } })
+                    }
+                  />
+                )}
                 <BentoCard className="overflow-hidden">
                   <div className="grid gap-8 md:grid-cols-[1fr_auto] md:items-center">
                     <div>
                       <div className="inline-flex rounded-lg border border-black/[0.08] bg-[#f2f5fb] px-3 py-1 text-xs font-semibold text-[#17213a]">
-                        {isPro ? `${planLabel} is active` : "bento.surf Link or Store"}
+                        {billing?.status === "paused"
+                          ? "Subscription paused"
+                          : isPro
+                            ? `${planLabel} is active`
+                            : "Choose your Bento plan"}
                       </div>
                       <h3 className="mt-4 font-ui-display text-3xl">
                         {planDefinition.description}
@@ -782,13 +814,13 @@ function SettingsPage() {
                 </BentoCard>
 
                 <div className="mt-4 grid gap-4 lg:grid-cols-3">
-                  {PLAN_ORDER.map((targetPlan) => (
+                  {PLAN_ORDER.filter((plan) => plan !== "free").map((targetPlan) => (
                     <PlanOptionCard
                       key={targetPlan}
                       plan={targetPlan}
                       currentPlan={plan}
                       billing={billing}
-                      busy={changePlan.isPending || cancelRenewal.isPending}
+                      busy={changePlan.isPending || billing?.status === "paused"}
                       onChangePlan={(nextPlan) => setPlanChangeTarget(nextPlan)}
                       onCancel={() => setCancelFlowOpen(true)}
                     />
@@ -850,7 +882,7 @@ function SettingsPage() {
                         </div>
                         <p className="mt-2 max-w-2xl text-sm leading-6 text-[#17213a]/52">
                           {billing.cancelAtPeriodEnd
-                            ? `Your ${planLabel} access stays active until ${formatBillingDate(billing.currentPeriodEnd)}, then your account moves to Free.`
+                            ? `Your ${planLabel} access stays active until ${formatBillingDate(billing.currentPeriodEnd)}, then hosted access pauses.`
                             : `Your current trial or billing period runs through ${formatBillingDate(billing.currentPeriodEnd)}. Cancelling stops the next charge without removing access early.`}
                         </p>
                       </div>
@@ -866,11 +898,10 @@ function SettingsPage() {
                       ) : (
                         <button
                           type="button"
-                          disabled={cancelRenewal.isPending}
                           onClick={() => setCancelFlowOpen(true)}
                           className={`${micro.btnOutline} shrink-0`}
                         >
-                          {cancelRenewal.isPending ? "Scheduling…" : "Downgrade to Free"}
+                          Cancel renewal
                         </button>
                       )}
                     </div>
@@ -1615,6 +1646,23 @@ function SettingsPage() {
                     </div>
                   </BentoCard>
                   <BentoCard className="md:col-span-2">
+                    <CardLabel>Your content</CardLabel>
+                    <h3 className="mt-3 font-ui-display text-xl">
+                      Take your Brain and drafts with you
+                    </h3>
+                    <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                      Download your saved Brain, Agent conversations and prepared drafts as JSON.
+                      Export stays available after a trial ends or your plan changes.
+                    </p>
+                    <button
+                      className={`${micro.btnOutline} mt-4`}
+                      disabled={exportContent.isPending}
+                      onClick={() => exportContent.mutate()}
+                    >
+                      {exportContent.isPending ? "Preparing export…" : "Download my content"}
+                    </button>
+                  </BentoCard>
+                  <BentoCard className="md:col-span-2">
                     <div className="flex h-full flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                         <CardLabel>Danger zone</CardLabel>
@@ -1655,12 +1703,12 @@ function SettingsPage() {
         <DialogContent className="w-[calc(100vw-1.5rem)] max-w-md rounded-[28px] p-5 sm:p-6">
           <DialogHeader>
             <DialogTitle className="font-ui-display text-2xl">
-              {planChangeTarget === "store" ? "Upgrade to Store?" : "Move to Link?"}
+              Change to {planName(planChangeTarget ?? "store")}?
             </DialogTitle>
             <DialogDescription className="leading-6">
-              {planChangeTarget === "store"
-                ? "Your Store access starts as soon as the prorated payment succeeds. Dodo uses your saved payment method."
-                : `You keep every Store feature until ${formatBillingDate(billing?.currentPeriodEnd ?? null)}. Link starts after that date.`}
+              {billing?.status === "trialing"
+                ? `Your trial continues without a charge today. ${planName(planChangeTarget ?? "store")} renews at ${PLAN_PRICING[planChangeTarget ?? "store"][billing?.billingPeriod ?? "monthly"].label}${PLAN_PRICING[planChangeTarget ?? "store"][billing?.billingPeriod ?? "monthly"].cadence} after your trial, plus applicable tax.`
+                : `Switch to ${planName(planChangeTarget ?? "store")} at ${PLAN_PRICING[planChangeTarget ?? "store"][billing?.billingPeriod ?? "monthly"].label}${PLAN_PRICING[planChangeTarget ?? "store"][billing?.billingPeriod ?? "monthly"].cadence}, plus applicable tax. Upgrades take effect after a prorated charge to your saved card; downgrades start at the end of your current billing period. Existing annual contracts require support to change catalogs.`}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:space-x-0">
@@ -1680,11 +1728,7 @@ function SettingsPage() {
               }}
               className={`${micro.btnPrimary} h-11`}
             >
-              {changePlan.isPending
-                ? "Saving…"
-                : planChangeTarget === "store"
-                  ? "Confirm upgrade"
-                  : "Schedule downgrade"}
+              {changePlan.isPending ? "Saving…" : "Confirm plan change"}
             </button>
           </DialogFooter>
         </DialogContent>
@@ -1695,8 +1739,6 @@ function SettingsPage() {
           onOpenChange={setCancelFlowOpen}
           plan={plan}
           billing={billing}
-          onAcceptOffer={(input) => acceptRetentionOffer.mutateAsync(input)}
-          onCancel={(input) => cancelRenewal.mutateAsync(input)}
         />
       )}
       <Dialog
@@ -1768,41 +1810,6 @@ function SettingsPage() {
   );
 }
 
-const CANCELLATION_REASONS: Array<{
-  id: CancellationFeedback;
-  label: string;
-  helper: string;
-}> = [
-  { id: "too_expensive", label: "It costs too much", helper: "The price no longer fits" },
-  { id: "unused", label: "I am not using it enough", helper: "I need more time to set it up" },
-  {
-    id: "missing_features",
-    label: "A feature is missing",
-    helper: "Bento does not yet cover what I need",
-  },
-  {
-    id: "too_complex",
-    label: "It is difficult to use",
-    helper: "The product or setup feels confusing",
-  },
-  {
-    id: "switched_service",
-    label: "I switched to another service",
-    helper: "Another tool fits my workflow better",
-  },
-  {
-    id: "low_quality",
-    label: "Something did not work well",
-    helper: "Quality or reliability fell short",
-  },
-  {
-    id: "customer_service",
-    label: "I need better support",
-    helper: "I could not get the help I needed",
-  },
-  { id: "other", label: "Another reason", helper: "Tell us in your own words" },
-];
-
 export function BillingAddonsCard({
   billingPeriod,
   billingStatus,
@@ -1830,7 +1837,7 @@ export function BillingAddonsCard({
   const canUpdate = billingStatus === "active" || billingStatus === "trialing";
   const disabled = !canUpdate || updating || saving;
   const contactPrice =
-    plan === "creator" && contactTier !== BASE_MARKETING_CONTACTS
+    (plan === "creator" || plan === "creator_plus") && contactTier !== BASE_MARKETING_CONTACTS
       ? CONTACT_TIER_PRICING[contactTier][billingPeriod]
       : 0;
   const storagePrice = storageAddonPrice(billingPeriod, storageUnits);
@@ -1859,10 +1866,10 @@ export function BillingAddonsCard({
         <h3 className="text-lg font-semibold">Add-ons</h3>
         <p className="text-sm text-[#17213a]/52">
           Your verified allowance is {initialContactTier.toLocaleString()} contacts and{" "}
-          {5 + initialStorageUnits * 10} GB storage.
+          {planLimits(plan).storageMb / 1024 + initialStorageUnits * 10} GB storage.
         </p>
       </div>
-      {plan === "creator" ? (
+      {plan !== "store" ? (
         <fieldset className="mt-5 min-w-0" disabled={disabled}>
           <legend className="text-sm font-semibold">Marketing contacts</legend>
           <p className="mt-1 text-xs text-[#17213a]/52">
@@ -1928,7 +1935,7 @@ export function BillingAddonsCard({
         />
         <p id="billing-storage-copy" className="mt-2 text-xs text-[#17213a]/52">
           ${storageUnitPrice} per 10 GB {billingPeriod === "monthly" ? "per month" : "per year"}, up
-          to 1 TB.
+          to 1 TB added.
         </p>
       </div>
       <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -2014,7 +2021,14 @@ function PlanOptionCard({
 }) {
   const definition = PLAN_CONFIG[plan];
   const current = plan === currentPlan;
-  const monthlyPrice = plan === "free" ? null : PLAN_PRICING[plan].monthly;
+  const ended = billing?.status === "canceled" || billing?.status === "incomplete";
+  const legacyAnnual = billing?.billingPeriod === "yearly" && billing.billingCatalog !== "2026-10";
+  const displayPrice =
+    plan === "free" || (current && legacyAnnual)
+      ? null
+      : PLAN_PRICING[plan][
+          billing?.billingPeriod === "yearly" && !legacyAnnual ? "yearly" : "monthly"
+        ];
   const buttonClass =
     "mt-auto inline-flex min-h-11 w-full items-center justify-center rounded-2xl px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-45";
 
@@ -2026,16 +2040,16 @@ function PlanOptionCard({
       </button>
     );
   } else if (plan === "free") {
-    if (!billing?.hasSubscription) {
+    if (!billing?.hasSubscription || ended) {
       action = (
         <button type="button" disabled className={`${buttonClass} bg-[#f2f5fb] text-[#17213a]/52`}>
-          Included after paid access ends
+          Self-hosted open source
         </button>
       );
     } else if (billing.cancelAtPeriodEnd) {
       action = (
         <button type="button" disabled className={`${buttonClass} bg-[#f2f5fb] text-[#17213a]/52`}>
-          Free starts {formatBillingDate(billing.currentPeriodEnd)}
+          Access ends {formatBillingDate(billing.currentPeriodEnd)}
         </button>
       );
     } else {
@@ -2046,14 +2060,16 @@ function PlanOptionCard({
           onClick={onCancel}
           className={`${buttonClass} ${micro.btnOutline} hover:bg-[#f2f5fb]`}
         >
-          Downgrade to Free
+          Cancel renewal
         </button>
       );
     }
-  } else if (!billing?.hasSubscription) {
+  } else if (!billing?.hasSubscription || ended) {
     action = (
       <UpgradeDialog
-        feature={plan === "store" ? "storeCards" : "postScheduler"}
+        feature={
+          plan === "store" ? "storeCards" : plan === "creator_plus" ? "brain" : "postScheduler"
+        }
         trigger={
           <button type="button" className={`${buttonClass} ${micro.btnPrimary}`}>
             Choose {planName(plan)}
@@ -2063,7 +2079,14 @@ function PlanOptionCard({
     );
   } else {
     const upgrade = PLAN_ORDER.indexOf(plan) > PLAN_ORDER.indexOf(currentPlan);
-    action = (
+    action = legacyAnnual ? (
+      <a
+        href="mailto:support@example.com?subject=Legacy%20annual%20plan%20change"
+        className={`${buttonClass} ${micro.btnOutline}`}
+      >
+        Contact support to change
+      </a>
+    ) : (
       <button
         type="button"
         disabled={busy || Boolean(billing.pendingPlan)}
@@ -2095,8 +2118,10 @@ function PlanOptionCard({
         )}
       </div>
       <div className="mt-5 flex items-baseline gap-1">
-        <span className="text-3xl font-semibold tracking-tight">{monthlyPrice?.label ?? "$0"}</span>
-        <span className="text-sm text-[#17213a]/52">{monthlyPrice?.cadence ?? "/month"}</span>
+        <span className="text-3xl font-semibold tracking-tight">
+          {current && legacyAnnual ? "Legacy annual price" : (displayPrice?.label ?? "$0")}
+        </span>
+        {displayPrice && <span className="text-sm text-[#17213a]/52">{displayPrice.cadence}</span>}
       </div>
       <ul className="my-5 grid gap-2.5 text-sm text-[#17213a]/52">
         {definition.highlights.slice(0, 5).map((highlight) => (
@@ -2116,333 +2141,19 @@ function CancellationFlowDialog({
   onOpenChange,
   plan,
   billing,
-  onAcceptOffer,
-  onCancel,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   plan: PaidPlanId;
   billing: MyBillingOverview;
-  onAcceptOffer: (input: {
-    reason: CancellationFeedback;
-    details?: string;
-  }) => Promise<MyBillingOverview>;
-  onCancel: (input: {
-    reason: CancellationFeedback;
-    details?: string;
-  }) => Promise<MyBillingOverview>;
 }) {
-  const [step, setStep] = useState<"reason" | "offer" | "loss" | "confirm" | "complete">("reason");
-  const [reason, setReason] = useState<CancellationFeedback | null>(null);
-  const [details, setDetails] = useState("");
-  const [outcome, setOutcome] = useState<"retained" | "cancelled" | null>(null);
-  const [resultDate, setResultDate] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
-  const selectedReason = CANCELLATION_REASONS.find((option) => option.id === reason);
-  const planLabel = planName(plan);
-
-  useEffect(() => {
-    if (open) return;
-    const retentionResetTimer = window.setTimeout(() => {
-      setStep("reason");
-      setReason(null);
-      setDetails("");
-      setOutcome(null);
-      setResultDate(null);
-    }, 150);
-    return () => window.clearTimeout(retentionResetTimer);
-  }, [open]);
-
-  const input = reason ? { reason, ...(details.trim() ? { details: details.trim() } : {}) } : null;
-
-  const finishOffer = async () => {
-    if (!input) return;
-    setPending(true);
-    try {
-      const next = await onAcceptOffer(input);
-      setOutcome("retained");
-      setResultDate(next.currentPeriodEnd);
-      setStep("complete");
-    } catch {
-      // The mutation displays a toast; keep this step open so the user can retry.
-    } finally {
-      setPending(false);
-    }
-  };
-
-  const finishCancellation = async () => {
-    if (!input) return;
-    setPending(true);
-    try {
-      const next = await onCancel(input);
-      setOutcome("cancelled");
-      setResultDate(next.currentPeriodEnd);
-      setStep("complete");
-    } catch {
-      // The mutation displays a toast; keep this step open so the user can retry.
-    } finally {
-      setPending(false);
-    }
-  };
-
   return (
-    <Dialog
+    <RetentionCancellationDialog
       open={open}
-      onOpenChange={(nextOpen) => {
-        if (pending) return;
-        onOpenChange(nextOpen);
-      }}
-    >
-      <DialogContent className="max-h-[calc(100dvh-1.5rem)] w-[calc(100vw-1.5rem)] max-w-lg overflow-y-auto rounded-[28px] p-5 sm:p-6">
-        {step === "reason" && (
-          <>
-            <DialogHeader>
-              <DialogTitle className="font-ui-display text-2xl">Before you leave</DialogTitle>
-              <DialogDescription className="leading-6">
-                What is the main reason you are considering cancelling {planLabel}? Your answer
-                helps us offer the most relevant option.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="grid gap-2" role="radiogroup" aria-label="Cancellation reason">
-              {CANCELLATION_REASONS.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={reason === option.id}
-                  onClick={() => setReason(option.id)}
-                  className={`rounded-2xl border p-3 text-left transition ${
-                    reason === option.id
-                      ? "border-[#3478f6] bg-[#dfeaff] ring-2 ring-[#3478f6]/15"
-                      : "border-black/[0.08] hover:bg-[#f2f5fb]"
-                  }`}
-                >
-                  <span className="block text-sm font-semibold">{option.label}</span>
-                  <span className="mt-0.5 block text-xs text-[#17213a]/52">{option.helper}</span>
-                </button>
-              ))}
-            </div>
-            {reason && (
-              <label className="grid gap-2 text-sm font-medium" htmlFor="cancellation-details">
-                Anything else? <span className="font-normal text-[#17213a]/52">Optional</span>
-                <textarea
-                  id="cancellation-details"
-                  value={details}
-                  maxLength={500}
-                  onChange={(event) => setDetails(event.target.value)}
-                  placeholder="Tell us what would make Bento work better for you"
-                  className={`${micro.input} min-h-24 resize-y`}
-                />
-              </label>
-            )}
-            <DialogFooter className="gap-2 sm:space-x-0">
-              <button
-                type="button"
-                onClick={() => onOpenChange(false)}
-                className={`${micro.btnOutline} h-11`}
-              >
-                Keep my plan
-              </button>
-              <button
-                type="button"
-                disabled={!reason}
-                onClick={() => setStep(billing.retentionOfferAvailable ? "offer" : "loss")}
-                className={`${micro.btnPrimary} h-11`}
-              >
-                Continue
-              </button>
-            </DialogFooter>
-          </>
-        )}
-
-        {step === "offer" && (
-          <>
-            <DialogHeader>
-              <div className={`${micro.iconWell} mb-2 size-12`}>
-                <Gift className="size-6" />
-              </div>
-              <DialogTitle className="font-ui-display text-3xl">
-                Keep {planLabel} free for 3 months
-              </DialogTitle>
-              <DialogDescription className="leading-6">
-                {reason === "too_expensive"
-                  ? "Take the pressure off your budget while keeping every paid feature."
-                  : reason === "unused"
-                    ? "Give yourself time to finish setup and see what works-without another charge for three months."
-                    : reason === "missing_features"
-                      ? "Keep your page and paid tools active while we use your feedback to improve Bento."
-                      : "Keep your current page, analytics, automations, and creator tools while you decide."}
-              </DialogDescription>
-            </DialogHeader>
-            <div className="rounded-[24px] border border-black/[0.07] bg-[#f2f5fb] p-4 text-[#17213a]">
-              <div className="text-sm font-semibold">One-time account offer</div>
-              <ul className="mt-3 grid gap-2 text-sm">
-                <li className="flex gap-2">
-                  <Check className="size-4 shrink-0" /> $0 Bento subscription charge for the next 3
-                  months
-                </li>
-                <li className="flex gap-2">
-                  <Check className="size-4 shrink-0" /> Keep every {planLabel} feature and all
-                  existing data
-                </li>
-                <li className="flex gap-2">
-                  <Check className="size-4 shrink-0" /> Normal billing resumes after the extended
-                  date
-                </li>
-              </ul>
-            </div>
-            <DialogFooter className="flex-col gap-2 sm:flex-col sm:space-x-0">
-              <button
-                type="button"
-                disabled={pending}
-                onClick={finishOffer}
-                className={`${micro.btnPrimary} h-12 w-full`}
-              >
-                {pending ? "Applying offer…" : "Apply 3 free months"}
-              </button>
-              <button
-                type="button"
-                disabled={pending}
-                onClick={() => setStep("loss")}
-                className="h-11 w-full rounded-2xl px-4 text-sm font-semibold text-[#17213a]/52 transition hover:bg-[#f2f5fb] hover:text-[#17213a]"
-              >
-                No thanks, continue cancelling
-              </button>
-              <button
-                type="button"
-                disabled={pending}
-                onClick={() => setStep("reason")}
-                className="h-10 w-full text-xs font-medium text-[#17213a]/52 hover:text-[#17213a]"
-              >
-                Back
-              </button>
-            </DialogFooter>
-          </>
-        )}
-
-        {step === "loss" && (
-          <>
-            <DialogHeader>
-              <DialogTitle className="font-ui-display text-2xl">
-                Here is what you will miss
-              </DialogTitle>
-              <DialogDescription className="leading-6">
-                Your content stays saved, but these {planLabel} features stop when your paid access
-                ends.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="rounded-[24px] border border-black/[0.07] bg-[#f2f5fb] p-4">
-              <ul className="grid gap-3 text-sm">
-                {PLAN_CONFIG[plan].highlights.slice(0, 4).map((highlight) => (
-                  <li key={highlight} className="flex items-start gap-2">
-                    <span
-                      aria-hidden="true"
-                      className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-xs font-bold text-destructive"
-                    >
-                      ×
-                    </span>
-                    <span>{highlight}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <DialogFooter className="flex-col gap-2 sm:flex-col sm:space-x-0">
-              <button
-                type="button"
-                onClick={() => onOpenChange(false)}
-                className={`${micro.btnPrimary} h-12 w-full`}
-              >
-                Keep my {planLabel} plan
-              </button>
-              <button
-                type="button"
-                onClick={() => setStep("confirm")}
-                className="h-11 w-full rounded-2xl px-4 text-sm font-semibold text-destructive ring-1 ring-destructive/25 transition hover:bg-destructive/10"
-              >
-                Continue cancelling
-              </button>
-              <button
-                type="button"
-                onClick={() => setStep(billing.retentionOfferAvailable ? "offer" : "reason")}
-                className="h-10 w-full text-xs font-medium text-[#17213a]/52 hover:text-[#17213a]"
-              >
-                Back
-              </button>
-            </DialogFooter>
-          </>
-        )}
-
-        {step === "confirm" && (
-          <>
-            <DialogHeader>
-              <DialogTitle className="font-ui-display text-2xl">
-                Do you really want to cancel?
-              </DialogTitle>
-              <DialogDescription className="leading-6">
-                Renewal will stop. Your {planLabel} features and existing content remain available
-                until {formatBillingDate(billing.currentPeriodEnd)}; then the account moves to Free.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="rounded-[22px] border border-black/[0.07] bg-[#f2f5fb] p-4 text-sm">
-              <span className="font-semibold">Reason:</span>{" "}
-              {selectedReason?.label ?? "Not provided"}
-              {details.trim() && <p className="mt-2 text-[#17213a]/52">“{details.trim()}”</p>}
-            </div>
-            <DialogFooter className="flex-col gap-2 sm:flex-col sm:space-x-0">
-              <button
-                type="button"
-                disabled={pending}
-                onClick={() => onOpenChange(false)}
-                className={`${micro.btnPrimary} h-12 w-full`}
-              >
-                Keep my {planLabel} plan
-              </button>
-              <button
-                type="button"
-                disabled={pending}
-                onClick={finishCancellation}
-                className="h-11 w-full rounded-2xl px-4 text-sm font-semibold text-destructive ring-1 ring-destructive/25 transition hover:bg-destructive/10 disabled:opacity-50"
-              >
-                {pending ? "Cancelling renewal…" : "Yes, cancel my subscription"}
-              </button>
-              <button
-                type="button"
-                disabled={pending}
-                onClick={() => setStep("loss")}
-                className="h-10 w-full text-xs font-medium text-[#17213a]/52 hover:text-[#17213a]"
-              >
-                Back
-              </button>
-            </DialogFooter>
-          </>
-        )}
-
-        {step === "complete" && (
-          <>
-            <DialogHeader>
-              <div className={`${micro.iconWell} mb-2 size-12`}>
-                <Check className="size-6" />
-              </div>
-              <DialogTitle className="font-ui-display text-2xl">
-                {outcome === "retained" ? "Your 3 free months are active" : "Renewal is cancelled"}
-              </DialogTitle>
-              <DialogDescription className="leading-6">
-                {outcome === "retained"
-                  ? `You keep every ${planLabel} feature. Your next billing date is ${formatBillingDate(resultDate)}.`
-                  : `You keep ${planLabel} until ${formatBillingDate(resultDate)}. After that, your account moves to Free and your existing content stays saved.`}
-              </DialogDescription>
-            </DialogHeader>
-            <button
-              type="button"
-              onClick={() => onOpenChange(false)}
-              className={`${micro.btnPrimary} h-12 w-full`}
-            >
-              Done
-            </button>
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
+      onOpenChange={onOpenChange}
+      plan={plan}
+      billing={billing}
+    />
   );
 }
 

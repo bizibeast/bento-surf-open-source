@@ -1,9 +1,11 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { UpgradeDialog } from "./UpgradeDialog";
-
-vi.mock("@/lib/billing.functions", () => ({ createCheckout: vi.fn() }));
-vi.mock("@/lib/posthog", () => ({ captureProductEvent: vi.fn() }));
+import { getCheckoutOffer } from "@/lib/billing.functions";
+vi.mock("@/lib/billing.functions", () => ({
+  createCheckout: vi.fn(),
+  getCheckoutOffer: vi.fn().mockResolvedValue({ trialEligible: true, active: false }),
+}));
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children, to }: { children: React.ReactNode; to: string }) => (
     <a href={to}>{children}</a>
@@ -21,76 +23,32 @@ vi.stubGlobal(
     unobserve() {}
   },
 );
-
-describe("UpgradeDialog onboarding offer", () => {
-  it("shows what Free misses before allowing a new creator to continue", () => {
-    const onOpenChange = vi.fn();
-    render(<UpgradeDialog trigger={null} open showFreeOption onOpenChange={onOpenChange} />);
-
-    expect(screen.getByRole("dialog")).toHaveClass("overflow-x-hidden", "overflow-y-auto");
-
-    fireEvent.click(screen.getByRole("button", { name: "Continue for Free" }));
-
-    expect(screen.getByRole("heading", { name: "Before you continue with Free" })).toBeVisible();
-    expect(screen.getByText("Unlimited pages and blocks")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Start 7-day Store trial" })).toBeVisible();
-    expect(onOpenChange).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Continue for Free" }));
-    expect(onOpenChange).toHaveBeenCalledWith(false);
+describe("paid hosted plans", () => {
+  it("offers monthly and yearly tiers and separates self-hosting from trial checkout", async () => {
+    render(<UpgradeDialog trigger={null} open showFreeOption />);
+    expect(await screen.findByRole("button", { name: "Start 3-day Store trial" })).toBeEnabled();
+    expect(screen.getByText("$19")).toBeVisible();
+    expect(screen.getByText("$39")).toBeVisible();
+    expect(screen.getByText("$49")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Continue for Free" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Yearly · 2 months free" }));
+    expect(screen.getByText("$190")).toBeVisible();
+    expect(screen.getByText("$390")).toBeVisible();
+    expect(screen.getByText("$490")).toBeVisible();
+    expect(screen.getByText(/then \$190\/year plus applicable tax/)).toBeVisible();
+    expect(screen.getByText(/Credit card required. \$0 today/)).toBeVisible();
+    expect(screen.getByText(/after 3 full days/)).toBeVisible();
   });
-
-  it("keeps Store on email capture while offering 10 GB storage units", () => {
-    render(<UpgradeDialog trigger={null} open />);
-
-    expect(screen.queryByLabelText("25,000 contacts")).not.toBeInTheDocument();
-    expect(screen.getByText("Email capture up to 500 contacts")).toBeVisible();
-    expect(screen.getByLabelText("Added storage in 10 GB units")).toHaveAttribute("min", "0");
-    expect(screen.getByLabelText("Added storage in 10 GB units")).toHaveAttribute("max", "100");
+  it("recommends the plan that actually includes Brain", async () => {
+    render(<UpgradeDialog trigger={null} open feature="brain" />);
+    expect(
+      await screen.findByRole("button", { name: "Start 3-day Creator Plus trial" }),
+    ).toBeEnabled();
   });
-
-  it("shows a visible focus ring for keyboard-focused contact tier radios", () => {
+  it("does not promise another free trial to a returning subscriber", async () => {
+    vi.mocked(getCheckoutOffer).mockResolvedValueOnce({ trialEligible: false, active: false });
     render(<UpgradeDialog trigger={null} open />);
-    fireEvent.click(screen.getByRole("button", { name: /Creator/ }));
-
-    const radio = screen.getByLabelText("25,000 contacts");
-    radio.focus();
-
-    expect(radio).toHaveFocus();
-    expect(radio.closest("label")).toHaveClass("focus-within:ring-2");
-  });
-
-  it("prices Creator contact tiers and storage before hosted checkout", async () => {
-    const { createCheckout } = await import("@/lib/billing.functions");
-    vi.mocked(createCheckout).mockResolvedValueOnce({
-      url: "",
-    });
-    render(<UpgradeDialog trigger={null} open />);
-
-    fireEvent.click(screen.getByRole("button", { name: /Creator/ }));
-    expect(screen.getByText(/\$10 per 10 GB per year, up to 1 TB/)).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Monthly" }));
-    expect(screen.getByText(/\$1 per 10 GB per month, up to 1 TB/)).toBeVisible();
-    fireEvent.click(screen.getByLabelText("25,000 contacts"));
-    fireEvent.change(screen.getByLabelText("Added storage in 10 GB units"), {
-      target: { value: "8" },
-    });
-
-    expect(screen.getByText(/unlimited marketing sends/i)).toBeVisible();
-    expect(screen.getByText("$238/month before taxes")).toBeVisible();
-    expect(screen.getByText("Dodo confirms the final tax and currency at checkout.")).toBeVisible();
-
-    fireEvent.click(screen.getByRole("button", { name: "Start 7-day Creator trial" }));
-    await waitFor(() =>
-      expect(createCheckout).toHaveBeenCalledWith({
-        data: {
-          contactTier: 25_000,
-          period: "monthly",
-          plan: "creator",
-          returnTo: "dashboard",
-          storageUnits: 8,
-        },
-      }),
-    );
+    expect(await screen.findByText(/Your trial has already been used/)).toBeVisible();
+    expect(screen.queryByText(/\$0 today/)).not.toBeInTheDocument();
   });
 });

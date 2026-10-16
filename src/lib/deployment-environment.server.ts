@@ -45,7 +45,7 @@ export function getStagingIsolationErrors(env?: RuntimeEnvironment) {
     errors.push("The staging Worker is pointing at the production Supabase project.");
   }
 
-  if (env?.DODO_PAYMENTS_ENVIRONMENT !== "test_mode") {
+  if (readString(env, "DODO_PAYMENTS_ENVIRONMENT") !== "test_mode") {
     errors.push("The staging Worker must use Dodo Payments test mode.");
   }
 

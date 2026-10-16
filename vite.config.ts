@@ -4,6 +4,7 @@ import tsConfigPaths from "vite-tsconfig-paths";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import { nitro } from "nitro/vite";
 import viteReact from "@vitejs/plugin-react";
+import { createRequire } from "node:module";
 
 export default defineConfig(({ mode, command }) => {
   // Statically inline VITE_* vars so they are replaced in both the client and
@@ -48,6 +49,19 @@ export default defineConfig(({ mode, command }) => {
       ],
     },
     plugins: [
+      {
+        name: "bento-server-wasm",
+        enforce: "pre",
+        resolveId(id) {
+          // Nitro emits the native Wasm module for Workers after Vite's SSR pass.
+          if (id === "@resvg/resvg-wasm/index_bg.wasm?module")
+            return {
+              id: `${createRequire(import.meta.url).resolve("@resvg/resvg-wasm/index_bg.wasm")}?module`,
+              external: true,
+            };
+        },
+      },
+
       tailwindcss(),
       tsConfigPaths({ projects: ["./tsconfig.json"] }),
       tanstackStart({

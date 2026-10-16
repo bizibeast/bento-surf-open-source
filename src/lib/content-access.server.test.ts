@@ -10,13 +10,23 @@ import { requireContentWorkspace } from "./content-access.server";
 
 beforeEach(() => vi.clearAllMocks());
 
-it("uses the existing post scheduler entitlement as the Content workspace gate", async () => {
+it("requires Brain access for the AI workspace", async () => {
   mocks.requirePlanEntitlement.mockResolvedValue("creator");
   await expect(requireContentWorkspace("creator-id")).resolves.toBe("creator");
   expect(mocks.requirePlanEntitlement).toHaveBeenCalledWith(
     "creator-id",
-    "postScheduler",
-    "Content is included in the Creator plan. Upgrade to continue.",
+    "brain",
+    "Brain is included with the Creator Plus plan. Upgrade to continue.",
+  );
+});
+
+it("allows Discover through its independent Creator entitlement", async () => {
+  mocks.requirePlanEntitlement.mockResolvedValue("creator");
+  await requireContentWorkspace("creator-id", "discover");
+  expect(mocks.requirePlanEntitlement).toHaveBeenCalledWith(
+    "creator-id",
+    "discover",
+    "Discover is included with the Creator plan. Upgrade to continue.",
   );
 });
 

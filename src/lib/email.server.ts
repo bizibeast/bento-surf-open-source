@@ -1,3 +1,4 @@
+import { reserveProviderUsage, ProviderBudgetError } from "./provider-budget.server";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Email tables are introduced by the lifecycle migration. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { renderBentoEmail, type BentoEmailCategory, type BentoEmailEvent } from "./email-templates";
@@ -386,6 +387,20 @@ export async function marketingAllowedForOutbox(row: EmailOutboxRow) {
 
 async function audienceCampaignDeliveryAuthorized(row: EmailOutboxRow) {
   if (!row.event_key.startsWith("audience-campaign:")) return true;
+  const { hasPlanEntitlement } = await import("./plan.server");
+  const creatorId =
+    typeof row.payload?.creatorId === "string" ? row.payload.creatorId : row.user_id;
+  if (!creatorId || !(await hasPlanEntitlement(creatorId, "emailMarketing"))) {
+    await updateOutbox(row.id, {
+      status: "suppressed",
+      last_error: "Workspace sending access is paused.",
+    });
+    await updateCampaignRecipientForOutbox(row.id, {
+      status: "suppressed",
+      skip_reason: "Workspace sending access is paused.",
+    });
+    return false;
+  }
   const { data, error } = await (supabaseAdmin as any).rpc("authorize_audience_campaign_delivery", {
     p_outbox_id: row.id,
   });
@@ -431,6 +446,67 @@ export function resolveEmailDeliveryEnvelope(input: {
 }
 
 async function sendWithResend(row: EmailOutboxRow) {
+  if (
+    [
+      "billing_access_ending",
+      "billing_tools_paused",
+      "billing_page_paused",
+      "workspace_deletion_warning",
+      "workspace_deletion_final",
+    ].includes(row.event_type)
+  ) {
+    const { readLifecycleNotice } = await import("./billing-notices.server");
+    const payload =
+      row.user_id && typeof row.payload?.episodeId === "string"
+        ? await readLifecycleNotice(
+            row.user_id,
+            row.payload.episodeId,
+            row.event_type as import("./billing-lifecycle").BillingLifecycleNotice,
+          )
+        : null;
+    if (!payload) {
+      await updateOutbox(row.id, {
+        status: "suppressed",
+        last_error: "Workspace billing has recovered or the notice no longer applies.",
+      });
+      return false;
+    }
+    row = { ...row, payload };
+  }
+  if (row.event_type === "trial_ending_reminder") {
+    const { readTrialReminder } = await import("./trial-reminders.server");
+    const payload =
+      row.user_id &&
+      typeof row.payload?.subscriptionId === "string" &&
+      typeof row.payload?.chargeAt === "string"
+        ? await readTrialReminder(row.user_id, row.payload.subscriptionId, row.payload.chargeAt)
+        : null;
+    if (!payload) {
+      await updateOutbox(row.id, {
+        status: "suppressed",
+        last_error: "No matching upcoming trial charge.",
+      });
+      return false;
+    }
+    row = { ...row, payload };
+  }
+  if (row.event_type === "pause_ending_reminder") {
+    const { readPauseReminder } = await import("./cancellation.functions");
+    const payload =
+      row.user_id &&
+      typeof row.payload?.pauseId === "string" &&
+      typeof row.payload?.resumeAt === "string"
+        ? await readPauseReminder(row.user_id, row.payload.pauseId, row.payload.resumeAt)
+        : null;
+    if (!payload) {
+      await updateOutbox(row.id, {
+        status: "suppressed",
+        last_error: "The subscription is no longer paused for this date.",
+      });
+      return false;
+    }
+    row = { ...row, payload };
+  }
   if (!(await marketingAllowedForOutbox(row))) {
     await updateOutbox(row.id, {
       status: "suppressed",
@@ -498,6 +574,16 @@ async function sendWithResend(row: EmailOutboxRow) {
     headers["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";
   }
   if (!(await audienceCampaignDeliveryAuthorized(row))) return false;
+  await reserveProviderUsage(
+    row.category === "marketing" ? "marketing_emails" : "transactional_emails",
+    1,
+    {
+      workspaceId:
+        typeof row.payload?.creatorId === "string"
+          ? row.payload.creatorId
+          : row.user_id || undefined,
+    },
+  );
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -568,6 +654,15 @@ export async function processEmailOutbox(limit = 25) {
     try {
       if (await sendWithResend(row)) sent += 1;
     } catch (deliveryError) {
+      if (deliveryError instanceof ProviderBudgetError) {
+        await updateOutbox(row.id, {
+          status: "pending",
+          attempts: Math.max(0, row.attempts - 1),
+          available_at: new Date(Date.now() + 86400000).toISOString(),
+          last_error: deliveryError.message,
+        });
+        continue;
+      }
       console.error(`[email] failed ${row.event_key}`, deliveryError);
       await failDelivery(row, deliveryError);
     }
@@ -655,6 +750,34 @@ export async function enqueueEmail(input: EnqueueEmailInput) {
   return row?.id ?? null;
 }
 
+export async function enqueueSeoPublishFailureEmail(input: {
+  runId: string;
+  publicationDate: string | null;
+  stage: string;
+  attempt: number;
+  summary: string;
+}) {
+  const recipientEmail = (process.env.FOUNDER_ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((email) => email.trim().toLowerCase())
+    .find(Boolean);
+  if (!recipientEmail) return null;
+  return enqueueEmail({
+    eventKey: `seo-publish-failed:${input.runId}`,
+    eventType: "seo_publish_failed",
+    category: "transactional",
+    recipientEmail,
+    recipientName: "Bento team",
+    payload: {
+      publicationDate: input.publicationDate ?? "unknown date",
+      stage: input.stage,
+      attempt: input.attempt,
+      summary: input.summary.slice(0, 1_000),
+    },
+    immediate: true,
+  });
+}
+
 export async function enqueueEmailBatch(inputs: EnqueueEmailInput[]) {
   if (!inputs.length) return { rows: [], skipped: 0 };
   const outboxInputs = inputs.flatMap((input) => {
@@ -724,7 +847,7 @@ export async function getCreatorEmailCapacity(creatorId: string) {
   const subscribed = Number(data?.subscribed);
   const remaining = Number(data?.remaining);
   if (
-    !["free", "store", "creator"].includes(plan) ||
+    !["free", "store", "creator", "creator_plus"].includes(plan) ||
     !Number.isSafeInteger(limit) ||
     limit < 0 ||
     !Number.isSafeInteger(subscribed) ||
@@ -802,8 +925,8 @@ export async function recordEmailMarketingCapacityBlock(input: {
 
 async function requireCreatorEmailCapacity(creatorId: string, source: "schedule" | "delivery") {
   const capacity = await getCreatorEmailCapacity(creatorId);
-  if (capacity.plan !== "creator") {
-    throw new CampaignDeliveryError("Email Marketing requires the Creator plan.", false);
+  if (!["creator", "creator_plus"].includes(capacity.plan)) {
+    throw new CampaignDeliveryError("Newsletter requires Creator or Creator Plus.", false);
   }
   if (!capacity.overLimit) return capacity;
   await recordEmailMarketingCapacityBlock({
@@ -1047,7 +1170,7 @@ export async function processAudienceCampaignDelivery(campaignId: string) {
         false,
       );
     }
-    if (recipientError.message === "Email Marketing requires the Creator plan.") {
+    if (recipientError.message === "Newsletter requires Creator or Creator Plus.") {
       throw new CampaignDeliveryError(recipientError.message, false);
     }
     throw new Error(recipientError.message);
@@ -1696,10 +1819,21 @@ export async function enqueueCommerceRefundEmails(input: {
 
 export async function enqueueBentoBillingEmail(input: {
   eventKey: string;
-  eventType: "pro_activated" | "payment_failed" | "subscription_cancelled" | "refund_processed";
+  eventType:
+    | "pro_activated"
+    | "payment_failed"
+    | "subscription_cancelled"
+    | "refund_processed"
+    | "trial_ending_reminder"
+    | "trial_extended"
+    | "subscription_cancellation_scheduled"
+    | "subscription_paused"
+    | "pause_ending_reminder"
+    | import("./billing-lifecycle").BillingLifecycleNotice;
   userId: string;
   amount?: number | null;
   currency?: string | null;
+  payload?: Record<string, unknown>;
 }) {
   const creator = await creatorIdentity(input.userId);
   if (!creator.email) return null;
@@ -1709,8 +1843,16 @@ export async function enqueueBentoBillingEmail(input: {
     recipientEmail: creator.email,
     recipientName: creator.name,
     userId: input.userId,
-    payload: { amount: input.amount, currency: input.currency },
-    immediate: true,
+    payload: { ...input.payload, amount: input.amount, currency: input.currency },
+    immediate: ![
+      "trial_ending_reminder",
+      "pause_ending_reminder",
+      "billing_access_ending",
+      "billing_tools_paused",
+      "billing_page_paused",
+      "workspace_deletion_warning",
+      "workspace_deletion_final",
+    ].includes(input.eventType),
   });
 }
 

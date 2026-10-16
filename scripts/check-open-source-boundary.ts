@@ -70,7 +70,7 @@ export const OPEN_SOURCE_IDENTITY_RULES: Array<{ reason: string; pattern: RegExp
   {
     reason: "personal identity marker",
     pattern:
-      /\b[A-Z0-9._%+-]+@(?!example\.(?:com|net|org)\b|[^\s"'\x60]+\.(?:test|invalid)\b|localhost\b)[A-Z0-9.-]+\.[A-Z]{2,}\b|\bEXPLORE_EXCLUDED_USERNAMES\s*=\s*new Set\s*\(\s*\[\s*["']|\b(?:author|maintainer|owner)\s*[:=]\s*["']?[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+/i,
+      /\b[A-Z0-9._%+-]+@(?!example\.(?:com|net|org)\b|[^\s"'\x60]+\.(?:test|invalid)\b|localhost\b)[A-Z0-9.-]+\.[A-Z]{2,}\b|\bEXPLORE_EXCLUDED_USERNAMES\s*=\s*new Set\s*\(\s*\[\s*["']|\b(?:author|maintainer|owner)[ \t]*[:=][ \t]*["'][A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)+["']/i,
   },
   {
     reason: "provider fallback identity",

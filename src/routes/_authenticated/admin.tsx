@@ -1665,7 +1665,7 @@ function JourneyCard({
     createdAt: string;
     lastSignInAt: string | null;
     subscriptionStatus: string | null;
-    planId: "free" | "store" | "creator";
+    planId: "free" | "store" | "creator" | "creator_plus";
   }>;
   funnel: Array<{ label: string; value: number }>;
   conversions: number;
@@ -1778,7 +1778,7 @@ function UserTable({
     createdAt: string;
     lastSignInAt: string | null;
     subscriptionStatus: string | null;
-    planId: "free" | "store" | "creator";
+    planId: "free" | "store" | "creator" | "creator_plus";
   }>;
 }) {
   if (!users.length) return <EmptyState label="No creators match this search." />;

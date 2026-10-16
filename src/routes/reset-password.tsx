@@ -169,6 +169,7 @@ function ResetPasswordPage() {
 
       <form
         onSubmit={mode === "update" ? updatePassword : requestReset}
+        method="post"
         noValidate
         className="mt-7 space-y-4"
         toolname={

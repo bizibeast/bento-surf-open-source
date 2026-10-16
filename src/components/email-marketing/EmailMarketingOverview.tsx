@@ -136,7 +136,7 @@ export function EmailMarketingOverview({
       return (
         <section className="py-16 text-center">
           <h2 className="font-ui-display text-3xl text-[#17213a]">
-            Email Marketing is included with the Creator plan
+            Newsletter is included with the Creator plan
           </h2>
           <p className="mt-2 text-sm text-[#17213a]/50">
             Review your plan before creating a publication or writing posts.
@@ -196,7 +196,7 @@ export function EmailMarketingOverview({
       </section>
 
       <section
-        aria-label="Email Marketing totals"
+        aria-label="Newsletter totals"
         className="grid border-b border-black/[0.08] py-8 sm:grid-cols-2 sm:py-9"
       >
         <div className="flex items-center gap-4 py-3 sm:border-r sm:border-black/[0.08] sm:px-2">

@@ -17,6 +17,7 @@ import {
 } from "@/lib/social-embeds";
 import { YouTubePlayer } from "./YouTubePlayer";
 import { DecodedImage } from "@/components/DecodedImage";
+import { mediaPreviewUrl } from "@/lib/media-variants";
 import {
   safeCssColor,
   safeMediaUrl,
@@ -419,16 +420,26 @@ function BlockContent({
       return <CommerceTile content={c} w={block.w} h={block.h} shellClass={SHELL} />;
     }
 
-    case "image":
+    case "image": {
+      const imageUrl = safeMediaUrl(c.url);
+      const previewUrl = imageUrl ? mediaPreviewUrl(imageUrl, 640) : null;
+      const previewSrcSet =
+        imageUrl && previewUrl !== imageUrl
+          ? `${previewUrl} 640w, ${mediaPreviewUrl(imageUrl, 1280)} 1280w`
+          : undefined;
       return (
         <Shell
           padded={false}
           href={c.linkUrl || undefined}
           className="relative overflow-hidden bg-muted"
         >
-          {safeMediaUrl(c.url) ? (
+          {imageUrl ? (
             <DecodedImage
-              src={safeMediaUrl(c.url)!}
+              src={previewUrl!}
+              srcSet={previewSrcSet}
+              sizes={
+                block.w >= 3 ? "(max-width: 640px) 100vw, 80vw" : "(max-width: 640px) 100vw, 40vw"
+              }
               alt={c.alt ?? ""}
               className="size-full object-cover"
               loading={c.loading === "eager" ? "eager" : "lazy"}
@@ -451,6 +462,7 @@ function BlockContent({
           )}
         </Shell>
       );
+    }
 
     case "image_gallery": {
       const urls: string[] = (Array.isArray(c.urls) ? c.urls : [])

@@ -146,7 +146,7 @@ describe("Bento MCP tools", () => {
       return chain;
     };
 
-    mcpMocks.requirePlanEntitlement.mockResolvedValue("store");
+    mcpMocks.requirePlanEntitlement.mockResolvedValue("creator_plus");
     mcpMocks.enforceRequestRateLimit.mockResolvedValue(undefined);
     mcpMocks.from.mockImplementation((table: string) => {
       if (table === "social_connections") {

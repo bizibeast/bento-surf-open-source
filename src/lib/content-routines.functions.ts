@@ -4,8 +4,11 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { requireContentWorkspace } from "./content-access.server";
-import { nextContentRoutineRun } from "./content-routines";
-import { SOCIAL_PROVIDERS } from "./social-scheduler";
+import {
+  nextContentRoutineRun,
+  AUTOMATIC_ROUTINE_PLATFORMS,
+  routineReviewReason,
+} from "./content-routines";
 import { isValidTimeZone } from "./timezones";
 
 export const CONTENT_ROUTINE_TEMPLATES = [
@@ -15,7 +18,7 @@ export const CONTENT_ROUTINE_TEMPLATES = [
   "weekly_performance_review",
 ] as const;
 
-const routineInputSchema = z
+export const routineInputSchema = z
   .object({
     template: z
       .enum(CONTENT_ROUTINE_TEMPLATES)
@@ -31,12 +34,13 @@ const routineInputSchema = z
     time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
     timezone: z.string().min(1).max(100).refine(isValidTimeZone, "Choose a valid timezone."),
     platforms: z
-      .array(z.enum(SOCIAL_PROVIDERS))
+      .array(z.enum(AUTOMATIC_ROUTINE_PLATFORMS))
       .max(8)
       .transform((values) => [...new Set(values)]),
     name: z.string().trim().min(1).max(100).optional(),
     instructions: z.string().trim().min(1).max(4_000).optional(),
     catalogKey: z.string().trim().max(100).optional(),
+    outputMode: z.literal("draft").optional(),
   })
   .superRefine((value, context) => {
     if (value.template.startsWith("custom:") && (!value.name || !value.instructions))
@@ -63,6 +67,7 @@ export const saveContentRoutine = createServerFn({ method: "POST" })
   .handler(async ({ context, data }) => {
     await requireContentWorkspace(context.userId);
     const schedule = {
+      outputMode: data.outputMode || "draft",
       intervalMinutes: data.intervalMinutes,
       time: data.time,
       ...(data.name ? { name: data.name } : {}),
@@ -114,11 +119,13 @@ export const setContentRoutinePaused = createServerFn({ method: "POST" })
     await requireContentWorkspace(context.userId);
     const { data: routine, error: loadError } = await (supabaseAdmin as any)
       .from("content_routines")
-      .select("schedule,timezone")
+      .select("schedule,timezone,platforms")
       .eq("id", data.id)
       .eq("user_id", context.userId)
       .maybeSingle();
     if (loadError || !routine) throw new Error("This Content routine is unavailable.");
+    if (!data.paused && routineReviewReason(routine))
+      throw new Error(routineReviewReason(routine)!);
     const nextRunAt = data.paused
       ? null
       : nextContentRoutineRun(routine.schedule, routine.timezone).toISOString();

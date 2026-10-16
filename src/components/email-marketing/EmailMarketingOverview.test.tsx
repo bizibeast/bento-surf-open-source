@@ -53,7 +53,7 @@ describe("EmailMarketingOverview", () => {
 
     expect(screen.getByRole("heading", { name: "Welcome back, Yash." })).toBeVisible();
     expect(screen.getByText(publication.title)).toBeVisible();
-    const totals = screen.getByRole("region", { name: "Email Marketing totals" });
+    const totals = screen.getByRole("region", { name: "Newsletter totals" });
     expect(totals).toHaveTextContent("42 subscribers in this publication");
     expect(totals).toHaveTextContent("420 / 500 contacts used across all publications");
     fireEvent.click(screen.getByRole("button", { name: "Continue writing" }));

@@ -16,6 +16,12 @@ const mocks = vi.hoisted(() => ({
   cancelMyRenewal: vi.fn(),
   acceptMyRetentionOffer: vi.fn(),
   resumeMyRenewal: vi.fn(),
+  resumeMyPausedSubscription: vi.fn(),
+  getMyCancellationImpact: vi.fn(),
+  startMyCancellation: vi.fn(),
+  extendMyTrial: vi.fn(),
+  pauseMySubscription: vi.fn(),
+  acceptMyRetentionDiscount: vi.fn(),
   createMyBillingPortal: vi.fn(),
   getMyEmailPreferences: vi.fn(),
   updateMyEmailPreferences: vi.fn(),
@@ -73,6 +79,14 @@ vi.mock("@/lib/billing.functions", () => ({
   acceptMyRetentionOffer: mocks.acceptMyRetentionOffer,
   resumeMyRenewal: mocks.resumeMyRenewal,
   createMyBillingPortal: mocks.createMyBillingPortal,
+}));
+vi.mock("@/lib/cancellation.functions", () => ({
+  getMyCancellationImpact: mocks.getMyCancellationImpact,
+  resumeMyPausedSubscription: mocks.resumeMyPausedSubscription,
+  startMyCancellation: mocks.startMyCancellation,
+  extendMyTrial: mocks.extendMyTrial,
+  pauseMySubscription: mocks.pauseMySubscription,
+  acceptMyRetentionDiscount: mocks.acceptMyRetentionDiscount,
 }));
 vi.mock("@/lib/email-preferences.functions", () => ({
   getMyEmailPreferences: mocks.getMyEmailPreferences,
@@ -141,12 +155,16 @@ function tool(
   refresh = vi.fn().mockResolvedValue(undefined),
   navigate = vi.fn(),
   openPaymentSetup = vi.fn(),
+  openCancellationFlow = vi.fn(),
 ) {
-  const found = createSettingsWebMcpTools({ refresh, navigate, openPaymentSetup }).find(
-    (candidate) => candidate.name === name,
-  );
+  const found = createSettingsWebMcpTools({
+    refresh,
+    navigate,
+    openPaymentSetup,
+    openCancellationFlow,
+  }).find((candidate) => candidate.name === name);
   if (!found) throw new Error(`Missing ${name}`);
-  return { found, refresh, navigate, openPaymentSetup };
+  return { found, refresh, navigate, openPaymentSetup, openCancellationFlow };
 }
 
 beforeEach(() => {
@@ -170,6 +188,8 @@ beforeEach(() => {
     plan: "creator",
     status: "active",
     hasSubscription: true,
+    billingCatalog: "2026-10",
+    pausedUntil: null,
     customerId: "private-customer-id",
   });
   mocks.getMyEmailPreferences.mockResolvedValue({
@@ -254,6 +274,13 @@ beforeEach(() => {
   });
   mocks.signOut.mockResolvedValue({ error: null });
   mocks.resetPasswordForEmail.mockResolvedValue({ error: null });
+  mocks.getMyCancellationImpact.mockResolvedValue({
+    publishedPages: 2,
+    publishedProducts: 1,
+    scheduledPosts: 3,
+    activeAutoDms: 1,
+  });
+  mocks.resumeMyPausedSubscription.mockResolvedValue({ active: true });
 });
 
 describe("Settings WebMCP tools", () => {
@@ -261,6 +288,8 @@ describe("Settings WebMCP tools", () => {
     const tools = createSettingsWebMcpTools({ refresh: vi.fn(), navigate: vi.fn() });
     expect(tools.map(({ name }) => name)).toEqual([
       "get_settings_workspace",
+      "get_settings_cancellation_impact",
+      "manage_settings_retention",
       "update_settings_account",
       "manage_settings_custom_domain",
       "manage_settings_social_connection",
@@ -269,7 +298,7 @@ describe("Settings WebMCP tools", () => {
       "manage_settings_billing",
       "manage_settings_security",
     ]);
-    for (const candidate of tools.slice(1)) {
+    for (const candidate of tools.filter((item) => !item.annotations?.readOnlyHint)) {
       expect(candidate.inputSchema).toMatchObject({
         type: "object",
         additionalProperties: false,
@@ -279,6 +308,110 @@ describe("Settings WebMCP tools", () => {
       expect(candidate.annotations?.readOnlyHint).toBe(false);
       expect(candidate.description).toContain("browser confirmation");
     }
+  });
+
+  it("shows cancellation impact and opens the current offer flow before changing billing", async () => {
+    const impact = await tool("get_settings_cancellation_impact").found.execute(
+      {},
+      { signal: signal() },
+    );
+    expect(impact).toMatchObject({
+      structuredContent: { impact: { publishedPages: 2, scheduledPosts: 3 } },
+    });
+    const { found, openCancellationFlow } = tool("manage_settings_billing");
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    await expect(
+      found.execute({ action: "review_cancellation" }, { signal: signal() }),
+    ).resolves.toMatchObject({ structuredContent: { ok: true, action: "review_cancellation" } });
+    expect(openCancellationFlow).toHaveBeenCalledOnce();
+    expect(mocks.cancelMyRenewal).not.toHaveBeenCalled();
+
+    await found.execute({ action: "resume_paused" }, { signal: signal() });
+    expect(mocks.resumeMyPausedSubscription).toHaveBeenCalledOnce();
+  });
+
+  it("starts cancellation and confirms each retention response separately", async () => {
+    const { found, refresh } = tool("manage_settings_retention");
+    const intentId = "22222222-2222-4222-8222-222222222222";
+    mocks.startMyCancellation.mockResolvedValue({
+      intentId,
+      firstAttempt: true,
+      reason: "budget",
+      offerType: "discount",
+      discountPercent: 40,
+      activeIntegrations: 3,
+      hasSocial: true,
+      activeUsage: true,
+    });
+    mocks.acceptMyRetentionDiscount.mockResolvedValue({ nextBillingDate: "2026-11-14" });
+    mocks.cancelMyRenewal.mockResolvedValue({
+      cancelAtPeriodEnd: true,
+      currentPeriodEnd: "2026-11-14",
+    });
+    const confirmation = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    await expect(
+      found.execute({ action: "start", reason: "budget" }, { signal: signal() }),
+    ).resolves.toMatchObject({
+      structuredContent: { intentId, firstAttempt: true, offerType: "discount" },
+    });
+    expect(mocks.startMyCancellation).toHaveBeenCalledWith({
+      data: {
+        reason: "budget",
+        details: undefined,
+        switchDestination: undefined,
+        switchWhy: undefined,
+      },
+    });
+    expect(mocks.cancelMyRenewal).not.toHaveBeenCalled();
+
+    await expect(
+      found.execute({ action: "accept_discount", intentId }, { signal: signal() }),
+    ).resolves.toMatchObject({ structuredContent: { outcome: "discounted" } });
+    expect(mocks.acceptMyRetentionDiscount).toHaveBeenCalledWith({ data: { intentId } });
+
+    const laterIntentId = "33333333-3333-4333-8333-333333333333";
+    mocks.startMyCancellation.mockResolvedValueOnce({
+      intentId: laterIntentId,
+      firstAttempt: false,
+      reason: "budget",
+      offerType: null,
+      discountPercent: null,
+      activeIntegrations: 3,
+      hasSocial: true,
+      activeUsage: true,
+    });
+    await expect(
+      found.execute({ action: "start", reason: "budget" }, { signal: signal() }),
+    ).resolves.toMatchObject({
+      structuredContent: { intentId: laterIntentId, firstAttempt: false, offerType: null },
+    });
+
+    await expect(
+      found.execute(
+        { action: "confirm_cancellation", intentId: laterIntentId },
+        { signal: signal() },
+      ),
+    ).resolves.toMatchObject({ structuredContent: { outcome: "cancelled" } });
+    expect(mocks.cancelMyRenewal).toHaveBeenCalledWith({ data: { intentId: laterIntentId } });
+    expect(confirmation).toHaveBeenCalledTimes(4);
+    expect(refresh).toHaveBeenCalledTimes(4);
+  });
+
+  it("rejects invalid retention input and unapproved actions before mutation", async () => {
+    const { found } = tool("manage_settings_retention");
+    const confirmation = vi.spyOn(window, "confirm").mockReturnValue(false);
+    await expect(
+      found.execute(
+        { action: "accept_pause", intentId: connectionId, days: 365 },
+        { signal: signal() },
+      ),
+    ).rejects.toThrow();
+    expect(confirmation).not.toHaveBeenCalled();
+    await expect(
+      found.execute({ action: "start", reason: "budget" }, { signal: signal() }),
+    ).rejects.toThrow("did not approve");
+    expect(mocks.startMyCancellation).not.toHaveBeenCalled();
   });
 
   it("returns an allowlisted workspace without credentials or private connection emails", async () => {
@@ -291,6 +424,7 @@ describe("Settings WebMCP tools", () => {
       profile: { username: "owner", display_name: "Owner" },
       customDomain: { domain: { hostname: "links.example.com", ready: true } },
       payments: { selectedProvider: "stripe" },
+      billing: { billingCatalog: "2026-10", pausedUntil: null },
     });
     const serialized = JSON.stringify(result);
     expect(serialized).not.toContain("profile-secret-token");
@@ -301,6 +435,24 @@ describe("Settings WebMCP tools", () => {
     expect(serialized).not.toContain("private-calendar@example.com");
     expect(serialized).not.toContain("acct_private");
     expect(serialized).not.toContain("private-customer-id");
+  });
+
+  it("reports disabled staging domains without hiding other Settings data", async () => {
+    mocks.getMyCustomDomain.mockRejectedValue(
+      new Error("Custom domains are disabled in the test environment."),
+    );
+    const { found } = tool("get_settings_workspace");
+    await expect(found.execute({}, { signal: signal() })).resolves.toMatchObject({
+      structuredContent: {
+        workspace: {
+          billing: { plan: "creator" },
+          customDomain: { disabled: true, cnameTarget: null, domain: null },
+        },
+      },
+    });
+
+    mocks.getMyCustomDomain.mockRejectedValue(new Error("Domain lookup failed."));
+    await expect(found.execute({}, { signal: signal() })).rejects.toThrow("Domain lookup failed.");
   });
 
   it("caps provider projections", async () => {

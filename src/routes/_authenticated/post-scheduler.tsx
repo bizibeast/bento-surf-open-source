@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -11,6 +12,7 @@ import {
   type DragEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   CalendarClock,
   ChevronLeft,
@@ -71,6 +73,12 @@ import { micro } from "@/lib/micro-app-ui";
 import { xArticleDocument, xArticlePlainText, type XArticleDocument } from "@/lib/x-account";
 import { uploadFileResult } from "@/lib/upload";
 import { prepareSchedulerImageUpload } from "@/lib/image-upload";
+import {
+  prepareSchedulerVideoUpload,
+  VIDEO_OPTIMIZATION_SOURCE_MAX_BYTES,
+} from "@/lib/video-upload";
+import { schedulerImageByteLimit, schedulerVideoByteLimit } from "@/lib/social-media-limits";
+import { SOCIAL_IMAGE_OPTIMIZATION_MAX_BYTES } from "@/lib/social-provider-media";
 import { uploadLimitMb } from "@/lib/plans";
 import { browserTimeZone } from "@/lib/timezones";
 import {
@@ -79,6 +87,8 @@ import {
   duplicateSocialPost,
   getRedditCommunities,
   getSocialScheduler,
+  getSocialDraftById,
+  prepareSocialAgentDraft,
   getTikTokCreatorInfo,
   moveSocialPostToDraft,
   refreshSocialConnectionAvatar,
@@ -87,6 +97,15 @@ import {
   rescheduleSocialPost,
   saveSocialPost,
 } from "@/lib/social-scheduler.functions";
+import { searchSocialMentions } from "@/lib/social-mentions.functions";
+import { socialMentionPopupPlacement } from "@/lib/social-mention-popup";
+import {
+  insertSocialMention,
+  mentionQueryAtCursor,
+  remapSocialMentions,
+  validSocialMentions,
+  type SocialMentionSuggestion,
+} from "@/lib/social-mentions";
 import {
   SOCIAL_PROVIDER_DEFINITIONS,
   prepareSchedulerMediaFiles,
@@ -129,6 +148,15 @@ import {
 } from "@/lib/webmcp";
 
 export const Route = createFileRoute("/_authenticated/post-scheduler")({
+  validateSearch: (search: Record<string, unknown>): { postId?: string } => ({
+    postId:
+      typeof search.postId === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        search.postId,
+      )
+        ? search.postId
+        : undefined,
+  }),
   head: () => ({ meta: [{ title: "Social scheduler | bento.surf" }] }),
   loader: ({ context }) => {
     context.queryClient.prefetchQuery({
@@ -146,6 +174,60 @@ const RESCHEDULABLE_POST_STATUSES = new Set<SchedulerPost["status"]>([
   "partially_failed",
 ]);
 const CALENDAR_POST_DRAG_MIME = "application/x-bento-social-post-id";
+
+// A textarea has no DOM node at its caret. Mirror its text to anchor the account
+// picker beside the typed @, even while the composer or textarea is scrolled.
+function textareaCaretRect(textarea: HTMLTextAreaElement, cursor: number) {
+  const bounds = textarea.getBoundingClientRect();
+  const style = window.getComputedStyle(textarea);
+  const mirror = document.createElement("div");
+  const properties = [
+    "boxSizing",
+    "width",
+    "padding",
+    "border",
+    "fontFamily",
+    "fontSize",
+    "fontWeight",
+    "fontStyle",
+    "lineHeight",
+    "letterSpacing",
+    "wordSpacing",
+    "textIndent",
+    "textTransform",
+    "tabSize",
+    "overflowWrap",
+    "wordBreak",
+  ] as const;
+  for (const property of properties) {
+    (mirror.style as unknown as Record<string, string>)[property] = style[property];
+  }
+  mirror.style.position = "fixed";
+  mirror.style.left = `${bounds.left}px`;
+  mirror.style.top = `${bounds.top}px`;
+  mirror.style.width = `${bounds.width}px`;
+  mirror.style.visibility = "hidden";
+  mirror.style.pointerEvents = "none";
+  mirror.style.whiteSpace = "pre-wrap";
+  mirror.style.overflowWrap = "break-word";
+  mirror.textContent = textarea.value.slice(0, cursor);
+  const marker = document.createElement("span");
+  marker.textContent = "\u200b";
+  mirror.appendChild(marker);
+  document.body.appendChild(mirror);
+  const caret = marker.getBoundingClientRect();
+  mirror.remove();
+  const lineHeight =
+    Number.parseFloat(style.lineHeight) || Number.parseFloat(style.fontSize) * 1.4 || 24;
+  return {
+    left: caret.width || caret.height ? caret.left - textarea.scrollLeft : bounds.left + 16,
+    top: caret.width || caret.height ? caret.top - textarea.scrollTop : bounds.top + 16,
+    bottom:
+      caret.width || caret.height
+        ? caret.bottom - textarea.scrollTop
+        : bounds.top + 16 + lineHeight,
+  };
+}
 
 function startCalendarPostDrag(event: DragEvent<HTMLElement>, postId: string) {
   event.dataTransfer.effectAllowed = "move";
@@ -576,6 +658,12 @@ function SchedulerPage() {
   const [selected, setSelected] = useState<string[]>([]);
   const [media, setMedia] = useState<SchedulerMedia[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [mediaProgress, setMediaProgress] = useState<{
+    label: string;
+    name: string;
+    fraction: number;
+  } | null>(null);
+  const mediaUploadController = useRef<AbortController | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [tiktokPrivacy, setTiktokPrivacy] = useState("");
   const [tiktokAllowComment, setTiktokAllowComment] = useState(false);
@@ -645,6 +733,22 @@ function SchedulerPage() {
     "idle",
   );
   const [savedProviderSettings, setSavedProviderSettings] = useState<SocialProviderSettings>({});
+  const mentionTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const composeDialogRef = useRef<HTMLDivElement | null>(null);
+  const [mentionRange, setMentionRange] = useState<{
+    provider: SocialProvider | null;
+    start: number;
+    end: number;
+    query: string;
+  } | null>(null);
+  const [mentionSearch, setMentionSearch] = useState("");
+  const [mentionSelection, setMentionSelection] = useState(0);
+  const [mentionPopup, setMentionPopup] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    maxHeight: number;
+  } | null>(null);
   const [postingSettingsOpen, setPostingSettingsOpen] = useState(false);
   const [publishingPostId, setPublishingPostId] = useState<string | null>(null);
   const [postPendingDelete, setPostPendingDelete] = useState<SchedulerPost | null>(null);
@@ -731,6 +835,8 @@ function SchedulerPage() {
     setAutosaveStatus("idle");
     setBody("");
     setTitle("");
+    setMentionRange(null);
+    setMentionSearch("");
     setSync(true);
     setBodyOverrides({});
     setPlatformTitles({});
@@ -822,15 +928,29 @@ function SchedulerPage() {
     setEditingPostId(null);
     setComposeWasOpenedForEdit(false);
     setEditingPostStatus(null);
-    setSavedProviderSettings(lastUsedSettings);
+    setSavedProviderSettings(
+      Object.fromEntries(
+        Object.entries(lastUsedSettings).map(([provider, settings]) => [
+          provider,
+          {
+            ...settings,
+            mentions: [],
+          },
+        ]),
+      ),
+    );
   };
 
   const closeCompose = () => {
+    mediaUploadController.current?.abort();
+    setMediaProgress(null);
     setDiscardPromptOpen(false);
     setUploadError(null);
     resetComposeForm();
     setComposeOpen(false);
   };
+
+  useEffect(() => () => mediaUploadController.current?.abort(), []);
 
   const openNewPost = () => {
     resetComposeForm();
@@ -857,8 +977,27 @@ function SchedulerPage() {
     setComposeOpen(true);
   };
 
-  const openPostForEdit = (post: SchedulerPost) => {
+  const preparingAgentDraft = useRef(false);
+  const openPostForEdit = async (post: SchedulerPost) => {
     if (data?.locked || !RESCHEDULABLE_POST_STATUSES.has(post.status)) return;
+    if (post.agentDraft && post.status === "draft") {
+      if (preparingAgentDraft.current) return;
+      preparingAgentDraft.current = true;
+      const notice = toast.loading("Preparing your draft for review…");
+      try {
+        const prepared = await prepareSocialAgentDraft({ data: { postId: post.id } });
+        post = JSON.parse(prepared.post) as SchedulerPost;
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Visuals could not be prepared. Your saved draft is still available.",
+        );
+      } finally {
+        preparingAgentDraft.current = false;
+        toast.dismiss(notice);
+      }
+    }
     resetComposeForm();
     const settings = Object.fromEntries(
       post.targets.map((target) => [target.provider, target.providerSettings || {}]),
@@ -965,6 +1104,33 @@ function SchedulerPage() {
     setComposeOpen(true);
   };
 
+  const { postId: requestedPostId } = Route.useSearch();
+  const deepLinkedPost = useQuery({
+    queryKey: ["social-scheduler-post", requestedPostId],
+    queryFn: () => getSocialDraftById({ data: { postId: requestedPostId! } }),
+    enabled: Boolean(requestedPostId),
+  });
+  useEffect(() => {
+    if (deepLinkedPost.error)
+      toast.error(
+        deepLinkedPost.error instanceof Error
+          ? deepLinkedPost.error.message
+          : "This scheduler draft is unavailable.",
+      );
+  }, [deepLinkedPost.error]);
+  const openedDeepLink = useRef<string | null>(null);
+  useEffect(() => {
+    if (!requestedPostId || !data || openedDeepLink.current === requestedPostId) return;
+    const requestedPost = deepLinkedPost.data
+      ? (JSON.parse(deepLinkedPost.data.post) as SchedulerPost)
+      : undefined;
+    if (!requestedPost) return;
+    openedDeepLink.current = requestedPostId;
+    openPostForEdit(requestedPost);
+    // Hydrate an explicitly requested owned post only once, never reset unsaved edits on refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedPostId, data, deepLinkedPost.data]);
+
   const selectedConnections = useMemo<SchedulerConnection[]>(
     () =>
       (data?.connections || []).filter((connection: SchedulerConnection) =>
@@ -979,6 +1145,134 @@ function SchedulerPage() {
   const activeProvider = activeConnection?.provider;
   const activeProviders = activeProvider ? [activeProvider] : [];
   const editorBody = activeProvider && !sync ? (bodyOverrides[activeProvider] ?? body) : body;
+  useEffect(() => {
+    if (!mentionRange || (mentionRange.provider ?? null) === (activeProvider ?? null)) return;
+    setMentionRange(
+      mentionRange.provider === null && activeProvider
+        ? { ...mentionRange, provider: activeProvider }
+        : null,
+    );
+  }, [activeProvider, mentionRange]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setMentionSearch(mentionRange?.query || ""), 450);
+    return () => window.clearTimeout(timer);
+  }, [mentionRange?.query]);
+  useLayoutEffect(() => {
+    const textarea = mentionTextareaRef.current;
+    const dialog = composeDialogRef.current;
+    if (!composeOpen || !mentionRange || !textarea || !dialog) {
+      setMentionPopup(null);
+      return;
+    }
+    let frame: number | null = null;
+    const schedulePosition = () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(position);
+    };
+    const position = () => {
+      frame = null;
+      const caret = textareaCaretRect(textarea, mentionRange.start);
+      const bounds = dialog.getBoundingClientRect();
+      const viewportBottom = window.visualViewport
+        ? window.visualViewport.offsetTop + window.visualViewport.height
+        : window.innerHeight;
+      const placement = socialMentionPopupPlacement(caret, bounds, viewportBottom);
+      const { availableBelow } = placement;
+      if (availableBelow < 220) {
+        for (
+          let scroller: HTMLElement | null = textarea;
+          scroller && scroller !== dialog;
+          scroller = scroller.parentElement
+        ) {
+          if (
+            scroller.scrollHeight > scroller.clientHeight + scroller.scrollTop + 1 &&
+            /auto|scroll/.test(window.getComputedStyle(scroller).overflowY)
+          ) {
+            const previous = scroller.scrollTop;
+            scroller.scrollBy({ top: 220 - availableBelow, behavior: "instant" });
+            if (scroller.scrollTop !== previous) schedulePosition();
+            break;
+          }
+        }
+      }
+      setMentionPopup(placement);
+    };
+    position();
+    const observer = new ResizeObserver(schedulePosition);
+    observer.observe(dialog);
+    observer.observe(textarea);
+    schedulePosition();
+    window.addEventListener("resize", schedulePosition);
+    window.visualViewport?.addEventListener("resize", schedulePosition);
+    window.visualViewport?.addEventListener("scroll", schedulePosition);
+    document.addEventListener("scroll", schedulePosition, true);
+    textarea.addEventListener("scroll", schedulePosition);
+    return () => {
+      observer.disconnect();
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", schedulePosition);
+      window.visualViewport?.removeEventListener("resize", schedulePosition);
+      window.visualViewport?.removeEventListener("scroll", schedulePosition);
+      document.removeEventListener("scroll", schedulePosition, true);
+      textarea.removeEventListener("scroll", schedulePosition);
+    };
+  }, [composeOpen, mentionRange]);
+  const mentionLookup = useQuery({
+    queryKey: ["social-mention-lookup", activeConnection?.id, mentionSearch],
+    queryFn: () =>
+      searchSocialMentions({
+        data: {
+          connectionId: activeConnection!.id,
+          query: mentionSearch,
+        },
+      }),
+    enabled: Boolean(
+      composeOpen &&
+      activeConnection &&
+      mentionRange?.provider === activeProvider &&
+      mentionRange.query === mentionSearch &&
+      mentionSearch.trim().length >= 3,
+    ),
+    staleTime: 30 * 60_000,
+    retry: false,
+  });
+  const manualMention = useMemo<SocialMentionSuggestion | null>(() => {
+    if (!activeProvider || !mentionRange?.query || mentionRange.query.trim().length < 3)
+      return null;
+    const query = mentionRange.query.trim();
+    if (activeProvider === "twitter" && !/^[A-Za-z0-9_]{1,15}$/.test(query)) return null;
+    if (
+      !/^[\p{L}\p{N}_.-]{1,60}$/u.test(query) &&
+      !(
+        ["facebook", "linkedin"].includes(activeProvider) && /^[\p{L}\p{N}_. -]{1,60}$/u.test(query)
+      )
+    )
+      return null;
+    return {
+      provider: activeProvider,
+      id: query,
+      name: query,
+      handle: query,
+      kind: "handle",
+      verified: false,
+      detail: "Insert as text; the platform has not verified this account.",
+    };
+  }, [activeProvider, mentionRange?.query]);
+  const mentionCandidates = [
+    ...((mentionRange?.query === mentionSearch ? mentionLookup.data?.items : []) || []),
+    ...(manualMention ? [manualMention] : []),
+  ];
+  const seenMentionHandles = new Set<string>();
+  const mentionOptions = mentionCandidates
+    .filter((item) => {
+      const key = item.handle
+        ? `${item.provider}:handle:${item.handle.toLowerCase()}`
+        : `${item.provider}:id:${item.id}`;
+      if (seenMentionHandles.has(key)) return false;
+      seenMentionHandles.add(key);
+      return true;
+    })
+    .slice(0, 3);
   const youtubeTitleSynced =
     sync &&
     selectedConnections.some((connection) => connection.provider === "youtube") &&
@@ -1004,6 +1298,13 @@ function SchedulerPage() {
     [selectedConnections],
   );
   const usesCaption = schedulerUsesCaption(connectedProviders);
+  const currentMentions = activeProvider
+    ? validSocialMentions(
+        activeProvider === "youtube" && usesCaption ? youtubeDescription : editorBody,
+        activeProvider,
+        savedProviderSettings[activeProvider]?.mentions,
+      )
+    : [];
   const hasVideo = media.some((item) => item.mimeType.startsWith("video/"));
   const primaryVideo = media.find((item) => item.mimeType.startsWith("video/")) || null;
   const needsYouTubeTitle = connectedProviders.includes("youtube");
@@ -1034,6 +1335,10 @@ function SchedulerPage() {
         [...creators[0].privacyLevelOptions],
       );
   }, [tiktokCreatorInfo.data]);
+  const tiktokDirectPostAudited = Boolean(
+    tiktokCreatorInfo.data?.length &&
+    tiktokCreatorInfo.data.every((creator) => creator.directPostAudited),
+  );
   const tiktokInteractionDisabled = useMemo(
     () => ({
       comment: Boolean(tiktokCreatorInfo.data?.some((creator) => creator.commentDisabled)),
@@ -1121,6 +1426,8 @@ function SchedulerPage() {
   });
   const providerSettings = useMemo(() => {
     const settings: SocialProviderSettings = {
+      facebook: { ...savedProviderSettings.facebook },
+      threads: { ...savedProviderSettings.threads },
       tiktok: {
         ...savedProviderSettings.tiktok,
         privacyLevel: tiktokPrivacy,
@@ -1360,6 +1667,7 @@ function SchedulerPage() {
     title,
     providerSettings,
     selectedXConnection?.xCapabilities,
+    tiktokDirectPostAudited,
   );
   const mediaCompatibility = schedulerMediaCompatibility(connectedProviders);
   const previewConnection = activeConnection;
@@ -1371,6 +1679,21 @@ function SchedulerPage() {
   const showPostTitle = activeProvider === "youtube" || activeProvider === "reddit" || isXArticle;
 
   const updateEditorBody = (value: string) => {
+    if (activeProvider) {
+      const previous =
+        activeProvider === "youtube" && usesCaption ? youtubeDescription : editorBody;
+      setSavedProviderSettings((current) => ({
+        ...current,
+        [activeProvider]: {
+          ...current[activeProvider],
+          mentions: remapSocialMentions(
+            previous,
+            value,
+            validSocialMentions(previous, activeProvider, current[activeProvider]?.mentions),
+          ),
+        },
+      }));
+    }
     if (activeProvider === "youtube" && usesCaption) {
       setYoutubeDescription(value);
     } else if (!activeProvider) {
@@ -1382,8 +1705,65 @@ function SchedulerPage() {
     }
   };
 
+  const insertSelectedMention = (suggestion: SocialMentionSuggestion) => {
+    if (!activeProvider || !mentionRange || suggestion.provider !== activeProvider) return;
+    const youtubeCaption = activeProvider === "youtube" && usesCaption;
+    const previous = youtubeCaption ? youtubeDescription : editorBody;
+    if (previous.slice(mentionRange.start, mentionRange.end).trimEnd() !== `@${mentionRange.query}`)
+      return;
+    const inserted = insertSocialMention(previous, mentionRange, suggestion);
+    setSavedProviderSettings((current) => ({
+      ...current,
+      [activeProvider]: {
+        ...current[activeProvider],
+        mentions: [
+          ...remapSocialMentions(
+            previous,
+            inserted.value,
+            validSocialMentions(previous, activeProvider, current[activeProvider]?.mentions),
+          ),
+          inserted.mention,
+        ],
+      },
+    }));
+    if (youtubeCaption) {
+      setYoutubeDescription(inserted.value);
+    } else if (sync && selectedConnections.length > 1) {
+      setBodyOverrides(
+        Object.fromEntries(
+          selectedConnections.map((connection) => [
+            connection.provider,
+            connection.provider === activeProvider ? inserted.value : body,
+          ]),
+        ) as Partial<Record<SocialProvider, string>>,
+      );
+      setSync(false);
+      toast.info("Sync turned off. Review @mentions on each platform.");
+    } else if (sync) {
+      setBody(inserted.value);
+    } else {
+      setBodyOverrides((current) => ({ ...current, [activeProvider]: inserted.value }));
+    }
+    setMentionRange(null);
+    requestAnimationFrame(() => {
+      mentionTextareaRef.current?.focus();
+      mentionTextareaRef.current?.setSelectionRange(inserted.cursor, inserted.cursor);
+    });
+  };
+
   const toggleSync = (enabled: boolean) => {
     if (enabled) {
+      setSavedProviderSettings((current) =>
+        Object.fromEntries(
+          Object.entries(current).map(([provider, settings]) => [
+            provider,
+            {
+              ...settings,
+              mentions: [],
+            },
+          ]),
+        ),
+      );
       const firstWrittenVersion = selectedConnections
         .map((connection) => bodyOverrides[connection.provider])
         .find((value) => value?.trim());
@@ -1799,8 +2179,14 @@ function SchedulerPage() {
             ? "file"
             : "image";
       const maxMb = uploadLimitMb(kind, plan);
-      if (file.size > maxMb * 1024 * 1024) {
-        const message = `${kind === "video" ? "Videos" : kind === "file" ? "Files" : "Images"} are limited to ${maxMb} MB on your plan.`;
+      if (kind === "file" && file.size > maxMb * 1024 * 1024) {
+        const message = `Files are limited to ${maxMb} MB on your plan.`;
+        setUploadError(message);
+        toast.error(message);
+        return;
+      }
+      if (kind === "video" && file.size > VIDEO_OPTIMIZATION_SOURCE_MAX_BYTES) {
+        const message = "Choose a video up to 1 GB. Bento will optimize it to your upload limit.";
         setUploadError(message);
         toast.error(message);
         return;
@@ -1814,26 +2200,80 @@ function SchedulerPage() {
     }
 
     setUploading(true);
+    const controller = new AbortController();
+    mediaUploadController.current = controller;
     try {
-      const results = await Promise.allSettled(
-        selection.accepted.map(async (file) => {
-          if (file.type.startsWith("video/") || schedulerMediaKindForFile(file) === "video") {
-            return uploadFileResult(file, "video", { optimize: false });
-          }
-          if (
-            file.type === "application/pdf" ||
-            file.type === "application/msword" ||
-            file.type.includes("wordprocessingml") ||
-            file.type.includes("presentationml") ||
-            file.type === "application/vnd.ms-powerpoint" ||
-            schedulerMediaKindForFile(file) === "file"
-          ) {
-            return uploadFileResult(file, "file", { optimize: false });
-          }
-          const prepared = await prepareSchedulerImageUpload(file);
-          return uploadFileResult(prepared, "image", { optimize: false });
-        }),
-      );
+      // Prepare one file at a time so a carousel cannot run several encoders
+      // simultaneously on a phone. Keep successful files when another fails.
+      const results: PromiseSettledResult<Awaited<ReturnType<typeof uploadFileResult>>>[] = [];
+      for (const file of selection.accepted) {
+        controller.signal.throwIfAborted();
+        const next = await Promise.allSettled([
+          (async () => {
+            if (file.type.startsWith("video/") || schedulerMediaKindForFile(file) === "video") {
+              const prepared = await prepareSchedulerVideoUpload(file, {
+                maxBytes: schedulerVideoByteLimit(
+                  connectedProviders,
+                  uploadLimitMb("video", plan) * 1024 ** 2,
+                ),
+                providers: connectedProviders,
+                signal: controller.signal,
+                onProgress: ({ stage, fraction }) =>
+                  setMediaProgress({
+                    label: {
+                      checking: "Checking video",
+                      repackaging: "Optimizing without quality loss",
+                      compressing: "Preparing a high-quality video",
+                      verifying: "Checking the full video",
+                    }[stage],
+                    name: file.name,
+                    fraction: fraction * 0.65,
+                  }),
+              });
+              setMediaProgress({ label: "Uploading video", name: file.name, fraction: 0.65 });
+              return uploadFileResult(prepared, "video", {
+                optimize: false,
+                signal: controller.signal,
+                onProgress: (fraction) =>
+                  setMediaProgress({
+                    label: "Uploading video",
+                    name: file.name,
+                    fraction: 0.65 + fraction * 0.35,
+                  }),
+              });
+            }
+            if (
+              file.type === "application/pdf" ||
+              file.type === "application/msword" ||
+              file.type.includes("wordprocessingml") ||
+              file.type.includes("presentationml") ||
+              file.type === "application/vnd.ms-powerpoint" ||
+              schedulerMediaKindForFile(file) === "file"
+            ) {
+              setMediaProgress({ label: "Uploading file", name: file.name, fraction: 0.5 });
+              return uploadFileResult(file, "file", { optimize: false, signal: controller.signal });
+            }
+            setMediaProgress({ label: "Preparing image", name: file.name, fraction: 0.1 });
+            const prepared = await prepareSchedulerImageUpload(file, {
+              maxBytes: Math.min(
+                uploadLimitMb("image", plan) * 1024 * 1024,
+                schedulerImageByteLimit(connectedProviders),
+              ),
+            });
+            if (prepared.size > uploadLimitMb("image", plan) * 1024 * 1024)
+              throw new Error(
+                `Images must fit your plan's ${uploadLimitMb("image", plan)} MB limit after optimization.`,
+              );
+            setMediaProgress({ label: "Uploading image", name: file.name, fraction: 0.65 });
+            return uploadFileResult(prepared, "image", {
+              optimize: false,
+              signal: controller.signal,
+            });
+          })(),
+        ]);
+        results.push(...next);
+      }
+      controller.signal.throwIfAborted();
       const uploaded = results
         .filter(
           (
@@ -1867,10 +2307,13 @@ function SchedulerPage() {
         );
       }
     } catch (error) {
+      if (controller.signal.aborted) return;
       const message = error instanceof Error ? error.message : "Upload failed";
       setUploadError(message);
       toast.error(message);
     } finally {
+      if (mediaUploadController.current === controller) mediaUploadController.current = null;
+      setMediaProgress(null);
       setUploading(false);
     }
   }
@@ -1879,14 +2322,14 @@ function SchedulerPage() {
     if (
       !["image/jpeg", "image/png", "image/webp"].includes(file.type) ||
       file.size <= 0 ||
-      file.size > 5 * 1024 * 1024
+      file.size > SOCIAL_IMAGE_OPTIMIZATION_MAX_BYTES
     ) {
-      toast.error("Choose a JPEG, PNG, or WebP image up to 5 MB.");
+      toast.error("Choose a JPEG, PNG, or WebP image up to 20 MB. Bento will optimize it for X.");
       return null;
     }
     setUploading(true);
     try {
-      const prepared = await prepareSchedulerImageUpload(file);
+      const prepared = await prepareSchedulerImageUpload(file, { maxBytes: 5 * 1024 * 1024 });
       const uploaded = await uploadFileResult(prepared, "image", { optimize: false });
       if (!uploaded.publicUrl) throw new Error("Image upload failed.");
       return { ...uploaded, url: uploaded.publicUrl };
@@ -1948,13 +2391,16 @@ function SchedulerPage() {
     }
     const plan = (data as { plan?: "free" | "store" | "creator" } | undefined)?.plan || "creator";
     const maxMb = uploadLimitMb("image", plan);
-    if (file.size > maxMb * 1024 * 1024) {
-      toast.error(`Images are limited to ${maxMb} MB on your plan.`);
-      return;
-    }
     setUploading(true);
     try {
-      const prepared = await prepareSchedulerImageUpload(file);
+      const prepared = await prepareSchedulerImageUpload(file, {
+        maxBytes: Math.min(
+          maxMb * 1024 * 1024,
+          target === "youtube" || (sync && needsYouTubeTitle && instagramSelected)
+            ? YOUTUBE_THUMBNAIL_MAX_BYTES
+            : 8 * 1024 * 1024,
+        ),
+      });
       if (
         (target === "youtube" || (sync && needsYouTubeTitle && instagramSelected)) &&
         prepared.size > YOUTUBE_THUMBNAIL_MAX_BYTES
@@ -2030,6 +2476,8 @@ function SchedulerPage() {
   }
 
   const canSubmit =
+    !uploading &&
+    !uploadError &&
     selected.length > 0 &&
     hasPostContent &&
     Object.keys(providerErrors).length === 0 &&
@@ -2048,6 +2496,7 @@ function SchedulerPage() {
     !(primaryVideo && !videoMeta && (needsYouTubeTitle || tiktokSelected)) &&
     (!tiktokSelected || (tiktokCreatorInfo.isSuccess && tiktokPrivacyOptions.length > 0));
   const canSaveDraft =
+    !uploading &&
     hasPostContent &&
     (editingPostStatus === null || editingPostStatus === "draft" || selected.length > 0) &&
     !save.isPending &&
@@ -2258,6 +2707,7 @@ function SchedulerPage() {
                 }}
               >
                 <DialogContent
+                  ref={composeDialogRef}
                   overlayClassName="bg-[#17213a]/35 backdrop-blur-[6px]"
                   onPaste={handleComposePaste}
                   className="h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-6xl gap-0 overflow-hidden rounded-[24px] border-white/80 bg-[#f7f8fc] p-0 shadow-[0_42px_130px_-45px_rgba(23,33,58,.7)] data-[state=closed]:slide-out-to-bottom-2 data-[state=open]:slide-in-from-bottom-2 sm:h-[min(90dvh,840px)] sm:w-[90vw] sm:rounded-[32px] [&>button]:z-40"
@@ -2281,6 +2731,29 @@ function SchedulerPage() {
                               connection={connection}
                               selected={selected.includes(connection.id)}
                               onToggle={() => {
+                                if (
+                                  !selected.includes(connection.id) &&
+                                  sync &&
+                                  selectedConnections.some(
+                                    (item) =>
+                                      validSocialMentions(
+                                        body,
+                                        item.provider,
+                                        savedProviderSettings[item.provider]?.mentions,
+                                      ).length > 0,
+                                  )
+                                ) {
+                                  setBodyOverrides(
+                                    Object.fromEntries(
+                                      [...selectedConnections, connection].map((item) => [
+                                        item.provider,
+                                        body,
+                                      ]),
+                                    ) as Partial<Record<SocialProvider, string>>,
+                                  );
+                                  setSync(false);
+                                  toast.info("Sync turned off. Review @mentions on each platform.");
+                                }
                                 setSelected((current) =>
                                   current.includes(connection.id)
                                     ? current.filter((id) => id !== connection.id)
@@ -2474,9 +2947,10 @@ function SchedulerPage() {
                               uploading={uploading}
                             />
                           ) : (
-                            <label className="mt-6 block">
+                            <div className="relative mt-6 block">
                               <span className="flex items-end justify-between gap-3">
                                 <span
+                                  id="scheduler-post-body-label"
                                   className={
                                     activeProviders.length
                                       ? "text-xs font-semibold text-muted-foreground"
@@ -2506,12 +2980,71 @@ function SchedulerPage() {
                                 )}
                               </span>
                               <textarea
+                                ref={mentionTextareaRef}
+                                aria-labelledby="scheduler-post-body-label"
+                                aria-haspopup="listbox"
+                                aria-expanded={Boolean(mentionRange && mentionPopup)}
+                                aria-controls={
+                                  mentionRange && mentionPopup
+                                    ? "scheduler-mention-options"
+                                    : undefined
+                                }
+                                aria-activedescendant={
+                                  mentionRange && mentionOptions.length
+                                    ? `scheduler-mention-option-${mentionSelection}`
+                                    : undefined
+                                }
                                 value={
                                   activeProvider === "youtube" && usesCaption
                                     ? youtubeDescription
                                     : editorBody
                                 }
-                                onChange={(event) => updateEditorBody(event.target.value)}
+                                onChange={(event) => {
+                                  updateEditorBody(event.target.value);
+                                  const range = mentionQueryAtCursor(
+                                    event.target.value,
+                                    event.target.selectionStart,
+                                    activeProvider,
+                                  );
+                                  setMentionRange(
+                                    range ? { ...range, provider: activeProvider || null } : null,
+                                  );
+                                  setMentionSelection(0);
+                                }}
+                                onClick={(event) => {
+                                  const range = mentionQueryAtCursor(
+                                    event.currentTarget.value,
+                                    event.currentTarget.selectionStart,
+                                    activeProvider,
+                                  );
+                                  setMentionRange(
+                                    range ? { ...range, provider: activeProvider || null } : null,
+                                  );
+                                }}
+                                onKeyDown={(event) => {
+                                  if (!mentionRange || !mentionOptions.length) {
+                                    if (event.key === "Escape") setMentionRange(null);
+                                    return;
+                                  }
+                                  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                                    event.preventDefault();
+                                    setMentionSelection(
+                                      (current) =>
+                                        (current +
+                                          (event.key === "ArrowDown" ? 1 : -1) +
+                                          mentionOptions.length) %
+                                        mentionOptions.length,
+                                    );
+                                  } else if (event.key === "Enter") {
+                                    event.preventDefault();
+                                    insertSelectedMention(
+                                      mentionOptions[mentionSelection] || mentionOptions[0],
+                                    );
+                                  } else if (event.key === "Escape") {
+                                    event.preventDefault();
+                                    setMentionRange(null);
+                                  }
+                                }}
                                 rows={10}
                                 placeholder={
                                   isXArticle
@@ -2520,7 +3053,118 @@ function SchedulerPage() {
                                 }
                                 className="mt-2 min-h-64 w-full resize-none bg-transparent font-ui-sans text-[26px] leading-relaxed outline-none placeholder:text-muted-foreground/45 sm:min-h-80 sm:text-[32px]"
                               />
-                            </label>
+                              {currentMentions.length > 0 && (
+                                <p className="mt-2 text-xs text-muted-foreground">
+                                  {currentMentions.length} mention
+                                  {currentMentions.length === 1 ? "" : "s"} selected for{" "}
+                                  {SOCIAL_PROVIDER_DEFINITIONS[activeProvider!].name}.{" "}
+                                  {activeProvider === "twitter"
+                                    ? "X links existing @handles in published posts. Choose a found account for the most reliable result."
+                                    : activeProvider === "facebook" || activeProvider === "linkedin"
+                                      ? "Verified Pages and organizations use native mentions. Public profiles may publish as plain text."
+                                      : "This platform receives @handle text. Whether it becomes a profile link depends on the platform and account."}
+                                </p>
+                              )}
+                              {mentionRange &&
+                                mentionPopup &&
+                                composeDialogRef.current &&
+                                createPortal(
+                                  <div
+                                    id="scheduler-mention-options"
+                                    role="listbox"
+                                    aria-label="Accounts to mention"
+                                    style={mentionPopup}
+                                    className="absolute z-50 overflow-auto rounded-2xl border border-black/10 bg-white p-2 shadow-[0_20px_60px_-12px_rgba(23,33,58,.35)]"
+                                  >
+                                    <div className="px-3 py-2 text-xs font-semibold text-muted-foreground">
+                                      {!activeProvider
+                                        ? "Select a platform above to find accounts"
+                                        : mentionRange.query.trim().length < 3
+                                          ? "Type at least 3 letters to search"
+                                          : mentionLookup.isFetching ||
+                                              mentionSearch !== mentionRange.query
+                                            ? "Looking up accounts…"
+                                            : `Mention on ${SOCIAL_PROVIDER_DEFINITIONS[activeProvider].name}`}
+                                    </div>
+                                    {mentionOptions.map((option, index) => (
+                                      <button
+                                        key={`${option.provider}:${option.id}:${option.verified}`}
+                                        id={`scheduler-mention-option-${index}`}
+                                        role="option"
+                                        aria-selected={mentionSelection === index}
+                                        type="button"
+                                        onMouseDown={(event) => event.preventDefault()}
+                                        onClick={() => insertSelectedMention(option)}
+                                        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left hover:bg-black/5 ${mentionSelection === index ? "bg-black/5" : ""}`}
+                                      >
+                                        {option.avatarUrl ? (
+                                          <img
+                                            src={option.avatarUrl}
+                                            alt=""
+                                            className="size-8 rounded-full object-cover"
+                                          />
+                                        ) : (
+                                          <span className="flex size-8 items-center justify-center rounded-full bg-black/5 text-sm">
+                                            @
+                                          </span>
+                                        )}
+                                        <span className="min-w-0 flex-1">
+                                          <span className="block truncate text-sm font-semibold">
+                                            {option.name}
+                                          </span>
+                                          <span className="block truncate text-xs text-muted-foreground">
+                                            {option.handle
+                                              ? `@${option.handle}`
+                                              : option.verified
+                                                ? option.kind === "page"
+                                                  ? "Page"
+                                                  : option.name
+                                                : "Account not verified"}
+                                          </span>
+                                          {option.detail && (
+                                            <span className="block truncate text-[11px] text-muted-foreground">
+                                              {option.detail}
+                                            </span>
+                                          )}
+                                        </span>
+                                        <span className="text-[10px] font-semibold text-muted-foreground">
+                                          {option.verified
+                                            ? "Tag"
+                                            : option.id.startsWith("https://")
+                                              ? "Profile"
+                                              : "Text"}
+                                        </span>
+                                      </button>
+                                    ))}
+                                    {!mentionOptions.length &&
+                                      !mentionLookup.isFetching &&
+                                      mentionRange.query === mentionSearch && (
+                                        <p className="px-3 py-2 text-xs text-muted-foreground">
+                                          {!activeProvider
+                                            ? "Choose the social account this post will go to."
+                                            : mentionRange.query.trim().length < 3
+                                              ? "Suggestions appear after 3 letters."
+                                              : mentionLookup.data?.detail ||
+                                                (mentionRange.query
+                                                  ? "No matching account yet. Keep typing the handle."
+                                                  : "Type a name or handle to find an account.")}
+                                        </p>
+                                      )}
+                                    {mentionLookup.data?.detail && mentionOptions.length > 0 && (
+                                      <p className="px-3 py-2 text-xs text-muted-foreground">
+                                        {mentionLookup.data.detail}
+                                      </p>
+                                    )}
+                                    {mentionLookup.isError && (
+                                      <p className="px-3 py-2 text-xs text-muted-foreground">
+                                        Account lookup is unavailable. You can still insert the
+                                        handle as text.
+                                      </p>
+                                    )}
+                                  </div>,
+                                  composeDialogRef.current,
+                                )}
+                            </div>
                           )}
 
                           {activeProvider === "reddit" && (
@@ -2813,8 +3457,9 @@ function SchedulerPage() {
                                     {tiktokCreatorInfo.isSuccess &&
                                       tiktokPrivacyOptions.length === 0 && (
                                         <p className="text-sm text-rose-600">
-                                          The selected TikTok accounts have no common privacy
-                                          option. Post to them separately.
+                                          {tiktokDirectPostAudited
+                                            ? "The selected TikTok accounts have no common privacy option. Post to them separately."
+                                            : "Only me is unavailable for this TikTok account. Public publishing requires the separate Direct Post audit."}
                                         </p>
                                       )}
                                     {primaryVideo && (
@@ -2844,8 +3489,9 @@ function SchedulerPage() {
                                         ))}
                                       </select>
                                       <span className="mt-2 block text-xs text-muted-foreground">
-                                        Options come from TikTok for the selected account. Sandbox
-                                        posts use Only me.
+                                        {tiktokDirectPostAudited
+                                          ? "Options come from TikTok for the selected account."
+                                          : "TikTok's Direct Post audit is pending. Until approved, the TikTok account must be private and posts must use Only me."}
                                       </span>
                                     </label>
                                     <fieldset className="space-y-2">
@@ -3338,6 +3984,61 @@ function SchedulerPage() {
                     </div>
 
                     <div className="shrink-0 border-t border-border/70 bg-[#f7f8fc] px-4 py-2 sm:px-5">
+                      {uploadError && (
+                        <div
+                          role="alert"
+                          className="mb-2 flex items-start gap-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800"
+                        >
+                          <p className="min-w-0 flex-1 break-words">{uploadError}</p>
+                          <button
+                            type="button"
+                            className="shrink-0 underline underline-offset-2"
+                            onClick={() => setUploadError(null)}
+                            title="Continue with the media already added"
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      )}
+                      {mediaProgress && (
+                        <div
+                          className="mb-2 rounded-lg border border-primary/10 bg-white px-3 py-2"
+                          role="status"
+                          aria-live="polite"
+                        >
+                          <div className="flex items-center justify-between gap-3 text-xs">
+                            <span className="min-w-0 truncate">
+                              <span className="font-medium">{mediaProgress.label}</span>
+                              <span
+                                className="ml-2 text-muted-foreground"
+                                title={mediaProgress.name}
+                              >
+                                {mediaProgress.name}
+                              </span>
+                            </span>
+                            <button
+                              type="button"
+                              className="shrink-0 text-muted-foreground hover:text-foreground"
+                              onClick={() => mediaUploadController.current?.abort()}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                          <div
+                            className="mt-2 h-1.5 overflow-hidden rounded-full bg-primary/10"
+                            role="progressbar"
+                            aria-label={mediaProgress.label}
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-valuenow={Math.round(mediaProgress.fraction * 100)}
+                          >
+                            <div
+                              className="h-full rounded-full bg-primary transition-[width] duration-300 motion-reduce:transition-none"
+                              style={{ width: `${Math.max(2, mediaProgress.fraction * 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
                       <div className="flex min-w-0 items-center gap-2 overflow-x-auto whitespace-nowrap">
                         <button
                           type="button"
@@ -3377,15 +4078,6 @@ function SchedulerPage() {
                               : autosaveStatus === "saved"
                                 ? "Saved"
                                 : "Draft not saved"}
-                          </span>
-                        )}
-                        {uploadError && (
-                          <span
-                            role="alert"
-                            title={uploadError}
-                            className="max-w-32 truncate text-xs text-rose-700"
-                          >
-                            {uploadError}
                           </span>
                         )}
                         <div className="ml-auto flex shrink-0 items-center gap-2">
@@ -4629,7 +5321,7 @@ function PostRow({
   retryPending?: boolean;
   onDelete: () => void;
 }) {
-  const cancellable = ["draft", "scheduled", "failed", "partially_failed"].includes(post.status);
+  const cancellable = ["scheduled", "partially_failed"].includes(post.status);
   const deletable = ["draft", "cancelled", "failed"].includes(post.status);
   const retryable =
     canEdit &&
@@ -4819,7 +5511,7 @@ function PostRow({
             <button
               type="button"
               onClick={onCancel}
-              aria-label="Cancel post"
+              aria-label="Cancel schedule"
               className="inline-flex size-8 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             >
               <X className="size-4" />

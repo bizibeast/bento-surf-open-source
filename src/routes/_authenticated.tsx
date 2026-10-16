@@ -1,3 +1,4 @@
+import { AppSetupGuide } from "@/components/onboarding/AppSetupGuide";
 import {
   createFileRoute,
   Outlet,
@@ -30,6 +31,7 @@ import { createAuthenticatedWebMcpTools } from "@/lib/webmcp-tools";
 
 const WEBMCP_WORKSPACES = {
   home: "/home",
+  content: "/content",
   link: "/link",
   store: "/store",
   email_marketing: "/email-marketing",
@@ -50,6 +52,19 @@ const WEBMCP_WORKSPACES = {
 export const WEBMCP_TOOLS_BY_ROUTE: Record<string, readonly string[]> = {
   home: ["list_social_posts", "list_products", "list_bookings"],
   dashboard: ["list_social_posts", "list_products", "list_bookings"],
+  content: [
+    "get_content_brain",
+    "get_content_media",
+    "get_content_routines",
+    "get_content_agent",
+    "get_content_discover",
+    "upload_media",
+    "manage_content_brain",
+    "manage_content_media",
+    "manage_content_routine",
+    "manage_content_agent",
+    "manage_content_discover",
+  ],
   link: ["list_pages", "manage_page", "manage_block", "manage_calendar", "update_profile"],
   store: [
     "list_products",
@@ -300,6 +315,7 @@ function AuthLayout() {
               onCollapsedChange={setSidebarCollapsed}
             />
             <div className={`min-w-0 flex-1 pt-14 lg:pt-0 ${compactAppUi ? "app-ui-compact" : ""}`}>
+              <AppSetupGuide workspaceId={workspaceSession?.workspaceId} />
               <Outlet />
             </div>
           </div>
@@ -308,7 +324,7 @@ function AuthLayout() {
             <Outlet />
           </div>
         )}
-        {FEATUREBASE_CONFIG && (
+        {FEATUREBASE_CONFIG && pathname !== "/link" && (
           <FeaturebaseHub portalUrl={FEATUREBASE_CONFIG.portalUrl} inAppShell={showSidebar} />
         )}
       </div>

@@ -6,6 +6,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { readPublicProfileResult, updateProfileWithRls } from "@/lib/profile-query";
 import { checkUsernameAvailability } from "@/lib/username-availability";
 import { getPlan } from "@/lib/plan.server";
+import { isWorkspacePublicBillingAvailable } from "./billing-public.server";
 import {
   entitlementUpgradeMessage,
   isPremiumPattern,
@@ -14,7 +15,7 @@ import {
 } from "@/lib/plans";
 import { usernameSchema } from "@/lib/username";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { hostnameFromRequestHost } from "@/lib/custom-domain";
+import { hostnameFromRequestHost, isBentoLandingHost } from "@/lib/custom-domain";
 import {
   publicProfileCacheKey,
   readPublicProfileCache,
@@ -91,7 +92,11 @@ export const getMyProfile = createServerFn({ method: "GET" })
     if (profileResult.error) throw new Error(profileResult.error.message);
     if (cardsResult.error) throw new Error(cardsResult.error.message);
     if (!profileResult.data) return profileResult.data;
-    return { ...profileResult.data, explore_card_count: cardsResult.count ?? 0 };
+    return {
+      ...profileResult.data,
+      plan_id: await getPlan(userId),
+      explore_card_count: cardsResult.count ?? 0,
+    };
   });
 
 export const profileUpdateSchema = z.object({
@@ -379,12 +384,18 @@ export const getPublicProfileForRequest = createServerFn({ method: "GET" })
     z.object({ segments: z.array(z.string().min(1).max(64)).max(2) }).parse(input),
   )
   .handler(async ({ data }) => {
-    await enforceRequestRateLimit("PUBLIC_API_RATE_LIMITER", "public-profile-request");
     const requestHostname = hostnameFromRequestHost(getRequestHost());
+    // The Bento homepage cannot be a creator profile. Avoid an edge cache read,
+    // rate limiter call, and custom_domains database lookup on every cold visit.
+    if (data.segments.length === 0 && isBentoLandingHost(requestHostname)) return null;
+    await enforceRequestRateLimit("PUBLIC_API_RATE_LIMITER", "public-profile-request");
     const cacheKey = publicProfileCacheKey(requestHostname, data.segments);
     const cached =
       await readPublicProfileCache<Awaited<ReturnType<typeof loadPublicProfile>>>(cacheKey);
-    if (cached.hit) return cached.value;
+    if (cached.hit)
+      return cached.value && (await isWorkspacePublicBillingAvailable(cached.value.profile.id))
+        ? cached.value
+        : null;
 
     const result = await (async () => {
       if (requestHostname) {

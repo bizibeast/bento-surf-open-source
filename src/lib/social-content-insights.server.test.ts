@@ -9,7 +9,7 @@ import {
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe("LinkedIn content insights", () => {
+describe("Social content insights", () => {
   it("keeps all carousel attachments with their actual media type instead of one thumbnail", async () => {
     vi.stubGlobal(
       "fetch",
@@ -507,42 +507,33 @@ describe("LinkedIn content insights", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("keeps X public metrics when optional owner metrics are restricted", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockImplementationOnce(async (input: string | URL) => {
-        const url = new URL(String(input));
-        expect(url.pathname).toContain("/users/x-user/tweets");
-        expect(url.searchParams.get("tweet.fields")).toContain("public_metrics");
-        expect(url.searchParams.get("tweet.fields")).not.toContain("organic_metrics");
-        return new Response(
-          JSON.stringify({
-            data: [
-              {
-                id: "tweet-1",
-                text: "Public post",
-                created_at: "2026-07-01T00:00:00.000Z",
-                public_metrics: {
-                  like_count: 4,
-                  reply_count: 2,
-                  retweet_count: 1,
-                  quote_count: 1,
-                  impression_count: 80,
-                },
+  it("fetches only new X posts and uses public metrics without a second read", async () => {
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const url = new URL(String(input));
+      expect(url.pathname).toContain("/users/x-user/tweets");
+      expect(url.searchParams.get("since_id")).toBe("12345");
+      expect(url.searchParams.get("tweet.fields")).toContain("public_metrics");
+      expect(url.searchParams.get("tweet.fields")).not.toContain("organic_metrics");
+      return new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: "tweet-1",
+              text: "Public post",
+              created_at: "2026-07-01T00:00:00.000Z",
+              public_metrics: {
+                like_count: 4,
+                reply_count: 2,
+                retweet_count: 1,
+                quote_count: 1,
+                impression_count: 80,
               },
-            ],
-          }),
-          { status: 200 },
-        );
-      })
-      .mockImplementationOnce(async (input: string | URL) => {
-        const url = new URL(String(input));
-        expect(url.pathname).toBe("/2/tweets");
-        expect(url.searchParams.get("tweet.fields")).toBe("organic_metrics");
-        return new Response(JSON.stringify({ error: { message: "Tier does not allow this" } }), {
-          status: 403,
-        });
-      });
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     const page = await fetchSocialContentInsightsPage(
@@ -551,6 +542,7 @@ describe("LinkedIn content insights", () => {
         provider: "twitter",
         provider_user_id: "x-user",
         provider_handle: "creator",
+        latestIndexedPostId: "12345",
       },
       "token",
     );
@@ -563,7 +555,47 @@ describe("LinkedIn content insights", () => {
       shares: 2,
       engagements: 8,
     });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("caps an X archive import at 100 posts and preserves the incremental baseline", async () => {
+    const urls: URL[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL) => {
+        const url = new URL(String(input));
+        urls.push(url);
+        return new Response(
+          JSON.stringify({
+            data: Array.from({ length: 25 }, (_, index) => ({
+              id: String(urls.length * 100 + index),
+              text: "Post",
+              created_at: "2026-07-01T00:00:00.000Z",
+            })),
+            meta: { next_token: `page-${urls.length + 1}` },
+          }),
+          { status: 200 },
+        );
+      }),
+    );
+    const connection = {
+      id: "connection",
+      provider: "twitter",
+      provider_user_id: "x-user",
+      provider_handle: "creator",
+      latestIndexedPostId: "12345",
+    };
+    let cursor: string | null = null;
+    let posts = 0;
+    for (let pageNumber = 0; pageNumber < 4; pageNumber += 1) {
+      const page = await fetchSocialContentInsightsPage(connection, "token", cursor);
+      posts += page.content.length;
+      cursor = page.nextCursor;
+    }
+    expect(posts).toBe(100);
+    expect(cursor).toBeNull();
+    expect(urls).toHaveLength(4);
+    expect(urls.every((url) => url.searchParams.get("since_id") === "12345")).toBe(true);
   });
 
   it("keeps Reddit score in engagements without labeling it as likes", async () => {
@@ -714,4 +746,33 @@ it("keeps supported Threads metrics when shares is rejected", async () => {
     shares: 10,
     engagements: 20,
   });
+});
+
+it("caps a first import even when the provider always offers another page", async () => {
+  const fetcher = vi.fn(async () =>
+    Response.json({
+      data: [],
+      paging: { cursors: { after: "more" }, next: "https://graph.facebook.com/next" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  await fetchSocialContentInsights(
+    { id: "conn", provider: "facebook", provider_user_id: "page" },
+    "token",
+  );
+  expect(fetcher).toHaveBeenCalledTimes(5);
+});
+it("refreshes only the recent page after the first import", async () => {
+  const fetcher = vi.fn(async () =>
+    Response.json({
+      data: [],
+      paging: { cursors: { after: "more" }, next: "https://graph.facebook.com/next" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  await fetchSocialContentInsights(
+    { id: "conn", provider: "facebook", provider_user_id: "page", initialImportComplete: true },
+    "token",
+  );
+  expect(fetcher).toHaveBeenCalledTimes(1);
 });

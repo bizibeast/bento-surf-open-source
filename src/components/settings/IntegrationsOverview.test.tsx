@@ -155,6 +155,41 @@ describe("IntegrationsOverview", () => {
     );
   });
 
+  it.each(["active", "disconnected", "expired"])(
+    "manages the newest active knowledge workspace when the older one is %s",
+    (status) => {
+      const client = new QueryClient();
+      const connection = {
+        provider: "notion",
+        selectedResources: { ids: [] },
+        lastSuccessAt: null,
+        lastError: null,
+      };
+      client.setQueryData(["integration-overview"], {
+        contentReadiness: { notion: true },
+        contentConnections: [
+          { ...connection, id: "old", displayName: "Old workspace", status },
+          { ...connection, id: "current", displayName: "Personal workspace", status: "active" },
+          {
+            ...connection,
+            id: "disconnected",
+            displayName: "Disconnected workspace",
+            status: "disconnected",
+          },
+        ],
+      });
+      render(
+        <QueryClientProvider client={client}>
+          <IntegrationsOverview />
+        </QueryClientProvider>,
+      );
+
+      expect(
+        screen.getByRole("button", { name: "Manage Notion integration, connected" }),
+      ).toHaveTextContent("Personal workspace");
+    },
+  );
+
   it("describes each provider as a single workspace account", async () => {
     render(
       <QueryClientProvider client={new QueryClient()}>
