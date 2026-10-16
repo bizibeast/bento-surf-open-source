@@ -10,6 +10,9 @@ export function redactWorkerQueryStrings(config: Record<string, unknown>) {
   if (!Object.keys(observability).length) return config;
   return {
     ...config,
+    // Wrangler also sends a separate settings update after the version upload.
+    // Keep redaction in that object as well, or it resets the API-only field.
+    observability: { ...observability, redact_query_string: true },
     unsafe: {
       ...unsafe,
       metadata: {

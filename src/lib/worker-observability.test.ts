@@ -17,6 +17,7 @@ it("redacts provider query credentials without changing sampling, bindings or ot
   };
   expect(redactWorkerQueryStrings(config)).toEqual({
     ...config,
+    observability: { ...config.observability, redact_query_string: true },
     unsafe: {
       ...config.unsafe,
       metadata: {
@@ -31,6 +32,7 @@ it("redacts provider query credentials without changing sampling, bindings or ot
 it("does not enable observability on instances where it is absent or disabled", () => {
   expect(redactWorkerQueryStrings({ main: "worker.mjs" })).toEqual({ main: "worker.mjs" });
   expect(redactWorkerQueryStrings({ observability: { enabled: false } })).toMatchObject({
+    observability: { enabled: false, redact_query_string: true },
     unsafe: { metadata: { observability: { enabled: false, redact_query_string: true } } },
   });
 });
