@@ -23,6 +23,7 @@ import { toast } from "sonner";
 import { AppHeader } from "@/components/AppHeader";
 import { MobileTabSelect } from "@/components/MobileTabSelect";
 import { micro } from "@/lib/micro-app-ui";
+import { AGENT_CLIENT_SETUP, AGENT_CLIENT_STARTER_PROMPT } from "@/lib/agent-client-setup";
 import bentoSkill from "../../../skills/bento/SKILL.md?raw";
 
 const MCP_URL = `${(import.meta.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "")}/mcp`;
@@ -44,40 +45,28 @@ const CLIENTS = [
     id: "chatgpt",
     name: "ChatGPT",
     icon: MessageSquareText,
-    description: "Connect Bento as a custom app from ChatGPT settings.",
+    description: AGENT_CLIENT_SETUP.chatgpt.description,
     setup: MCP_URL,
     setupLabel: "MCP URL",
-    steps: [
-      "Open Settings → Apps & Connectors → Advanced settings. Turn on Developer mode, choose Create, and paste the Bento MCP URL.",
-      "ChatGPT opens Bento in your browser. Sign in with your existing Bento account.",
-      "Review the requested access, choose Allow access, and start asking ChatGPT to work in Bento.",
-    ],
+    steps: AGENT_CLIENT_SETUP.chatgpt.steps,
   },
   {
     id: "claude",
     name: "Claude",
     icon: SiClaude,
-    description: "Use one secure remote connector in Claude web or desktop.",
+    description: AGENT_CLIENT_SETUP.claude.description,
     setup: MCP_URL,
     setupLabel: "MCP URL",
-    steps: [
-      "Open Settings → Connectors, choose Add custom connector, name it Bento, and paste the MCP URL.",
-      "Claude opens Bento in your browser. Sign in with your existing Bento account.",
-      "Approve access, return to Claude, and ask it to create or update anything in your workspace.",
-    ],
+    steps: AGENT_CLIENT_SETUP.claude.steps,
   },
   {
     id: "cursor",
     name: "Cursor",
     icon: SiCursor,
-    description: "Add Bento to Cursor's MCP tools with the standard JSON config.",
+    description: AGENT_CLIENT_SETUP.cursor.description,
     setup: MCP_CONFIG,
     setupLabel: "Cursor config",
-    steps: [
-      "Open Cursor Settings → Tools & MCP → New MCP Server, then add the configuration below.",
-      "Enable Bento and complete the secure browser sign-in when Cursor opens it.",
-      "Approve access, then use Agent mode to work across your Bento workspace.",
-    ],
+    steps: AGENT_CLIENT_SETUP.cursor.steps,
   },
   {
     id: "claude-code",
@@ -91,6 +80,15 @@ const CLIENTS = [
       "Follow the browser sign-in and authorization flow using your Bento account.",
       "Run /mcp in Claude Code to confirm Bento is connected, then start asking naturally.",
     ],
+  },
+  {
+    id: "grok",
+    name: "Grok",
+    icon: Bot,
+    description: AGENT_CLIENT_SETUP.grok.description,
+    setup: MCP_URL,
+    setupLabel: "MCP URL",
+    steps: AGENT_CLIENT_SETUP.grok.steps,
   },
   {
     id: "other",
@@ -218,7 +216,7 @@ const FAQS = [
   {
     question: "Which agents are supported?",
     answer:
-      "ChatGPT, Claude, Cursor, Claude Code, Codex, and any client that supports remote Streamable HTTP MCP and OAuth can connect.",
+      "ChatGPT, Claude, Grok, Cursor, Claude Code, Codex, and any client that supports remote Streamable HTTP MCP and OAuth can connect.",
   },
   {
     question: "Do I need an API key?",
@@ -263,9 +261,9 @@ export function McpSetupPage() {
             Your Bento. In any AI agent.
           </h2>
           <p className="mt-5 max-w-3xl text-base leading-7 text-[#17213a]/58 sm:text-lg sm:leading-8">
-            Connect ChatGPT, Claude, Cursor, Claude Code, Codex, or another MCP client. Your agent
-            can safely work across Content, pages, Store, Calendar, Community, social posts, and
-            Auto-DMs, with your permission.
+            Connect ChatGPT, Claude, Grok, Cursor, Claude Code, Codex, or another MCP client. Your
+            agent can safely work across Content, pages, Store, Calendar, Community, social posts,
+            and Auto-DMs, with your permission.
           </p>
 
           <div className="mt-7 flex max-w-3xl flex-col gap-2 sm:flex-row sm:items-center">
@@ -376,6 +374,15 @@ export function McpSetupPage() {
                   ))}
                 </div>
               </SetupStep>
+            </div>
+          </div>
+          <div className="mt-4 rounded-xl border border-border p-4">
+            <p className="text-sm font-semibold">Try this after connecting</p>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              {AGENT_CLIENT_STARTER_PROMPT}
+            </p>
+            <div className="mt-3">
+              <CopyButton value={AGENT_CLIENT_STARTER_PROMPT} label="Copy starter prompt" />
             </div>
           </div>
         </section>
