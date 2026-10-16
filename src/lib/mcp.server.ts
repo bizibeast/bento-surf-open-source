@@ -85,6 +85,17 @@ import {
 } from "./mcp.content-ops.server";
 
 const MCP_PATH = "/mcp";
+// ChatGPT's app dashboard scans this endpoint from the browser. Other origins
+// stay rejected so a DNS-rebinding page cannot call the MCP server.
+const MCP_BROWSER_ORIGINS = new Set([
+  "https://chatgpt.com",
+  "https://chat.openai.com",
+  "https://platform.openai.com",
+]);
+const MCP_CORS_ALLOW_METHODS = "POST, GET, DELETE, OPTIONS";
+const MCP_CORS_ALLOW_HEADERS =
+  "authorization, content-type, mcp-session-id, mcp-protocol-version, last-event-id";
+const MCP_CORS_EXPOSE_HEADERS = "mcp-session-id, www-authenticate";
 const SKILL_URI = "skill://bento/bento/SKILL.md";
 const SKILL_TOOLS_URI = "skill://bento/bento/references/tools.md";
 const SKILL_DESCRIPTION =
@@ -2105,6 +2116,19 @@ function protectedResourceMetadata(request: Request) {
   );
 }
 
+function applyMcpCors(response: Response, request: Request) {
+  const vary = response.headers.get("vary");
+  const variesByOrigin = vary?.split(",").some((part) => part.trim().toLowerCase() === "origin");
+  if (!variesByOrigin) response.headers.set("vary", vary ? `${vary}, Origin` : "Origin");
+  const origin = request.headers.get("origin");
+  if (!origin || !MCP_BROWSER_ORIGINS.has(origin)) return response;
+  response.headers.set("access-control-allow-origin", origin);
+  response.headers.set("access-control-allow-methods", MCP_CORS_ALLOW_METHODS);
+  response.headers.set("access-control-allow-headers", MCP_CORS_ALLOW_HEADERS);
+  response.headers.set("access-control-expose-headers", MCP_CORS_EXPOSE_HEADERS);
+  return response;
+}
+
 function unauthorized(request: Request, message = "Authorization required") {
   const metadata = `${new URL(request.url).origin}/.well-known/oauth-protected-resource`;
   return Response.json(
@@ -2124,6 +2148,15 @@ export async function handleBentoMcpRequest(
   configuredOrigin: string | null | undefined,
   authenticate: (request: Request) => Promise<AuthInfo> = authenticateMcpRequest,
 ): Promise<Response | null> {
+  const response = await routeBentoMcpRequest(request, configuredOrigin, authenticate);
+  return response ? applyMcpCors(response, request) : null;
+}
+
+async function routeBentoMcpRequest(
+  request: Request,
+  configuredOrigin: string | null | undefined,
+  authenticate: (request: Request) => Promise<AuthInfo>,
+): Promise<Response | null> {
   const url = new URL(request.url);
   let expectedOrigin: string;
   try {
@@ -2141,12 +2174,13 @@ export async function handleBentoMcpRequest(
     return protectedResourceMetadata(request);
   }
   if (url.pathname !== MCP_PATH) return null;
-  if (request.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: { Allow: "POST, GET, DELETE, OPTIONS" } });
-  }
   const origin = request.headers.get("origin");
-  if (origin && origin !== url.origin)
+  if (origin && origin !== url.origin && !MCP_BROWSER_ORIGINS.has(origin)) {
     return Response.json({ error: "Invalid origin" }, { status: 403 });
+  }
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: { Allow: MCP_CORS_ALLOW_METHODS } });
+  }
   let authInfo: AuthInfo;
   try {
     authInfo = await authenticate(request);

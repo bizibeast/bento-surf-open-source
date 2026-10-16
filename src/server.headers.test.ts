@@ -9,6 +9,32 @@ import server, { handleDeploymentHealthRequest, withDeploymentHeaders } from "./
 describe("deployment security headers", () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  it("preserves ChatGPT CORS on the configured instance MCP", async () => {
+    const env = {
+      APP_ENV: "development",
+      VITE_APP_URL: "https://self.example",
+      VITE_PUBLIC_URL: "https://self.example",
+      SUPABASE_URL: "https://example.supabase.co",
+    };
+    const request = (path: string, init?: RequestInit) =>
+      Object.assign(new Request(`https://self.example${path}`, init), {
+        runtime: { cloudflare: { env } },
+      }) as unknown as Parameters<typeof server.fetch>[0];
+    const preflight = await server.fetch(request("/mcp", {
+      method: "OPTIONS",
+      headers: { origin: "https://chatgpt.com", "access-control-request-method": "POST" },
+    }));
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("access-control-allow-origin")).toBe("https://chatgpt.com");
+    expect(preflight.headers.get("access-control-expose-headers")).toContain("www-authenticate");
+    const metadata = await server.fetch(request("/.well-known/oauth-protected-resource", {
+      headers: { origin: "https://platform.openai.com" },
+    }));
+    expect(metadata.status).toBe(200);
+    expect(metadata.headers.get("access-control-allow-origin")).toBe("https://platform.openai.com");
+    expect(metadata.headers.get("vary")?.toLowerCase()).toContain("origin");
+  });
+
   it.each(["/api/tools/transcribe", "/api/tools/media"])(
     "does not expose removed public marketing endpoint %s",
     async (path) => {
