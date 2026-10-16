@@ -23,6 +23,7 @@ vi.mock("./request-security.server", async () => ({
   enforceRequestRateLimit: mcpMocks.enforceRequestRateLimit,
 }));
 
+import { RequestHttpError } from "./request-security.server";
 import {
   createBentoMcpServer,
   defaultBentoMcpOperations,
@@ -50,6 +51,28 @@ function request(body: unknown) {
     },
     body: JSON.stringify(body),
   });
+}
+
+const CHATGPT_ORIGINS = [
+  "https://chatgpt.com",
+  "https://chat.openai.com",
+  "https://platform.openai.com",
+];
+
+function expectChatGptCors(response: Response | null | undefined, origin: string) {
+  expect(response?.headers.get("access-control-allow-origin")).toBe(origin);
+  expect(response?.headers.get("access-control-allow-methods")).toBe("POST, GET, DELETE, OPTIONS");
+  expect(response?.headers.get("access-control-allow-headers")).toBe(
+    "authorization, content-type, mcp-session-id, mcp-protocol-version, last-event-id",
+  );
+  expect(response?.headers.get("access-control-expose-headers")).toBe(
+    "mcp-session-id, www-authenticate",
+  );
+  expect(response?.headers.get("vary")?.toLowerCase()).toContain("origin");
+}
+
+function handleBrowserMcpRequest(request: Request, authenticate?: () => Promise<AuthInfo>) {
+  return handleBentoMcpRequest(request, "http://localhost:8080", authenticate);
 }
 
 async function payload(response: Response) {
@@ -104,6 +127,147 @@ describe("Bento MCP HTTP surface", () => {
       "/.well-known/oauth-protected-resource",
     );
   });
+  it("rejects other browser origins before the token is checked", async () => {
+    const authenticate = vi.fn(async () => authInfo);
+    for (const origin of ["https://evil.example", "https://chatgpt.com.evil.example", "null"]) {
+      const response = await handleBrowserMcpRequest(
+        new Request("http://localhost:8080/mcp", {
+          method: "POST",
+          headers: {
+            origin,
+            authorization: `Bearer ${authInfo.token}`,
+            "content-type": "application/json",
+          },
+          body: "{}",
+        }),
+        authenticate,
+      );
+      expect(response?.status).toBe(403);
+      await expect(response?.json()).resolves.toEqual({ error: "Invalid origin" });
+      expect(response?.headers.get("access-control-allow-origin")).toBeNull();
+    }
+    expect(authenticate).not.toHaveBeenCalled();
+    const preflight = await handleBrowserMcpRequest(
+      new Request("http://localhost:8080/mcp", {
+        method: "OPTIONS",
+        headers: { origin: "https://evil.example", "access-control-request-method": "POST" },
+      }),
+    );
+    expect(preflight?.status).toBe(403);
+    expect(preflight?.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it.each(CHATGPT_ORIGINS)(
+    "lets %s reach authentication and exposes the 401 challenge",
+    async (origin) => {
+      const authenticate = vi.fn(async () => {
+        throw new RequestHttpError(401, "Unauthorized");
+      });
+      const response = await handleBrowserMcpRequest(
+        new Request("http://localhost:8080/mcp", {
+          method: "POST",
+          headers: {
+            origin,
+            authorization: "Bearer not-a-real-token-value",
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+          },
+          body: "{}",
+        }),
+        authenticate,
+      );
+      expect(authenticate).toHaveBeenCalledOnce();
+      expect(response?.status).toBe(401);
+      expect(response?.headers.get("www-authenticate")).toContain(
+        "/.well-known/oauth-protected-resource",
+      );
+      expectChatGptCors(response, origin);
+    },
+  );
+
+  it.each(CHATGPT_ORIGINS)("answers the %s preflight with CORS", async (origin) => {
+    const response = await handleBrowserMcpRequest(
+      new Request("http://localhost:8080/mcp", {
+        method: "OPTIONS",
+        headers: {
+          origin,
+          "access-control-request-method": "POST",
+          "access-control-request-headers":
+            "authorization, content-type, mcp-session-id, mcp-protocol-version",
+        },
+      }),
+    );
+    expect(response?.status).toBe(204);
+    expect(response?.headers.get("allow")).toBe("POST, GET, DELETE, OPTIONS");
+    expectChatGptCors(response, origin);
+  });
+
+  it("keeps a same-origin and origin-less MCP call on the existing path", async () => {
+    const authenticate = vi.fn(async () => {
+      throw new RequestHttpError(401, "Unauthorized");
+    });
+    const sameOrigin = await handleBrowserMcpRequest(
+      new Request("http://localhost:8080/mcp", {
+        method: "POST",
+        headers: { origin: "http://localhost:8080", "content-type": "application/json" },
+        body: "{}",
+      }),
+      authenticate,
+    );
+    expect(sameOrigin?.status).toBe(401);
+    expect(sameOrigin?.headers.get("access-control-allow-origin")).toBeNull();
+    const browserless = await handleBrowserMcpRequest(
+      new Request("http://localhost:8080/mcp", { method: "OPTIONS" }),
+    );
+    expect(browserless?.status).toBe(204);
+    expect(browserless?.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("sends CORS on MCP discovery metadata for ChatGPT origins only", async () => {
+    const paths = [
+      "/.well-known/oauth-protected-resource",
+      "/.well-known/oauth-protected-resource/mcp",
+    ];
+    for (const path of paths) {
+      const allowed = await handleBrowserMcpRequest(
+        new Request(`http://localhost:8080${path}`, {
+          headers: { origin: "https://platform.openai.com" },
+        }),
+      );
+      expect(allowed?.status).toBe(200);
+      expectChatGptCors(allowed, "https://platform.openai.com");
+      const blocked = await handleBrowserMcpRequest(
+        new Request(`http://localhost:8080${path}`, {
+          headers: { origin: "https://evil.example" },
+        }),
+      );
+      expect(blocked?.status).toBe(200);
+      expect(blocked?.headers.get("access-control-allow-origin")).toBeNull();
+      expect(blocked?.headers.get("vary")?.toLowerCase()).toContain("origin");
+    }
+  });
+
+  it("adds CORS to an authenticated MCP response for an allowed origin", async () => {
+    const response = await handleBrowserMcpRequest(
+      new Request("http://localhost:8080/mcp", {
+        method: "POST",
+        headers: {
+          origin: "https://chatgpt.com",
+          accept: "application/json, text/event-stream",
+          authorization: `Bearer ${authInfo.token}`,
+          "content-type": "application/json",
+          "mcp-protocol-version": "2025-11-25",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      }),
+      async () => authInfo,
+    );
+    expect(response?.status).toBe(200);
+    expectChatGptCors(response, "https://chatgpt.com");
+    const body = await payload(response!);
+    expect(body.result.tools.length).toBeGreaterThan(0);
+  });
+
 });
 
 const readOnlyAnnotations = {
