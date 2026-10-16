@@ -566,7 +566,11 @@ describe("Bento MCP tools", () => {
       ]),
     );
     const appTools = createBentoAppTools(
-      { userId: String(authInfo.extra!.userId), accessToken: authInfo.token, supabase: {} as any },
+      {
+        userId: String(authInfo.extra!.userId),
+        accessToken: authInfo.token,
+        supabase: {} as Parameters<typeof createBentoAppTools>[0]["supabase"],
+      },
       "https://app.bento.surf",
     );
     expect([...appTools.keys()].sort()).toEqual(
@@ -782,7 +786,11 @@ describe("Bento MCP tools", () => {
       input: socialPostInputSchema.parse(input),
     }));
     const tools = createBentoAppTools(
-      { userId: String(authInfo.extra!.userId), accessToken: authInfo.token, supabase: {} as any },
+      {
+        userId: String(authInfo.extra!.userId),
+        accessToken: authInfo.token,
+        supabase: {} as Parameters<typeof createBentoAppTools>[0]["supabase"],
+      },
       "https://app.bento.surf",
       { ...defaultBentoMcpOperations, saveSocialPostForUser: save },
     );
@@ -1062,7 +1070,11 @@ it("imports the selected free photo only at execution and schedules all tailored
     input: socialPostInputSchema.parse(input),
   }));
   const tools = createBentoAppTools(
-    { userId: String(authInfo.extra!.userId), accessToken: authInfo.token, supabase: {} as any },
+    {
+      userId: String(authInfo.extra!.userId),
+      accessToken: authInfo.token,
+      supabase: {} as Parameters<typeof createBentoAppTools>[0]["supabase"],
+    },
     "https://app.bento.surf",
     {
       ...defaultBentoMcpOperations,
@@ -1102,7 +1114,11 @@ it("executes the documented video example as one draft with three platform targe
   example.media[0].key = `users/${authInfo.extra!.userId}/video/example.mp4`;
   const save = vi.fn(async (_userId: string, input: unknown) => socialPostInputSchema.parse(input));
   const tools = createBentoAppTools(
-    { userId: String(authInfo.extra!.userId), accessToken: authInfo.token, supabase: {} as any },
+    {
+      userId: String(authInfo.extra!.userId),
+      accessToken: authInfo.token,
+      supabase: {} as Parameters<typeof createBentoAppTools>[0]["supabase"],
+    },
     "https://app.example.com",
     { ...defaultBentoMcpOperations, saveSocialPostForUser: save },
   );
