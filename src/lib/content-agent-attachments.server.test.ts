@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   media: vi.fn(),
   budget: vi.fn(),
   pdf: vi.fn(),
+  register: vi.fn(),
 }));
 vi.mock("@/integrations/supabase/client.server", () => ({
   supabaseAdmin: { rpc: mocks.rpc, from: mocks.from },
@@ -20,6 +21,7 @@ vi.mock("./mcp.content-ops.server", () => ({ manageMcpContentMedia: mocks.media 
 vi.mock("./provider-budget.server", () => ({ reserveProviderUsage: mocks.budget }));
 vi.mock("./ai-json.server", () => ({ decodeAiJsonResponse: (v: any) => v }));
 vi.mock("unpdf", () => ({ getDocumentProxy: mocks.pdf }));
+vi.mock("./content-agent-media.server", () => ({ registerAgentMedia: mocks.register }));
 import {
   extractAgentDocument,
   loadAgentAttachments,
@@ -72,12 +74,10 @@ it("limits extracted text and rejects binary data", async () => {
 });
 it("reads a bounded number of PDF pages and always destroys its task", async () => {
   const destroy = vi.fn(),
-    getPage = vi
-      .fn()
-      .mockResolvedValue({
-        getTextContent: async () => ({ items: [{ str: "Reference text" }] }),
-        cleanup: vi.fn(),
-      });
+    getPage = vi.fn().mockResolvedValue({
+      getTextContent: async () => ({ items: [{ str: "Reference text" }] }),
+      cleanup: vi.fn(),
+    });
   mocks.pdf.mockResolvedValue({ numPages: 40, getPage, loadingTask: { destroy } });
   const result = await extractAgentDocument(new Uint8Array([1]), "application/pdf", "brief.pdf");
   expect(getPage).toHaveBeenCalledTimes(30);
@@ -146,4 +146,39 @@ it("does not call vision when the provider budget is denied", async () => {
   expect(run).not.toHaveBeenCalled();
   expect(mocks.get).not.toHaveBeenCalled();
   vi.unstubAllGlobals();
+});
+
+it("reuses owned photos outside the new-upload folder through the existing media registry", async () => {
+  const photoKey = `users/${id}/cover/cover.jpg`,
+    photoRow = { ...row, storage_key: photoKey, mime_type: "image/jpeg", status: "processing" };
+  mocks.head.mockResolvedValue({
+    size: 5,
+    etag: "v1",
+    httpMetadata: { contentType: "image/jpeg" },
+  });
+  mocks.rpc.mockResolvedValue({ data: { claimed: true, attachment: photoRow } });
+  mocks.from.mockImplementation(() => {
+    let update: any;
+    const q: any = {
+      select: () => q,
+      eq: () => q,
+      limit: () => q,
+      update: (v: any) => {
+        update = v;
+        return q;
+      },
+      maybeSingle: async () => ({ data: null }),
+      single: async () => ({ data: { ...photoRow, ...update } }),
+    };
+    return q;
+  });
+  mocks.register.mockResolvedValue(id);
+  await prepareAgentAttachmentForUser(id, { key: photoKey, name: "cover.jpg" });
+  expect(mocks.register).toHaveBeenCalledWith(
+    id,
+    photoKey,
+    "uploaded",
+    expect.objectContaining({ messageId: null }),
+  );
+  expect(mocks.media).not.toHaveBeenCalled();
 });

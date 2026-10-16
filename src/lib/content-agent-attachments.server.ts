@@ -180,12 +180,25 @@ export async function prepareAgentAttachmentForUser(
         throw new Error("Your photo library could not be checked.");
       mediaId = library.data?.id || generated.data?.id || null;
       if (!mediaId) {
-        const media = await manageMcpContentMedia(userId, {
-          action: "register_upload",
-          key: input.key,
-          name: input.name,
-        });
-        mediaId = String(media.id);
+        if (
+          /^image\/(jpeg|png|webp)$/.test(mime) &&
+          !input.key.startsWith(`users/${userId}/image/`)
+        ) {
+          const { registerAgentMedia } = await import("./content-agent-media.server");
+          mediaId = await registerAgentMedia(userId, input.key, "uploaded", {
+            messageId: null,
+            cardId: `attachment:${existing.id}`,
+            revision: 0,
+            slideIndex: 0,
+          });
+        } else {
+          const media = await manageMcpContentMedia(userId, {
+            action: "register_upload",
+            key: input.key,
+            name: input.name,
+          });
+          mediaId = String(media.id);
+        }
       }
       note = mime.startsWith("video/")
         ? "Video can be attached to a post. Describe its content or add a transcript for writing context."
