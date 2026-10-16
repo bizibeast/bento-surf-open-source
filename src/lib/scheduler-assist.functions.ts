@@ -16,7 +16,11 @@ import {
   imageProviderAvailable,
 } from "./content-agent-images.server";
 import { getContentAgentPreferencesForWorkspace } from "./content-agent-identity.server";
-import { searchStockPhotos, importStockPhoto } from "./scheduler-stock.server";
+import {
+  searchStockPhotos,
+  importStockPhoto,
+  availableStockProviders,
+} from "./scheduler-stock.server";
 
 const requireScheduler = (id: string) =>
   requirePlanEntitlement(id, "postScheduler", "Upgrade to Creator to use the post scheduler.");
@@ -117,7 +121,8 @@ export const getSchedulerPhotoLibrary = createServerFn({ method: "GET" })
         })),
       cursor: page.truncated ? page.cursor : null,
       stockAvailable: true,
-      stockProvider: process.env.PEXELS_API_KEY?.trim() ? "pexels" : "commons",
+      stockProvider: availableStockProviders()[0],
+      stockProviders: availableStockProviders(),
     };
   });
 
@@ -128,6 +133,7 @@ export const findSchedulerStockPhotos = createServerFn({ method: "POST" })
       .object({
         query: z.string().trim().min(3).max(100),
         page: z.number().int().min(1).max(5).default(1),
+        provider: z.enum(["pixabay", "pexels", "commons"]).optional(),
       })
       .strict()
       .parse(input),
@@ -135,13 +141,16 @@ export const findSchedulerStockPhotos = createServerFn({ method: "POST" })
   .handler(async ({ context, data }) => {
     await requireScheduler(context.userId);
     await enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "stock-search", context.userId);
-    return searchStockPhotos(data.query, data.page);
+    return searchStockPhotos(data.query, data.page, data.provider);
   });
 export const addSchedulerStockPhoto = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) =>
     z
-      .object({ id: z.number().int().positive(), provider: z.enum(["pexels", "commons"]) })
+      .object({
+        id: z.number().int().positive(),
+        provider: z.enum(["pixabay", "pexels", "commons"]),
+      })
       .strict()
       .parse(input),
   )

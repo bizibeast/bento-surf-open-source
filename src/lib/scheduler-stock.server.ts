@@ -32,8 +32,16 @@ const photoSchema = z.object({
   alt: z.string().max(1000).optional(),
   src: z.object({ medium: imageUrl, large2x: imageUrl }),
 });
+export type StockProvider = "pixabay" | "pexels" | "commons";
+export function availableStockProviders(): StockProvider[] {
+  return [
+    ...(process.env.PIXABAY_API_KEY?.trim() ? ["pixabay" as const] : []),
+    ...(process.env.PEXELS_API_KEY?.trim() ? ["pexels" as const] : []),
+    "commons",
+  ];
+}
 export type StockPhoto = {
-  provider: "pexels" | "commons";
+  provider: StockProvider;
   id: number;
   url: string;
   photographer: string;
@@ -76,8 +84,13 @@ export async function pexelsRequest(path: string, fetcher: typeof fetch = fetch)
       .catch(() => {});
   return result;
 }
-export async function searchStockPhotos(query: string, page: number): Promise<StockPhoto[]> {
-  if (!process.env.PEXELS_API_KEY?.trim()) return searchCommonsPhotos(query, page);
+export async function searchStockPhotos(
+  query: string,
+  page: number,
+  provider: StockProvider = availableStockProviders()[0],
+): Promise<StockPhoto[]> {
+  if (provider === "commons") return searchCommonsPhotos(query, page);
+  if (provider === "pixabay") return searchPixabayPhotos(query, page);
   const result = z
     .object({ photos: z.array(photoSchema).max(12) })
     .parse(
@@ -92,6 +105,116 @@ export async function searchStockPhotos(query: string, page: number): Promise<St
     previewUrl: p.src.medium,
     description: p.alt || "Stock photo",
   }));
+}
+const pixabayPageUrl = z
+  .string()
+  .url()
+  .refine((value) => {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      url.hostname === "pixabay.com" &&
+      !url.username &&
+      !url.password &&
+      (!url.port || url.port === "443")
+    );
+  });
+const pixabayImageUrl = z
+  .string()
+  .url()
+  .refine((value) => {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      !url.username &&
+      !url.password &&
+      (!url.port || url.port === "443") &&
+      ((url.hostname === "pixabay.com" && url.pathname.startsWith("/get/")) ||
+        (url.hostname === "cdn.pixabay.com" && /^\/(?:photo|get)\//.test(url.pathname)))
+    );
+  });
+const pixabayPhoto = z.object({
+  id: z.number().int().positive(),
+  type: z.literal("photo"),
+  pageURL: pixabayPageUrl,
+  user: z.string().max(200),
+  user_id: z.number().int().nonnegative(),
+  tags: z.string().max(1000),
+  previewURL: pixabayImageUrl,
+  largeImageURL: pixabayImageUrl,
+});
+async function pixabayRequest(params: Record<string, string>): Promise<unknown> {
+  const key = process.env.PIXABAY_API_KEY?.trim();
+  if (!key) throw new Error("Pixabay is not connected yet. Choose another stock source.");
+  // Pixabay requires a query-string key. Keep it out of cache keys and errors.
+  const cacheUrl = `https://stock-cache.bento.invalid/pixabay?${new URLSearchParams(params)}`;
+  const cache = typeof caches !== "undefined" ? await caches.open("bento-pixabay-stock-v1") : null;
+  const cached = await cache?.match(cacheUrl);
+  if (cached) return JSON.parse(await readResponseText(cached, 256 * 1024));
+  await enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "pixabay-shared", "pixabay");
+  let response: Response;
+  try {
+    response = await fetch(`https://pixabay.com/api/?${new URLSearchParams({ ...params, key })}`, {
+      redirect: "manual",
+      headers: { "User-Agent": stockUserAgent() },
+      signal: AbortSignal.timeout(12000),
+    });
+  } catch {
+    throw new Error("Pixabay is temporarily unavailable. Try again or choose another source.");
+  }
+  if (!response.ok)
+    throw new Error(
+      response.status === 429
+        ? "Pixabay's free search limit was reached. Try later or choose another source."
+        : "Pixabay is temporarily unavailable. Try again or choose another source.",
+    );
+  let text: string;
+  let result: unknown;
+  try {
+    text = await readResponseText(response, 256 * 1024);
+    result = JSON.parse(text);
+    z.object({ hits: z.array(z.unknown()).max(12) }).parse(result);
+  } catch {
+    throw new Error("Pixabay returned an invalid response. Try another stock source.");
+  }
+  if (cache)
+    await cache
+      .put(
+        cacheUrl,
+        new Response(text, {
+          headers: { "cache-control": "public, max-age=86400", "content-type": "application/json" },
+        }),
+      )
+      .catch(() => {});
+  return result;
+}
+async function searchPixabayPhotos(query: string, page: number): Promise<StockPhoto[]> {
+  const result = z.object({ hits: z.array(z.unknown()).max(12) }).parse(
+    await pixabayRequest({
+      q: query.trim().toLowerCase(),
+      page: String(page),
+      per_page: "12",
+      image_type: "photo",
+      safesearch: "true",
+    }),
+  );
+  return result.hits.flatMap((hit) => {
+    const parsed = pixabayPhoto.safeParse(hit);
+    if (!parsed.success) return [];
+    const photo = parsed.data;
+    return [
+      {
+        provider: "pixabay" as const,
+        id: photo.id,
+        url: photo.pageURL,
+        photographer: photo.user || "Pixabay contributor",
+        photographerUrl: `https://pixabay.com/users/${encodeURIComponent(photo.user)}-${photo.user_id}/`,
+        // Preview URLs are stable; expiring /get/ URLs are only used at import time.
+        previewUrl: photo.previewURL,
+        description: photo.tags || "Stock photo",
+      },
+    ];
+  });
 }
 const commonsImageUrl = z
   .string()
@@ -200,10 +323,15 @@ export async function searchCommonsPhotos(query: string, page: number): Promise<
     })
     .slice(0, 12);
 }
-async function downloadStockPhoto(value: string, provider: "pexels" | "commons") {
+async function downloadStockPhoto(value: string, provider: StockProvider) {
   let url = value;
   for (let redirects = 0; redirects <= 2; redirects++) {
-    (provider === "commons" ? commonsImageUrl : imageUrl).parse(url);
+    (provider === "commons"
+      ? commonsImageUrl
+      : provider === "pixabay"
+        ? pixabayImageUrl
+        : imageUrl
+    ).parse(url);
     const response = await fetch(url, {
       redirect: "manual",
       headers: { "User-Agent": stockUserAgent(), Accept: "image/jpeg,image/png,image/webp" },
@@ -221,7 +349,7 @@ async function downloadStockPhoto(value: string, provider: "pexels" | "commons")
   }
   throw new Error("This stock photo redirected too many times. Try another photo.");
 }
-export async function importStockPhoto(userId: string, id: number, provider: "pexels" | "commons") {
+export async function importStockPhoto(userId: string, id: number, provider: StockProvider) {
   let photo: { id: number; downloadUrl: string; photographer: string; url: string };
   if (provider === "commons") {
     const result = await commonsRequest({ pageids: String(id) });
@@ -233,6 +361,24 @@ export async function importStockPhoto(userId: string, id: number, provider: "pe
       downloadUrl: info.thumburl,
       photographer: plain(info.extmetadata.Artist?.value || "Wikimedia Commons"),
       url: info.descriptionurl,
+    };
+  } else if (provider === "pixabay") {
+    const result = z.object({ hits: z.array(z.unknown()).max(12) }).parse(
+      await pixabayRequest({
+        id: String(id),
+        image_type: "photo",
+        safesearch: "true",
+        per_page: "3",
+      }),
+    );
+    const selected = pixabayPhoto.safeParse(result.hits[0]);
+    if (!selected.success || selected.data.id !== id)
+      throw new Error("This stock photo is no longer available. Choose another image.");
+    photo = {
+      id,
+      downloadUrl: selected.data.largeImageURL,
+      photographer: selected.data.user || "Pixabay contributor",
+      url: selected.data.pageURL,
     };
   } else {
     const selected = photoSchema.parse(await pexelsRequest(`photos/${id}`));
