@@ -1,3 +1,4 @@
+import { AutoDmDelaySettings } from "@/components/AutoDmDelaySettings";
 import { AutoDmActivityRow } from "@/components/AutoDmDetails";
 import { AutoDmDetailActions } from "@/components/AutoDmDetailDialog";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
@@ -293,6 +294,7 @@ function TwitterAutoDmPage() {
       />
 
       <div className={micro.main}>
+        <AutoDmDelaySettings />
         <DmAutomationPlatformNav current="twitter" />
         {!isLoading && !data?.advancedAutoDm && (
           <div

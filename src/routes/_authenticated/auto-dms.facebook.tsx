@@ -1,3 +1,4 @@
+import { AutoDmDelaySettings } from "@/components/AutoDmDelaySettings";
 import { AutoDmActivityRow } from "@/components/AutoDmDetails";
 import { AutoDmDetailActions } from "@/components/AutoDmDetailDialog";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
@@ -397,6 +398,7 @@ function FacebookAutoDmPage() {
       />
 
       <div className={micro.main}>
+        <AutoDmDelaySettings />
         <DmAutomationPlatformNav current="facebook" />
         {!isLoading && !data?.advancedAutoDm && (
           <div

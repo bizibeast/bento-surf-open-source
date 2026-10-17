@@ -1,3 +1,5 @@
+import { autoDmDelaySchema } from "./auto-dm-delay";
+import { readAutoDmDelay, writeAutoDmDelay } from "./auto-dm-delay-settings.server";
 import { searchStockPhotos, importStockPhoto, type StockProvider } from "./scheduler-stock.server";
 import { resolveOwnedAgentMedia } from "./content-agent-media.server";
 import { scheduledPostAutoDmSchemas } from "./scheduled-post-auto-dm";
@@ -846,6 +848,8 @@ async function resolvePostMedia(userId: string, ids: string[]) {
 }
 
 export const defaultBentoMcpOperations = {
+  readAutoDmDelay,
+  writeAutoDmDelay,
   readWorkspaceData,
   findPostStockPhotos,
   importPostStockPhoto,
@@ -1981,6 +1985,38 @@ function registerBentoTools(
       const automations = await operations.listAutoDmAutomations(userId, platform);
       return textResult("Loaded Bento Auto-DM automations.", { automations });
     },
+  );
+
+  server.registerTool(
+    "get_auto_dm_delay",
+    {
+      title: "Get Auto DM reply delay",
+      description:
+        "Read the workspace delay before automated comment replies and DM steps on Instagram, Facebook and X. Default 60 seconds. Includes scheduler-created automations.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+    },
+    async () => readResult("Loaded Auto DM delay.", await operations.readAutoDmDelay(userId)),
+  );
+  server.registerTool(
+    "set_auto_dm_delay",
+    {
+      title: "Set Auto DM reply delay",
+      description:
+        "Set the delay for ALL workspace Auto DM automations, including scheduled posts, to 30, 60, 120 or 180 seconds. This does not guarantee protection from platform spam enforcement.",
+      inputSchema: z.object({ delaySeconds: autoDmDelaySchema }),
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
+    },
+    async (input) =>
+      textResult(
+        "Saved Auto DM delay for this workspace.",
+        await operations.writeAutoDmDelay(userId, input),
+      ),
   );
 
   server.registerTool(

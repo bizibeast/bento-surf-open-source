@@ -13,6 +13,7 @@
 - `list_social_posts`: recent drafts, scheduled posts, publishing outcomes, and stable IDs.
 - `create_social_post`: create or edit a draft, schedule, or publish to connected accounts. Use `providerSettings` for YouTube title, description, privacy, and thumbnail; Instagram Trial Reels and scheduled Auto DM; TikTok privacy and interactions; and X repost timing.
 - `get_scheduler_workspace`, `manage_scheduler`: inspect posting times and lifecycle state, then save posting times or reschedule, move to draft, duplicate, cancel, or delete owned posts.
+- `get_auto_dm_delay` / `set_auto_dm_delay`: read or set the workspace-wide delay before automated replies on Instagram, Facebook and X, including scheduled-post automations. Allowed seconds: 30, 60 (default), 120, 180. Related public replies and opening DMs use the same event delay; each incoming workflow response waits again.
 - `list_auto_dm_automations`: Instagram, Facebook, or X automations and connection health.
 - `save_auto_dm_automation`: create or update an automation using the platform's native validation.
 - `set_auto_dm_enabled`: pause or enable one owned automation.

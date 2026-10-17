@@ -1,3 +1,4 @@
+import { AutoDmDelaySettings } from "@/components/AutoDmDelaySettings";
 import { InstagramPublicRepliesEditor } from "@/components/InstagramPublicRepliesEditor";
 import { INSTAGRAM_AUTO_DM_DEFAULTS as autoDmDefaults } from "@/lib/instagram-auto-dm-defaults";
 import { AutoDmActivityRow } from "@/components/AutoDmDetails";
@@ -419,6 +420,7 @@ function InstagramAutoDmPage() {
       />
 
       <div className={micro.main}>
+        <AutoDmDelaySettings />
         <DmAutomationPlatformNav current="instagram" />
         {!isLoading && !data?.advancedAutoDm && (
           <div
