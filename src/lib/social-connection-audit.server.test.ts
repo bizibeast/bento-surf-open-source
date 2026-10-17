@@ -70,7 +70,11 @@ describe("connection health recovery", () => {
     state.refresh.mockRejectedValue(new ProviderError("revoked", "invalid_grant", false, 400));
     expect((await auditSocialConnections()).expired).toBe(1);
     expect(state.changes).toContainEqual(
-      expect.objectContaining({ reauth_required: true, status: "expired" }),
+      expect.objectContaining({
+        reauth_required: true,
+        status: "expired",
+        provider_error_code: "invalid_grant",
+      }),
     );
     expect(state.filters).toContainEqual(["access_token", "saved-token"]);
     state.saved = false;

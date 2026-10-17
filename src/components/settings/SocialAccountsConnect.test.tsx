@@ -18,6 +18,32 @@ vi.mock("@/lib/social-connections.functions", () => ({
 }));
 
 describe("SocialAccountsConnect", () => {
+  it("keeps an expired account visible with its reason and reconnect action", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <SocialAccountsConnect
+          connections={[
+            {
+              id: "tiktok",
+              provider: "tiktok",
+              displayName: "Creator",
+              canPublish: false,
+              needsReconnect: true,
+              lastError: "TikTok authorization was rejected (invalid_grant).",
+            },
+          ]}
+          readiness={{ tiktok: true }}
+          onChanged={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText("Reconnect needed")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Manage TikTok integration/i }));
+    expect(
+      screen.getByText("TikTok authorization was rejected (invalid_grant)."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reconnect" })).toBeEnabled();
+  });
   it("offers reconnect when an existing YouTube token predates Analytics access", () => {
     render(
       <QueryClientProvider client={new QueryClient()}>
@@ -48,7 +74,7 @@ describe("SocialAccountsConnect", () => {
     expect(screen.getByRole("dialog")).not.toHaveClass("overflow-hidden");
     expect(screen.getByText("1 of 1 accounts connected")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reconnect" })).toBeEnabled();
-    expect(screen.getByText("Reconnect for analytics access")).toBeInTheDocument();
+    expect(screen.getByText("Reconnect to approve the missing permissions")).toBeInTheDocument();
     expect(
       document.querySelector('img[src="https://cdn.example.com/creator.jpg"]'),
     ).toBeInTheDocument();

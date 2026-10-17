@@ -64,6 +64,8 @@ type SocialConnection = {
   canPublish?: boolean;
   canAutomate?: boolean;
   scopes?: string[];
+  needsReconnect?: boolean;
+  lastError?: string | null;
 };
 
 export function IntegrationsOverview({
@@ -90,8 +92,8 @@ export function IntegrationsOverview({
   }, [target]);
 
   const socialConnections = (data?.socialConnections || []) as SocialConnection[];
-  const activeSocialConnections: SocialConnectAccount[] = socialConnections
-    .filter((connection) => connection.status === "active")
+  const visibleSocialConnections: SocialConnectAccount[] = socialConnections
+    .filter((connection) => connection.status !== "revoked")
     .map((connection) => ({
       id: connection.id,
       provider: connection.provider as SocialProvider,
@@ -100,6 +102,8 @@ export function IntegrationsOverview({
       canPublish: connection.canPublish !== false,
       canAutomate: connection.canAutomate !== false,
       scopes: connection.scopes || [],
+      needsReconnect: connection.needsReconnect || connection.status !== "active",
+      lastError: connection.lastError,
     }));
   const calendarConnections = (data?.calendarConnections || []) as BookingConnectAccount[];
   const fathomConnections = (data?.fathomConnections || []) as BookingConnectAccount[];
@@ -163,7 +167,7 @@ export function IntegrationsOverview({
             <TileSkeleton count={8} />
           ) : (
             <SocialAccountsConnect
-              connections={activeSocialConnections}
+              connections={visibleSocialConnections}
               readiness={readiness}
               onChanged={refreshOverview}
               query={query}
@@ -265,9 +269,11 @@ export function IntegrationsOverview({
           <div className="grid grid-cols-3 gap-x-4 gap-y-6 sm:grid-cols-5 lg:grid-cols-8">
             {shownAutomations.map((automation) => {
               const Icon = automation.icon;
-              const connected = activeSocialConnections.some(
+              const connected = visibleSocialConnections.some(
                 (connection) =>
-                  connection.provider === automation.provider && connection.canAutomate !== false,
+                  connection.provider === automation.provider &&
+                  !connection.needsReconnect &&
+                  connection.canAutomate !== false,
               );
               return (
                 <Link

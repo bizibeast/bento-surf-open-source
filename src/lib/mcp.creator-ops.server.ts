@@ -69,6 +69,7 @@ import {
 import { enforceRequestRateLimit } from "./request-security.server";
 import { ensureReferralAccount } from "./referral.functions";
 import { isReferralCode } from "./referrals";
+import { socialConnectionHealth } from "./social-scheduler";
 
 export type CreatorMcpContext = {
   userId: string;
@@ -1667,7 +1668,7 @@ export async function getIntegrationWorkspace(context: CreatorMcpContext) {
     client
       .from("social_connections")
       .select(
-        "id,provider,provider_handle,provider_display_name,status,scopes,connection_health,last_error",
+        "id,provider,provider_handle,provider_display_name,status,scopes,connection_health,last_error,reauth_required,provider_error_code,token_expires_at,last_refreshed_at",
       )
       .eq("user_id", context.userId)
       .order("created_at"),
@@ -1693,7 +1694,10 @@ export async function getIntegrationWorkspace(context: CreatorMcpContext) {
     throw new Error("Integration workspace could not be loaded.");
   }
   return {
-    social: social.data || [],
+    social: (social.data || []).map((connection: any) => ({
+      ...connection,
+      connection_health: socialConnectionHealth(connection),
+    })),
     calendars: calendar.data || [],
     fathom: fathom.data || [],
     paymentAccounts: payment.data || [],

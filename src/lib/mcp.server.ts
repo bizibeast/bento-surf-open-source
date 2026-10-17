@@ -244,7 +244,7 @@ async function listSocialAccounts(userId: string, provider?: string) {
   let query = db()
     .from("social_connections")
     .select(
-      "id,provider,provider_handle,provider_display_name,provider_avatar_url,status,scopes,connection_health,webhook_fields,last_verified_at,last_error,reauth_required,token_expires_at,created_at",
+      "id,provider,provider_handle,provider_display_name,provider_avatar_url,status,scopes,connection_health,webhook_fields,last_verified_at,last_error,reauth_required,token_expires_at,created_at,provider_error_code",
     )
     .eq("user_id", userId)
     .order("created_at", { ascending: true });
@@ -272,7 +272,11 @@ async function listSocialAccounts(userId: string, provider?: string) {
         ),
       autoDmReady: autoDm?.ready ?? false,
       autoDmIssues: autoDm?.issues || [],
-      needsReconnect: Boolean(connection.reauth_required || autoDm?.needsReconnect),
+      needsReconnect: Boolean(
+        connection.status !== "active" || connection.reauth_required || autoDm?.needsReconnect,
+      ),
+      accessExpiresAt: connection.token_expires_at,
+      providerErrorCode: connection.provider_error_code,
       lastVerifiedAt: connection.last_verified_at,
       lastError: connection.last_error,
       connectedAt: connection.created_at,

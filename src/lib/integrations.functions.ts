@@ -22,7 +22,7 @@ export const getIntegrationOverview = createServerFn({ method: "GET" })
       db
         .from("social_connections")
         .select(
-          "id,provider,provider_handle,provider_display_name,provider_avatar_url,status,scopes,reauth_required",
+          "id,provider,provider_handle,provider_display_name,provider_avatar_url,status,scopes,reauth_required,last_error",
         )
         .eq("user_id", context.userId)
         .order("created_at", { ascending: true }),
@@ -69,6 +69,8 @@ export const getIntegrationOverview = createServerFn({ method: "GET" })
           displayName: (connection.provider_display_name || connection.provider_handle) as string,
           avatarUrl: (connection.provider_avatar_url as string | null) || null,
           status: connection.status as string,
+          needsReconnect: connection.status !== "active" || Boolean(connection.reauth_required),
+          lastError: (connection.last_error as string | null) || null,
           scopes: (connection.scopes || []) as string[],
           canPublish: socialConnectionCanPublish(
             connection.provider,
