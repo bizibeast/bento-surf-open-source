@@ -1,3 +1,4 @@
+import { deferAutoDmDelivery } from "./lib/auto-dm-delay.server";
 import { guardCreatorDocument } from "./lib/creator-document-auth.server";
 import { handleFaviconRequest } from "./lib/favicon.server";
 import "./lib/error-capture";
@@ -1335,6 +1336,11 @@ export default {
     }
     for (const message of instagramDmMessages) {
       try {
+        if (
+          message.body.kind !== "instagram_comment_reconcile" &&
+          (await deferAutoDmDelivery("instagram", message.body.event.instagramAccountId, message))
+        )
+          continue;
         await processInstagramDmQueueMessage(message.body, env.INSTAGRAM_DM_QUEUE);
         message.ack();
       } catch (error) {
@@ -1350,6 +1356,11 @@ export default {
     }
     for (const message of twitterDmMessages) {
       try {
+        if (
+          message.body.kind !== "twitter_dm_reconcile" &&
+          (await deferAutoDmDelivery("twitter", message.body.event.twitterUserId, message))
+        )
+          continue;
         await processTwitterDmQueueMessage(message.body, env.TWITTER_DM_QUEUE);
         message.ack();
       } catch (error) {
@@ -1365,6 +1376,8 @@ export default {
     }
     for (const message of facebookDmMessages) {
       try {
+        if (await deferAutoDmDelivery("facebook", message.body.event.facebookPageId, message))
+          continue;
         await processFacebookDmQueueMessage(message.body);
         message.ack();
       } catch (error) {

@@ -1,3 +1,4 @@
+import { AutoDmDelaySettings } from "@/components/AutoDmDelaySettings";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { ArrowRight } from "lucide-react";
@@ -16,6 +17,7 @@ function DmAutomationHubPage() {
     <main className={`relative overflow-x-clip ${micro.shell}`}>
       <AppHeader title="DM automation" />
       <div className={micro.main}>
+        <AutoDmDelaySettings />
         <p className={micro.eyebrow}>Auto-DM</p>
         <h2 className="mt-1 font-ui-display text-3xl">
           Reply automatically on Instagram, Facebook, and X.

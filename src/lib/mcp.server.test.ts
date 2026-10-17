@@ -357,6 +357,13 @@ const bentoMcpToolAnnotations = {
   resolve_post_media: readOnlyAnnotations,
   create_social_post: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
   list_auto_dm_automations: readOnlyAnnotations,
+  get_auto_dm_delay: readOnlyAnnotations,
+  set_auto_dm_delay: {
+    readOnlyHint: false,
+    openWorldHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+  },
   save_auto_dm_automation: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
   set_auto_dm_enabled: {
     readOnlyHint: false,
@@ -646,6 +653,13 @@ describe("Bento MCP tools", () => {
       begin_media_upload: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
       list_social_posts: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
       create_social_post: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      get_auto_dm_delay: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      set_auto_dm_delay: {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
       list_auto_dm_automations: {
         readOnlyHint: true,
         openWorldHint: false,

@@ -118,6 +118,8 @@ const initialTools = [
   "list_social_posts",
   "create_social_post",
   "list_auto_dm_automations",
+  "get_auto_dm_delay",
+  "set_auto_dm_delay",
   "save_auto_dm_automation",
   "get_content_media",
   "resolve_post_media",

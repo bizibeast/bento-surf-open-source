@@ -80,17 +80,9 @@ export type RedditCommunity = {
 
 const REDDIT_USER_AGENT = "web:bento.surf.scheduler:1.0 (by /u/bentosurf)";
 
-export class ProviderError extends Error {
-  constructor(
-    message: string,
-    readonly code: string,
-    readonly retryable: boolean,
-    readonly status?: number,
-    readonly retryAfterSeconds?: number | null,
-  ) {
-    super(message);
-  }
-}
+import { ProviderError, needsSocialReconnect } from "./social-provider-error";
+import { withSocialTokenRefresh } from "./social-token-refresh.server";
+export { ProviderError } from "./social-provider-error";
 
 export async function providerJson(url: string, init: RequestInit, provider: SocialProvider) {
   if (
@@ -106,7 +98,10 @@ export async function providerJson(url: string, init: RequestInit, provider: Soc
       throw error;
     }
   }
-  const response = await fetch(url, { ...init, signal: AbortSignal.timeout(120_000) });
+  const response = await fetch(url, {
+    ...init,
+    signal: init.signal ?? AbortSignal.timeout(120_000),
+  });
   const text = await response.text();
   let data: any = {};
   try {
@@ -118,7 +113,12 @@ export async function providerJson(url: string, init: RequestInit, provider: Soc
   const providerReportedError = Boolean(data.error) && !["ok", "0", 0].includes(providerErrorCode);
   if (!response.ok || providerReportedError) {
     const retryable = response.status === 429 || response.status >= 500;
-    const code = String(data.error?.code || data.code || response.status);
+    const code = String(
+      data.error?.code ||
+        (typeof data.error === "string" ? data.error : null) ||
+        data.code ||
+        response.status,
+    );
     const rawMessage =
       data.error?.message ||
       data.detail ||
@@ -1720,39 +1720,78 @@ export function tiktokRetryRemotePostId(
     : remotePostId;
 }
 
-export async function accessTokenForConnection(connection: any) {
-  if (!connection.access_token)
+export async function accessTokenForConnection(
+  connection: any,
+  options: { forceRefresh?: boolean } = {},
+) {
+  if (
+    ["twitter", "youtube", "tiktok", "linkedin", "reddit", "threads"].includes(connection.provider)
+  ) {
+    return withSocialTokenRefresh(connection, refreshConnectionToken, options.forceRefresh);
+  }
+  if (
+    !connection.access_token ||
+    connection.status === "revoked" ||
+    options.forceRefresh ||
+    (connection.token_expires_at && Date.parse(connection.token_expires_at) <= Date.now())
+  ) {
     throw new ProviderError(
-      "Reconnect this account before publishing.",
+      "Reconnect this account to restore access.",
       "reconnect_required",
       false,
+      401,
     );
-  const current = await decryptServerSecret(connection.access_token, "social");
-  const expiresAt = connection.token_expires_at
-    ? new Date(connection.token_expires_at).getTime()
-    : Number.POSITIVE_INFINITY;
-  if (expiresAt > Date.now() + 5 * 60_000) return current;
-  const provider = connection.provider as SocialProvider;
+  }
+  return decryptServerSecret(connection.access_token, "social");
+}
 
+async function persistRefreshedToken(connection: any, values: Record<string, unknown>) {
+  const { data, error } = await (supabaseAdmin as any)
+    .from("social_connections")
+    .update({
+      ...values,
+      last_refreshed_at: new Date().toISOString(),
+      status: "active",
+      last_error: null,
+      reauth_required: false,
+      // Preserve webhook/permission health; only clear an authentication failure.
+      ...(connection.status === "expired" ? { connection_health: "healthy" } : {}),
+    })
+    .eq("id", connection.id)
+    .eq("token_refresh_lease_id", connection.token_refresh_lease_id)
+    .eq("access_token", connection.access_token)
+    .neq("status", "revoked")
+    .select("id")
+    .maybeSingle();
+  if (error || !data)
+    throw new ProviderError(
+      "Renewed access could not be saved. Retrying shortly.",
+      "refresh_save_failed",
+      true,
+      503,
+    );
+}
+
+async function refreshConnectionToken(connection: any) {
+  const current = await decryptServerSecret(connection.access_token, "social");
+  const provider = connection.provider as SocialProvider;
   if (provider === "threads") {
     const url = new URL("https://graph.threads.net/refresh_access_token");
     url.searchParams.set("grant_type", "th_refresh_token");
     url.searchParams.set("access_token", current);
-    const refreshed = await providerJson(url.toString(), { method: "GET" }, provider);
+    const refreshed = await providerJson(
+      url.toString(),
+      { method: "GET", signal: AbortSignal.timeout(20_000) },
+      provider,
+    );
     const nextAccessToken = String(refreshed.data.access_token || "");
     if (!nextAccessToken)
       throw new ProviderError("Threads did not refresh this connection.", "refresh_failed", false);
     const expiresIn = Number(refreshed.data.expires_in || 5_184_000);
-    await (supabaseAdmin as any)
-      .from("social_connections")
-      .update({
-        access_token: await encryptServerSecret(nextAccessToken, "social"),
-        token_expires_at: new Date(Date.now() + expiresIn * 1_000).toISOString(),
-        last_refreshed_at: new Date().toISOString(),
-        status: "active",
-        last_error: null,
-      })
-      .eq("id", connection.id);
+    await persistRefreshedToken(connection, {
+      access_token: await encryptServerSecret(nextAccessToken, "social"),
+      token_expires_at: new Date(Date.now() + expiresIn * 1_000).toISOString(),
+    });
     return nextAccessToken;
   }
 
@@ -1829,7 +1868,12 @@ export async function accessTokenForConnection(connection: any) {
   }
   const refreshed = await providerJson(
     endpoint,
-    { method: "POST", headers, body: new URLSearchParams(fields) },
+    {
+      method: "POST",
+      headers,
+      body: new URLSearchParams(fields),
+      signal: AbortSignal.timeout(20_000),
+    },
     provider,
   );
   const nextAccessToken = String(refreshed.data.access_token || "");
@@ -1841,17 +1885,11 @@ export async function accessTokenForConnection(connection: any) {
     );
   const nextRefreshToken = String(refreshed.data.refresh_token || refreshToken);
   const expiresIn = Number(refreshed.data.expires_in || 3_600);
-  await (supabaseAdmin as any)
-    .from("social_connections")
-    .update({
-      access_token: await encryptServerSecret(nextAccessToken, "social"),
-      refresh_token: await encryptServerSecret(nextRefreshToken, "social"),
-      token_expires_at: new Date(Date.now() + expiresIn * 1_000).toISOString(),
-      last_refreshed_at: new Date().toISOString(),
-      status: "active",
-      last_error: null,
-    })
-    .eq("id", connection.id);
+  await persistRefreshedToken(connection, {
+    access_token: await encryptServerSecret(nextAccessToken, "social"),
+    refresh_token: await encryptServerSecret(nextRefreshToken, "social"),
+    token_expires_at: new Date(Date.now() + expiresIn * 1_000).toISOString(),
+  });
   return nextAccessToken;
 }
 
@@ -2169,7 +2207,7 @@ export async function processSocialPublishMessage(message: SocialPublishMessage)
     const timedOut =
       error instanceof Error &&
       (error.name === "TimeoutError" || /aborted|timeout/i.test(error.message));
-    const providerError =
+    let providerError =
       error instanceof ProviderError
         ? error
         : timedOut
@@ -2179,6 +2217,30 @@ export async function processSocialPublishMessage(message: SocialPublishMessage)
               false,
             )
           : new ProviderError("Publishing failed unexpectedly.", "unexpected", true);
+
+    // A rejected request is safe to retry after renewing access. Never repeat an unknown-outcome write.
+    if (providerError.status === 401 && !needsSocialReconnect(providerError)) {
+      try {
+        await accessTokenForConnection(target.connection, { forceRefresh: true });
+        providerError = new ProviderError(
+          "Account access renewed. Retrying the post.",
+          "access_renewed",
+          true,
+          503,
+          30,
+        );
+      } catch (refreshError) {
+        providerError =
+          refreshError instanceof ProviderError
+            ? refreshError
+            : new ProviderError(
+                "Account access could not be renewed yet. Retrying shortly.",
+                "refresh_unavailable",
+                true,
+                503,
+              );
+      }
+    }
 
     if (providerError.code === "outcome_unknown" || timedOut) {
       await db
@@ -2239,12 +2301,21 @@ export async function processSocialPublishMessage(message: SocialPublishMessage)
         await notifySocialPublishFailure(target, providerError.message);
       }
     }
-    if (providerError.status === 401 || providerError.code === "reconnect_required") {
-      await db
+    if (needsSocialReconnect(providerError)) {
+      const { data: expired } = await db
         .from("social_connections")
-        .update({ status: "expired", last_error: providerError.message })
-        .eq("id", target.connection_id);
-      await notifySocialConnectionExpired(target);
+        .update({
+          status: "expired",
+          reauth_required: true,
+          connection_health: "action_required",
+          last_error: "Account authorization expired or was revoked. Reconnect this account.",
+        })
+        .eq("id", target.connection_id)
+        .eq("access_token", target.connection.access_token)
+        .neq("status", "revoked")
+        .select("id")
+        .maybeSingle();
+      if (expired) await notifySocialConnectionExpired(target);
     }
   } finally {
     await refreshSocialPostStatus(target.post_id);
@@ -2385,56 +2456,63 @@ export async function relaySocialOutbox(env?: unknown) {
 
 export async function auditSocialConnections(now = new Date()) {
   const db = supabaseAdmin as any;
-  const refreshCutoff = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1_000).toISOString();
-  const checkCutoff = new Date(now.getTime() - 24 * 60 * 60 * 1_000).toISOString();
+  const cutoff = new Date(now.getTime() + 5 * 60_000).toISOString();
+  const threadsCutoff = new Date(now.getTime() + 3 * 86400_000).toISOString();
+  const checkCutoff = new Date(now.getTime() - 15 * 60_000).toISOString();
   const { data, error } = await db
     .from("social_connections")
     .select(
-      "id, user_id, provider, provider_user_id, access_token, refresh_token, token_expires_at, status, last_error",
+      "id,user_id,provider,provider_user_id,access_token,refresh_token,token_expires_at,status,last_error,reauth_required",
     )
-    .neq("provider", "instagram")
-    .eq("status", "active")
-    .or(`token_expires_at.lt.${refreshCutoff},token_expires_at.is.null`)
-    .order("token_expires_at", { ascending: true, nullsFirst: true })
+    .in("provider", ["twitter", "youtube", "tiktok", "linkedin", "reddit", "threads"])
+    .in("status", ["active", "expired"])
+    .eq("reauth_required", false)
+    .or(
+      `status.eq.expired,token_expires_at.lt.${cutoff},and(provider.eq.threads,token_expires_at.lt.${threadsCutoff})`,
+    )
+    .or(`last_health_check_at.is.null,last_health_check_at.lt.${checkCutoff}`)
+    .order("last_health_check_at", { ascending: true, nullsFirst: true })
     .limit(40);
   if (error) throw new Error("Unable to load social connections for health checks.");
-
   const result = { checked: 0, refreshed: 0, expired: 0, skipped: 0 };
   for (const connection of data || []) {
     result.checked += 1;
-    if (!connection.refresh_token) {
-      if (
-        connection.token_expires_at &&
-        new Date(connection.token_expires_at).getTime() <= now.getTime()
-      ) {
-        await db
-          .from("social_connections")
-          .update({
-            status: "expired",
-            last_error: "This connection expired. Reconnect it from the scheduler.",
-          })
-          .eq("id", connection.id);
-        result.expired += 1;
-      } else {
-        result.skipped += 1;
-      }
-      continue;
-    }
+    await db
+      .from("social_connections")
+      .update({ last_health_check_at: now.toISOString() })
+      .eq("id", connection.id);
     try {
+      const before = connection.access_token;
       await accessTokenForConnection(connection);
-      result.refreshed += 1;
+      if (connection.access_token !== before) result.refreshed += 1;
+      else result.skipped += 1;
     } catch (refreshError) {
-      const message =
-        refreshError instanceof Error
-          ? refreshError.message
-          : "This connection needs to be reconnected.";
-      await db
+      // Rate limits, provider outages, configuration errors and a busy refresh lease
+      // must not disconnect an account or repeatedly tell its owner to reconnect.
+      if (!needsSocialReconnect(refreshError)) {
+        result.skipped += 1;
+        continue;
+      }
+      const { data: expired, error: expireError } = await db
         .from("social_connections")
-        .update({ status: "expired", last_error: message })
-        .eq("id", connection.id);
+        .update({
+          status: "expired",
+          reauth_required: true,
+          connection_health: "action_required",
+          last_error: "Account authorization expired or was revoked. Reconnect this account.",
+        })
+        .eq("id", connection.id)
+        .eq("access_token", connection.access_token)
+        .neq("status", "revoked")
+        .select("id")
+        .maybeSingle();
+      if (expireError || !expired) {
+        result.skipped += 1;
+        continue;
+      }
       result.expired += 1;
       const email = await creatorEmailForUser(String(connection.user_id));
-      if (email) {
+      if (email)
         await enqueueEmail({
           eventKey: `social-connection-expired:${connection.id}:${now.toISOString().slice(0, 10)}`,
           eventType: "social_connection_expired",
@@ -2448,10 +2526,8 @@ export async function auditSocialConnections(now = new Date()) {
             schedulerUrl: "/post-scheduler",
           },
         });
-      }
     }
   }
-  void checkCutoff;
   return result;
 }
 

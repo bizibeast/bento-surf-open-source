@@ -51,3 +51,18 @@ Brain Media stores a catalog of connected posts and imports at most one image fr
 Knowledge connections require `CONTENT_CONNECTION_ENCRYPTION_KEY`. Notion uses `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`, and optionally `NOTION_REDIRECT_URI`; Slack uses `SLACK_CONTENT_CLIENT_ID`, `SLACK_CONTENT_CLIENT_SECRET`, and optionally `SLACK_CONTENT_REDIRECT_URI`. GitHub uses `GITHUB_CONTENT_APP_ID`, `GITHUB_CONTENT_APP_SLUG`, and `GITHUB_CONTENT_APP_PRIVATE_KEY`. Granola performs MCP OAuth discovery and optionally uses `GRANOLA_REDIRECT_URI`. Callback URLs default to the configured `VITE_APP_URL`; register that instance's `/integrations/<provider>/callback` with each provider.
 
 Telegram requires `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, and `TELEGRAM_WEBHOOK_SECRET`. Register the instance's `/api/webhooks/telegram` with the same webhook secret and provision the `TELEGRAM_QUEUE` producer, consumer, and dead-letter queue from the neutral Cloudflare template. Optional integrations require the instance operator's own credentials and approvals.
+
+### Auto DM reply timing and connection recovery
+
+Auto DM has one workspace-wide reply delay: 30 seconds, 1 minute (default),
+2 minutes or 3 minutes. Change it in Auto DMs or the scheduler's Auto DM settings.
+It applies to Instagram, Facebook and X, including Agent/MCP-created rules.
+Incoming comments, messages and workflow responses wait in the queue before
+processing; related public replies and opening DMs share the event delay.
+Queue backlog or provider limits may add more time. Delay does not guarantee
+protection from platform spam enforcement.
+
+Apply the `20261017190000_auto_dm_delay_and_token_refresh_leases.sql` migration
+before updating your Worker. It also adds server-only coordination for OAuth
+refresh tokens. Temporary provider errors retain the connection; revoked
+permissions or refresh tokens still require the user to reconnect.

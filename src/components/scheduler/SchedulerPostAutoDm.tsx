@@ -1,3 +1,4 @@
+import { AutoDmDelaySettings } from "@/components/AutoDmDelaySettings";
 import type { ReactNode } from "react";
 import { InstagramPublicRepliesEditor } from "@/components/InstagramPublicRepliesEditor";
 import { micro } from "@/lib/micro-app-ui";
@@ -35,6 +36,7 @@ export function SchedulerPostAutoDm({
       </p>
       {value.enabled && (
         <div className="mt-4 space-y-3">
+          <AutoDmDelaySettings />
           {blockReason && (
             <p role="status" className="rounded-lg bg-amber-50 p-3 text-xs text-amber-950">
               {blockReason} You can save the setup in your draft.

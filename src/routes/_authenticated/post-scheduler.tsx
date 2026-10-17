@@ -1,3 +1,4 @@
+import { AutoDmDelaySettings } from "@/components/AutoDmDelaySettings";
 import { SchedulerActionButton } from "@/components/scheduler/SchedulerActionButton";
 import { SchedulerPostAutoDm } from "@/components/scheduler/SchedulerPostAutoDm";
 import {
@@ -3911,6 +3912,7 @@ function SchedulerPage() {
                               </p>
                               {autoDmEnabled && (
                                 <div className="mt-4 space-y-3">
+                                  <AutoDmDelaySettings />
                                   <label className="block text-xs font-semibold text-muted-foreground">
                                     Trigger
                                     <select

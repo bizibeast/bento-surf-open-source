@@ -299,7 +299,8 @@ function twitterApiError(status: number, data: any, fallback: string, retryAfter
 
 async function tokenForConnection(connection: any) {
   try {
-    return await accessTokenForConnection({ ...connection, provider: "twitter" });
+    connection.provider = "twitter";
+    return await accessTokenForConnection(connection);
   } catch (error) {
     if (error instanceof ProviderError) {
       throw new TwitterDeliveryError(error.message, error.code, error.retryable);
@@ -598,6 +599,8 @@ async function processTwitterDmReconciliation(
     .eq("provider", "twitter")
     .maybeSingle();
   if (connectionError) throw new Error("Unable to load the X account for reconciliation.");
+  if (connection?.status === "active" && connection.refresh_token)
+    await tokenForConnection(connection);
   if (!connection || !getTwitterConnectionReadiness(connection).ready) {
     return { skipped: true, reason: "connection_not_ready" };
   }
@@ -820,6 +823,9 @@ export async function processTwitterDmQueueMessage(
         processed_at: new Date().toISOString(),
       });
       return { ignored: true };
+    }
+    for (const connection of eligibleConnections) {
+      if (connection.refresh_token) await tokenForConnection(connection);
     }
     const readyConnections = eligibleConnections.filter(
       (connection: any) => getTwitterConnectionReadiness(connection).ready,
