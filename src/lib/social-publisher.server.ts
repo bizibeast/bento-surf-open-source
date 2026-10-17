@@ -80,7 +80,11 @@ export type RedditCommunity = {
 
 const REDDIT_USER_AGENT = "web:bento.surf.scheduler:1.0 (by /u/bentosurf)";
 
-import { ProviderError, needsSocialReconnect } from "./social-provider-error";
+import {
+  ProviderError,
+  needsSocialReconnect,
+  socialReconnectMessage,
+} from "./social-provider-error";
 import { withSocialTokenRefresh } from "./social-token-refresh.server";
 export { ProviderError } from "./social-provider-error";
 
@@ -1754,6 +1758,7 @@ async function persistRefreshedToken(connection: any, values: Record<string, unk
       status: "active",
       last_error: null,
       reauth_required: false,
+      provider_error_code: null,
       // Preserve webhook/permission health; only clear an authentication failure.
       ...(connection.status === "expired" ? { connection_health: "healthy" } : {}),
     })
@@ -1798,7 +1803,7 @@ async function refreshConnectionToken(connection: any) {
   if (!connection.refresh_token) {
     throw new ProviderError(
       "This connection expired. Reconnect it before publishing.",
-      "reconnect_required",
+      "refresh_token_missing",
       false,
       401,
     );
@@ -2308,7 +2313,8 @@ export async function processSocialPublishMessage(message: SocialPublishMessage)
           status: "expired",
           reauth_required: true,
           connection_health: "action_required",
-          last_error: "Account authorization expired or was revoked. Reconnect this account.",
+          last_error: socialReconnectMessage(target.provider, providerError),
+          provider_error_code: providerError.providerCode,
         })
         .eq("id", target.connection_id)
         .eq("access_token", target.connection.access_token)
@@ -2462,11 +2468,14 @@ export async function auditSocialConnections(now = new Date()) {
   const { data, error } = await db
     .from("social_connections")
     .select(
-      "id,user_id,provider,provider_user_id,access_token,refresh_token,token_expires_at,status,last_error,reauth_required",
+      "id,user_id,provider,provider_user_id,access_token,refresh_token,token_expires_at,status,last_error,reauth_required,provider_error_code",
     )
     .in("provider", ["twitter", "youtube", "tiktok", "linkedin", "reddit", "threads"])
     .in("status", ["active", "expired"])
-    .eq("reauth_required", false)
+    // Older releases marked failures without preserving a provider error code.
+    // Give those records a bounded recovery attempt. Confirmed rejections are
+    // recorded below and excluded from subsequent audits until OAuth reconnect.
+    .or("reauth_required.eq.false,and(status.eq.expired,provider_error_code.is.null)")
     .or(
       `status.eq.expired,token_expires_at.lt.${cutoff},and(provider.eq.threads,token_expires_at.lt.${threadsCutoff})`,
     )
@@ -2490,16 +2499,27 @@ export async function auditSocialConnections(now = new Date()) {
       // Rate limits, provider outages, configuration errors and a busy refresh lease
       // must not disconnect an account or repeatedly tell its owner to reconnect.
       if (!needsSocialReconnect(refreshError)) {
+        console.warn("[social] token renewal deferred", {
+          connectionId: connection.id,
+          provider: connection.provider,
+          code:
+            refreshError instanceof ProviderError
+              ? refreshError.providerCode
+              : "refresh_unavailable",
+          status: refreshError instanceof ProviderError ? refreshError.status : undefined,
+        });
         result.skipped += 1;
         continue;
       }
+      const authError = refreshError as ProviderError;
       const { data: expired, error: expireError } = await db
         .from("social_connections")
         .update({
           status: "expired",
           reauth_required: true,
           connection_health: "action_required",
-          last_error: "Account authorization expired or was revoked. Reconnect this account.",
+          last_error: socialReconnectMessage(connection.provider, authError),
+          provider_error_code: authError.providerCode,
         })
         .eq("id", connection.id)
         .eq("access_token", connection.access_token)
@@ -2511,6 +2531,14 @@ export async function auditSocialConnections(now = new Date()) {
         continue;
       }
       result.expired += 1;
+      console.warn("[social] token renewal requires reconnect", {
+        connectionId: connection.id,
+        provider: connection.provider,
+        code: authError.providerCode,
+        status: authError.status,
+      });
+      // A diagnostic retry must not send a second disconnect notification.
+      if (connection.reauth_required) continue;
       const email = await creatorEmailForUser(String(connection.user_id));
       if (email)
         await enqueueEmail({

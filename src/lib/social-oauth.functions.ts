@@ -548,7 +548,7 @@ export const completeSocialConnection = createServerFn({ method: "POST" })
     if (!discoveredAccounts.length) throw new Error("No publishable account was found.");
     const { data: existingConnections, error: existingError } = await db
       .from("social_connections")
-      .select("provider_user_id")
+      .select("provider_user_id,refresh_token")
       .eq("user_id", context.userId)
       .eq("provider", data.provider);
     if (existingError) throw new Error("The connected accounts could not be checked.");
@@ -589,7 +589,12 @@ export const completeSocialConnection = createServerFn({ method: "POST" })
                 : {}),
               refresh_token: refreshToken
                 ? await encryptServerSecret(refreshToken, "social")
-                : null,
+                : // Google can omit refresh_token on repeat consent for the same grant.
+                  data.provider === "youtube"
+                  ? existingConnections?.find(
+                      (existing: any) => existing.provider_user_id === providerUserId,
+                    )?.refresh_token || null
+                  : null,
               token_expires_at:
                 data.provider === "facebook"
                   ? null
@@ -602,6 +607,17 @@ export const completeSocialConnection = createServerFn({ method: "POST" })
                 : {}),
               status: "active",
               last_error: null,
+              reauth_required: false,
+              provider_error_code: null,
+              connection_health: BASIC_AUTO_DM_PROVIDERS.has(data.provider)
+                ? "verifying"
+                : "healthy",
+              last_verified_at: BASIC_AUTO_DM_PROVIDERS.has(data.provider)
+                ? null
+                : new Date().toISOString(),
+              last_health_check_at: null,
+              token_refresh_lease_id: null,
+              token_refresh_lease_until: null,
             };
           }),
         ),

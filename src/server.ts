@@ -1424,6 +1424,29 @@ export default {
   },
   async scheduled(controller: ScheduledController, env: RuntimeEnv) {
     env = hydrateRuntimeEnv(env) as RuntimeEnv;
+    // Renew authorization before unrelated maintenance. One failing provider
+    // or analytics/email job must not stop the other accounts from renewing.
+    const connectionHealthTask = (async () => {
+      if (
+        controller.cron !== "0 9 * * *" &&
+        new Date(controller.scheduledTime).getUTCMinutes() % 5 === 0
+      ) {
+        const audits = await Promise.allSettled([
+          auditSocialConnections(),
+          auditInstagramConnections(),
+          auditFacebookConnections(),
+        ]);
+        for (const [index, result] of audits.entries()) {
+          const provider = ["social", "instagram", "facebook"][index];
+          if (result.status === "fulfilled") {
+            if (result.value.checked > 0)
+              console.log(`[${provider}] connection health audit`, result.value);
+          } else {
+            console.error(`[${provider}] connection health audit deferred`);
+          }
+        }
+      }
+    })();
     try {
       if (controller.cron === "0 9 * * *") {
         const { supabaseAdmin } = await import("./integrations/supabase/client.server");
@@ -1499,13 +1522,10 @@ export default {
         env.SOCIAL_INSIGHTS_QUEUE,
       );
       const referralResult = await enqueueDueReferralReach(env.REFERRAL_QUEUE);
-      const socialHealth = await auditSocialConnections();
-      const instagramHealth = await auditInstagramConnections();
       const instagramReconciliation = await enqueueInstagramCommentReconciliations(
         env.INSTAGRAM_DM_QUEUE,
       );
       const twitterReconciliation = await enqueueTwitterDmReconciliations(env.TWITTER_DM_QUEUE);
-      const facebookHealth = await auditFacebookConnections();
       const bookingResult = await processBookingFollowups();
       await cleanupTelegramReceipts();
       let contentIndexResult = null;
@@ -1590,14 +1610,6 @@ export default {
         console.log("[content-routines] processed", contentRoutineResult);
       if (referralResult.queued > 0)
         console.log("[referral] queued reach verification", referralResult);
-      if (socialHealth.checked > 0) console.log("[social] connection health audit", socialHealth);
-      if (
-        instagramHealth.checked > 0 ||
-        instagramHealth.actionRequired > 0 ||
-        instagramHealth.transientFailures > 0
-      ) {
-        console.log("[instagram-auto-dm] connection health audit", instagramHealth);
-      }
       if (instagramReconciliation.queued > 0) {
         console.log(
           "[instagram-auto-dm] queued missed-comment reconciliation",
@@ -1607,19 +1619,14 @@ export default {
       if (twitterReconciliation.queued > 0) {
         console.log("[twitter-auto-dm] queued missed-event reconciliation", twitterReconciliation);
       }
-      if (
-        facebookHealth.checked > 0 ||
-        facebookHealth.actionRequired > 0 ||
-        facebookHealth.transientFailures > 0
-      ) {
-        console.log("[facebook-auto-dm] connection health audit", facebookHealth);
-      }
     } catch (error) {
       console.error("[scheduled] background processing failed", error);
       await captureServerException(error, "bento-scheduled-work", {
         surface: "scheduled_work",
       });
       throw error;
+    } finally {
+      await connectionHealthTask;
     }
   },
 };

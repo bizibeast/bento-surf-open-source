@@ -88,6 +88,15 @@ async function resolveToken(
     try {
       token = await refresh({ ...connection, token_refresh_lease_id: lease });
     } catch (error) {
+      // A user may finish OAuth while an older refresh request is in flight.
+      // Use the newly saved authorization instead of reporting its predecessor's failure.
+      const replacement = await latest();
+      if (replacement.access_token !== connection.access_token && !needsRefresh(replacement)) {
+        return {
+          token: await decryptServerSecret(replacement.access_token, "social"),
+          connection: replacement,
+        };
+      }
       if (error instanceof ProviderError) {
         if (
           error.code === "invalid_token" ||
@@ -101,6 +110,8 @@ async function resolveToken(
             "reconnect_required",
             false,
             401,
+            null,
+            error.providerCode,
           );
         }
         throw error;

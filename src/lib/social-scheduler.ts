@@ -66,6 +66,19 @@ export type SchedulerConnection = {
 
 export const INSTAGRAM_CONTENT_PUBLISH_SCOPE = "instagram_business_content_publish";
 
+/** Webhook health applies only to Auto DM providers, not LinkedIn/TikTok posting. */
+export function socialConnectionHealth(connection: {
+  provider: string;
+  status: string;
+  reauth_required?: boolean | null;
+  connection_health?: string | null;
+}) {
+  if (connection.status !== "active" || connection.reauth_required) return "action_required";
+  return ["instagram", "facebook", "twitter"].includes(connection.provider)
+    ? connection.connection_health || "verifying"
+    : "healthy";
+}
+
 export function socialConnectionCanPublish(
   provider: SocialProvider,
   scopes: readonly string[] | null | undefined,

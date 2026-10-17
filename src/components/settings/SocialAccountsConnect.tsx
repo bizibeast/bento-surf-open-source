@@ -59,6 +59,8 @@ export type SocialConnectAccount = {
   canPublish: boolean;
   canAutomate?: boolean;
   scopes?: string[];
+  needsReconnect?: boolean;
+  lastError?: string | null;
 };
 
 function accountHasCurrentScopes(provider: SocialProvider, connection: SocialConnectAccount) {
@@ -169,6 +171,7 @@ export function SocialAccountsConnect({
   const selectedNeedsReconnect = selectedProvider
     ? selectedConnections.some(
         (connection) =>
+          connection.needsReconnect ||
           !connection.canPublish ||
           connection.canAutomate === false ||
           !accountHasCurrentScopes(selectedProvider, connection),
@@ -186,12 +189,15 @@ export function SocialAccountsConnect({
               (connection) => connection.provider === provider,
             );
             const count = providerConnections.length;
+            const needsReconnect = providerConnections.some(
+              (connection) => connection.needsReconnect,
+            );
             return (
               <button
                 key={provider}
                 type="button"
                 onClick={() => setSelectedProvider(provider)}
-                aria-label={`Manage ${definition.name} integration, ${count} ${count === 1 ? "account" : "accounts"} connected`}
+                aria-label={`Manage ${definition.name} integration, ${needsReconnect ? "reconnect needed" : `${count} ${count === 1 ? "account" : "accounts"} connected`}`}
                 aria-description="One account per Bento profile"
                 className="group flex min-h-28 min-w-0 flex-col items-center rounded-xl px-1 py-2 text-center outline-none transition-[background-color,transform] duration-150 ease-out hover:bg-[#f7f9fd] active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-[#3478f6]/35"
               >
@@ -201,8 +207,14 @@ export function SocialAccountsConnect({
                 >
                   <Icon className="size-6" />
                   {count > 0 && (
-                    <span className="absolute -right-1 -top-1 flex size-5 items-center justify-center rounded-lg bg-emerald-500 text-white ring-2 ring-white">
-                      <Check className="size-3" strokeWidth={3} />
+                    <span
+                      className={`absolute -right-1 -top-1 flex size-5 items-center justify-center rounded-lg ${needsReconnect ? "bg-amber-500" : "bg-emerald-500"} text-white ring-2 ring-white`}
+                    >
+                      {needsReconnect ? (
+                        <span className="text-xs font-bold">!</span>
+                      ) : (
+                        <Check className="size-3" strokeWidth={3} />
+                      )}
                     </span>
                   )}
                 </span>
@@ -211,7 +223,9 @@ export function SocialAccountsConnect({
                 </span>
                 <span className="mt-0.5 text-[10px] tabular-nums text-[#17213a]/48">
                   {count
-                    ? `${count} connected`
+                    ? needsReconnect
+                      ? "Reconnect needed"
+                      : `${count} connected`
                     : readiness[provider]
                       ? "Available"
                       : "Setup pending"}
@@ -246,8 +260,9 @@ export function SocialAccountsConnect({
                       {selectedDefinition.name}
                     </DialogTitle>
                     <DialogDescription className="mt-1 text-left tabular-nums">
-                      {selectedConnections.length} of {MAX_SOCIAL_PROFILES_PER_PROVIDER} accounts
-                      connected
+                      {selectedConnections.some((connection) => connection.needsReconnect)
+                        ? "Account needs reconnection"
+                        : `${selectedConnections.length} of ${MAX_SOCIAL_PROFILES_PER_PROVIDER} accounts connected`}
                     </DialogDescription>
                   </div>
                 </div>
@@ -259,6 +274,7 @@ export function SocialAccountsConnect({
                 <div className="space-y-2">
                   {selectedConnections.map((connection) => {
                     const ready =
+                      !connection.needsReconnect &&
                       connection.canPublish &&
                       connection.canAutomate !== false &&
                       accountHasCurrentScopes(selectedProvider, connection);
@@ -273,8 +289,10 @@ export function SocialAccountsConnect({
                             {connection.displayName}
                           </p>
                           {!ready && (
-                            <p className="mt-0.5 text-[10px] text-[#a66b0a]">
-                              Reconnect for analytics access
+                            <p className="mt-0.5 break-words text-xs leading-5 text-[#a66b0a]">
+                              {connection.needsReconnect
+                                ? connection.lastError || "Reconnect this account to renew access."
+                                : "Reconnect to approve the missing permissions"}
                             </p>
                           )}
                         </div>

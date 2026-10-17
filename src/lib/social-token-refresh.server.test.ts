@@ -151,4 +151,25 @@ describe("rotating social token refresh", () => {
     ])
       expect(needsSocialReconnect(new ProviderError("temporary", code, true, 503))).toBe(false);
   });
+  it("uses a successful OAuth reconnect that finishes while an older grant is rejected", async () => {
+    const original = { ...db.row };
+    const refresh = vi.fn(async () => {
+      refreshed();
+      throw new ProviderError("old grant rejected", "invalid_grant", false, 400);
+    });
+    expect(await withSocialTokenRefresh(original, refresh)).toBe("new");
+    expect(original.status).toBe("active");
+    expect(original.access_token).toBe("new");
+  });
+  it("retains the exact provider code when normalizing a rejected refresh token", async () => {
+    db.row.provider = "tiktok";
+    const refresh = vi.fn(async () => {
+      throw new ProviderError("expired", "invalid_token", false, 400);
+    });
+    await expect(withSocialTokenRefresh({ ...db.row }, refresh)).rejects.toMatchObject({
+      code: "reconnect_required",
+      providerCode: "invalid_token",
+      retryable: false,
+    });
+  });
 });
