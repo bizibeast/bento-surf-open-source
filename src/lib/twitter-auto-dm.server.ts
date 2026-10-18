@@ -15,6 +15,7 @@ import {
   twitterEngagementEvent,
   twitterMentionEventFromApi,
   TWITTER_AUTO_DM_WEBHOOK_FIELDS,
+  TWITTER_AUTO_DM_REQUIRED_SCOPES,
   type MatchableTwitterAutomation,
   type TwitterWebhookEvent,
 } from "./twitter-auto-dm";
@@ -60,9 +61,16 @@ export function shouldMockTwitterAutoDmProvider() {
 
 export function twitterAutoDmErrorNeedsReauth(error: unknown) {
   if (error instanceof TwitterDeliveryError) {
-    return ["32", "89", "401", "token_decryption_failed", "reconnect_required"].includes(
-      error.code,
-    );
+    return [
+      "32",
+      "89",
+      "401",
+      "invalid_grant",
+      "refresh_token_missing",
+      "token_revoked",
+      "token_decryption_failed",
+      "reconnect_required",
+    ].includes(error.code);
   }
   if (error instanceof ProviderError) {
     return ["reconnect_required", "refresh_failed", "401"].includes(error.code);
@@ -85,13 +93,13 @@ function clientSecret() {
 }
 
 function webhookSigningSecret() {
-  const consumerSecret = process.env.X_CONSUMER_SECRET?.trim();
-  if (consumerSecret) return consumerSecret;
+  // Current X v2 CRC supports the OAuth 2.0 secret. Keep OAuth 1.0 only
+  // for validating the separate legacy delivery signature header.
   return clientSecret();
 }
 
 function webhookUrl() {
-  return `${(process.env.VITE_APP_URL?.trim() || "http://localhost:8080").replace(/\/$/, "")}/api/webhooks/twitter`;
+  return `${(process.env.VITE_APP_URL?.trim() || "https://app.bento.surf").replace(/\/$/, "")}/api/webhooks/twitter`;
 }
 
 function timingSafeEqual(left: Uint8Array, right: Uint8Array) {
@@ -127,7 +135,9 @@ export async function twitterWebhookCrcResponse(crcToken: string) {
 
 export async function handleTwitterWebhookCrc(request: Request) {
   const crcToken = new URL(request.url).searchParams.get("crc_token") || "";
-  if (!crcToken || crcToken.length > 1024) {
+  // X challenges are opaque URL/base64-safe tokens. Reject JSON and whitespace
+  // so this public endpoint cannot be used to sign a forged webhook body.
+  if (!/^[A-Za-z0-9_+/=-]{1,1024}$/.test(crcToken)) {
     return new Response("Forbidden", { status: 403 });
   }
   try {
@@ -140,10 +150,20 @@ export async function handleTwitterWebhookCrc(request: Request) {
   }
 }
 
-export async function verifyTwitterWebhookSignature(rawBody: string, signature: string | null) {
-  if (!signature?.startsWith("sha256=")) return false;
-  const expected = `sha256=${bytesToBase64(await hmacSha256(webhookSigningSecret(), rawBody))}`;
-  return timingSafeEqual(encoder.encode(expected), encoder.encode(signature));
+export async function verifyTwitterWebhookSignature(
+  rawBody: string,
+  signature: string | null,
+  oauth2Signature?: string | null,
+) {
+  // Never accept a legacy signature when a present OAuth 2.0 signature fails.
+  const received = oauth2Signature ?? signature;
+  const secret =
+    oauth2Signature !== null && oauth2Signature !== undefined
+      ? process.env.X_CLIENT_SECRET?.trim()
+      : process.env.X_CONSUMER_SECRET?.trim();
+  if (!secret || !received?.startsWith("sha256=")) return false;
+  const expected = `sha256=${bytesToBase64(await hmacSha256(secret, rawBody))}`;
+  return timingSafeEqual(encoder.encode(expected), encoder.encode(received));
 }
 
 async function senderHash(senderId: string | null) {
@@ -159,6 +179,7 @@ export async function handleTwitterWebhook(request: Request, queue?: Queue<Twitt
       !(await verifyTwitterWebhookSignature(
         rawBody,
         request.headers.get("x-twitter-webhooks-signature"),
+        request.headers.get("x-twitter-webhooks-signature-oauth2"),
       ))
     ) {
       return new Response("Invalid signature", { status: 401 });
@@ -297,10 +318,10 @@ function twitterApiError(status: number, data: any, fallback: string, retryAfter
   );
 }
 
-async function tokenForConnection(connection: any) {
+async function tokenForConnection(connection: any, forceRefresh = false) {
   try {
     connection.provider = "twitter";
-    return await accessTokenForConnection(connection);
+    return await accessTokenForConnection(connection, { forceRefresh });
   } catch (error) {
     if (error instanceof ProviderError) {
       throw new TwitterDeliveryError(error.message, error.code, error.retryable);
@@ -313,101 +334,297 @@ async function tokenForConnection(connection: any) {
   }
 }
 
-export async function verifyTwitterAutoDmConnection(connection: {
+type TwitterVerificationConnection = {
   id: string;
+  user_id?: string;
+  scopes?: string[] | null;
   provider_user_id: string;
   access_token: string;
   refresh_token?: string | null;
   token_expires_at?: string | null;
-}) {
-  if (shouldMockTwitterAutoDmProvider()) {
-    return { fields: [...TWITTER_AUTO_DM_WEBHOOK_FIELDS], verifiedAt: new Date().toISOString() };
-  }
-  const token = await tokenForConnection(connection);
-  const me = await xRequest("https://api.x.com/2/users/me", token);
-  if (twitterRequestFailed(me.status, me.data)) {
-    throw twitterApiError(me.status, me.data, "X rejected this connection.", me.retryAfterSeconds);
-  }
-  if (xBackgroundReadsEnabled()) {
-    const dmProbe = await xRequest(
-      "https://api.x.com/2/dm_events?event_types=MessageCreate&dm_event.fields=id,event_type,sender_id,created_at&max_results=5",
-      token,
+};
+
+export function twitterWebhookAppConfigured() {
+  return Boolean(
+    process.env.X_CLIENT_SECRET?.trim() &&
+    (process.env.X_APP_BEARER_TOKEN?.trim() ||
+      (process.env.X_CONSUMER_KEY?.trim() && process.env.X_CONSUMER_SECRET?.trim())),
+  );
+}
+
+function webhookApiError(
+  stage: string,
+  result: { status: number; data: any; retryAfterSeconds?: number },
+  userContext = false,
+) {
+  const status = result.status;
+  const detail = String(result.data?.detail || result.data?.errors?.[0]?.message || "");
+  const reason = /crc/i.test(detail)
+    ? "X could not validate the callback signature. Check that the webhook credentials belong to the same X app."
+    : status === 401
+      ? userContext
+        ? "X rejected account subscription access even after renewing authorization. Check this app’s Account Activity access and Direct Message permissions."
+        : "X rejected Bento's app Bearer Token. Update the server's X_APP_BEARER_TOKEN from the same X app."
+      : status === 402
+        ? "X requires API credits for this webhook operation. Check the app's access and spending cap in the X Developer Console."
+        : status === 403
+          ? "X denied webhook or Account Activity access. Check the app's product access and Direct Message permissions in the X Developer Console."
+          : isRetryableTwitterStatus(status)
+            ? "X is temporarily unavailable. Verification will retry later."
+            : "X did not confirm the webhook operation. Check the app's webhook configuration and subscription limits.";
+  return new TwitterDeliveryError(
+    `${stage}: ${reason} (HTTP ${status})`,
+    `webhook_${status}`,
+    isRetryableTwitterStatus(status),
+    result.retryAfterSeconds,
+  );
+}
+
+async function webhookRequest(
+  url: string,
+  token: string,
+  init: RequestInit = {},
+  userContext = false,
+) {
+  let result: Awaited<ReturnType<typeof xRequest>>;
+  try {
+    result = await xRequest(url, token, init);
+  } catch (error) {
+    if (error instanceof TwitterDeliveryError) throw error;
+    throw new TwitterDeliveryError(
+      "X webhook verification timed out or could not connect. Try again later.",
+      "webhook_network",
+      true,
     );
-    if (twitterRequestFailed(dmProbe.status, dmProbe.data)) {
-      throw twitterApiError(
-        dmProbe.status,
-        dmProbe.data,
-        "X did not allow Direct Message access. Reconnect and approve DMs.",
-        dmProbe.retryAfterSeconds,
-      );
-    }
-    const mentionProbe = await xRequest(
-      `https://api.x.com/2/users/${encodeURIComponent(connection.provider_user_id)}/mentions?max_results=5`,
-      token,
-    );
-    if (twitterRequestFailed(mentionProbe.status, mentionProbe.data)) {
-      throw twitterApiError(
-        mentionProbe.status,
-        mentionProbe.data,
-        "X did not allow mention access for Auto-DM.",
-        mentionProbe.retryAfterSeconds,
-      );
-    }
   }
-  // Webhook delivery must really be registered when paid recovery polling is disabled.
-  await registerTwitterWebhookSubscription(token, connection.provider_user_id);
-  return { fields: [...TWITTER_AUTO_DM_WEBHOOK_FIELDS], verifiedAt: new Date().toISOString() };
+  if (twitterRequestFailed(result.status, result.data)) {
+    throw webhookApiError("X webhook verification", result, userContext);
+  }
+  return result.data;
 }
 
 async function appOnlyToken() {
-  const clientId = process.env.X_CLIENT_ID?.trim();
-  const secret = process.env.X_CLIENT_SECRET?.trim();
-  if (!clientId || !secret) return null;
-  const result = await xRequest("https://api.x.com/2/oauth2/token", "", {
+  const configured = process.env.X_APP_BEARER_TOKEN?.trim();
+  if (configured) return configured;
+  const key = process.env.X_CONSUMER_KEY?.trim();
+  const secret = process.env.X_CONSUMER_SECRET?.trim();
+  if (!key || !secret) {
+    throw new TwitterDeliveryError(
+      "Bento's X webhook needs the app Bearer Token. The administrator must set X_APP_BEARER_TOKEN from the same X app as X_CLIENT_ID. Your connected account does not need to be disconnected.",
+      "webhook_not_configured",
+      false,
+    );
+  }
+  const data = await webhookRequest("https://api.x.com/oauth2/token", "", {
     method: "POST",
     headers: {
-      Authorization: `Basic ${btoa(`${clientId}:${secret}`)}`,
+      Authorization: `Basic ${btoa(`${encodeURIComponent(key)}:${encodeURIComponent(secret)}`)}`,
       "Content-Type": "application/x-www-form-urlencoded",
     },
-    body: new URLSearchParams({ grant_type: "client_credentials" }).toString(),
+    body: "grant_type=client_credentials",
   });
-  const token = String(result.data.access_token || "");
-  return token || null;
+  if (data.token_type?.toLowerCase() !== "bearer" || !data.access_token) {
+    throw new TwitterDeliveryError(
+      "X did not return an app Bearer Token.",
+      "webhook_app_token_missing",
+      false,
+    );
+  }
+  return String(data.access_token);
 }
 
-async function registerTwitterWebhookSubscription(userToken: string, userId: string) {
-  const appToken = await appOnlyToken();
-  if (!appToken) return;
-  const listed = await xRequest("https://api.x.com/2/webhooks", appToken);
-  const existing = Array.isArray(listed.data?.data)
-    ? listed.data.data.find((item: any) => String(item.url || "") === webhookUrl())
-    : null;
-  let webhookId = existing ? String(existing.id || "") : "";
-  if (!webhookId) {
-    const created = await xRequest("https://api.x.com/2/webhooks", appToken, {
-      method: "POST",
-      body: JSON.stringify({ url: webhookUrl() }),
-    });
-    webhookId = String(created.data?.data?.id || created.data?.id || "");
+export async function verifyTwitterWebhookRegistration() {
+  if (process.env.APP_ENV === "staging" && process.env.X_WEBHOOK_STAGING_APP_ISOLATED !== "true") {
+    throw new TwitterDeliveryError(
+      "Live X webhook registration is disabled on staging to preserve the production app’s webhook allowance. Use a separate X developer app and set X_WEBHOOK_STAGING_APP_ISOLATED=true, or use staging mock mode.",
+      "webhook_staging_isolation",
+      false,
+    );
   }
-  if (!webhookId) return;
-  await xRequest(
-    `https://api.x.com/2/account_activity/webhooks/${encodeURIComponent(webhookId)}/subscriptions/all`,
-    userToken,
-    { method: "POST" },
-  );
-  await Promise.allSettled(
-    ["dm.received", "tweet.reply", "tweet.like", "tweet.repost", "tweet.retweet"].map((eventType) =>
-      xRequest("https://api.x.com/2/activity/subscriptions", userToken, {
-        method: "POST",
-        body: JSON.stringify({
-          event_type: eventType,
-          filter: { user_id: userId },
-          webhook_id: webhookId,
-        }),
-      }),
-    ),
-  );
+  const appToken = await appOnlyToken();
+  const url = webhookUrl();
+  const listed = await webhookRequest("https://api.x.com/2/webhooks", appToken);
+  if (!Array.isArray(listed.data)) {
+    throw new TwitterDeliveryError(
+      "X did not return a valid webhook list.",
+      "webhook_invalid_response",
+      true,
+    );
+  }
+  let webhook = listed.data.find((item: any) => item.url === url);
+  if (!webhook) {
+    const created = await webhookRequest("https://api.x.com/2/webhooks", appToken, {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    });
+    webhook = created.data;
+  }
+  if (!webhook?.id || !/^\d+$/.test(String(webhook.id))) {
+    throw new TwitterDeliveryError(
+      "X did not confirm a webhook ID. Auto-DMs remain unverified.",
+      "webhook_id_missing",
+      false,
+    );
+  }
+  if (webhook.valid !== true) {
+    const validated = await webhookRequest(`https://api.x.com/2/webhooks/${webhook.id}`, appToken, {
+      method: "PUT",
+    });
+    if (validated.data?.valid !== true) {
+      throw new TwitterDeliveryError(
+        "X has not passed the callback verification challenge. Auto-DMs remain unverified.",
+        "webhook_crc_failed",
+        false,
+      );
+    }
+  }
+  return { id: String(webhook.id), verifiedAt: new Date().toISOString() };
+}
+
+export async function verifyTwitterAutoDmConnection(connection: TwitterVerificationConnection) {
+  if (shouldMockTwitterAutoDmProvider()) {
+    return { fields: [...TWITTER_AUTO_DM_WEBHOOK_FIELDS], verifiedAt: new Date().toISOString() };
+  }
+  // Verification must not fetch paid timelines, profiles, mentions or DM histories.
+  const webhook = await verifyTwitterWebhookRegistration();
+  let token = await tokenForConnection(connection);
+  const url = `https://api.x.com/2/account_activity/webhooks/${webhook.id}/subscriptions/all`;
+  let checked = await xRequest(url, token);
+  if (checked.status === 401) {
+    token = await tokenForConnection(connection, true);
+    checked = await xRequest(url, token);
+  }
+  if (
+    !twitterRequestFailed(checked.status, checked.data) &&
+    checked.data?.data?.subscribed === true
+  ) {
+    return { fields: [...TWITTER_AUTO_DM_WEBHOOK_FIELDS], verifiedAt: webhook.verifiedAt };
+  }
+  // A missing subscription is recoverable. Authentication, access, billing and
+  // transient failures must never fall through to another registration attempt.
+  if (twitterRequestFailed(checked.status, checked.data) && checked.status !== 404) {
+    throw webhookApiError("X account subscription", checked, true);
+  }
+  if (checked.status !== 404 && checked.data?.data?.subscribed !== false) {
+    throw new TwitterDeliveryError(
+      "X returned an unrecognized subscription status. Auto-DMs remain unverified.",
+      "webhook_invalid_response",
+      true,
+    );
+  }
+  if (process.env.X_ACCOUNT_ACTIVITY_ENABLED !== "true") {
+    throw new TwitterDeliveryError(
+      "The X webhook passed verification, but account event delivery is not enabled. X bills delivered post events. The administrator must set a hard spending limit in the X Developer Console before enabling X_ACCOUNT_ACTIVITY_ENABLED. No paid polling or event feed was started.",
+      "webhook_events_disabled",
+      false,
+    );
+  }
+  const subscribed = await webhookRequest(url, token, { method: "POST", body: "{}" }, true);
+  if (subscribed.data?.subscribed !== true) {
+    throw new TwitterDeliveryError(
+      "X did not confirm the account subscription. Auto-DMs remain unverified.",
+      "webhook_subscription_unconfirmed",
+      false,
+    );
+  }
+  return { fields: [...TWITTER_AUTO_DM_WEBHOOK_FIELDS], verifiedAt: webhook.verifiedAt };
+}
+
+/** Claim verification separately from OAuth renewal so frequent token refreshes
+ * cannot starve the webhook audit. Compare-and-set also protects reconnects. */
+export async function refreshTwitterAutoDmHealth(connection: TwitterVerificationConnection) {
+  const now = new Date();
+  const leaseUntil = new Date(now.getTime() + 180_000).toISOString();
+  const { data: claimed, error: claimError } = await (supabaseAdmin as any)
+    .from("social_connections")
+    .update({ twitter_webhook_check_lease_until: leaseUntil })
+    .eq("id", connection.id)
+    .eq("provider", "twitter")
+    .eq("status", "active")
+    .eq("reauth_required", false)
+    .or(
+      `twitter_webhook_check_lease_until.is.null,twitter_webhook_check_lease_until.lt.${now.toISOString()}`,
+    )
+    .select("id")
+    .maybeSingle();
+  if (claimError) throw new Error("Unable to start X webhook verification.");
+  if (!claimed)
+    throw new TwitterDeliveryError(
+      "X webhook verification is already running, or the account needs reconnecting.",
+      "webhook_check_busy",
+      true,
+    );
+  let verification: Awaited<ReturnType<typeof verifyTwitterAutoDmConnection>> | undefined;
+  let failure: unknown;
+  try {
+    if (!TWITTER_AUTO_DM_REQUIRED_SCOPES.every((scope) => connection.scopes?.includes(scope))) {
+      throw new TwitterDeliveryError(
+        "Reconnect X and approve Direct Message access before verifying Auto-DMs.",
+        "webhook_missing_scope",
+        false,
+      );
+    }
+    verification = await verifyTwitterAutoDmConnection(connection);
+  } catch (error) {
+    failure = error;
+  }
+  const reauth = failure ? twitterAutoDmErrorNeedsReauth(failure) : false;
+  const retryable =
+    Boolean(failure) && (!(failure instanceof TwitterDeliveryError) || failure.retryable);
+  const message =
+    failure instanceof TwitterDeliveryError
+      ? failure.message
+      : "X webhook verification could not finish. Try again later.";
+  const { data: saved, error } = await (supabaseAdmin as any)
+    .from("social_connections")
+    .update({
+      connection_health: verification ? "healthy" : "action_required",
+      webhook_fields: verification?.fields || [],
+      last_verified_at: verification?.verifiedAt || null,
+      last_health_check_at: now.toISOString(),
+      last_error: verification ? null : message,
+      ...(reauth ? { reauth_required: true } : {}),
+      twitter_webhook_check_after: new Date(
+        now.getTime() + (retryable ? 30 * 60_000 : 24 * 60 * 60_000),
+      ).toISOString(),
+      twitter_webhook_check_lease_until: null,
+    })
+    .eq("id", connection.id)
+    .eq("access_token", connection.access_token)
+    .eq("status", "active")
+    .eq("reauth_required", false)
+    .eq("twitter_webhook_check_lease_until", leaseUntil)
+    .select("id")
+    .maybeSingle();
+  if (error || !saved)
+    throw new Error("X connection changed during verification. Please recheck it.");
+  if (failure) throw failure instanceof TwitterDeliveryError ? failure : new Error(message);
+  return verification!;
+}
+
+export async function auditTwitterWebhookConnections() {
+  // No paid content reads; bounded control-plane checks, at most once per day
+  // per account (30 minutes for transient errors). No user/customer messages.
+  const { data, error } = await (supabaseAdmin as any)
+    .from("social_connections")
+    .select("id, user_id, provider_user_id, access_token, refresh_token, token_expires_at, scopes")
+    .eq("provider", "twitter")
+    .eq("status", "active")
+    .eq("reauth_required", false)
+    .lte("twitter_webhook_check_after", new Date().toISOString())
+    .order("twitter_webhook_check_after", { ascending: true })
+    .limit(5);
+  if (error) throw new Error("Unable to load X webhook checks.");
+  let verified = 0;
+  for (const connection of data || []) {
+    try {
+      await refreshTwitterAutoDmHealth(connection);
+      verified += 1;
+    } catch {
+      // The safe, actionable reason is stored on the owned connection.
+    }
+  }
+  return { checked: data?.length || 0, verified };
 }
 
 async function sendTwitterDm(connection: any, senderId: string | null, text: string) {

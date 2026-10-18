@@ -1756,7 +1756,12 @@ async function persistRefreshedToken(connection: any, values: Record<string, unk
       ...values,
       last_refreshed_at: new Date().toISOString(),
       status: "active",
-      last_error: null,
+      // X OAuth renewal must not erase a separate webhook setup error.
+      ...(connection.provider !== "twitter" ||
+      connection.reauth_required ||
+      connection.status === "expired"
+        ? { last_error: null }
+        : {}),
       reauth_required: false,
       provider_error_code: null,
       // Preserve webhook/permission health; only clear an authentication failure.

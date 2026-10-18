@@ -14,11 +14,7 @@ import {
   type TwitterDmActivity,
   type TwitterDmAutomation,
 } from "./twitter-auto-dm";
-import {
-  twitterAutoDmErrorNeedsReauth,
-  TwitterDeliveryError,
-  verifyTwitterAutoDmConnection,
-} from "./twitter-auto-dm.server";
+import { refreshTwitterAutoDmHealth, twitterWebhookAppConfigured } from "./twitter-auto-dm.server";
 import { isServerSecretEncryptionKeyValid } from "./secret-crypto.server";
 import { getPlan, requirePlanEntitlement } from "./plan.server";
 import { planHasEntitlement, usesAdvancedAutoDm, type PlanId } from "./plans";
@@ -104,6 +100,7 @@ async function dashboard(userId: string, plan?: PlanId) {
     configured: Boolean(
       process.env.X_CLIENT_ID &&
       process.env.X_CLIENT_SECRET &&
+      twitterWebhookAppConfigured() &&
       isServerSecretEncryptionKeyValid(process.env.SOCIAL_CONNECTION_ENCRYPTION_KEY),
     ),
     connections: connections.map((connection) => {
@@ -295,35 +292,6 @@ export const deleteTwitterAutoDmAutomation = createServerFn({ method: "POST" })
     return dashboard(context.userId);
   });
 
-async function markConnectionHealth(
-  connection: ConnectionRow,
-  userId: string,
-  error: unknown,
-): Promise<never> {
-  const reauthRequired = twitterAutoDmErrorNeedsReauth(error);
-  await (supabaseAdmin as any)
-    .from("social_connections")
-    .update({
-      connection_health: "action_required",
-      webhook_fields: [],
-      last_verified_at: null,
-      last_health_check_at: new Date().toISOString(),
-      reauth_required: reauthRequired,
-      last_error: reauthRequired
-        ? "X permissions expired or were revoked."
-        : "X Auto-DM verification failed.",
-    })
-    .eq("id", connection.id)
-    .eq("user_id", userId);
-  throw new Error(
-    reauthRequired
-      ? "X needs to be reconnected before Auto-DMs can run."
-      : error instanceof TwitterDeliveryError
-        ? error.message
-        : "X did not confirm Direct Message access. Try again in a moment.",
-  );
-}
-
 export const enableTwitterAutoDmDelivery = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) => z.object({ connectionId: z.string().uuid() }).parse(input))
@@ -341,24 +309,7 @@ export const enableTwitterAutoDmDelivery = createServerFn({ method: "POST" })
     if (connection.reauth_required || !scopeReady(connection.scopes)) {
       throw new Error("Reconnect X to approve Direct Message access.");
     }
-    const healthCheckedAt = new Date().toISOString();
-    try {
-      const verification = await verifyTwitterAutoDmConnection(connection);
-      await (supabaseAdmin as any)
-        .from("social_connections")
-        .update({
-          connection_health: "healthy",
-          webhook_fields: verification.fields,
-          last_verified_at: verification.verifiedAt,
-          last_health_check_at: healthCheckedAt,
-          reauth_required: false,
-          last_error: null,
-        })
-        .eq("id", connection.id)
-        .eq("user_id", context.userId);
-    } catch (error) {
-      await markConnectionHealth(connection, context.userId, error);
-    }
+    await refreshTwitterAutoDmHealth(connection);
     return dashboard(context.userId);
   });
 
@@ -386,32 +337,14 @@ export const preflightTwitterAutoDmAutomation = createServerFn({ method: "POST" 
     if (connection.reauth_required || !scopeReady(connection.scopes)) {
       throw new Error("Reconnect X to approve Direct Message access.");
     }
-    const healthCheckedAt = new Date().toISOString();
-    try {
-      const verification = await verifyTwitterAutoDmConnection(connection);
-      const { error: updateError } = await (supabaseAdmin as any)
-        .from("social_connections")
-        .update({
-          connection_health: "healthy",
-          webhook_fields: verification.fields,
-          last_verified_at: verification.verifiedAt,
-          last_health_check_at: healthCheckedAt,
-          reauth_required: false,
-          last_error: null,
-        })
-        .eq("id", connection.id)
-        .eq("user_id", context.userId);
-      if (updateError) throw new Error("Unable to store X preflight health.");
-      return {
-        dashboard: await dashboard(context.userId),
-        checks: {
-          officialApiAccess: true,
-          requiredPermissions: true,
-          connectionHealthy: true,
-          verifiedAt: verification.verifiedAt,
-        },
-      };
-    } catch (error) {
-      return markConnectionHealth(connection, context.userId, error);
-    }
+    const verification = await refreshTwitterAutoDmHealth(connection);
+    return {
+      dashboard: await dashboard(context.userId),
+      checks: {
+        officialApiAccess: true,
+        requiredPermissions: true,
+        connectionHealthy: true,
+        verifiedAt: verification.verifiedAt,
+      },
+    };
   });

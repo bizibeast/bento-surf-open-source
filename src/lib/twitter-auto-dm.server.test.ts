@@ -31,8 +31,18 @@ async function signature(body: string, secret = SECRET) {
 }
 
 describe("X Auto-DM webhook security", () => {
+  it("does not let the public CRC endpoint sign a forged JSON delivery", async () => {
+    vi.stubEnv("X_CLIENT_SECRET", SECRET);
+    const url = new URL("https://example.com/api/webhooks/twitter");
+    url.searchParams.set(
+      "crc_token",
+      JSON.stringify({ for_user_id: "victim", direct_message_events: [] }),
+    );
+    expect((await handleTwitterWebhookCrc(new Request(url))).status).toBe(403);
+  });
   it("answers the CRC challenge with an HMAC of the token", async () => {
     vi.stubEnv("X_CLIENT_SECRET", SECRET);
+    vi.stubEnv("X_CONSUMER_SECRET", SECRET);
     const crc = await handleTwitterWebhookCrc(
       new Request("http://localhost:8080/api/webhooks/twitter?crc_token=challenge-token"),
     );
@@ -47,22 +57,30 @@ describe("X Auto-DM webhook security", () => {
     expect(rejected.status).toBe(403);
   });
 
-  it("prefers the OAuth 1.0a consumer secret for CRC and webhook signatures", async () => {
+  it("uses OAuth 2.0 for CRC and the matching secret for each signature header", async () => {
     const consumerSecret = "test-x-consumer-secret";
     vi.stubEnv("X_CLIENT_SECRET", SECRET);
+    vi.stubEnv("X_CONSUMER_SECRET", SECRET);
     vi.stubEnv("X_CONSUMER_SECRET", consumerSecret);
     const crc = await twitterWebhookCrcResponse("challenge-token");
     const body = JSON.stringify({ for_user_id: "1" });
 
-    expect(crc.response_token).toBe(await signature("challenge-token", consumerSecret));
+    expect(crc.response_token).toBe(await signature("challenge-token"));
     await expect(
       verifyTwitterWebhookSignature(body, await signature(body, consumerSecret)),
     ).resolves.toBe(true);
     await expect(verifyTwitterWebhookSignature(body, await signature(body))).resolves.toBe(false);
+    await expect(verifyTwitterWebhookSignature(body, null, await signature(body))).resolves.toBe(
+      true,
+    );
+    await expect(
+      verifyTwitterWebhookSignature(body, await signature(body, consumerSecret), "sha256=invalid"),
+    ).resolves.toBe(false);
   });
 
   it("rejects unsigned bodies and accepts the exact signed body", async () => {
     vi.stubEnv("X_CLIENT_SECRET", SECRET);
+    vi.stubEnv("X_CONSUMER_SECRET", SECRET);
     const body = JSON.stringify({ for_user_id: "1", direct_message_events: [] });
     const valid = await signature(body);
 
@@ -73,6 +91,7 @@ describe("X Auto-DM webhook security", () => {
 
   it("queues each normalized event only after signature verification", async () => {
     vi.stubEnv("X_CLIENT_SECRET", SECRET);
+    vi.stubEnv("X_CONSUMER_SECRET", SECRET);
     const body = JSON.stringify({
       for_user_id: "creator-1",
       users: { "sender-1": { screen_name: "alice" } },
@@ -93,7 +112,7 @@ describe("X Auto-DM webhook security", () => {
     const response = await handleTwitterWebhook(
       new Request("http://localhost:8080/api/webhooks/twitter", {
         method: "POST",
-        headers: { "x-twitter-webhooks-signature": await signature(body) },
+        headers: { "x-twitter-webhooks-signature-oauth2": await signature(body) },
         body,
       }),
       {
