@@ -247,7 +247,8 @@ describe("public product Open Graph metadata", () => {
 
     expect(head.meta).toContainEqual({
       name: "description",
-      content: "Buy Coaching Call from coach on bento.surf.",
+      content:
+        "Buy Coaching Call from coach (@coach) on bento.surf. Secure checkout stays with this creator.",
     });
     expect(head.meta).toContainEqual({ name: "twitter:card", content: "summary_large_image" });
     expect(head.meta).toContainEqual({

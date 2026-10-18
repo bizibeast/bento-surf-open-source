@@ -65,6 +65,7 @@ export type EditorialSource = {
   text: string;
   occurredAt: string | null;
   url?: string | null;
+  sourceName?: string | null;
   external: boolean;
 };
 export type EditorialOutput = { id: string; body: string; createdAt?: string; platform?: string };
@@ -94,6 +95,7 @@ export type EditorialContext = {
   recentOutputs?: EditorialOutput[];
   revisionTarget?: EditorialRevisionTarget;
   feedback?: Array<Record<string, unknown>>;
+  requiredRecentSourceIds?: string[];
 };
 export type EditorialBrief = {
   platform: EditorialPlatform;
@@ -111,6 +113,7 @@ export type EditorialBrief = {
   strategy: string[];
   feedback: Array<Record<string, unknown>>;
   recentOutputs: EditorialOutput[];
+  requiredRecentSourceIds?: string[];
   revisionTarget?: EditorialRevisionTarget;
 };
 export type EditorialIssue = { code: string; message: string };
@@ -232,6 +235,9 @@ export function buildEditorialBrief(input: EditorialContext): EditorialBrief {
       "Explain the specific reader application during editing. Source age alone does not establish relevance or a current event.",
     sources,
     sourceIds: sources.map((source) => source.id),
+    requiredRecentSourceIds: (input.requiredRecentSourceIds || []).filter((id) =>
+      sources.some((source) => source.id === id),
+    ),
     claimsAllowed: sources.filter((source) => source.text.trim()).map((source) => source.id),
     voiceProfile: {
       instructions: confirmed
@@ -308,6 +314,16 @@ export function validateEditorialDraft(
       "voice_drift",
       "Do not use em dashes in a post, title or carousel slide. Rewrite the sentence in the creator's voice.",
     );
+  const publishableText = text.replace(/https?:\/\/\S+/g, " ");
+  if (
+    (publishableText.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+){2,}\b/g) || []).some(
+      (identifier) => !brief.request.includes(identifier),
+    )
+  )
+    add(
+      "internal_jargon",
+      "Explain the benefit in reader-facing words instead of exposing internal tool names.",
+    );
   const hook = normalized(text.split(/[\n.!?]/)[0]);
   const priorWriting = [
     ...recentOutputs.filter((output) => !revisionOutputIds(brief.revisionTarget).has(output.id)),
@@ -362,12 +378,41 @@ export function validateEditorialDraft(
     )
   )
     add("stale_context", "Do not turn an old or undated event into a current announcement.");
+  if (
+    /\bjust (?:shipped|launched|released|announced)\b/i.test(text) &&
+    !/\b(?:announce|launch|release|ship)\b/i.test(brief.request)
+  )
+    add(
+      "stale_context",
+      "Do not write a fresh launch announcement unless the creator asked for one.",
+    );
   const verified = (draft.claims || []).filter((claim) => {
     const source = brief.sources.find((item) => item.id === claim.sourceId);
     const valid = Boolean(source && source.text.includes(claim.quote) && text.includes(claim.text));
     if (!valid) add("unsupported_claim", "Ground each factual claim in an exact source excerpt.");
     return valid;
   });
+  const currentClaim = verified.find((claim) =>
+    brief.requiredRecentSourceIds?.includes(claim.sourceId),
+  );
+  if (brief.requiredRecentSourceIds?.length && !currentClaim)
+    add(
+      "current_source",
+      "Anchor this timely post in a checkable fact from a current external source.",
+    );
+  if (currentClaim) {
+    const source = brief.sources.find((item) => item.id === currentClaim.sourceId);
+    const publisher = source?.sourceName?.trim();
+    if (
+      publisher &&
+      !text.toLowerCase().includes(publisher.toLowerCase()) &&
+      !(source?.url && text.includes(source.url))
+    )
+      add(
+        "source_attribution",
+        "Name the source in the public post; source metadata is not visible to readers.",
+      );
+  }
   // Opinions are welcome; personal experiences and numerical claims need evidence.
   for (const sentence of text.split(/(?<=[.!?])\s+|\n/)) {
     if (

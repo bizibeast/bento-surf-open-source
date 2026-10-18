@@ -1,6 +1,7 @@
 import { deferAutoDmDelivery } from "./lib/auto-dm-delay.server";
 import { guardCreatorDocument } from "./lib/creator-document-auth.server";
 import { handleFaviconRequest } from "./lib/favicon.server";
+import { handleAvatarImageRequest } from "./lib/public-image.server";
 import "./lib/error-capture";
 import llmsTxt from "../public/llms.txt?raw";
 import robotsTxt from "../public/robots.txt?raw";
@@ -35,7 +36,12 @@ import {
   insertAnalyticsEventBatch,
 } from "./lib/analytics-ingest.server";
 import type { AnalyticsEvent } from "./lib/analytics-event";
-import { readPublicPageCache, storePublicPageCache } from "./lib/public-page-cache.server";
+import {
+  PUBLIC_SITEMAP_CACHE_CONTROL,
+  publicBlogFailureFallback,
+  readPublicPageCache,
+  storePublicPageCache,
+} from "./lib/public-page-cache.server";
 import { guardUnavailablePublicWorkspace } from "./lib/billing-public.server";
 import { handleReferralRedirect } from "./lib/referral.server";
 import {
@@ -156,6 +162,8 @@ type ServerEntry = {
 
 type WorkerContext = { waitUntil?: (promise: Promise<unknown>) => void };
 type RuntimeEnv = Env & {
+  IMAGES?: ImagesBinding;
+  CF_VERSION_METADATA?: WorkerVersionMetadata;
   TURNSTILE_VERIFIER_URL?: string;
   ANALYTICS_QUEUE?: Queue<AnalyticsEvent>;
   ANALYTICS_QUEUE_1?: Queue<AnalyticsEvent>;
@@ -733,8 +741,7 @@ function sitemapResponse(request: Request, xml: string, status = 200) {
   return new Response(request.method === "HEAD" ? null : xml, {
     status,
     headers: {
-      "cache-control":
-        status === 200 ? "public, max-age=300, stale-while-revalidate=3600" : "no-store",
+      "cache-control": status === 200 ? PUBLIC_SITEMAP_CACHE_CONTROL : "no-store",
       "content-type": "application/xml; charset=utf-8",
       ...(status === 503 ? { "retry-after": "60" } : {}),
     },
@@ -887,12 +894,7 @@ export default {
     const seoFile = !seoMethod
       ? undefined
       : path === "/robots.txt"
-        ? [
-            true
-              ? rewritePublicOrigin(robotsTxt, sitemapBaseUrl(env))
-              : "User-agent: *\nAllow: /\n",
-            "text/plain; charset=utf-8",
-          ]
+        ? [rewritePublicOrigin(robotsTxt, sitemapBaseUrl(env)), "text/plain; charset=utf-8"]
         : path === "/llms.txt"
           ? [llmsTxt, "text/plain; charset=utf-8"]
           : undefined;
@@ -911,6 +913,8 @@ export default {
 
     if (path === "/api/favicon")
       return withDeploymentHeaders(await handleFaviconRequest(request), env, request);
+    if (path === "/api/image")
+      return withDeploymentHeaders(await handleAvatarImageRequest(request, env), env, request);
 
     if (path === "/api/health") {
       return withDeploymentHeaders(await handleDeploymentHealthRequest(request, env), env, request);
@@ -933,6 +937,8 @@ export default {
         "/mcp",
         "/.well-known/oauth-protected-resource",
         "/.well-known/oauth-protected-resource/mcp",
+        "/chatgpt/mcp",
+        "/.well-known/oauth-protected-resource/chatgpt/mcp",
       ].includes(path)
     ) {
       try {
@@ -1147,10 +1153,19 @@ export default {
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
       const normalized = await normalizeCatastrophicSsrResponse(response, request, env);
+      const recovered = await publicBlogFailureFallback(request, normalized);
+      if (recovered.status < 500 && normalized.status >= 500) {
+        return withDeploymentHeaders(recovered, env, request);
+      }
       const cacheAware = await storePublicPageCache(request, normalized, env, ctx);
       return withDeploymentHeaders(cacheAware, env, request);
     } catch (error) {
       console.error(error);
+      const recovered = await publicBlogFailureFallback(
+        request,
+        new Response(null, { status: 500 }),
+      );
+      if (recovered.status < 500) return withDeploymentHeaders(recovered, env, request);
       const capture = captureServerException(
         error,
         "bento-worker",
@@ -1452,8 +1467,8 @@ export default {
     try {
       if (controller.cron === "0 9 * * *") {
         const { supabaseAdmin } = await import("./integrations/supabase/client.server");
-        const { error: cleanupError } = await (supabaseAdmin as any).rpc(
-          "cleanup_provider_cost_data",
+        const { error: cleanupError } = await supabaseAdmin.rpc(
+          "cleanup_provider_cost_data" as never,
         );
         if (cleanupError) console.warn("Provider cost cache cleanup deferred");
         await enqueueLifecycleEmails();

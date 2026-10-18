@@ -1,3 +1,4 @@
+import { imageUploadMaxDimension, isAnimatedImage } from "./image-upload";
 import { reserveProviderUsage } from "./provider-budget.server";
 import {
   resolveWorkspace,
@@ -518,6 +519,101 @@ function fixedLengthUploadBody(stream: ReadableStream<Uint8Array>, size: number)
   return { readable: fixed.readable, completion: stream.pipeTo(fixed.writable) };
 }
 
+const OPTIMIZABLE_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/avif"]);
+const MAX_IMAGE_OPTIMIZE_BYTES = 20 * 1024 * 1024;
+
+function skipImageOptimize(request: Request) {
+  return request.headers.get("x-bento-skip-image-optimize") === "1";
+}
+
+async function readUploadBytes(stream: ReadableStream<Uint8Array>, size: number) {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > size) return null;
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  if (total !== size) return null;
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+async function readPrefix(stream: ReadableStream<Uint8Array>, max: number) {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (total < max) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      total += value.byteLength;
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  const bytes = new Uint8Array(Math.min(total, max));
+  let offset = 0;
+  for (const chunk of chunks) {
+    const slice = chunk.subarray(0, bytes.length - offset);
+    bytes.set(slice, offset);
+    offset += slice.byteLength;
+    if (offset >= bytes.length) break;
+  }
+  return bytes;
+}
+
+function imageStream(bytes: Uint8Array) {
+  const copy = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(copy).set(bytes);
+  return new Response(copy).body!;
+}
+
+async function optimizeImageForStorage(
+  env: StorageEnv,
+  bytes: Uint8Array,
+  contentType: string,
+  kind: string,
+  workspaceId: string,
+) {
+  const unchanged = { bytes, contentType };
+  if (
+    !env.IMAGES ||
+    !OPTIMIZABLE_IMAGE_TYPES.has(contentType) ||
+    isAnimatedImage(bytes, contentType)
+  ) {
+    return unchanged;
+  }
+  try {
+    await reserveProviderUsage("image_transformations", 1, { workspaceId });
+    const max = imageUploadMaxDimension(kind);
+    const transformed = await env.IMAGES.input(imageStream(bytes))
+      .transform({ width: max, height: max, fit: "scale-down" })
+      .output({ format: "image/webp", quality: 82 });
+    const response = transformed.response();
+    if (!response.ok || !response.body) throw new Error("Image optimize failed");
+    const output = new Uint8Array(await response.arrayBuffer());
+    if (!output.byteLength) throw new Error("Image optimize returned an empty file");
+    return { bytes: output, contentType: "image/webp" };
+  } catch (error) {
+    console.warn("[storage] image optimize failed; storing original", error);
+    return unchanged;
+  }
+}
+
 export async function sumR2UserStorageBytes(bucket: R2Bucket, userId: string) {
   let total = 0;
   for (const prefix of [`users/${userId}/`, `private/users/${userId}/`]) {
@@ -879,7 +975,10 @@ async function completeMultipartUpload(
     // A lost completion response must not make a successfully stored upload
     // appear failed or increment its usage twice.
     const existing = await env.MEDIA_BUCKET.head(key);
-    if (existing && existing.size === metadata.size) {
+    if (
+      existing &&
+      (existing.size === metadata.size || existing.customMetadata?.imageOptimized === "1")
+    ) {
       return Response.json(
         {
           key,
@@ -925,7 +1024,34 @@ async function completeMultipartUpload(
       await env.MEDIA_BUCKET.delete(key).catch(() => undefined);
       return jsonError("Completed upload size does not match the declared upload", 400);
     }
-    await adjustCachedR2UserStorageBytes(userId, object.size).catch((error) =>
+    let storedSize = object.size;
+    if (
+      env.IMAGES &&
+      (kind === "avatar" || kind === "image" || kind === "cover") &&
+      !skipImageOptimize(request) &&
+      object.size <= MAX_IMAGE_OPTIMIZE_BYTES
+    ) {
+      const current = await env.MEDIA_BUCKET.get(key);
+      const currentType = (current?.httpMetadata?.contentType || "").split(";", 1)[0].toLowerCase();
+      if (current?.body && OPTIMIZABLE_IMAGE_TYPES.has(currentType)) {
+        const source = new Uint8Array(await new Response(current.body).arrayBuffer());
+        const optimized = await optimizeImageForStorage(env, source, currentType, kind, userId);
+        if (
+          optimized.contentType !== currentType ||
+          optimized.bytes.byteLength !== source.byteLength
+        ) {
+          const replaced = await env.MEDIA_BUCKET.put(key, optimized.bytes, {
+            httpMetadata: {
+              contentType: optimized.contentType,
+              cacheControl: IMMUTABLE_CACHE_CONTROL,
+            },
+            customMetadata: { ...(current.customMetadata ?? {}), imageOptimized: "1" },
+          });
+          storedSize = replaced?.size ?? optimized.bytes.byteLength;
+        }
+      }
+    }
+    await adjustCachedR2UserStorageBytes(userId, storedSize).catch((error) =>
       console.error("[storage] usage cache update failed", error),
     );
     const isPrivate = key.startsWith("private/");
@@ -933,7 +1059,7 @@ async function completeMultipartUpload(
       {
         key: object.key,
         publicUrl: isPrivate ? null : mediaObjectUrl(object.key, new URL(request.url).origin),
-        size: object.size,
+        size: storedSize,
       },
       { status: 201 },
     );
@@ -1011,7 +1137,6 @@ async function uploadMedia(
   );
   if (quotaError) return quotaError;
 
-  const key = objectKeyForUpload(userId, kindHeader, extension);
   const originalFilename = sanitizeOriginalFilename(request.headers.get("x-bento-file-name"));
   const disposition = ["file", "product_file", "agent_file"].includes(kindHeader)
     ? `attachment; filename="download.${extension}"`
@@ -1019,14 +1144,49 @@ async function uploadMedia(
   const inspectedBody = await inspectUploadBody(request.body, contentType, extension);
   if (!inspectedBody) return jsonError("File contents do not match the declared file type", 415);
 
+  const shouldOptimizeUpload =
+    Boolean(env.IMAGES) &&
+    (kindHeader === "avatar" || kindHeader === "image" || kindHeader === "cover") &&
+    OPTIMIZABLE_IMAGE_TYPES.has(contentType) &&
+    !skipImageOptimize(request);
   const guarded = guardedUploadBody(inspectedBody, declaredSize, maxBytes);
-  const fixed = fixedLengthUploadBody(guarded.stream, declaredSize);
+  let storedBytes = guarded.stream;
+  let storedSize = declaredSize;
+  let storedType = contentType;
+  let storedExtension = extension;
+  if (shouldOptimizeUpload) {
+    let source: Uint8Array | null;
+    try {
+      source = await readUploadBytes(guarded.stream, declaredSize);
+    } catch (error) {
+      console.error("[storage] single upload failed", {
+        reason: guarded.reason(),
+        message: error instanceof Error ? error.message : "unknown",
+      });
+      if (guarded.reason() === "too-large")
+        return jsonError("Upload exceeds the allowed size", 413);
+      if (guarded.reason() === "size-mismatch") {
+        return jsonError("Upload size does not match the file size", 400);
+      }
+      return jsonError("Upload could not be stored. Please try again.", 500);
+    }
+    if (!source || guarded.bytesSeen() !== declaredSize) {
+      return jsonError("Upload size does not match the file size", 400);
+    }
+    const optimized = await optimizeImageForStorage(env, source, contentType, kindHeader, userId);
+    storedBytes = imageStream(optimized.bytes);
+    storedSize = optimized.bytes.byteLength;
+    storedType = optimized.contentType;
+    storedExtension = optimized.contentType === "image/webp" ? "webp" : extension;
+  }
+  const key = objectKeyForUpload(userId, kindHeader, storedExtension);
+  const fixed = fixedLengthUploadBody(storedBytes, storedSize);
   let object: R2Object | null;
   try {
     [object] = await Promise.all([
       env.MEDIA_BUCKET.put(key, fixed.readable, {
         httpMetadata: {
-          contentType,
+          contentType: storedType,
           cacheControl: ["product_file", "agent_file"].includes(kindHeader)
             ? "private, no-store"
             : IMMUTABLE_CACHE_CONTROL,
@@ -1055,7 +1215,10 @@ async function uploadMedia(
     return jsonError("Upload could not be stored. Please try again.", 500);
   }
   if (!object) return jsonError("Upload could not be stored", 500);
-  if (object.size !== declaredSize || guarded.bytesSeen() !== declaredSize) {
+  if (
+    object.size !== storedSize ||
+    (!shouldOptimizeUpload && guarded.bytesSeen() !== declaredSize)
+  ) {
     await env.MEDIA_BUCKET.delete(key).catch(() => undefined);
     return jsonError("Upload size does not match the file size", 400);
   }
@@ -1146,24 +1309,55 @@ async function serveMedia(request: Request, env: StorageEnv, context: StorageCon
     return new Response(object.body, { status: 206, headers });
   }
 
-  const requestedWidth = Number(url.searchParams.get("w"));
-  const variantWidth =
-    env.IMAGES && [320, 640, 1280].includes(requestedWidth) ? requestedWidth : null;
-  const cacheUrl = new URL(request.url);
-  cacheUrl.search = variantWidth ? `?w=${variantWidth}` : "";
-  const cacheKey = new Request(cacheUrl.toString(), { method: "GET" });
+  const widthParam = url.searchParams.get("w");
+  const requestedWidth = Number(widthParam);
+  const allowedWidths = [320, 512, 640, 1280];
+  const explicitWidth =
+    env.IMAGES && widthParam !== null && allowedWidths.includes(requestedWidth)
+      ? requestedWidth
+      : null;
   const cache = typeof caches === "undefined" ? null : await caches.open("bento-media-v2");
-  const cached = await cache?.match(cacheKey);
-  if (cached) return cached;
+  const cacheRequest = (search: string) => {
+    const cacheUrl = new URL(request.url);
+    cacheUrl.search = search;
+    return new Request(cacheUrl.toString(), { method: "GET" });
+  };
+  if (explicitWidth) {
+    const cached = await cache?.match(cacheRequest(`?w=${explicitWidth}`));
+    if (cached) return cached;
+  } else if (!widthParam) {
+    const cached = await cache?.match(cacheRequest(""));
+    if (cached) return cached;
+  }
 
   const object = await env.MEDIA_BUCKET.get(key);
   if (!object) return new Response("Not found", { status: 404 });
   const headers = mediaHeaders(object);
-  if (variantWidth && /^image\/(?:png|jpeg|webp)$/i.test(headers.get("content-type") ?? "")) {
+  const image = /^image\/(?:png|jpeg|webp)$/i.test(headers.get("content-type") ?? "");
+  const autoWidth =
+    !widthParam && env.IMAGES && image && object.size > 300 * 1024
+      ? key.startsWith("avatars/")
+        ? 512
+        : 1280
+      : null;
+  if (autoWidth) {
+    const cached = await cache?.match(cacheRequest(`?w=${autoWidth}`));
+    if (cached) return cached;
+  }
+  const variantWidth = explicitWidth ?? autoWidth;
+  if (variantWidth && image && object.body) {
+    const [peek, rest] = object.body.tee();
+    const prefix = await readPrefix(peek, 65_536);
+    if (isAnimatedImage(prefix, headers.get("content-type") ?? "")) {
+      await rest.cancel().catch(() => undefined);
+      const original = await env.MEDIA_BUCKET.get(key);
+      if (!original) return new Response("Not found", { status: 404 });
+      return new Response(original.body, { headers: mediaHeaders(original) });
+    }
     try {
       await reserveProviderUsage("image_transformations");
       const transformed = await env
-        .IMAGES!.input(object.body)
+        .IMAGES!.input(rest)
         .transform({ width: variantWidth, fit: "scale-down" })
         .output({ format: "image/webp", quality: 82 });
       const transformedResponse = transformed.response();
@@ -1173,7 +1367,11 @@ async function serveMedia(request: Request, env: StorageEnv, context: StorageCon
       headers.delete("etag");
       headers.set("content-type", "image/webp");
       const response = new Response(transformedResponse.body, { headers });
-      if (cache) context.waitUntil(cache.put(cacheKey, response.clone()));
+      if (cache) {
+        const writes = [cache.put(cacheRequest(`?w=${variantWidth}`), response.clone())];
+        if (autoWidth) writes.push(cache.put(cacheRequest(""), response.clone()));
+        context.waitUntil(Promise.all(writes));
+      }
       return response;
     } catch (error) {
       console.warn("[media] Image resize failed; serving original", error);
@@ -1183,7 +1381,7 @@ async function serveMedia(request: Request, env: StorageEnv, context: StorageCon
     }
   }
   const response = new Response(object.body, { headers });
-  if (cache) context.waitUntil(cache.put(cacheKey, response.clone()));
+  if (cache && !widthParam) context.waitUntil(cache.put(cacheRequest(""), response.clone()));
   return response;
 }
 

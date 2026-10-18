@@ -9,7 +9,10 @@ const MAX_PROVIDER_RESPONSE_BYTES = 128 * 1024;
 
 export type AiProvider = "openrouter" | "workers-ai" | "groq";
 export class AiProviderRequestError extends Error {
-  constructor(public readonly status: number, public readonly provider: AiProvider) {
+  constructor(
+    public readonly status: number,
+    public readonly provider: AiProvider,
+  ) {
     super(`AI provider request failed (${status}).`);
     this.name = "AiProviderRequestError";
   }
@@ -37,6 +40,8 @@ export type AiProviderRequest = {
   responseFormat?: unknown;
   workersAiModel?: string;
   openRouterModel?: string;
+  /** gpt-oss only. Other models ignore this and must not receive it. */
+  reasoningEffort?: "low";
   validateResponse?: (response: unknown) => void;
   /** Optional end-to-end budget shared by every fallback provider. */
   timeoutMs?: number;
@@ -66,6 +71,21 @@ export function selectAiProvider(env: AiProviderEnv): AiProvider {
   if (openRouterApiKey(env)) return "openrouter";
   if (groqApiKey(env)) return "groq";
   throw new Error("AI generation is unavailable.");
+}
+
+export function selectedAiModel(
+  env: AiProviderEnv,
+  request: { workersAiModel?: string; openRouterModel?: string } = {},
+): { provider: AiProvider; model: string } {
+  const provider =
+    request.openRouterModel && openRouterApiKey(env) ? "openrouter" : selectAiProvider(env);
+  if (provider === "workers-ai") {
+    return { provider, model: request.workersAiModel || WORKERS_AI_MODEL };
+  }
+  if (provider === "openrouter") {
+    return { provider, model: request.openRouterModel || OPENROUTER_MODEL };
+  }
+  return { provider, model: GROQ_MODEL };
 }
 
 export async function runAiProviderRequest(
@@ -112,8 +132,7 @@ async function executeAiProviderRequest(
     ![OPENROUTER_MODEL, "anthropic/claude-sonnet-4.5"].includes(request.openRouterModel)
   )
     throw new Error("This AI model has no approved cost policy.");
-  const provider =
-    request.openRouterModel && openRouterApiKey(env) ? "openrouter" : selectAiProvider(env);
+  const { provider, model } = selectedAiModel(env, request);
   if (request.publicTool) await reserveProviderUsage("public_ai_microusd", cost);
   await reserveProviderUsage("ai_microusd", cost);
   signal?.throwIfAborted();
@@ -132,8 +151,13 @@ async function executeAiProviderRequest(
     const gatewayId = env.CLOUDFLARE_AI_GATEWAY_ID?.trim();
     response = await awaitAiRequest(
       env.AI!.run(
-        request.workersAiModel || WORKERS_AI_MODEL,
-        payload,
+        model,
+        {
+          ...payload,
+          // The Workers binding for gpt-oss accepts the Responses API, whose reasoning
+          // control is `reasoning.effort` (low, medium, or high).
+          ...(request.reasoningEffort ? { reasoning: { effort: request.reasoningEffort } } : {}),
+        },
         gatewayId ? { gateway: { id: gatewayId, collectLog: false, skipCache: false } } : undefined,
       ),
       providerSignal,
@@ -155,7 +179,7 @@ async function executeAiProviderRequest(
           "X-OpenRouter-Title": process.env.VITE_APP_NAME?.trim() || "Bento Surf",
         },
         body: JSON.stringify({
-          model: isOpenRouter ? request.openRouterModel || OPENROUTER_MODEL : GROQ_MODEL,
+          model,
           ...payload,
           ...(isOpenRouter
             ? {
@@ -171,13 +195,73 @@ async function executeAiProviderRequest(
         signal: providerSignal,
       },
     );
-    if (!providerResponse.ok)
-      throw new AiProviderRequestError(providerResponse.status, provider);
+    if (!providerResponse.ok) throw new AiProviderRequestError(providerResponse.status, provider);
     response = JSON.parse(await readResponseText(providerResponse, MAX_PROVIDER_RESPONSE_BYTES));
   }
   signal?.throwIfAborted();
   request.validateResponse?.(response);
   return { response, provider };
+}
+
+function textFromParts(value: unknown) {
+  if (typeof value === "string") return value.trim() ? value : undefined;
+  if (!Array.isArray(value)) return undefined;
+  const parts: string[] = [];
+  for (const part of value) {
+    if (!part || typeof part !== "object") continue;
+    const record = part as Record<string, unknown>;
+    if (
+      (record.type === "text" || record.type === "output_text") &&
+      typeof record.text === "string"
+    ) {
+      parts.push(record.text);
+    }
+  }
+  const text = parts.join("");
+  return text.trim() ? text : undefined;
+}
+
+function responsesOutputText(output: unknown) {
+  if (!Array.isArray(output)) return undefined;
+  const parts: string[] = [];
+  for (const item of output) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    if (record.type !== "message") continue;
+    const text = textFromParts(record.content);
+    if (text) parts.push(text);
+  }
+  const text = parts.join("");
+  return text.trim() ? text : undefined;
+}
+
+function choiceContent(response: Record<string, unknown>) {
+  const choices = response.choices;
+  if (!Array.isArray(choices)) return undefined;
+  const first = choices[0];
+  if (!first || typeof first !== "object") return undefined;
+  const message = (first as Record<string, unknown>).message;
+  if (!message || typeof message !== "object") return undefined;
+  const content = (message as Record<string, unknown>).content;
+  if (typeof content === "string") return content.trim() ? content : undefined;
+  if (Array.isArray(content)) return textFromParts(content);
+  if (content && typeof content === "object") return content;
+  return undefined;
+}
+
+function finishReason(response: unknown) {
+  if (!response || typeof response !== "object") return undefined;
+  const choices = (response as Record<string, unknown>).choices;
+  if (!Array.isArray(choices) || !choices[0] || typeof choices[0] !== "object") return undefined;
+  const reason = (choices[0] as Record<string, unknown>).finish_reason;
+  return typeof reason === "string" ? reason : undefined;
+}
+
+export class AiStructuredOutputError extends Error {
+  constructor(readonly finishReason?: string) {
+    super("AI provider returned no structured output.");
+    this.name = "AiStructuredOutputError";
+  }
 }
 
 export function aiProviderContent(response: unknown) {
@@ -188,24 +272,61 @@ export function aiProviderContent(response: unknown) {
   if (typeof record.response === "string") return record.response;
   if (record.response && typeof record.response === "object") return record.response;
   if (typeof record.output_text === "string") return record.output_text;
-  const choices = record.choices;
-  if (!Array.isArray(choices)) return undefined;
-  const first = choices[0];
-  if (!first || typeof first !== "object") return undefined;
-  const message = (first as Record<string, unknown>).message;
-  if (!message || typeof message !== "object") return undefined;
-  return (message as Record<string, unknown>).content;
+  return choiceContent(record) ?? responsesOutputText(record.output);
+}
+
+function stripJsonFences(value: string) {
+  return value
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "");
+}
+
+function firstBalancedObject(value: string) {
+  const start = value.indexOf("{");
+  if (start < 0) return undefined;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < value.length; index += 1) {
+    const char = value[index]!;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "{") depth += 1;
+    else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return value.slice(start, index + 1);
+    }
+  }
+  return undefined;
 }
 
 export function decodeAiJsonResponse(response: unknown) {
   const content = aiProviderContent(response);
   if (content && typeof content === "object") return content;
-  if (typeof content !== "string") throw new Error("AI provider returned no structured output.");
-  const trimmed = content
-    .trim()
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/, "");
-  return JSON.parse(trimmed);
+  if (typeof content !== "string") throw new AiStructuredOutputError(finishReason(response));
+  const trimmed = stripJsonFences(content);
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const balanced = firstBalancedObject(trimmed);
+    if (balanced && balanced !== trimmed) {
+      try {
+        return JSON.parse(balanced);
+      } catch {
+        // Prefixed or fenced text still has no JSON object.
+      }
+    }
+    throw new AiStructuredOutputError(finishReason(response));
+  }
 }
 
 export async function runAiJson<TSchema extends z.ZodTypeAny>(
@@ -218,6 +339,7 @@ export async function runAiJson<TSchema extends z.ZodTypeAny>(
     responseFormat?: unknown;
     workersAiModel?: string;
     openRouterModel?: string;
+    reasoningEffort?: "low";
     timeoutMs?: number;
     signal?: AbortSignal;
   },
@@ -242,6 +364,7 @@ export async function runAiJson<TSchema extends z.ZodTypeAny>(
       responseFormat: input.responseFormat,
       workersAiModel: input.workersAiModel,
       openRouterModel: input.openRouterModel,
+      reasoningEffort: input.reasoningEffort,
       timeoutMs: input.timeoutMs,
       signal: input.signal,
       validateResponse: (response) => input.schema.parse(decodeAiJsonResponse(response)),

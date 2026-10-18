@@ -17,6 +17,7 @@ import { requireContentWorkspace } from "./content-access.server";
 import { loadContentBusinessContext } from "./content-business-context.server";
 import { z } from "zod";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { BRAIN_ITEM_COLUMNS, SOCIAL_CONNECTION_LIST_LIMIT } from "./large-table-columns";
 import { runAiJson, type AiProviderEnv } from "./ai-json.server";
 import {
   buildContentAgentInput,
@@ -490,7 +491,7 @@ async function loadContentWorkspaceContext(
       .limit(100),
     db
       .from("creator_content_recommendations")
-      .select("id,title,summary,source_url,source_published_at,reason,angles,feedback")
+      .select("id,title,summary,source_url,source_name,source_published_at,reason,angles,feedback")
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .limit(50),
@@ -508,7 +509,8 @@ async function loadContentWorkspaceContext(
       .from("social_connections")
       .select("id,provider,provider_handle,provider_display_name,status,reauth_required")
       .eq("user_id", userId)
-      .eq("status", "active"),
+      .eq("status", "active")
+      .limit(SOCIAL_CONNECTION_LIST_LIMIT),
     db
       .from("social_posting_schedules")
       .select("timezone,slots")
@@ -596,6 +598,7 @@ async function loadContentWorkspaceContext(
       title: row.title,
       summary: row.summary,
       sourceUrl: row.source_url,
+      sourceName: row.source_name,
       sourcePublishedAt: row.source_published_at,
       reason: row.reason,
       angles: row.angles,
@@ -757,6 +760,7 @@ export function editorialContextFromAgent(
           text: String(item.summary || ""),
           occurredAt: typeof item.sourcePublishedAt === "string" ? item.sourcePublishedAt : null,
           url: typeof item.sourceUrl === "string" ? item.sourceUrl : null,
+          sourceName: typeof item.sourceName === "string" ? item.sourceName : null,
           external: true,
         })),
       ...sampleBrainSourcePosts(posts)
@@ -892,7 +896,7 @@ const defaultDependencies: ContentAgentDependencies = {
   async loadBrainSeed(userId) {
     const db = supabaseAdmin as any;
     const [brain, insights] = await Promise.all([
-      db.from("creator_brain_items").select("*").eq("user_id", userId).limit(200),
+      db.from("creator_brain_items").select(BRAIN_ITEM_COLUMNS).eq("user_id", userId).limit(200),
       db
         .from("social_content_insights")
         .select(
@@ -937,7 +941,8 @@ const defaultDependencies: ContentAgentDependencies = {
       .from("creator_brain_items")
       .select("id,title,content,locked,provenance")
       .eq("user_id", userId)
-      .eq("kind", "profile");
+      .eq("kind", "profile")
+      .limit(1_000);
     if (error) throw new Error("Conversation memories could not be saved.");
     const existing = existingRows || [];
     let saved = 0;

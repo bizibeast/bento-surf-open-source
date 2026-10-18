@@ -10,6 +10,8 @@ import { loadContentEditorialContext } from "./content-agent.server";
 import { buildEditorialBrief, isAutomaticEditorialFormat } from "./content-editorial";
 import { generateEditorialDraft } from "./content-editorial.server";
 import { discoverPostKey } from "./content-discover-identity";
+import { normalizeNicheKey } from "./content-briefs.server";
+import { selectFreshEditorialSignals, type ContentSourceItem } from "./content-sources.server";
 import {
   contentTopicKeys,
   topicIsSuppressed,
@@ -99,6 +101,48 @@ async function recommendationPage(userId: string) {
     });
   return (await rpc("claim_content_agent_recommendations", { p_user_id: userId })) as any[];
 }
+
+/** Read only the shared daily brief; scanning never starts a paid provider refresh. */
+export async function loadFreshBriefSources(userId: string) {
+  const { data: profile, error: profileError } = await (supabaseAdmin as any)
+    .from("creator_content_profiles")
+    .select("niche_keywords,language,region")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (profileError) throw new Error("Agent research preferences could not load.");
+  const nicheKey = normalizeNicheKey(profile?.niche_keywords || []);
+  if (!nicheKey) return [];
+  const { data: brief, error: briefError } = await (supabaseAdmin as any)
+    .from("content_trend_briefs")
+    .select("items")
+    .eq("niche_key", nicheKey)
+    .eq("language", profile.language || "en")
+    .eq("region", profile.region || "global")
+    .gte("brief_date", new Date(Date.now() - 86400000).toISOString().slice(0, 10))
+    .order("brief_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (briefError) throw new Error("Current Agent research could not load.");
+  const items: ContentSourceItem[] = Array.isArray(brief?.items)
+    ? brief.items.filter(
+        (item: any) =>
+          typeof item?.canonicalUrl === "string" &&
+          typeof item?.title === "string" &&
+          typeof item?.summary === "string" &&
+          typeof item?.publishedAt === "string" &&
+          typeof item?.kind === "string",
+      )
+    : [];
+  return selectFreshEditorialSignals(items).map((item) => ({
+    title: item.title,
+    summary: item.summary,
+    source_name: item.sourceName,
+    source_url: item.canonicalUrl,
+    source_published_at: item.publishedAt,
+    reason: `Current ${item.sourceName || "source"} report related to this creator's niche.`,
+    feedback: "pending",
+  }));
+}
 async function suppressedTopics(userId: string, keys: string[]): Promise<string[]> {
   if (!keys.length) return [];
   return rpc("content_agent_suppressed_topics", {
@@ -136,8 +180,8 @@ export function usefulDiscoverSources(rows: any[], now = Date.now()) {
       seen.has(key) ||
       excluded.has(key) ||
       !row.source_url ||
-      !(age >= 0 && age <= 7 * 86400000) ||
-      row.summary.trim().length < 100 ||
+      !(age >= 0 && age <= 3 * 86400000) ||
+      row.summary.trim().length < 80 ||
       row.reason.trim().length < 20
     )
       return false;
@@ -170,7 +214,10 @@ export async function scanContentAgentSignals(limit = 3) {
 /** Advance past already-seen originals instead of repeatedly enqueuing the first three. */
 export async function enqueueFreshSourceSignals(userId: string) {
   if (!proactiveDeliveryAvailable(userId)) return 0;
-  const rows = usefulDiscoverSources(await recommendationPage(userId));
+  const rows = usefulDiscoverSources([
+    ...(await loadFreshBriefSources(userId)),
+    ...(await recommendationPage(userId)),
+  ]);
   const blocked = await suppressedTopics(
     userId,
     rows.flatMap((row) => contentTopicKeys(row.title || "")),
@@ -499,9 +546,11 @@ export async function prepareContentAgentSignal(
       p_user_id: signal.user_id,
       p_source_key: signal.source_ids[0],
     });
-    const selected = usefulDiscoverSources(rows).find((row) =>
-      signal.source_ids.includes(postKey(row)),
-    );
+    const selected =
+      usefulDiscoverSources(rows).find((row) => signal.source_ids.includes(postKey(row))) ||
+      usefulDiscoverSources(await loadFreshBriefSources(signal.user_id)).find((row) =>
+        signal.source_ids.includes(postKey(row)),
+      );
     if (!selected) return null;
     metadata.topicKeys = contentTopicKeys(selected.title);
     if (
@@ -517,16 +566,45 @@ export async function prepareContentAgentSignal(
         id: postKey(selected),
         title: selected.title,
         text: selected.summary,
+        sourceName: selected.source_name || null,
         url: selected.source_url,
         occurredAt: selected.source_published_at,
         external: true,
       },
-      ...context.sources.filter((source) => !source.external),
+      ...context.sources.filter((source) => source.id.startsWith("brain:")),
     ];
+    context.requiredRecentSourceIds = [postKey(selected)];
     metadata.whyNow = selected.reason;
   } else if (gap) {
     metadata.gap = gap;
-    context.request = `Prepare one useful evidence-backed ${gap.platform} draft for the configured posting slot at ${gap.scheduledAt}.`;
+    const sharedBrief = (await loadFreshBriefSources(signal.user_id)).map((row) => ({
+      id: postKey(row),
+      title: row.title,
+      text: row.summary,
+      sourceName: row.source_name || null,
+      url: row.source_url,
+      occurredAt: row.source_published_at,
+      external: true,
+    }));
+    const current = [...sharedBrief, ...context.sources]
+      .filter((source) => {
+        const age = Date.now() - Date.parse(source.occurredAt || "");
+        return (
+          source.external &&
+          source.url &&
+          age >= 0 &&
+          age <= 3 * 86400000 &&
+          source.text.trim().length >= 100
+        );
+      })
+      .slice(0, 3);
+    if (!current.length) return null;
+    context.sources = [
+      ...current,
+      ...context.sources.filter((source) => source.id.startsWith("brain:")),
+    ];
+    context.requiredRecentSourceIds = current.map((source) => source.id);
+    context.request = `Prepare one useful evidence-backed ${gap.platform} draft for the configured posting slot at ${gap.scheduledAt}. React to a current external development and explain the reader benefit; old workspace updates are not news.`;
     metadata.whyNow = `Your configured ${gap.platform} posting slot at ${gap.scheduledAt} is still open.`;
   }
   const blockedTopics = await suppressedTopics(
@@ -543,6 +621,11 @@ export async function prepareContentAgentSignal(
       !blockedSources.has(sourceIdentity(source)) &&
       !topicIsSuppressed(contentTopicKeys(source.title), blockedTopics),
   );
+  if (
+    context.requiredRecentSourceIds?.length &&
+    !context.sources.some((source) => context.requiredRecentSourceIds?.includes(source.id))
+  )
+    return null;
   const brief = buildEditorialBrief(context);
   // Context/voice alone should not become an unsolicited generic draft.
   if (!brief.sources.some((source) => source.id !== "request" && source.text.trim().length >= 100))
@@ -561,6 +644,10 @@ export async function prepareContentAgentSignal(
   if (
     checked.status !== "ready" ||
     checked.card.type !== "draft" ||
+    (brief.requiredRecentSourceIds?.length &&
+      !checked.card.editorial?.sourceIds.some((id) =>
+        brief.requiredRecentSourceIds?.includes(id),
+      )) ||
     !checked.card.editorial?.sourceIds.some((id) => id !== "request")
   )
     return null;

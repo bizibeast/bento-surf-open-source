@@ -13,6 +13,7 @@ import {
   publicStorePath,
 } from "@/lib/application-urls";
 import { creatorIndexingMeta } from "@/lib/open-graph";
+import { seoMetaDescription } from "@/lib/seo-description";
 import { useWebMcpTools, webMcpResult } from "@/lib/webmcp";
 
 export const Route = createFileRoute("/$username_/store")({
@@ -38,7 +39,12 @@ export const Route = createFileRoute("/$username_/store")({
       },
       {
         name: "description",
-        content: loaderData?.profile.bio || "Products from a bento.surf creator.",
+        content: loaderData
+          ? seoMetaDescription(
+              loaderData.profile.bio,
+              `Shop published products from ${loaderData.profile.display_name || loaderData.profile.username} (@${loaderData.profile.username}) on bento.surf. Checkout stays on this creator's page.`,
+            )
+          : "This creator store is not available. Visit bento.surf to find published creator pages.",
       },
       ...creatorIndexingMeta(loaderData?.profile ?? {}, { surface: "store" }),
     ],
@@ -98,7 +104,7 @@ function PublicStorePage() {
   useWebMcpTools(webMcpTools);
   if (!data.isStandalone)
     return (
-      <PublicCreatorShell chrome={data.chrome} activePageId={data.page.id}>
+      <PublicCreatorShell chrome={data.chrome} activePageId={data.page.id} documentHeading="Store">
         <PublicSystemPageCanvas
           username={profile.username}
           blocks={data.blocks}

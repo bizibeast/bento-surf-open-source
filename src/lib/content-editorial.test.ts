@@ -106,8 +106,76 @@ describe("editorial briefing and deterministic gate", () => {
     "Episode 5: another lesson.",
     "Launching today: the prototype is here!",
     "Join my event tomorrow.",
+    "Just shipped a new tool. Builders: check read_workspace_data",
   ])("rejects stale serial/current event language: %s", (body) => {
     expect(codes(body)).toContain("stale_context");
+  });
+  it("rejects raw internal tool names in automatic post copy", () => {
+    expect(codes("Builders: check read_workspace_data for your next post.")).toContain(
+      "internal_jargon",
+    );
+  });
+  it("requires a cited current signal for automatic trend drafts", () => {
+    const current = {
+      id: "trend:news",
+      title: "A startup funding announcement",
+      text: "A startup announced a new funding round on October 17.",
+      occurredAt: "2026-10-17T12:00:00Z",
+      url: "https://example.com/news",
+      sourceName: "Example News",
+      external: true,
+    };
+    const brief = buildEditorialBrief({
+      ...context,
+      now: "2026-10-18T12:00:00Z",
+      sources: [current, ...context.sources],
+      requiredRecentSourceIds: [current.id],
+    });
+    const unsourced = validateEditorialDraft(
+      brief,
+      { ...draft("A practical lesson from my own launch."), sourceIds: ["launch"] },
+      [],
+    ).map((issue) => issue.code);
+    expect(unsourced).toContain("current_source");
+    const unattributed = validateEditorialDraft(
+      brief,
+      {
+        ...draft(
+          "A startup announced a new funding round on October 17. What would you test before spending it?",
+        ),
+        sourceIds: [current.id],
+        sourceUrls: [current.url],
+        claims: [
+          {
+            text: "A startup announced a new funding round on October 17",
+            sourceId: current.id,
+            quote: "A startup announced a new funding round on October 17",
+          },
+        ],
+      },
+      [],
+    ).map((issue) => issue.code);
+    expect(unattributed).toContain("source_attribution");
+    const grounded = validateEditorialDraft(
+      brief,
+      {
+        ...draft(
+          "Example News reports: A startup announced a new funding round on October 17. What would you test before spending it?",
+        ),
+        sourceIds: [current.id],
+        sourceUrls: [current.url],
+        claims: [
+          {
+            text: "A startup announced a new funding round on October 17",
+            sourceId: current.id,
+            quote: "A startup announced a new funding round on October 17",
+          },
+        ],
+      },
+      [],
+    ).map((issue) => issue.code);
+    expect(grounded).not.toContain("current_source");
+    expect(grounded).not.toContain("source_attribution");
   });
   it("accepts a new durable lesson and dated historical facts", () => {
     expect(codes("I think interviews work best when each question tests one assumption.")).toEqual(

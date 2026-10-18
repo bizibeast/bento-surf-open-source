@@ -110,15 +110,6 @@ type JourneyContextRow = {
   spent: number | string;
 };
 
-type InstagramConnectionHealthRow = {
-  id: string;
-  connection_health: string;
-  reauth_required: boolean;
-  provider_error_code: string | null;
-  last_verified_at: string | null;
-  last_webhook_at: string | null;
-};
-
 type InstagramAutomationHealthRow = {
   id: string;
   enabled: boolean;
@@ -367,6 +358,27 @@ export const revokeComplimentaryPlan = createServerFn({ method: "POST" })
     return { success: true };
   });
 
+async function loadInstagramConnectionHealth() {
+  const count = () =>
+    supabaseAdmin
+      .from("social_connections")
+      .select("id", { count: "exact", head: true })
+      .eq("provider", "instagram");
+  const [total, healthy, reauth] = await Promise.all([
+    count(),
+    count().eq("connection_health", "healthy").eq("reauth_required", false),
+    count().eq("reauth_required", true),
+  ]);
+  const error = total.error || healthy.error || reauth.error;
+  return {
+    error,
+    total: total.count ?? 0,
+    healthy: healthy.count ?? 0,
+    actionRequired: Math.max(0, (total.count ?? 0) - (healthy.count ?? 0)),
+    reauthRequired: reauth.count ?? 0,
+  };
+}
+
 export const getAdminOverview = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .validator((input) =>
@@ -424,12 +436,7 @@ export const getAdminOverview = createServerFn({ method: "GET" })
         )
         .order("created_at", { ascending: false })
         .limit(20),
-      supabaseAdmin
-        .from("social_connections" as never)
-        .select(
-          "id, connection_health, reauth_required, provider_error_code, last_verified_at, last_webhook_at" as never,
-        )
-        .eq("provider", "instagram"),
+      loadInstagramConnectionHealth(),
       supabaseAdmin.from("instagram_dm_automations" as never).select("id, enabled" as never),
       supabaseAdmin
         .from("instagram_dm_runs" as never)
@@ -480,8 +487,7 @@ export const getAdminOverview = createServerFn({ method: "GET" })
     if (socialPreviewBudgetsResult.error)
       throwAdminDataError("load social-preview budgets", socialPreviewBudgetsResult.error);
     const database = (databaseResult.data ?? {}) as FounderDatabaseOverview;
-    const instagramConnections = (instagramConnectionsResult.data ??
-      []) as unknown as InstagramConnectionHealthRow[];
+    const instagramConnections = instagramConnectionsResult;
     const instagramAutomations = (instagramAutomationsResult.data ??
       []) as unknown as InstagramAutomationHealthRow[];
     const instagramRuns = (instagramRunsResult.data ?? []) as unknown as InstagramRunHealthRow[];
@@ -635,17 +641,10 @@ export const getAdminOverview = createServerFn({ method: "GET" })
       })),
       instagramAutoDm: {
         connections: {
-          total: instagramConnections.length,
-          healthy: instagramConnections.filter(
-            (connection) =>
-              connection.connection_health === "healthy" && !connection.reauth_required,
-          ).length,
-          actionRequired: instagramConnections.filter(
-            (connection) =>
-              connection.connection_health !== "healthy" || connection.reauth_required,
-          ).length,
-          reauthRequired: instagramConnections.filter((connection) => connection.reauth_required)
-            .length,
+          total: instagramConnections.total,
+          healthy: instagramConnections.healthy,
+          actionRequired: instagramConnections.actionRequired,
+          reauthRequired: instagramConnections.reauthRequired,
         },
         automations: {
           total: instagramAutomations.length,

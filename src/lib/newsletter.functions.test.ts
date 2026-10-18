@@ -58,6 +58,10 @@ const mocks = vi.hoisted(() => {
           state.filters.push(filter);
           return query;
         }),
+        gt: vi.fn((...filter: unknown[]) => {
+          state.filters.push(["gt", ...filter]);
+          return query;
+        }),
         is: vi.fn((...filter: unknown[]) => {
           state.filters.push(["is", ...filter]);
           return query;

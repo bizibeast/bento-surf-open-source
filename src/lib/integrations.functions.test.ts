@@ -24,7 +24,8 @@ const rows: Record<string, unknown[]> = {
 
 function queryFor(table: string) {
   const query: Record<string, unknown> = {};
-  for (const method of ["select", "eq", "order"] as const) query[method] = vi.fn(() => query);
+  for (const method of ["select", "eq", "order", "limit"] as const)
+    query[method] = vi.fn(() => query);
   query.then = (resolve: (value: unknown) => unknown) =>
     Promise.resolve({ data: rows[table] || [], error: null }).then(resolve);
   return query;

@@ -56,7 +56,7 @@ export type PublicNewsletterArchiveData = {
 
 export type PublicNewsletterDirectoryData = {
   chrome: PublicCreatorChrome;
-  page: { id: string };
+  page: { id: string; name?: string | null };
   blocks: Parameters<typeof PublicSystemPageCanvas>[0]["blocks"];
   systemItems: SystemPageItem[];
   systemLayout: SystemItemLayout[];
@@ -172,7 +172,11 @@ export function PublicNewsletterDirectoryContent({
   data: PublicNewsletterDirectoryData;
 }) {
   return (
-    <PublicCreatorShell chrome={data.chrome} activePageId={data.page.id}>
+    <PublicCreatorShell
+      chrome={data.chrome}
+      activePageId={data.page.id}
+      documentHeading={data.page.name || "Newsletters"}
+    >
       <section aria-label="Publications">
         {data.blocks.length || data.systemItems.length ? (
           <PublicSystemPageCanvas

@@ -35,6 +35,7 @@ vi.mock("@/integrations/supabase/client.server", () => ({
 
 vi.mock("./posthog.server", () => storageAnalyticsMocks);
 
+import { reserveProviderUsage } from "./provider-budget.server";
 import { getStorageAllowanceMb } from "./plan.server";
 import {
   handleR2StorageRequest,
@@ -45,6 +46,11 @@ import {
 
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const PDF_BYTES = new TextEncoder().encode("%PDF-1.7");
+
+function putContentType(options?: R2PutOptions) {
+  const metadata = options?.httpMetadata;
+  return metadata && "contentType" in metadata ? metadata.contentType : undefined;
+}
 
 function storedObject(key: string, size: number): R2Object {
   return {
@@ -215,6 +221,57 @@ describe("R2 media storage paths", () => {
     );
 
     expect(response?.headers.get("content-type")).toBe("image/png");
+    expect(input).not.toHaveBeenCalled();
+  });
+
+  it("resizes a large avatar when no width is requested", async () => {
+    const { bucket } = mockBucket();
+    const key = "avatars/user-123/avatar.png";
+    bucket.get = vi.fn(async () => ({
+      ...storedObject(key, 400 * 1024),
+      body: new Response(PNG_BYTES).body,
+      writeHttpMetadata(headers: Headers) {
+        headers.set("content-type", "image/png");
+      },
+    })) as unknown as R2Bucket["get"];
+    const transform = vi.fn(() => ({
+      output: vi.fn(async () => ({ response: () => new Response("webp-preview") })),
+    }));
+    const input = vi.fn(() => ({ transform }));
+
+    const response = await handleR2StorageRequest(
+      new Request(`https://bento.surf/cdn/${key}`),
+      { MEDIA_BUCKET: bucket, IMAGES: { input } as unknown as ImagesBinding },
+      { waitUntil: vi.fn() },
+    );
+
+    expect(response?.headers.get("content-type")).toBe("image/webp");
+    expect(transform).toHaveBeenCalledWith({ width: 512, fit: "scale-down" });
+  });
+
+  it("does not flatten an animated image while resizing", async () => {
+    const { bucket } = mockBucket();
+    const key = "users/user-123/image/anim.webp";
+    const bytes = new Uint8Array(16);
+    bytes.set(new TextEncoder().encode("RIFF"), 0);
+    bytes.set(new TextEncoder().encode("WEBP"), 8);
+    bytes.set(new TextEncoder().encode("ANIM"), 12);
+    bucket.get = vi.fn(async () => ({
+      ...storedObject(key, 400 * 1024),
+      body: new Response(bytes).body,
+      writeHttpMetadata(headers: Headers) {
+        headers.set("content-type", "image/webp");
+      },
+    })) as unknown as R2Bucket["get"];
+    const input = vi.fn();
+
+    const response = await handleR2StorageRequest(
+      new Request(`https://bento.surf/cdn/${key}`),
+      { MEDIA_BUCKET: bucket, IMAGES: { input } as unknown as ImagesBinding },
+      { waitUntil: vi.fn() },
+    );
+
+    expect(response?.headers.get("content-type")).toBe("image/webp");
     expect(input).not.toHaveBeenCalled();
   });
 
@@ -647,6 +704,99 @@ describe("R2 upload boundary", () => {
     expect(response?.status).toBe(503);
   });
 
+  it("stores a still image as resized WebP when Images is bound", async () => {
+    const { bucket, put } = mockBucket();
+    const output = new Uint8Array([9, 8, 7, 6]);
+    const transform = vi.fn(() => ({
+      output: vi.fn(async () => ({ response: () => new Response(output) })),
+    }));
+    const input = vi.fn(() => ({ transform }));
+    vi.mocked(reserveProviderUsage).mockClear();
+
+    const response = await handleR2StorageRequest(
+      new Request("https://bento.surf/api/storage/upload", {
+        method: "PUT",
+        headers: {
+          "content-length": String(PNG_BYTES.length),
+          "content-type": "image/png",
+          "x-bento-file-extension": "png",
+          "x-bento-file-size": String(PNG_BYTES.length),
+          "x-bento-upload-kind": "avatar",
+        },
+        body: PNG_BYTES,
+      }),
+      { MEDIA_BUCKET: bucket, IMAGES: { input } as unknown as ImagesBinding },
+      { waitUntil: vi.fn() },
+      { authenticate: async () => "user-123", isPro: async () => false },
+    );
+    const payload = (await response?.json()) as { key: string; size: number };
+
+    expect(response?.status).toBe(201);
+    expect(payload.key).toMatch(/^avatars\/user-123\/.+\.webp$/);
+    expect(payload.size).toBe(output.byteLength);
+    expect(putContentType(put.mock.calls[0][2])).toBe("image/webp");
+    expect(transform).toHaveBeenCalledWith({ width: 512, height: 512, fit: "scale-down" });
+    expect(reserveProviderUsage).toHaveBeenCalledWith("image_transformations", 1, {
+      workspaceId: "user-123",
+    });
+  });
+
+  it("keeps the original image when optimization is skipped or fails", async () => {
+    const { bucket, put } = mockBucket();
+    const input = vi.fn(() => {
+      throw new Error("images unavailable");
+    });
+    const headers = {
+      "content-length": String(PNG_BYTES.length),
+      "content-type": "image/png",
+      "x-bento-file-extension": "png",
+      "x-bento-file-size": String(PNG_BYTES.length),
+      "x-bento-upload-kind": "image",
+    };
+    const upload = (extra?: Record<string, string>) =>
+      handleR2StorageRequest(
+        new Request("https://bento.surf/api/storage/upload", {
+          method: "PUT",
+          headers: { ...headers, ...extra },
+          body: PNG_BYTES,
+        }),
+        { MEDIA_BUCKET: bucket, IMAGES: { input } as unknown as ImagesBinding },
+        { waitUntil: vi.fn() },
+        { authenticate: async () => "user-123", isPro: async () => false },
+      );
+
+    const skipped = await upload({ "x-bento-skip-image-optimize": "1" });
+    const failed = await upload();
+    const gif = new TextEncoder().encode("GIF89a");
+    const animated = await handleR2StorageRequest(
+      new Request("https://bento.surf/api/storage/upload", {
+        method: "PUT",
+        headers: {
+          "content-length": String(gif.length),
+          "content-type": "image/gif",
+          "x-bento-file-extension": "gif",
+          "x-bento-file-size": String(gif.length),
+          "x-bento-upload-kind": "image",
+        },
+        body: gif,
+      }),
+      { MEDIA_BUCKET: bucket, IMAGES: { input } as unknown as ImagesBinding },
+      { waitUntil: vi.fn() },
+      { authenticate: async () => "user-123", isPro: async () => false },
+    );
+
+    expect(skipped?.status).toBe(201);
+    expect(failed?.status).toBe(201);
+    expect(animated?.status).toBe(201);
+    expect(input).toHaveBeenCalledOnce();
+    expect(put.mock.calls.map((call) => putContentType(call[2]))).toEqual([
+      "image/png",
+      "image/png",
+      "image/gif",
+    ]);
+    expect(String(put.mock.calls[0][0])).toMatch(/\.png$/);
+  });
+
   it("stores an authenticated image under the user's isolated prefix", async () => {
     const { bucket, put } = mockBucket();
     const response = await handleR2StorageRequest(
@@ -817,6 +967,54 @@ describe("R2 upload boundary", () => {
       { waitUntil: vi.fn() },
     );
     expect(read?.status).toBe(404);
+  });
+
+  it("keeps Agent references private and rejects documents larger than 8 MB", async () => {
+    const { bucket, put } = mockBucket();
+    const headers = {
+      "content-length": String(PDF_BYTES.length),
+      "content-type": "application/pdf",
+      "x-bento-file-extension": "pdf",
+      "x-bento-file-size": String(PDF_BYTES.length),
+      "x-bento-upload-kind": "agent_file",
+    };
+    const upload = await handleR2StorageRequest(
+      new Request("https://test.bento.surf/api/storage/upload", {
+        method: "PUT",
+        headers,
+        body: PDF_BYTES,
+      }),
+      { MEDIA_BUCKET: bucket },
+      { waitUntil: vi.fn() },
+      { authenticate: async () => "user-123", getPlan: async () => "store" },
+    );
+    expect(upload?.status).toBe(201);
+    const payload = (await upload!.json()) as { key: string; publicUrl: string | null };
+    expect(payload.publicUrl).toBeNull();
+    expect(payload.key).toMatch(/^private\/users\/user-123\/agent\//);
+    const read = await handleR2StorageRequest(
+      new Request(`https://test.bento.surf/cdn/${payload.key}`),
+      { MEDIA_BUCKET: bucket },
+      { waitUntil: vi.fn() },
+    );
+    expect(read?.status).toBe(404);
+    expect(put).toHaveBeenCalledOnce();
+    const oversized = await handleR2StorageRequest(
+      new Request("https://test.bento.surf/api/storage/upload", {
+        method: "PUT",
+        headers: {
+          ...headers,
+          "content-length": String(9 * 1024 * 1024),
+          "x-bento-file-size": String(9 * 1024 * 1024),
+        },
+        body: PDF_BYTES,
+      }),
+      { MEDIA_BUCKET: bucket },
+      { waitUntil: vi.fn() },
+      { authenticate: async () => "user-123", getPlan: async () => "store" },
+    );
+    expect(oversized?.status).toBe(413);
+    expect(put).toHaveBeenCalledOnce();
   });
 
   it("keeps Agent references private and rejects documents larger than 8 MB", async () => {
@@ -1216,6 +1414,49 @@ describe("R2 upload boundary", () => {
 
     expect(response?.status).toBe(400);
     expect(uploadPart).toHaveBeenCalledOnce();
+  });
+
+  it("replaces a completed multipart still image with WebP", async () => {
+    const { bucket, put } = mockBucket();
+    const key = "users/user-123/image/photo-mpu-8.png";
+    mockMultipart(bucket, 8);
+    const source = new Uint8Array(8);
+    source.set(PNG_BYTES);
+    bucket.get = vi.fn(async () => ({
+      ...storedObject(key, 8),
+      body: new Response(source).body,
+      httpMetadata: { contentType: "image/png" },
+      customMetadata: { kind: "image" },
+    })) as unknown as R2Bucket["get"];
+    const output = new Uint8Array([1, 2, 3]);
+    const transform = vi.fn(() => ({
+      output: vi.fn(async () => ({ response: () => new Response(output) })),
+    }));
+
+    const response = await handleR2StorageRequest(
+      new Request(
+        `https://bento.surf/api/storage/upload?action=mpu-complete&key=${encodeURIComponent(key)}&uploadId=upload-1`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ parts: [{ etag: "one", partNumber: 1 }] }),
+        },
+      ),
+      {
+        MEDIA_BUCKET: bucket,
+        IMAGES: { input: vi.fn(() => ({ transform })) } as unknown as ImagesBinding,
+      },
+      { waitUntil: vi.fn() },
+      { authenticate: async () => "user-123" },
+    );
+    const payload = (await response?.json()) as { size: number };
+
+    expect(response?.status).toBe(201);
+    expect(payload.size).toBe(output.byteLength);
+    expect(put).toHaveBeenCalledOnce();
+    expect(transform).toHaveBeenCalledWith({ width: 2_000, height: 2_000, fit: "scale-down" });
+    expect(putContentType(put.mock.calls[0][2])).toBe("image/webp");
+    expect(put.mock.calls[0][2]?.customMetadata?.imageOptimized).toBe("1");
   });
 
   it("rejects duplicate completion parts and deletes a mismatched completed object", async () => {

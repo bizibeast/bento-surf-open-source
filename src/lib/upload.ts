@@ -119,6 +119,13 @@ async function parseUploadError(response: Response) {
   return payload?.error || `Upload failed (${response.status})`;
 }
 
+function skipImageOptimizeHeader(file: File, options?: UploadOptions): Record<string, string> {
+  if (options?.optimize === false || file.type === "image/webp" || file.type === "image/gif") {
+    return { "X-Bento-Skip-Image-Optimize": "1" };
+  }
+  return {};
+}
+
 async function uploadSinglePut(
   file: File,
   kind: UploadKind,
@@ -139,6 +146,7 @@ async function uploadSinglePut(
           "X-Bento-File-Name": encodeURIComponent(file.name),
           "X-Bento-File-Size": String(file.size),
           "X-Bento-Upload-Kind": kind,
+          ...skipImageOptimizeHeader(file, options),
         },
         body: file,
       },
@@ -254,6 +262,7 @@ async function uploadMultipart(
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
+          ...skipImageOptimizeHeader(file, options),
         },
         body: JSON.stringify({ parts }),
       },

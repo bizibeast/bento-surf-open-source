@@ -5,6 +5,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { SOCIAL_CONNECTION_LIST_LIMIT } from "./large-table-columns";
 import { enforceRequestRateLimit } from "./request-security.server";
 import {
   getTwitterConnectionReadiness,
@@ -13,6 +14,7 @@ import {
   twitterDmAutomationInputSchema,
   type TwitterDmActivity,
   type TwitterDmAutomation,
+  type TwitterDmTriggerType,
 } from "./twitter-auto-dm";
 import { refreshTwitterAutoDmHealth, twitterWebhookAppConfigured } from "./twitter-auto-dm.server";
 import { isServerSecretEncryptionKeyValid } from "./secret-crypto.server";
@@ -44,8 +46,11 @@ function scopeReady(scopes: string[] | null | undefined) {
   return TWITTER_AUTO_DM_REQUIRED_SCOPES.every((scope) => scopes?.includes(scope));
 }
 
-function connectionReady(connection: ConnectionRow | null | undefined) {
-  return getTwitterConnectionReadiness(connection).ready;
+function connectionReady(
+  connection: ConnectionRow | null | undefined,
+  triggerType: TwitterDmTriggerType = "any_dm",
+) {
+  return getTwitterConnectionReadiness(connection, new Date(), triggerType).ready;
 }
 
 async function ownedConnections(userId: string): Promise<ConnectionRow[]> {
@@ -56,7 +61,8 @@ async function ownedConnections(userId: string): Promise<ConnectionRow[]> {
     )
     .eq("user_id", userId)
     .eq("provider", "twitter")
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: true })
+    .limit(SOCIAL_CONNECTION_LIST_LIMIT);
   if (error) throw new Error("Unable to load X connections.");
   return (data || []) as ConnectionRow[];
 }
@@ -123,7 +129,7 @@ async function dashboard(userId: string, plan?: PlanId) {
     }),
     automations: (automations || []).map((row: any): TwitterDmAutomation => {
       const connection = byId.get(row.connection_id);
-      const readiness = getTwitterConnectionReadiness(connection);
+      const readiness = getTwitterConnectionReadiness(connection, new Date(), row.trigger_type);
       return {
         id: row.id,
         connectionId: row.connection_id,
@@ -188,7 +194,7 @@ export const saveTwitterAutoDmAutomation = createServerFn({ method: "POST" })
     const connections = await ownedConnections(context.userId);
     const connection = connections.find((item) => item.id === data.connectionId);
     if (!connection) throw new Error("Connect this X account first.");
-    if (data.enabled && !connectionReady(connection)) {
+    if (data.enabled && !connectionReady(connection, data.triggerType)) {
       throw new Error(
         connection.reauth_required || !scopeReady(connection.scopes)
           ? "Reconnect X to approve Direct Messages before enabling this."
@@ -250,7 +256,7 @@ export const setTwitterAutoDmEnabled = createServerFn({ method: "POST" })
       await requireAutoDm(context.userId);
       const { data: automation, error: automationError } = await (supabaseAdmin as any)
         .from("twitter_dm_automations")
-        .select("connection_id")
+        .select("connection_id,trigger_type")
         .eq("id", data.id)
         .eq("user_id", context.userId)
         .maybeSingle();
@@ -258,7 +264,7 @@ export const setTwitterAutoDmEnabled = createServerFn({ method: "POST" })
       const connection = (await ownedConnections(context.userId)).find(
         (item) => item.id === automation.connection_id,
       );
-      if (!connectionReady(connection)) {
+      if (!connectionReady(connection, automation.trigger_type)) {
         throw new Error(
           connection?.reauth_required || !scopeReady(connection?.scopes)
             ? "Reconnect X before enabling this automation."

@@ -261,6 +261,9 @@ describe("editor and public block parity", () => {
 
     expect(title.compareDocumentPosition(domain)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(screen.getByText("Visit")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("block-render-surface").querySelector("img:not(.hidden)"),
+    ).toHaveAttribute("src", "/api/favicon?domain=www.product.example");
   });
 });
 

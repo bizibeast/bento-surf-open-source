@@ -9,6 +9,7 @@ import { withWorkspaceBillingSync } from "./billing-sync.server";
 import { TRIAL_DAYS } from "./plans";
 import { trialExtensionEnd } from "./billing-catalog";
 import { enqueueBentoBillingEmail } from "./email.server";
+import { SOCIAL_CONNECTION_LIST_LIMIT } from "./large-table-columns";
 import {
   cancellationReasonSchema,
   firstOfferAvailable,
@@ -56,7 +57,8 @@ async function integrationSignals(workspaceId: string) {
     db
       .from("social_connections")
       .select("provider,status,reauth_required")
-      .eq("user_id", workspaceId),
+      .eq("user_id", workspaceId)
+      .limit(SOCIAL_CONNECTION_LIST_LIMIT),
     db.from("booking_calendar_connections").select("status").eq("user_id", workspaceId),
     db.from("booking_fathom_connections").select("status").eq("user_id", workspaceId),
     db.from("content_connections").select("provider,status").eq("user_id", workspaceId),

@@ -161,4 +161,12 @@ it("rotates equally relevant photos and rejects unrelated indexed images", () =>
   ];
   expect(rankAgentPhotos(rows, draft, null, ["a", "a"])).toEqual(["b", "a"]);
   expect(rankAgentPhotos(rows, draft, "c", ["c"])[0]).toBe("c");
+  expect(
+    rankAgentPhotos(
+      [{ id: "unrelated", caption: "Ask for Help", tags: [], singleFace: true }],
+      { ...draft, body: "This can help founders launch." },
+      null,
+      [],
+    ),
+  ).toEqual([]);
 });

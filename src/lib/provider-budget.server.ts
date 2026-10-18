@@ -22,7 +22,8 @@ export type PaidResource =
   | "image_transformations"
   | "public_background_removals"
   | "analytics_events"
-  | "x_write_actions";
+  | "x_write_actions"
+  | "x_dm_deliveries";
 
 export class ProviderBudgetError extends Error {
   constructor(readonly resource: PaidResource) {

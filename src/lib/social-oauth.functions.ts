@@ -10,6 +10,7 @@ import { socialApiErrorMessage, socialApiPayloadHasError } from "./social-provid
 import { requirePlanEntitlement } from "./plan.server";
 import { durableSocialAvatarUrl } from "./social-avatar.server";
 import { queueInitialSocialInsightsImport } from "./social-analytics.functions";
+import { SOCIAL_CONNECTION_LIST_LIMIT } from "./large-table-columns";
 import { xAccountCapabilities, xCapabilitiesMetadata } from "./x-account";
 import {
   SOCIAL_PROVIDERS,
@@ -451,7 +452,7 @@ export async function socialAccountProfiles(
   if (provider === "twitter") {
     await reserveXRead("https://api.x.com/2/users/me");
     const data = await get(
-      "https://api.x.com/2/users/me?user.fields=profile_image_url,subscription_type,verified_type",
+      "https://api.x.com/2/users/me?user.fields=profile_image_url,subscription_type,verified_type,description,location",
       {
         headers: bearer,
       },
@@ -468,6 +469,11 @@ export async function socialAccountProfiles(
         avatar: data.data.profile_image_url,
         token,
         xCapabilities,
+        profile: {
+          biography: String(data.data.description || "").slice(0, 2000),
+          location: String(data.data.location || "").slice(0, 300),
+          profile_url: `https://x.com/${encodeURIComponent(data.data.username)}`,
+        },
       },
     ];
   }
@@ -496,6 +502,7 @@ export async function socialAccountProfiles(
       handle: channel.snippet?.customUrl || channel.snippet?.title,
       name: channel.snippet?.title,
       avatar: channel.snippet?.thumbnails?.default?.url,
+      profile: { biography: String(channel.snippet?.description || "").slice(0, 2000) },
       token,
     },
   ];
@@ -548,9 +555,10 @@ export const completeSocialConnection = createServerFn({ method: "POST" })
     if (!discoveredAccounts.length) throw new Error("No publishable account was found.");
     const { data: existingConnections, error: existingError } = await db
       .from("social_connections")
-      .select("provider_user_id,refresh_token")
+      .select("provider_user_id,refresh_token,metadata")
       .eq("user_id", context.userId)
-      .eq("provider", data.provider);
+      .eq("provider", data.provider)
+      .limit(SOCIAL_CONNECTION_LIST_LIMIT);
     if (existingError) throw new Error("The connected accounts could not be checked.");
     const accounts = socialAccountsWithinLimit(
       (existingConnections || []).map((connection: any) => String(connection.provider_user_id)),
@@ -602,8 +610,18 @@ export const completeSocialConnection = createServerFn({ method: "POST" })
                     ? new Date(Date.now() + expiresIn * 1_000).toISOString()
                     : null,
               scopes,
-              ...(data.provider === "twitter" && account.xCapabilities
-                ? { metadata: xCapabilitiesMetadata(account.xCapabilities) }
+              ...(account.profile || (data.provider === "twitter" && account.xCapabilities)
+                ? {
+                    metadata: {
+                      ...(existingConnections?.find(
+                        (existing: any) => String(existing.provider_user_id) === account.id,
+                      )?.metadata || {}),
+                      ...(account.profile ? { profile: account.profile } : {}),
+                      ...(data.provider === "twitter" && account.xCapabilities
+                        ? xCapabilitiesMetadata(account.xCapabilities)
+                        : {}),
+                    },
+                  }
                 : {}),
               status: "active",
               last_error: null,

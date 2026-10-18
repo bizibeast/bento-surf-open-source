@@ -11,6 +11,7 @@ import { accessTokenForConnection, ProviderError } from "./social-publisher.serv
 import { parsePublicHttpUrl } from "./safe-url";
 import { BRAIN_MEDIA_BUDGET_BYTES } from "./content-media";
 import type { SocialProvider } from "./social-scheduler";
+import { CONTENT_MEDIA_IMPORT_COLUMNS, SOCIAL_CONNECTION_COLUMNS } from "./large-table-columns";
 
 export type ContentMediaImportMessage = {
   kind: "content_media_import";
@@ -154,7 +155,7 @@ export async function processContentMediaImportMessage(message: ContentMediaImpo
   const db = supabaseAdmin as any;
   const { data: row, error } = await db
     .from("creator_content_media")
-    .select("*")
+    .select(CONTENT_MEDIA_IMPORT_COLUMNS)
     .eq("user_id", userId)
     .eq("id", message.id)
     .eq("lease_id", message.leaseId)
@@ -177,7 +178,7 @@ export async function processContentMediaImportMessage(message: ContentMediaImpo
     if (!url && row.provider === "linkedin") {
       const connection = await db
         .from("social_connections")
-        .select("*")
+        .select(SOCIAL_CONNECTION_COLUMNS)
         .eq("id", row.connection_id)
         .eq("user_id", userId)
         .maybeSingle();

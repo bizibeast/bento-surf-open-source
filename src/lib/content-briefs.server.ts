@@ -8,10 +8,11 @@ import { reserveBrightDataSeoRequest } from "./seo-bright-data.server";
 import { sourceFreshnessTier, sourcePublicationTime } from "./content-source-recency";
 import { evaluateDiscoverQuality } from "./content-discover-quality";
 
-export const DISCOVER_BRIEF_VERSION = "social-v14";
+export const DISCOVER_BRIEF_VERSION = "social-v15";
 import {
   dedupeSourceItems,
   fetchHackerNewsStories,
+  fetchNewsStories,
   fetchRedditStories,
   fetchYouTubeStories,
   type ContentSourceItem,
@@ -155,6 +156,7 @@ export function discoverSourceWarnings(
 
 type TrendSourceDependencies = {
   search: typeof fetchSocialSearch;
+  news: typeof fetchNewsStories;
   youtube: typeof fetchYouTubeStories;
   reddit: typeof fetchRedditStories;
   hackerNews: typeof fetchHackerNewsStories;
@@ -168,6 +170,7 @@ export async function fetchTrendSources(
 ): Promise<PromiseSettledResult<ContentSourceItem[]>[]> {
   const dependencies: TrendSourceDependencies = {
     search: fetchSocialSearch,
+    news: fetchNewsStories,
     youtube: fetchYouTubeStories,
     reddit: fetchRedditStories,
     hackerNews: fetchHackerNewsStories,
@@ -263,6 +266,14 @@ export async function fetchTrendSources(
     ),
   );
   const officialResults = await Promise.allSettled([
+    named("News", () =>
+      dependencies.news(primaryTopic, {
+        limit: 25,
+        signal,
+        language: input.language,
+        region: input.region,
+      }),
+    ),
     named("YouTube", () =>
       dependencies.youtube(primaryTopic, {
         limit: 50,

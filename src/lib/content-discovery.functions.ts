@@ -7,6 +7,11 @@ import { hasPlanEntitlement } from "./plan.server";
 import { requireContentWorkspace } from "./content-access.server";
 import { contentProfileFromRow, contentProfileSchema, type BrainItem } from "./content-brain";
 import {
+  BRAIN_ITEM_COLUMNS,
+  CONTENT_PROFILE_COLUMNS,
+  SOCIAL_INSIGHT_COLUMNS,
+} from "./large-table-columns";
+import {
   discoverSourceWarnings,
   DISCOVER_BRIEF_VERSION,
   getOrBuildTrendBrief,
@@ -445,7 +450,11 @@ const defaultDependencies: CreatorDiscoverDependencies = {
   async loadCreatorContext(userId) {
     const db = supabaseAdmin as any;
     const [profileResult, hasBrain] = await Promise.all([
-      db.from("creator_content_profiles").select("*").eq("user_id", userId).maybeSingle(),
+      db
+        .from("creator_content_profiles")
+        .select(CONTENT_PROFILE_COLUMNS)
+        .eq("user_id", userId)
+        .maybeSingle(),
       hasPlanEntitlement(userId, "brain"),
     ]);
     const canUseBrain = hasBrain && profileResult.data?.discover_use_brain !== false;
@@ -454,7 +463,7 @@ const defaultDependencies: CreatorDiscoverDependencies = {
       canUseBrain
         ? db
             .from("creator_brain_items")
-            .select("*")
+            .select(BRAIN_ITEM_COLUMNS)
             .eq("user_id", userId)
             .eq("status", "confirmed")
             .order("updated_at", { ascending: false })
@@ -462,7 +471,7 @@ const defaultDependencies: CreatorDiscoverDependencies = {
         : Promise.resolve({ data: [], error: null }),
       db
         .from("social_content_insights")
-        .select("*")
+        .select(SOCIAL_INSIGHT_COLUMNS)
         .eq("user_id", userId)
         .gte("published_at", cutoff)
         .order("published_at", { ascending: false })
@@ -1199,7 +1208,7 @@ export const getDiscoverPreferences = createServerFn({ method: "GET" })
     await requireContentWorkspace(context.userId, "discover");
     const { data, error } = await (supabaseAdmin as any)
       .from("creator_content_profiles")
-      .select("*")
+      .select(CONTENT_PROFILE_COLUMNS)
       .eq("user_id", context.userId)
       .maybeSingle();
     if (error) throw new Error("Your Discover preferences could not be loaded.");

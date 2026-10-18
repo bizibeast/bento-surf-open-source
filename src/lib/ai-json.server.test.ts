@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { runAiJson, runAiProviderRequest, selectAiProvider } from "./ai-json.server";
+import {
+  decodeAiJsonResponse,
+  runAiJson,
+  runAiProviderRequest,
+  selectAiProvider,
+} from "./ai-json.server";
 import { reserveProviderUsage, ProviderBudgetError } from "./provider-budget.server";
 
 const schema = z.object({ answer: z.string().min(1).max(100) }).strict();
@@ -274,6 +279,66 @@ describe("validated AI JSON transport", () => {
       ),
     ).rejects.toThrow("down");
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("treats null gpt-oss content as missing when only reasoning is present", async () => {
+    const ai = {
+      run: vi.fn().mockResolvedValue({
+        choices: [
+          {
+            finish_reason: "length",
+            message: { content: null, reasoning_content: '{"answer":"hidden"}' },
+          },
+        ],
+      }),
+    };
+    await expect(
+      runAiJson(
+        { system: "Answer.", input: {}, schema, maxTokens: 100, temperature: 0 },
+        { AI: ai },
+      ),
+    ).rejects.toThrow("AI provider returned no structured output.");
+  });
+
+  it("reads a Responses API output array", () => {
+    expect(
+      decodeAiJsonResponse({
+        output: [
+          { type: "reasoning", summary: [] },
+          {
+            type: "message",
+            content: [{ type: "output_text", text: '{"answer":"Ready"}' }],
+          },
+        ],
+      }),
+    ).toEqual({ answer: "Ready" });
+  });
+
+  it("reads chat content part arrays", () => {
+    expect(
+      decodeAiJsonResponse({
+        choices: [
+          {
+            message: {
+              content: [
+                { type: "text", text: '{"answer":' },
+                { type: "output_text", text: '"Ready"}' },
+              ],
+            },
+          },
+        ],
+      }),
+    ).toEqual({ answer: "Ready" });
+  });
+
+  it("parses fenced and prefixed JSON", () => {
+    expect(decodeAiJsonResponse('```json\n{"answer":"Ready"}\n```')).toEqual({ answer: "Ready" });
+    expect(decodeAiJsonResponse('Note:\n```json\n{"answer":"Ready"}\n```')).toEqual({
+      answer: "Ready",
+    });
+    expect(decodeAiJsonResponse('Result follows {"answer":"Ready"} trailing note')).toEqual({
+      answer: "Ready",
+    });
   });
 
   it("fails closed without a provider or with malformed output", async () => {

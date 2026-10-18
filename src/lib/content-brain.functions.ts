@@ -16,6 +16,11 @@ import { recordContentEvent } from "./content-workspace-analytics.server";
 import { requestContentIndex } from "./content-index.server";
 import { contentMediaSearchTerms } from "./content-media";
 import { parsePublicHttpUrl } from "./safe-url";
+import {
+  BRAIN_ITEM_COLUMNS,
+  CONTENT_PROFILE_COLUMNS,
+  SOCIAL_CONNECTION_LIST_LIMIT,
+} from "./large-table-columns";
 
 const brainItemIdSchema = z.object({ id: z.string().uuid() });
 const lockBrainItemSchema = brainItemIdSchema.extend({ locked: z.boolean() });
@@ -32,10 +37,14 @@ export async function loadContentBrain(userId: string, itemLimit = 1000) {
     indexResult,
     identityResult,
   ] = await Promise.all([
-    db.from("creator_content_profiles").select("*").eq("user_id", userId).maybeSingle(),
+    db
+      .from("creator_content_profiles")
+      .select(CONTENT_PROFILE_COLUMNS)
+      .eq("user_id", userId)
+      .maybeSingle(),
     db
       .from("creator_brain_items")
-      .select("*")
+      .select(BRAIN_ITEM_COLUMNS)
       .eq("user_id", userId)
       .order("updated_at", { ascending: false })
       .limit(itemLimit),
@@ -43,7 +52,8 @@ export async function loadContentBrain(userId: string, itemLimit = 1000) {
       .from("social_connections")
       .select("id,provider,provider_handle,provider_display_name,status,reauth_required,created_at")
       .eq("user_id", userId)
-      .order("created_at", { ascending: true }),
+      .order("created_at", { ascending: true })
+      .limit(SOCIAL_CONNECTION_LIST_LIMIT),
     db
       .from("content_connections")
       .select("id,provider,display_name,status,last_success_at,created_at")

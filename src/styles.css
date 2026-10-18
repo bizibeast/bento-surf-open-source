@@ -764,6 +764,13 @@ textarea {
    the canvas never gets squeezed into a clipped desktop column. */
 .link-editor-shell {
   container: link-editor / inline-size;
+  padding-block-start: 1rem;
+  min-height: 0;
+}
+
+.link-editor-layout {
+  align-content: start;
+  align-items: start;
 }
 
 @container link-editor (min-width: 64rem) {
@@ -778,7 +785,7 @@ textarea {
     top: 0;
     align-self: start;
     align-items: flex-start;
-    min-height: calc(100vh - 4rem);
+    min-height: 0;
     overflow: visible;
     padding: 0 0.5rem 2rem 0.25rem;
     text-align: left;

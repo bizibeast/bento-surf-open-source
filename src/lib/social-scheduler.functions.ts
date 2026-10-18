@@ -8,6 +8,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { SOCIAL_CONNECTION_COLUMNS, SOCIAL_CONNECTION_LIST_LIMIT } from "./large-table-columns";
 import { enforceRequestRateLimit } from "./request-security.server";
 import {
   PUBLIC_SOCIAL_PROVIDERS,
@@ -227,7 +228,8 @@ async function schedulerData(userId: string, plan?: PlanId) {
         "id, provider, provider_handle, provider_display_name, provider_avatar_url, status, scopes, reauth_required, created_at, metadata, access_token, refresh_token, token_expires_at, connection_health, webhook_fields, last_verified_at",
       )
       .eq("user_id", userId)
-      .order("created_at", { ascending: true }),
+      .order("created_at", { ascending: true })
+      .limit(SOCIAL_CONNECTION_LIST_LIMIT),
     db
       .from("social_posts")
       .select(
@@ -409,7 +411,7 @@ export const getRedditCommunities = createServerFn({ method: "GET" })
     );
     const { data: connection, error } = await (supabaseAdmin as any)
       .from("social_connections")
-      .select("*")
+      .select(SOCIAL_CONNECTION_COLUMNS)
       .eq("id", data.connectionId)
       .eq("user_id", context.userId)
       .eq("provider", "reddit")
@@ -433,11 +435,12 @@ export const getTikTokCreatorInfo = createServerFn({ method: "GET" })
     );
     const { data: connections, error } = await (supabaseAdmin as any)
       .from("social_connections")
-      .select("*")
+      .select(SOCIAL_CONNECTION_COLUMNS)
       .eq("user_id", context.userId)
       .eq("provider", "tiktok")
       .eq("status", "active")
-      .in("id", data.connectionIds);
+      .in("id", data.connectionIds)
+      .limit(data.connectionIds.length);
     if (error || connections?.length !== new Set(data.connectionIds).size) {
       throw new Error("Reconnect TikTok before composing this post.");
     }
@@ -499,7 +502,8 @@ export async function saveSocialPostForUser(
       "id, provider, status, scopes, reauth_required, metadata, access_token, refresh_token, token_expires_at, connection_health, webhook_fields, last_verified_at",
     )
     .eq("user_id", userId)
-    .in("id", data.connectionIds);
+    .in("id", data.connectionIds)
+    .limit(data.connectionIds.length);
   if (connectionError) throw new Error("Connected accounts could not be verified.");
   if ((connections || []).length !== new Set(data.connectionIds).size) {
     throw new Error("One or more selected accounts are unavailable.");
@@ -633,7 +637,7 @@ export async function saveSocialPostForUser(
       redditConnections.map(async (summaryConnection: any) => {
         const { data: fullConnection, error } = await db
           .from("social_connections")
-          .select("*")
+          .select(SOCIAL_CONNECTION_COLUMNS)
           .eq("id", summaryConnection.id)
           .eq("user_id", userId)
           .maybeSingle();

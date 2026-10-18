@@ -106,7 +106,11 @@ function PublicBookingCalendar() {
   if (!data) return <CalendarNotFound />;
 
   return (
-    <PublicCreatorShell chrome={data.chrome} activePageId={data.page.id}>
+    <PublicCreatorShell
+      chrome={data.chrome}
+      activePageId={data.page.id}
+      documentHeading={data.page.name}
+    >
       <PublicSystemPageCanvas
         username={data.profile.username}
         blocks={data.blocks}

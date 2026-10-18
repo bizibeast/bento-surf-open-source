@@ -1,6 +1,79 @@
 import { expect, it, vi } from "vitest";
-import { generateOnboardingDrafts } from "./generation.server";
+import { citedInstagramPhoto, generateOnboardingDrafts } from "./generation.server";
 import { onboardingBriefSchema, buildManualCandidates, onboardingCandidatesSchema } from "./brief";
+
+it("only attaches a cited Instagram image with stable caption-filtered source IDs", () => {
+  const sources = [
+    {
+      id: "empty",
+      provider: "instagram",
+      caption: null,
+      content_type: "image",
+      remote_post_url: null,
+    },
+    {
+      id: "video",
+      provider: "instagram",
+      caption: "A video",
+      content_type: "video",
+      remote_post_url: null,
+    },
+    {
+      id: "photo",
+      provider: "instagram",
+      caption: "An owned photo story",
+      content_type: "carousel",
+      remote_post_url: null,
+    },
+  ];
+  const draft = {
+    title: "Lesson",
+    body: "Lesson",
+    platform: "linkedin" as const,
+    editorial: {
+      sourceIds: ["source-1"],
+      angle: "Lesson",
+      whyNow: "Useful",
+      validationState: "passed" as const,
+    },
+  };
+  expect(citedInstagramPhoto(draft, sources)).toBe("photo");
+  expect(
+    citedInstagramPhoto(
+      { ...draft, editorial: { ...draft.editorial, sourceIds: ["source-0"] } },
+      sources,
+    ),
+  ).toBeUndefined();
+  expect(citedInstagramPhoto({ ...draft, platform: "twitter" }, sources)).toBeUndefined();
+});
+it("keeps the selected photo story in a crowded evidence pack without reindexing sources", async () => {
+  const brief = onboardingBriefSchema.parse({ platform: "linkedin" });
+  const sources = Array.from({ length: 24 }, (_, index) => ({
+    id: `post-${index}`,
+    provider: "instagram",
+    caption: `Supported story ${index}`,
+    content_type: "image",
+    remote_post_url: null,
+  }));
+  const generate = vi.fn().mockResolvedValue({
+    status: "needs_input",
+    message: "Fixture",
+    card: { type: "idea" },
+    issues: [],
+  });
+  await generateOnboardingDrafts(
+    brief,
+    buildManualCandidates(brief),
+    sources,
+    generate,
+    Date.now() + 90000,
+    false,
+    "post-23",
+  );
+  expect(generate.mock.calls[0][0].sourceIds).toContain("source-23");
+  expect(generate.mock.calls[0][0].request).toContain("from source-23");
+});
+
 it("requires a supported output while retaining an imported video source brief", async () => {
   const brief = onboardingBriefSchema.parse({ platform: "youtube" });
   const result = await generateOnboardingDrafts(brief, buildManualCandidates(brief), []);
@@ -52,7 +125,7 @@ const ready = (index: number): EditorialGenerationResult => ({
     },
   },
 });
-it("generates three supported drafts and compares all accepted carousel slide text", async () => {
+it("generates one checked starter draft and preserves source dates", async () => {
   const brief = onboardingBriefSchema.parse({
     platform: "instagram",
     expertise: "Coral restoration",
@@ -77,39 +150,33 @@ it("generates three supported drafts and compares all accepted carousel slide te
     ],
     generate,
   );
-  expect(output.drafts).toHaveLength(3);
+  expect(output.drafts).toHaveLength(1);
+  expect(generate).toHaveBeenCalledOnce();
   expect(output.brain).toEqual(candidates.brain);
   expect(generate.mock.calls[0][0]).toMatchObject({ platform: "instagram", format: "carousel" });
-  expect(generate.mock.calls[2][0].recentOutputs).toHaveLength(2);
-  expect(
-    generate.mock.calls[2][0].recentOutputs.map((post: { body: string }) => post.body).join(" "),
-  ).toContain("Specific explanation 1");
   expect(generate.mock.calls[0][0].sources).toEqual(
     expect.arrayContaining([expect.objectContaining({ occurredAt: "2024-01-01" })]),
   );
   expect(generate.mock.calls[0][1].timeoutMs).toBeLessThanOrEqual(45000);
 });
-it("keeps completed drafts and distinguishes transient failures from missing evidence", async () => {
+it("distinguishes transient failures from missing evidence without additional paid attempts", async () => {
   const brief = onboardingBriefSchema.parse({ platform: "instagram" });
   for (const status of ["retry", "needs_input"] as const) {
-    const generate = vi
-      .fn()
-      .mockResolvedValueOnce(ready(1))
-      .mockResolvedValue({
-        status,
-        message: status === "retry" ? "Provider unavailable; retry." : "Add an original example.",
-        issues: [],
-        card: { type: "idea" },
-      });
+    const generate = vi.fn().mockResolvedValue({
+      status,
+      message: status === "retry" ? "Provider unavailable; retry." : "Add an original example.",
+      issues: [],
+      card: { type: "idea" },
+    });
     const result = await generateOnboardingDrafts(
       brief,
       buildManualCandidates(brief),
       [],
       generate,
     );
-    expect(result.drafts).toHaveLength(1);
+    expect(result.drafts).toHaveLength(0);
     expect(result).toHaveProperty("retry", status === "retry");
-    expect(generate).toHaveBeenCalledTimes(2);
+    expect(generate).toHaveBeenCalledOnce();
   }
 });
 it("does no generation after the shared deadline", async () => {
@@ -126,7 +193,7 @@ it("does no generation after the shared deadline", async () => {
   expect(result.warning).toMatch(/timed out/);
 });
 
-it("retains creator-edited partial drafts on retry and compares their complete slides before filling missing slots", async () => {
+it("retains a creator-edited draft on retry without generating another starter", async () => {
   const brief = onboardingBriefSchema.parse({ platform: "instagram" });
   const completed = ready(1).card;
   if (completed.type !== "draft") throw new Error("fixture");
@@ -145,12 +212,8 @@ it("retains creator-edited partial drafts on retry and compares their complete s
   const generate = vi.fn().mockResolvedValueOnce(ready(2)).mockResolvedValueOnce(ready(3));
   const result = await generateOnboardingDrafts(brief, candidates, [], generate);
   expect(result.drafts[0]).toEqual(candidates.drafts[0]);
-  expect(result.drafts).toHaveLength(3);
-  expect(generate).toHaveBeenCalledTimes(2);
-  expect(generate.mock.calls[0][0].recentOutputs[0].body).toContain(
-    "Creator's complete slide argument",
-  );
-  expect(generate.mock.calls[0][1].timeoutMs).toBe(45000);
+  expect(result.drafts).toHaveLength(1);
+  expect(generate).not.toHaveBeenCalled();
 });
 it("only replaces a completed starter batch on explicit refresh and still compares old copy", async () => {
   const brief = onboardingBriefSchema.parse({ platform: "instagram" });
@@ -163,6 +226,6 @@ it("only replaces a completed starter batch on explicit refresh and still compar
   expect(retained.drafts).toEqual(candidates.drafts);
   expect(generate).not.toHaveBeenCalled();
   await generateOnboardingDrafts(brief, candidates, [], generate, Date.now() + 90000, false);
-  expect(generate).toHaveBeenCalledTimes(3);
+  expect(generate).toHaveBeenCalledOnce();
   expect(generate.mock.calls[0][0].recentOutputs).toHaveLength(3);
 });

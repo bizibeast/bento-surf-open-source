@@ -22,6 +22,7 @@ import {
 import { getMediaBucket, mediaObjectUrl } from "./r2-storage.server";
 import { parsePublicHttpUrl } from "./safe-url";
 import { getPlan } from "./plan.server";
+import { CONTENT_PROFILE_COLUMNS } from "./large-table-columns";
 import { uploadLimitMb } from "./plans";
 import { nextContentRoutineRun } from "./content-routines";
 import { routineInputSchema } from "./content-routines.functions";
@@ -613,7 +614,11 @@ export async function getMcpContentDiscover(userId: string, creatorId?: string) 
   }
   const [discover, profile] = await Promise.all([
     readStoredDiscover(userId),
-    db().from("creator_content_profiles").select("*").eq("user_id", userId).maybeSingle(),
+    db()
+      .from("creator_content_profiles")
+      .select(CONTENT_PROFILE_COLUMNS)
+      .eq("user_id", userId)
+      .maybeSingle(),
   ]);
   if (profile.error) throw new Error("Discover preferences could not be loaded.");
   return {

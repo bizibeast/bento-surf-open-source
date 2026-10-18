@@ -1,6 +1,6 @@
 import userEvent from "@testing-library/user-event";
 import { act, fireEvent, render, screen, within, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ContentDiscoverData } from "@/lib/content-discovery.functions";
 import { ContentDiscover } from "./ContentDiscover";
 
@@ -76,8 +76,14 @@ const data: ContentDiscoverData = {
   status: "stale",
   lastRefreshedAt: "2026-09-18T08:00:00.000Z",
 };
+const fixedNow = new Date("2026-09-18T09:00:00.000Z");
 
 describe("ContentDiscover", () => {
+  beforeAll(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-18T09:00:00.000Z"));
+  });
+  afterAll(() => vi.useRealTimers());
   it("uses backend relevance scores without treating high scores as a tracking flag", () => {
     const unfollowed = {
       ...trend,
@@ -89,6 +95,7 @@ describe("ContentDiscover", () => {
     };
     render(
       <ContentDiscover
+        now={fixedNow}
         data={{
           ...data,
           creators: [],
@@ -114,6 +121,7 @@ describe("ContentDiscover", () => {
     const onSave = vi.fn();
     render(
       <ContentDiscover
+        now={fixedNow}
         data={{ ...data, trends: [{ ...trend, saved: true }], ideas: [] }}
         onLike={vi.fn()}
         onSave={onSave}
@@ -147,6 +155,7 @@ describe("ContentDiscover", () => {
       authorUrl: "https://www.reddit.com/user/alice",
     };
     const props = {
+      now: fixedNow,
       onLike: vi.fn(),
       onSave: vi.fn(),
       onReject: vi.fn(),
@@ -264,6 +273,7 @@ describe("ContentDiscover", () => {
     const onRefresh = vi.fn();
     const { rerender } = render(
       <ContentDiscover
+        now={fixedNow}
         data={data}
         refreshing
         refreshError={null}
@@ -281,6 +291,7 @@ describe("ContentDiscover", () => {
 
     rerender(
       <ContentDiscover
+        now={fixedNow}
         data={data}
         refreshing={false}
         refreshError="Recommendations could not be refreshed."

@@ -194,7 +194,13 @@ function publicationDate(value: unknown, unixSeconds = false) {
     value = new Date(seconds * 1_000).toISOString();
   }
   if (typeof value !== "string" || !value.trim()) return null;
-  const timestamp = sourcePublicationTime(value, Date.now());
+  // Public captions often provide only a calendar day. Interpret that day in
+  // UTC so its stored date does not shift with the Worker's or test host's zone.
+  const day = value.trim();
+  const timestamp = sourcePublicationTime(
+    /^[A-Za-z]+ \d{1,2}, \d{4}$/.test(day) ? `${day} UTC` : day,
+    Date.now(),
+  );
   return timestamp !== null && timestamp >= 946684800000 ? new Date(timestamp).toISOString() : null;
 }
 

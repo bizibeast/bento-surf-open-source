@@ -54,6 +54,11 @@ export default tseslint.config(
     },
   },
   {
+    // Shared SDK adapter has heterogeneous operation records; Zod validates each tool input.
+    files: ["src/lib/mcp.chatgpt.server.ts"],
+    rules: { "@typescript-eslint/no-explicit-any": "off" },
+  },
+  {
     files: ["src/components/ui/**/*.{ts,tsx}"],
     rules: { "react-refresh/only-export-components": "off" },
   },

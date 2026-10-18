@@ -6,7 +6,7 @@ vi.mock("./content-agent-config.server", () => ({
   proactiveDeliveryAvailable: () => rollout.enabled,
   proactiveWorkspaceIds: () => (rollout.enabled ? ["owner"] : []),
 }));
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   contentSignalFingerprint,
   processDueContentAgentSignals,
@@ -102,6 +102,10 @@ const productionMocks = vi.hoisted(() => ({
   generate: vi.fn(),
   context: vi.fn(),
 }));
+afterEach(() => {
+  delete productionMocks.rows.creator_content_profiles;
+  delete productionMocks.rows.content_trend_briefs;
+});
 vi.mock("@/integrations/supabase/client.server", () => ({
   supabaseAdmin: {
     rpc: (...args: unknown[]) => {
@@ -146,7 +150,11 @@ vi.mock("./content-agent.server", () => ({
 vi.mock("./content-editorial.server", () => ({
   generateEditorialDraft: (...args: unknown[]) => productionMocks.generate(...args),
 }));
-import { prepareContentAgentSignal, usefulDiscoverSources } from "./content-agent-proactive.server";
+import {
+  loadFreshBriefSources,
+  prepareContentAgentSignal,
+  usefulDiscoverSources,
+} from "./content-agent-proactive.server";
 import { contentAgentResultSchema } from "./content-agent";
 import { storedContentAgentResultSchema } from "./content-agent-proactive";
 const postId = "11111111-1111-4111-8111-111111111111";
@@ -288,8 +296,75 @@ it("Discover variants share dismissed/saved feedback and require fresh substanti
     usefulDiscoverSources([
       { ...source, summary: "weak" },
       { ...source, source_published_at: "2020-01-01" },
+      { ...source, source_published_at: new Date(Date.now() - 4 * 86400000).toISOString() },
     ]),
   ).toEqual([]);
+});
+
+it("grounds a fresh Agent signal in its current external source rather than workspace history", async () => {
+  const source = {
+    source_url: "https://x.com/creator/status/123",
+    source_published_at: new Date().toISOString(),
+    title: "A startup funding announcement",
+    summary:
+      "A newly reported startup funding round with a concrete decision for founders. ".repeat(2),
+    reason: "A specific current development for this creator's audience",
+    feedback: "pending",
+  };
+  productionMocks.rows.creator_content_recommendations = [source];
+  productionMocks.context.mockResolvedValue({
+    brain: [],
+    sources: [
+      {
+        id: "github:old",
+        title: "Old product update",
+        text: "A tool shipped last month.",
+        occurredAt: null,
+        external: false,
+      },
+    ],
+  });
+  productionMocks.generate.mockResolvedValue({
+    status: "ready",
+    card: { ...draft, editorial: { ...draft.editorial, sourceIds: ["x:123"] } },
+  });
+  const result = await prepareContentAgentSignal(signal);
+  expect(result?.cards).toHaveLength(1);
+  const brief = productionMocks.generate.mock.calls.at(-1)?.[0];
+  expect(brief.requiredRecentSourceIds).toEqual(["x:123"]);
+  expect(brief.sources.some((item: { id: string }) => item.id === "github:old")).toBe(false);
+});
+
+it("scans the shared current brief even when Discover recommendations have not refreshed", async () => {
+  productionMocks.rows.creator_content_profiles = {
+    niche_keywords: ["startup journey"],
+    language: "en",
+    region: "global",
+  };
+  productionMocks.rows.content_trend_briefs = {
+    items: [
+      {
+        canonicalUrl: "https://example.com/new-report",
+        title: "Startup announces a new funding round",
+        summary:
+          "The company announced its funding round and described the next product milestone for founders.",
+        sourceName: "Example News",
+        publishedAt: new Date().toISOString(),
+        retrievedAt: new Date().toISOString(),
+        kind: "rss",
+      },
+    ],
+  };
+  productionMocks.rows.creator_content_recommendations = [];
+  productionMocks.rows.content_agent_signals = [];
+  expect(await loadFreshBriefSources("owner")).toHaveLength(1);
+  productionMocks.rpc.mockClear();
+  const { enqueueFreshSourceSignals } = await import("./content-agent-proactive.server");
+  expect(await enqueueFreshSourceSignals("owner")).toBe(1);
+  expect(productionMocks.rpc).toHaveBeenCalledWith(
+    "enqueue_content_agent_signal",
+    expect.objectContaining({ p_user_id: "owner", p_source_ids: ["example.com/new-report"] }),
+  );
 });
 
 it("advances beyond already-seen Discover originals in a bounded scan", async () => {
@@ -464,6 +539,26 @@ it("the worker prepares only a real gap and carries its exact platform and slot"
           text: "A concrete pricing decision with a measured comparison. ".repeat(5),
           occurredAt: "2026-10-11T09:00:00Z",
           external: false,
+        },
+      ],
+    });
+    expect(
+      await prepareContentAgentSignal({
+        ...signal,
+        kind: "schedule_gap",
+        source_ids: ["upcoming-schedule"],
+      }),
+    ).toBeNull();
+    productionMocks.context.mockResolvedValue({
+      brain: [],
+      sources: [
+        {
+          id: "source-1",
+          title: "Current creator pricing research",
+          text: "A concrete pricing decision with a measured comparison. ".repeat(5),
+          occurredAt: "2026-10-11T09:00:00Z",
+          url: "https://example.com/current-research",
+          external: true,
         },
       ],
     });

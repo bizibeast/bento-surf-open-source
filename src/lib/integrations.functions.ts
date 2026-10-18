@@ -13,6 +13,7 @@ import { notionReady } from "./notion-content.server";
 import { granolaReady } from "./granola-content.server";
 import { githubReady } from "./github-content.server";
 import { slackReady } from "./slack-content.server";
+import { SOCIAL_CONNECTION_LIST_LIMIT } from "./large-table-columns";
 
 export const getIntegrationOverview = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -25,7 +26,8 @@ export const getIntegrationOverview = createServerFn({ method: "GET" })
           "id,provider,provider_handle,provider_display_name,provider_avatar_url,status,scopes,reauth_required,last_error",
         )
         .eq("user_id", context.userId)
-        .order("created_at", { ascending: true }),
+        .order("created_at", { ascending: true })
+        .limit(SOCIAL_CONNECTION_LIST_LIMIT),
       db
         .from("booking_calendar_connections")
         .select("id,email,display_name,status,is_default")

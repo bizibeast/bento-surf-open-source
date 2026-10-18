@@ -1,6 +1,10 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { buildManualCandidates, onboardingBriefSchema } from "./brief";
-const mocks = vi.hoisted(() => ({ row: {} as Record<string, unknown>, generate: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  row: {} as Record<string, unknown>,
+  generate: vi.fn(),
+  activateRpc: vi.fn(),
+}));
 vi.mock("@tanstack/react-start", () => ({
   createServerFn: () => {
     let validate = (value: unknown) => value;
@@ -20,6 +24,12 @@ vi.mock("@tanstack/react-start", () => ({
 }));
 vi.mock("@/integrations/supabase/auth-middleware", () => ({ requireSupabaseAuth: {} }));
 vi.mock("../request-security.server", () => ({ enforceRequestRateLimit: vi.fn() }));
+vi.mock("../plan.server", () => ({
+  getPlan: vi.fn(),
+  isSelfHostedEdition: vi.fn(),
+  requirePlanEntitlement: vi.fn(),
+}));
+vi.mock("../public-profile-cache.server", () => ({ clearPublicProfileCache: vi.fn() }));
 vi.mock("../username-alias.server", () => ({
   resolvePublicUsername: vi.fn().mockResolvedValue(null),
 }));
@@ -27,6 +37,11 @@ vi.mock("./export.server", () => ({
   readOnboardingExport: vi.fn().mockResolvedValue({ brain: [], drafts: [] }),
 }));
 vi.mock("./generation.server", () => ({ processOnboardingGeneration: mocks.generate }));
+vi.mock("./evidence.server", () => ({
+  loadOnboardingEvidence: vi
+    .fn()
+    .mockResolvedValue({ profiles: [], postCount: 0, standout: null, inspirations: [] }),
+}));
 vi.mock("./session.server", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./session.server")>();
   return {
@@ -34,6 +49,7 @@ vi.mock("./session.server", async (importOriginal) => {
     requireOnboardingPreview: async () => mocks.row,
     readOnboardingSession: async () => mocks.row,
     onboardingDb: {
+      rpc: mocks.activateRpc,
       from: () => {
         let patch: Record<string, unknown> = {};
         const query = {
@@ -59,7 +75,42 @@ import {
   saveOnboarding,
   editOnboardingCandidates,
   exportOnboardingContent,
+  activateOnboarding,
 } from "./functions";
+it("retains server-owned media and personalization when a client spoofs draft fields", async () => {
+  const candidates = buildManualCandidates(onboardingBriefSchema.parse({}));
+  candidates.personalization = {
+    generation: 1,
+    status: "ready",
+    profileCount: 1,
+    postCount: 2,
+    note: "Built from owned sources.",
+  };
+  candidates.drafts = [
+    {
+      title: "Checked draft",
+      body: "A supported lesson.",
+      platform: "linkedin",
+      mediaIds: ["11111111-1111-4111-8111-111111111111"],
+      mediaPreview: {
+        mediaId: "11111111-1111-4111-8111-111111111111",
+        url: "https://cdn.bento.surf/owned.jpg",
+        alt: "Owned image",
+        sourceUrl: null,
+      },
+    },
+  ];
+  mocks.row.candidates = candidates;
+  const supplied = structuredClone(candidates);
+  supplied.personalization!.note = "Client forged this status";
+  supplied.drafts[0].mediaIds = ["22222222-2222-4222-8222-222222222222"];
+  supplied.drafts[0].mediaPreview!.url = "https://example.com/spoof.jpg";
+  const edited = await editOnboardingCandidates({ data: { revision: 4, candidates: supplied } });
+  expect(edited.candidates?.drafts[0].mediaIds).toEqual(candidates.drafts[0].mediaIds);
+  expect(edited.candidates?.drafts[0].mediaPreview).toEqual(candidates.drafts[0].mediaPreview);
+  expect(edited.candidates?.personalization).toEqual(candidates.personalization);
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   const brief = onboardingBriefSchema.parse({
@@ -204,4 +255,27 @@ it("preserves the server's deferred archive when a Brain edit omits or clears th
     data: { revision: edited.revision, candidates: { ...edited.candidates!, deferredDrafts: [] } },
   });
   expect(cleared.candidates?.deferredDrafts).toEqual(deferredDrafts);
+});
+
+it("keeps a prepared review valid when only the setup step is saved", async () => {
+  mocks.row.status = "prepared";
+  mocks.row.approved_revision = 2;
+  const saved = await saveOnboarding({
+    data: { revision: 4, step: 4, brief: mocks.row.brief },
+  });
+  expect(saved.status).toBe("prepared");
+  expect(mocks.row.approved_revision).toBe(5);
+});
+
+it("recovers an older prepared approval before activating a granted workspace", async () => {
+  mocks.row.status = "prepared";
+  mocks.row.approved_revision = 2;
+  mocks.activateRpc.mockImplementation(async () => {
+    expect(mocks.row.approved_revision).toBe(4);
+    mocks.row.status = "applied";
+    return { error: null };
+  });
+  const activated = await activateOnboarding();
+  expect(mocks.activateRpc).toHaveBeenCalledOnce();
+  expect(activated.status).toBe("applied");
 });

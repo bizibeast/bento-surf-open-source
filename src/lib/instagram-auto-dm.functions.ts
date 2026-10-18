@@ -4,6 +4,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { SOCIAL_CONNECTION_LIST_LIMIT } from "./large-table-columns";
 import { enforceRequestRateLimit } from "./request-security.server";
 import { readResponseText } from "./request-security.server";
 import {
@@ -71,7 +72,8 @@ async function ownedConnections(userId: string): Promise<ConnectionRow[]> {
     )
     .eq("user_id", userId)
     .eq("provider", "instagram")
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: true })
+    .limit(SOCIAL_CONNECTION_LIST_LIMIT);
   if (error) throw new Error("Unable to load Instagram connections.");
   return (data || []) as ConnectionRow[];
 }

@@ -1,4 +1,5 @@
 import { requireOnboardingPreview } from "./onboarding/session.server";
+import { SOCIAL_CONNECTION_LIST_LIMIT } from "./large-table-columns";
 import { hasPlanEntitlement } from "./plan.server";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
@@ -196,7 +197,8 @@ async function listConnections(userId: string) {
     )
     .eq("user_id", userId)
     .eq("provider", "instagram")
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: true })
+    .limit(SOCIAL_CONNECTION_LIST_LIMIT);
   if (error) throw new Error("Unable to read Instagram connections.");
   return ((data ?? []) as unknown as SocialConnectionRow[]).map(sanitized);
 }

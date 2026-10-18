@@ -4,6 +4,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { getPlan } from "./plan.server";
 import { planHasEntitlement } from "./plans";
 import { socialRetryDelaySeconds, type SocialProvider } from "./social-scheduler";
+import { SOCIAL_CONNECTION_COLUMNS } from "./large-table-columns";
 import {
   accessTokenForConnection,
   providerJson,
@@ -161,7 +162,7 @@ export async function processSocialRepostMessage(message: SocialRepostMessage) {
   const { data: target, error: targetError } = await db
     .from("social_post_targets")
     .select(
-      "id, provider, status, post_id, connection_id, remote_post_id, post:social_posts(user_id), connection:social_connections(*)",
+      `id, provider, status, post_id, connection_id, remote_post_id, post:social_posts(user_id), connection:social_connections(${SOCIAL_CONNECTION_COLUMNS})`,
     )
     .eq("id", message.targetId)
     .maybeSingle();

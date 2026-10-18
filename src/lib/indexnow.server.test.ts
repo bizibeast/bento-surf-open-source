@@ -63,7 +63,11 @@ describe("IndexNow publication notification", () => {
       fetchImpl,
     );
 
-    expect(result.submitted).toEqual(["https://bento.surf/blog/creator-website-checklist"]);
+    expect(result.submitted).toEqual([
+      "https://bento.surf/blog/creator-website-checklist",
+      "https://bento.surf/blog",
+      "https://bento.surf/sitemaps/blog.xml",
+    ]);
     expect(fetchImpl).toHaveBeenCalledOnce();
     const [endpoint, init] = fetchImpl.mock.calls[0]!;
     expect(endpoint).toBe("https://api.indexnow.org/indexnow");
@@ -71,8 +75,26 @@ describe("IndexNow publication notification", () => {
       host: "bento.surf",
       key: KEY,
       keyLocation: `https://bento.surf/${KEY}.txt`,
-      urlList: ["https://bento.surf/blog/creator-website-checklist"],
+      urlList: [
+        "https://bento.surf/blog/creator-website-checklist",
+        "https://bento.surf/blog",
+        "https://bento.surf/sitemaps/blog.xml",
+      ],
     });
+  });
+
+  it("submits the listing URLs when a published article is unpublished", () => {
+    expect(
+      indexNowUrlsForSeoArticle(
+        "https://bento.surf",
+        { slug: "creator-website-checklist", status: "published" },
+        { slug: "creator-website-checklist", status: "archived" },
+      ),
+    ).toEqual([
+      "https://bento.surf/blog/creator-website-checklist",
+      "https://bento.surf/blog",
+      "https://bento.surf/sitemaps/blog.xml",
+    ]);
   });
 
   it("submits the old and new public URLs when a published slug changes", () => {
@@ -82,7 +104,12 @@ describe("IndexNow publication notification", () => {
         { slug: "old-slug", status: "published" },
         { slug: "new-slug", status: "published" },
       ),
-    ).toEqual(["https://bento.surf/blog/new-slug", "https://bento.surf/blog/old-slug"]);
+    ).toEqual([
+      "https://bento.surf/blog/new-slug",
+      "https://bento.surf/blog/old-slug",
+      "https://bento.surf/blog",
+      "https://bento.surf/sitemaps/blog.xml",
+    ]);
   });
 
   it("does not notify staging or URLs on another host", async () => {

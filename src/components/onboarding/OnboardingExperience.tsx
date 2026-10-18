@@ -1,34 +1,18 @@
-import { consumeReferralAttribution } from "@/lib/referral.functions";
-import {
-  getPendingUsername,
-  clearPendingUsername,
-  selectOnboardingUsername,
-} from "@/lib/pending-username";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { configuredPublicOrigin } from "@/lib/application-urls";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   ArrowLeft,
   ArrowRight,
-  Brain,
   Check,
   CheckCircle2,
-  Copy,
   CreditCard,
-  FileText,
-  Globe,
-  Loader2,
   LockKeyhole,
-  Plus,
-  RefreshCw,
+  Loader2,
   Sparkles,
-  X,
 } from "lucide-react";
-import { SiFacebook, SiInstagram, SiThreads, SiTiktok, SiX, SiYoutube } from "react-icons/si";
-import { FaLinkedinIn } from "react-icons/fa";
-import { toast } from "sonner";
 import { AuthBrand } from "@/components/AuthShell";
-import { OnboardingPreview, previewThemes } from "./OnboardingPreview";
 import {
   activateOnboarding,
   approveOnboarding,
@@ -41,18 +25,16 @@ import {
   saveOnboarding,
 } from "@/lib/onboarding/functions";
 import {
-  ONBOARDING_GOALS,
-  ONBOARDING_PLATFORMS,
   ONBOARDING_OUTPUT_PLATFORMS,
   onboardingBriefSchema,
-  recommendedPlan,
+  hasUnsupportedOnboardingDrafts,
   type OnboardingBrief,
   type OnboardingCandidates,
+  type ONBOARDING_PLATFORMS,
 } from "@/lib/onboarding/brief";
 import type { OnboardingSession } from "@/lib/onboarding/session.server";
 import { beginInstagramConnection } from "@/lib/social-connections.functions";
 import { beginSocialConnection } from "@/lib/social-oauth.functions";
-import { SOCIAL_PROVIDER_DEFINITIONS } from "@/lib/social-scheduler";
 import { createCheckout } from "@/lib/billing.functions";
 import {
   PAID_PLAN_IDS,
@@ -63,174 +45,245 @@ import {
   type PaidPlanId,
 } from "@/lib/plans";
 import { checkUsername } from "@/lib/profile.functions";
+import { usernameSchema } from "@/lib/username";
 import { clearOnboardedCache } from "@/lib/auth-entry";
 import { safeNavigationHref } from "@/lib/safe-url";
 import { publicProfileUrl } from "@/lib/application-urls";
 import { captureProductEvent } from "@/lib/posthog";
-import { motionTokens } from "@/lib/motion";
+import { consumeReferralAttribution } from "@/lib/referral.functions";
+import {
+  clearPendingUsername,
+  getPendingUsername,
+  selectOnboardingUsername,
+} from "@/lib/pending-username";
+import {
+  BrainBook,
+  FirstDraft,
+  OnboardingPlanChoices,
+  LinkIdentity,
+  PersonAvatar,
+  PreparationInProgress,
+  RelatedInspiration,
+  SocialConnections,
+  StandoutPost,
+  type OnboardingConnection,
+} from "./OnboardingScreens";
+import "./onboarding.css";
 
-const icons = {
-  instagram: SiInstagram,
-  twitter: SiX,
-  linkedin: FaLinkedinIn,
-  facebook: SiFacebook,
-  threads: SiThreads,
-  tiktok: SiTiktok,
-  youtube: SiYoutube,
+type ContextField = "displayName" | "expertise" | "audience";
+const questions: Record<ContextField, { title: string; hint: string; placeholder: string }> = {
+  displayName: {
+    title: "What should we call you?",
+    hint: "The name you want people to know you by.",
+    placeholder: "Your name",
+  },
+  expertise: {
+    title: "What do you create or know best?",
+    hint: "A sentence is plenty. This helps Bento find the useful threads in your work.",
+    placeholder: "I make photography feel simple for beginners…",
+  },
+  audience: {
+    title: "Who is your target audience that you want to help?",
+    hint: "Be as specific as you like. You can refine this in your Brain later.",
+    placeholder: "People starting their first creative business…",
+  },
 };
-const steps = ["Welcome", "Connect", "Direction", "Voice", "Your page", "Your trial", "Ready"];
-const inputClass =
-  "mt-2 w-full rounded-xl border border-black/10 bg-white px-4 py-3 text-sm text-[#17213a] outline-none transition-colors focus:border-[#3478f6] focus:ring-2 focus:ring-[#3478f6]/15";
-const secondary =
-  "inline-flex items-center justify-center gap-2 rounded-xl border border-black/10 bg-white px-4 py-2.5 text-sm font-medium transition-colors hover:bg-slate-50 disabled:opacity-50";
-const primary =
-  "inline-flex items-center justify-center gap-2 rounded-xl bg-[#3478f6] px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-[#2563db] disabled:opacity-50";
-const headings = [
-  "Let's get your business ready.",
-  "Bring what you've already built.",
-  "What should Bento help you achieve first?",
-  "Make it sound like you.",
-  "Make this your home on the internet.",
-  "Your work is prepared. Make it yours.",
-  "Your Bento is ready.",
-];
-const subtitles = [
-  "A page for your work. A Brain that knows your voice. A clear next step.",
-  "Connect one account. We'll use the profile and available posts to give you a head start.",
-  "One priority is enough. We'll shape your page and content around it.",
-  "Review what Bento should remember, so you don't have to explain yourself every time.",
-  "A few finishing touches, and your page is ready for activation.",
-  `Start ${TRIAL_DAYS} full days with Creator Plus. Choose the plan that continues afterward.`,
-  "Your page, your voice, and your next move, in one workspace.",
-];
-function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
-  return (
-    <label className="block text-sm font-medium">
-      {label}
-      {children}
-      {hint && (
-        <span className="mt-1.5 block text-xs font-normal leading-relaxed text-slate-500">
-          {hint}
-        </span>
-      )}
-    </label>
-  );
-}
+const missingContext = (brief: OnboardingBrief) =>
+  (["displayName", "expertise", "audience"] as const).find((key) => !brief[key].trim());
+const chapterFor = (step: number) => (step === 0 ? 0 : step === 1 ? 1 : step < 5 ? 2 : 3);
+const normalizedStep = (session: OnboardingSession) =>
+  session.status === "applied" ? 6 : session.step === 4 ? 3 : session.step;
 
 export function OnboardingExperience() {
-  const reduced = useReducedMotion();
   const queryClient = useQueryClient();
+  const reduced = useReducedMotion();
+  const [session, setSession] = useState<OnboardingSession | null>(null);
+  const [brief, setBrief] = useState(() => onboardingBriefSchema.parse({}));
+  const [candidates, setCandidates] = useState<OnboardingCandidates | null>(null);
+  const [step, setStep] = useState(0);
+  const [contextField, setContextField] = useState<ContextField>("audience");
+  const [reveal, setReveal] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [savedLabel, setSavedLabel] = useState("Saved");
+  const [plan, setPlan] = useState<PaidPlanId>("creator_plus");
+  const [period, setPeriod] = useState<BillingPeriod>("monthly");
+  const [usernameStatus, setUsernameStatus] = useState<"idle" | "checking" | "available" | "taken">(
+    "idle",
+  );
+  const sessionRef = useRef<OnboardingSession | null>(null);
+  const briefRef = useRef(brief);
+  const candidateEdits = useRef<OnboardingCandidates | null>(null);
+  const saveQueue = useRef<Promise<OnboardingSession | null>>(Promise.resolve(null));
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const query = useQuery({
     queryKey: ["onboarding"],
     queryFn: () => getOnboarding(),
-    refetchInterval: (q) =>
-      ["queued", "running"].includes(q.state.data?.session.jobStatus ?? "") ||
-      q.state.data?.session.status === "prepared"
-        ? 2500
+    refetchInterval: (current) =>
+      ["queued", "running"].includes(current.state.data?.session.jobStatus || "") ||
+      current.state.data?.session.status === "prepared"
+        ? 3000
         : false,
   });
-  const [session, setSession] = useState<OnboardingSession | null>(null);
-  const currentSession = useRef<OnboardingSession | null>(null);
-  const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
-  const [brief, setBrief] = useState(() => onboardingBriefSchema.parse({}));
-  const [candidates, setCandidates] = useState<OnboardingCandidates | null>(null);
-  const candidateEdits = useRef<OnboardingCandidates | null>(null);
-  const [step, setStep] = useState(0);
-  const [plan, setPlan] = useState<PaidPlanId>("creator_plus");
-  const [period, setPeriod] = useState<BillingPeriod>("monthly");
-  const selectedPrice = PLAN_PRICING[plan][period];
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [savedLabel, setSavedLabel] = useState("Your progress is saved as you go");
-  const [allowPartial, setAllowPartial] = useState(false);
-  const [importNote, setImportNote] = useState<string | null>(null);
-  const [linkTitle, setLinkTitle] = useState("");
-  const [linkUrl, setLinkUrl] = useState("");
-  const headingRef = useRef<HTMLHeadingElement>(null);
-  useEffect(() => {
-    headingRef.current?.focus({ preventScroll: true });
-  }, [step]);
+  const connections = (query.data?.connections || []) as OnboardingConnection[];
+  const hasHostedAccess = Boolean(
+    query.data?.selfHosted || (query.data?.plan && query.data.plan !== "free"),
+  );
+  const trialEligible = query.data?.trialEligible !== false;
+  const building = busy || Boolean(session && ["queued", "running"].includes(session.jobStatus));
 
+  function updateBrief(value: OnboardingBrief) {
+    briefRef.current = value;
+    setBrief(value);
+  }
+  function patch<K extends keyof OnboardingBrief>(key: K, value: OnboardingBrief[K]) {
+    updateBrief({ ...briefRef.current, [key]: value });
+  }
   function accept(next: OnboardingSession, replaceBrief = false) {
-    currentSession.current = next;
+    if (sessionRef.current && next.revision < sessionRef.current.revision) return;
+    sessionRef.current = next;
     setSession(next);
     if (!candidateEdits.current) setCandidates(next.candidates);
-    if (replaceBrief) setBrief(next.brief);
+    if (replaceBrief) updateBrief(next.brief);
   }
+  useEffect(() => {
+    void consumeReferralAttribution().catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }, [step, contextField, reveal]);
   useEffect(() => {
     const next = query.data?.session;
     if (!next) return;
-    if (currentSession.current?.workspaceId !== next.workspaceId) {
-      accept(next, true);
-      setStep(next.step);
-      if (next.step === 0)
-        setBrief({
-          ...next.brief,
-          username: selectOnboardingUsername(
-            next.brief.username,
-            getPendingUsername(window.sessionStorage),
-          ),
-        });
-      void consumeReferralAttribution().catch(() => undefined);
-      const pricingSelection = window.sessionStorage.getItem("bentoPricingSelection");
-      let preferred: { plan?: string; period?: string } | null = null;
-      try {
-        preferred = pricingSelection ? JSON.parse(pricingSelection) : null;
-      } catch {
-        preferred = null;
-      }
-      setPlan(
-        preferred?.plan && PAID_PLAN_IDS.includes(preferred.plan as PaidPlanId)
-          ? (preferred.plan as PaidPlanId)
-          : recommendedPlan(next.brief.goal),
+    if (!sessionRef.current) {
+      const initial: OnboardingBrief = {
+        ...next.brief,
+        platform:
+          next.step === 0 && next.generationCount === 0 && !next.candidates
+            ? "linkedin"
+            : (ONBOARDING_OUTPUT_PLATFORMS as readonly string[]).includes(next.brief.platform)
+              ? next.brief.platform
+              : "linkedin",
+        goal:
+          next.step === 0 &&
+          next.generationCount === 0 &&
+          !next.candidates &&
+          next.brief.goal === "presence"
+            ? "grow"
+            : next.brief.goal,
+        username:
+          next.step === 0
+            ? selectOnboardingUsername(
+                next.brief.username,
+                getPendingUsername(window.sessionStorage),
+              )
+            : next.brief.username,
+        timezone: next.brief.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+      };
+      accept(
+        {
+          ...next,
+          brief: initial,
+          candidates:
+            next.status !== "applied" &&
+            next.candidates &&
+            hasUnsupportedOnboardingDrafts(next.candidates)
+              ? null
+              : next.candidates,
+        },
+        true,
       );
-      setPeriod(preferred?.period === "yearly" ? "yearly" : "monthly");
+      setStep(
+        window.sessionStorage.getItem("bentoOnboardingSocialReturn") ? 1 : normalizedStep(next),
+      );
+      window.sessionStorage.removeItem("bentoOnboardingSocialReturn");
+      setContextField(missingContext(initial) || "audience");
+      try {
+        const choice = JSON.parse(window.sessionStorage.getItem("bentoPricingSelection") || "null");
+        if (choice?.plan && PAID_PLAN_IDS.includes(choice.plan)) setPlan(choice.plan);
+        if (choice?.period === "yearly") setPeriod("yearly");
+      } catch {
+        /* An invalid saved pricing preference does not block setup. */
+      }
     } else if (
-      ["running", "queued"].includes(currentSession.current.jobStatus) &&
-      next.revision === currentSession.current.revision
+      next.revision === sessionRef.current.revision &&
+      (["queued", "running"].includes(sessionRef.current.jobStatus) ||
+        (next.status === "applied" && sessionRef.current.status !== "applied"))
     )
       accept(next);
+    // A query refresh must not overwrite answers currently being typed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query.data]);
-  function save(nextStep: number, value = brief) {
-    const pending = saveQueue.current
-      .catch(() => undefined)
-      .then(async () => {
-        if (!currentSession.current) throw new Error("Your workspace is still loading.");
-        const pendingEdits = candidateEdits.current;
-        if (pendingEdits) {
-          const edited = await editOnboardingCandidates({
-            data: { revision: currentSession.current.revision, candidates: pendingEdits },
-          });
-          if (candidateEdits.current === pendingEdits) candidateEdits.current = null;
-          accept(edited);
-        }
-        const next = await saveOnboarding({
-          data: { revision: currentSession.current.revision, step: nextStep, brief: value },
+  useEffect(() => {
+    if (step !== 0) return;
+    let current = true;
+    const username = brief.username;
+    if (!usernameSchema.safeParse(username).success) {
+      setUsernameStatus("idle");
+      return;
+    }
+    if (username === query.data?.currentUsername) {
+      setUsernameStatus("available");
+      return;
+    }
+    setUsernameStatus("checking");
+    const timer = window.setTimeout(() => {
+      void checkUsername({ data: { username } })
+        .then((result) => {
+          if (current) setUsernameStatus(result.available ? "available" : "taken");
+        })
+        .catch(() => {
+          if (current) setUsernameStatus("idle");
         });
-        accept(next);
-        setSavedLabel("Saved to your workspace");
-        return next;
+    }, 350);
+    return () => {
+      current = false;
+      window.clearTimeout(timer);
+    };
+  }, [brief.username, query.data?.currentUsername, step]);
+
+  function save(nextStep = step, value = briefRef.current) {
+    const task = saveQueue.current
+      .catch(() => null)
+      .then(async () => {
+        let latest = sessionRef.current;
+        if (!latest) throw new Error("Your setup is still loading.");
+        const edits = candidateEdits.current;
+        if (edits) {
+          latest = await editOnboardingCandidates({
+            data: { revision: latest.revision, candidates: edits },
+          });
+          if (candidateEdits.current === edits) candidateEdits.current = null;
+          accept(latest);
+        }
+        const saved = await saveOnboarding({
+          data: { revision: latest.revision, step: Math.min(nextStep, 5), brief: value },
+        });
+        accept(saved);
+        setSavedLabel("Saved");
+        return saved;
       });
-    saveQueue.current = pending;
-    return pending;
+    saveQueue.current = task;
+    return task;
   }
   useEffect(() => {
     if (
       !session ||
       session.status === "applied" ||
       busy ||
+      !onboardingBriefSchema.safeParse(brief).success ||
       (!candidateEdits.current && JSON.stringify(brief) === JSON.stringify(session.brief))
     )
       return;
-    setSavedLabel("Saving your changes…");
+    setSavedLabel("Saving…");
     const timer = window.setTimeout(() => {
-      void save(step).catch((cause) => {
-        setSavedLabel("Changes need saving");
+      void save().catch((cause) => {
+        setSavedLabel("Not saved yet");
         setError(cause instanceof Error ? cause.message : "Could not save.");
       });
     }, 700);
     return () => window.clearTimeout(timer);
-    // Writes are serialized against the latest server revision.
+    // All writes are serialized against the latest server revision.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [brief, candidates, busy, step]);
   async function action(run: () => Promise<void>) {
@@ -245,8 +298,7 @@ export function OnboardingExperience() {
     }
   }
   async function activate() {
-    const next = await activateOnboarding();
-    accept(next, true);
+    accept(await activateOnboarding(), true);
     setStep(6);
     clearOnboardedCache();
     clearPendingUsername(window.sessionStorage);
@@ -254,53 +306,32 @@ export function OnboardingExperience() {
     captureProductEvent("onboarding_workspace_ready");
   }
   useEffect(() => {
-    if (session?.status !== "prepared" || step !== 5 || busy) return;
-    if (!query.data?.plan || query.data.plan === "free") return;
-    void action(activate);
-    // The server's verified access controls activation, never the return URL query.
+    if (session?.status === "prepared" && step === 5 && hasHostedAccess && !busy)
+      void action(activate);
+    // Only verified server access can activate a workspace.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query.data?.plan, query.data?.selfHosted, session?.status, step]);
-  function patch<K extends keyof OnboardingBrief>(key: K, value: OnboardingBrief[K]) {
-    setBrief((current) => ({ ...current, [key]: value }));
-  }
-  async function forward() {
-    await action(async () => {
-      if (step === 2 && (!brief.displayName || !brief.expertise || !brief.audience))
-        throw new Error("Add your name, expertise and audience so Bento can make this yours.");
-      if (step === 3) {
-        const latest = await save(3);
-        if (!latest.candidates)
-          throw new Error(
-            "Your answers changed. Prepare your starting point again before continuing.",
-          );
-      }
-      if (step === 4) {
-        const current = await save(4);
-        const available =
-          brief.username === query.data?.currentUsername
-            ? { available: true }
-            : await checkUsername({ data: { username: brief.username } });
-        if (!available.available)
-          throw new Error("That link is already taken. Choose another username.");
-        const reviewed = current.candidates;
-        if (!reviewed) throw new Error("Prepare your Brain in the previous step first.");
-        accept(
-          await approveOnboarding({
-            data: { revision: current.revision, candidates: reviewed, allowPartial },
-          }),
-        );
-        setPlan(recommendedPlan(brief.goal));
-        setStep(5);
-        if (query.data?.selfHosted) await activate();
-        captureProductEvent("onboarding_preparation_ready");
-        return;
-      }
-      const next = await save(step + 1);
-      setStep(step + 1);
-      captureProductEvent("onboarding_step_completed", { step, flow_version: 1, goal: brief.goal });
-      if (step === 2 && !next.candidates)
-        accept(await prepareOnboarding({ data: { revision: next.revision, generate: true } }));
-    });
+  }, [session?.status, step, hasHostedAccess]);
+  async function importProfile(id: string) {
+    const imported = await importOnboardingSocial({ data: { connectionId: id } });
+    const current = briefRef.current;
+    const value: OnboardingBrief = {
+      ...current,
+      displayName: imported.displayName || current.displayName,
+      avatarUrl: imported.avatarUrl || current.avatarUrl,
+      primaryConnectionId: imported.primaryConnectionId,
+      writingSample: imported.writingSample || current.writingSample,
+      expertise: current.expertise || imported.bio,
+      bio: imported.bio || current.bio,
+      links: [
+        ...current.links,
+        ...imported.links.filter(
+          (link) => !current.links.some((existing) => existing.url === link.url),
+        ),
+      ].slice(0, 8),
+    };
+    updateBrief(value);
+    await save(1, value);
+    return value;
   }
   async function connect(provider: (typeof ONBOARDING_PLATFORMS)[number]) {
     await action(async () => {
@@ -315,34 +346,79 @@ export function OnboardingExperience() {
       window.location.assign(href);
     });
   }
-  async function generate(manual = false) {
-    await action(async () => {
-      const current = await save(3);
-      accept(await prepareOnboarding({ data: { revision: current.revision, generate: !manual } }));
-      if (manual) setAllowPartial(true);
-    });
+  async function prepare(value = briefRef.current, manual = false) {
+    const latest = await save(3, value);
+    setStep(3);
+    setReveal(0);
+    accept(await prepareOnboarding({ data: { revision: latest.revision, generate: !manual } }));
+    await query.refetch();
   }
-  async function exportPreparation() {
-    const content = await exportOnboardingContent();
-    const blob = new Blob([content], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "my-bento-preparation.json";
-    anchor.click();
-    URL.revokeObjectURL(url);
+  async function forward() {
+    await action(async () => {
+      if (step === 0) {
+        if (!usernameSchema.safeParse(brief.username).success)
+          throw new Error("Choose 3–24 letters, numbers, or underscores for your link.");
+        if (
+          brief.username !== query.data?.currentUsername &&
+          !(await checkUsername({ data: { username: brief.username } })).available
+        )
+          throw new Error("That link is already taken. Try another username.");
+        await save(1);
+        setStep(1);
+        return;
+      }
+      if (step === 1) {
+        let value = briefRef.current;
+        if (
+          connections.length &&
+          !connections.some((item) => item.id === value.primaryConnectionId)
+        )
+          value = await importProfile(connections[0].id);
+        const missing = missingContext(value);
+        if (missing) {
+          setContextField(missing);
+          await save(2, value);
+          setStep(2);
+        } else await prepare(value);
+        return;
+      }
+      if (step === 2) {
+        if (!briefRef.current[contextField].trim())
+          throw new Error("Add a little context so Bento can make this personal.");
+        const missing = missingContext(briefRef.current);
+        if (missing) {
+          await save(2);
+          setContextField(missing);
+        } else await prepare();
+        return;
+      }
+      if (step === 3) {
+        if (reveal < reveals.length - 1) {
+          setReveal((value) => value + 1);
+          return;
+        }
+        const latest = await save(3);
+        if (!latest.candidates) throw new Error("Prepare your Brain before continuing.");
+        accept(
+          await approveOnboarding({
+            data: {
+              revision: latest.revision,
+              candidates: latest.candidates,
+              allowPartial: latest.candidates.drafts.length === 0,
+            },
+          }),
+        );
+        setStep(5);
+        captureProductEvent("onboarding_preparation_ready");
+        if (hasHostedAccess) await activate();
+      }
+    });
   }
   async function checkout() {
     await action(async () => {
       await saveQueue.current;
       const result = await createCheckout({
-        data: {
-          plan,
-          period,
-          returnTo: "onboarding",
-          contactTier: 500,
-          storageUnits: 0,
-        },
+        data: { plan, period, returnTo: "onboarding", contactTier: 500, storageUnits: 0 },
       });
       const href = safeNavigationHref(result.url);
       if (!href) throw new Error("The checkout link was invalid.");
@@ -350,986 +426,537 @@ export function OnboardingExperience() {
       window.location.assign(href);
     });
   }
-  function textField(
-    key:
-      | "displayName"
-      | "expertise"
-      | "audience"
-      | "offer"
-      | "voice"
-      | "writingSample"
-      | "language"
-      | "timezone"
-      | "bio"
-      | "username",
-    label: string,
-    hint?: string,
-    rows?: number,
-  ) {
-    return (
-      <Field label={label} hint={hint}>
-        {rows ? (
-          <textarea
-            rows={rows}
-            className={inputClass}
-            value={brief[key]}
-            onChange={(e) => patch(key, e.target.value)}
-          />
-        ) : (
-          <input
-            className={inputClass}
-            value={brief[key]}
-            onChange={(e) => patch(key, e.target.value)}
-          />
-        )}
-      </Field>
-    );
+  async function exportPreparation() {
+    const content = await exportOnboardingContent();
+    const url = URL.createObjectURL(new Blob([content], { type: "application/json" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "my-bento-preparation.json";
+    anchor.click();
+    URL.revokeObjectURL(url);
   }
+  const evidence = candidates?.evidence;
+  const reveals = [
+    evidence?.standout ? "standout" : null,
+    evidence?.inspirations.length ? "inspiration" : null,
+    "brain",
+    candidates?.drafts.length ? "draft" : null,
+  ].filter(Boolean) as string[];
+  const currentReveal = reveals[Math.min(reveal, reveals.length - 1)];
+  const question = questions[contextField];
+  const price = PLAN_PRICING[plan][period];
+  const headings: Record<string, [string, string, string]> = {
+    standout: [
+      "A little proof of your potential",
+      "You already have something worth sharing.",
+      "We found a post your audience responded to. This is part of what makes your Brain personal.",
+    ],
+    inspiration: [
+      "Your corner of the internet",
+      "Good company for your next idea.",
+      "A few sourced ideas from your space. Explore the originals whenever you like.",
+    ],
+    brain: [
+      "Made from your world",
+      `Meet your Brain, ${brief.displayName.split(" ")[0] || "creator"}.`,
+      "Your story, your voice, and a direction to grow. Read a chapter, make it yours, and keep moving.",
+    ],
+    draft: [
+      "Your first small win",
+      "This already sounds more like you.",
+      "A new piece of content built from your context. Your approval always comes before publishing.",
+    ],
+  };
+  const intro =
+    step === 0
+      ? [
+          "A little space, all yours",
+          "First, make a name for yourself.",
+          "Choose the link that brings your world together. You can change it later.",
+        ]
+      : step === 1
+        ? [
+            "Bring your world with you",
+            "Your socials. Your starting point.",
+            "Connect the accounts that feel most like you. Bento will use their available profiles and posts to get to know your work.",
+          ]
+        : step === 2
+          ? ["One little thing", question.title, question.hint]
+          : step === 3
+            ? building
+              ? [
+                  "Making it personal",
+                  "You're more than a bio.",
+                  "Let's give your ideas, experience, and voice a home.",
+                ]
+              : headings[currentReveal]
+            : step === 5
+              ? [
+                  "Your next chapter",
+                  hasHostedAccess
+                    ? "Your workspace is ready to open."
+                    : "You've seen the start. Make it yours.",
+                  hasHostedAccess
+                    ? "Your plan is active. Your personal preparation is saved."
+                    : "Your Brain and your first ideas are waiting. Choose how you want to build with Bento.",
+                ]
+              : [
+                  "Welcome to your Bento",
+                  "Your Bento is ready.",
+                  "A home for your work. A Brain that grows with you. Your next idea starts here.",
+                ];
 
   if (query.isError && !session)
     return (
-      <main className="p-8">
-        <h1 className="text-xl">Your setup could not load.</h1>
-        <p className="my-3 text-sm">
-          Your saved answers are safe. Try again when your connection is ready.
-        </p>
-        <button className={primary} onClick={() => void query.refetch()}>
-          Retry
+      <main className="onboarding ob-main">
+        <AuthBrand />
+        <div className="ob-intro">
+          <h1>Your setup could not load.</h1>
+          <p>Your saved answers are safe.</p>
+        </div>
+        <button className="ob-primary" onClick={() => void query.refetch()}>
+          Try again
         </button>
       </main>
     );
   if (!session)
     return (
-      <main className="flex min-h-dvh items-center justify-center gap-3 bg-[#f7f8fc]" role="status">
-        <Loader2 className="size-5 motion-safe:animate-spin" /> Opening your workspace…
+      <main className="onboarding">
+        <div className="ob-main">
+          <PreparationInProgress name="" accountCount={0} jobStatus="queued" />
+        </div>
       </main>
     );
   if (session.status === "applied" && query.data?.plan === "free" && !query.data?.selfHosted)
     return (
-      <main className="mx-auto max-w-xl px-6 py-20">
-        <AuthBrand />
-        <h1 className="mt-10 font-ui-display text-4xl">Your work is saved.</h1>
-        <p className="my-5 leading-7 text-slate-500">
-          Your hosted access has ended. Review your plan to make your page and eligible apps
-          available again.
-        </p>
-        <a href="/settings?section=plan" className={primary}>
-          Review my billing <ArrowRight className="size-4" />
-        </a>
-        <button
-          className={`${secondary} mt-4`}
-          disabled={busy}
-          onClick={() => void action(exportPreparation)}
-        >
-          Download my Brain and saved drafts
-        </button>
-        {error && (
-          <p role="alert" className="mt-4 text-sm text-rose-800">
-            {error}
-          </p>
-        )}
+      <main className="onboarding">
+        <div className="ob-main ob-narrow">
+          <AuthBrand />
+          <div className="ob-intro">
+            <h1>Your work is saved.</h1>
+            <p>Review your billing to restore hosted access.</p>
+          </div>
+          <a className="ob-primary" href="/settings?section=plan">
+            Review my billing <ArrowRight />
+          </a>
+          <button className="ob-secondary" onClick={() => void action(exportPreparation)}>
+            Download my preparation
+          </button>
+        </div>
       </main>
     );
-  const selfHosted = Boolean(query.data?.selfHosted);
-  const trialEligible = query.data?.trialEligible !== false;
-  const premium = query.data?.plan === "creator_plus" || selfHosted;
-  const building = busy || ["queued", "running"].includes(session.jobStatus);
-  const transition = {
-    duration: reduced ? 0 : motionTokens.duration.normal,
-    ease: motionTokens.easing.smooth,
-  };
+
   return (
-    <main className="auth-light font-ui-sans min-h-dvh bg-[#f7f8fc] text-[#17213a]">
-      <header className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-5 sm:px-8">
+    <main className="onboarding auth-light">
+      <header className="ob-header">
         <AuthBrand />
-        <span className="text-xs text-slate-500" role="status">
+        <nav className="ob-progress" aria-label="Setup progress">
+          {["Your link", "Your socials", "Your Brain", "Your Bento"].map((label, index) => (
+            <span
+              key={label}
+              className={index < chapterFor(step) ? "ob-complete" : ""}
+              aria-current={index === chapterFor(step) ? "step" : undefined}
+            >
+              <i />
+              {label}
+            </span>
+          ))}
+        </nav>
+        <span className="ob-saved" role="status">
           {savedLabel}
         </span>
       </header>
-      <div className="mx-auto max-w-6xl px-5 pb-12 sm:px-8">
-        <nav aria-label="Setup progress" className="mb-10 flex items-center gap-1.5">
-          {steps.map((label, index) => (
-            <div key={label} className="min-w-0 flex-1">
-              <div className="h-1 overflow-hidden rounded-full bg-slate-200">
-                <motion.div
-                  initial={false}
-                  animate={{ width: index <= step ? "100%" : "0%" }}
-                  transition={transition}
-                  className="h-full bg-[#3478f6]"
-                />
+      <div
+        className={`ob-main ${step === 3 ? "ob-reveal-main" : ""} ${step === 0 || step === 2 || step === 6 ? "ob-narrow" : ""}`}
+      >
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.section
+            key={`${step}-${step === 2 ? contextField : step === 3 && !building ? currentReveal : ""}`}
+            initial={reduced ? false : { opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={reduced ? {} : { opacity: 0, y: -8 }}
+            transition={{ duration: reduced ? 0 : 0.24 }}
+            onAnimationComplete={() => headingRef.current?.focus({ preventScroll: true })}
+          >
+            {step === 0 && <LinkIdentity username={brief.username} />}
+            {step === 6 && (
+              <div className="ob-ready-badge">
+                <Check />
               </div>
-              <span
-                className={`mt-2 hidden text-[11px] sm:block ${index === step ? "font-semibold text-[#3478f6]" : "text-slate-400"}`}
-                aria-current={index === step ? "step" : undefined}
-              >
-                {index === 5 && !trialEligible ? "Your plan" : label}
+            )}
+            <div className="ob-intro">
+              <span className="ob-eyebrow">
+                <Sparkles />
+                {intro[0]}
               </span>
-            </div>
-          ))}
-        </nav>
-        <div className={`grid gap-10 lg:gap-16 ${step < 5 ? "lg:grid-cols-[1.15fr_0.85fr]" : ""}`}>
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.section
-              key={step}
-              initial={reduced ? false : { opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={reduced ? {} : { opacity: 0, y: -8 }}
-              transition={transition}
-              onAnimationComplete={() => headingRef.current?.focus({ preventScroll: true })}
-              className="min-w-0"
-            >
-              <p className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase text-[#3478f6]">
-                <Sparkles className="size-3.5" />{" "}
-                {step === 6
-                  ? "Ready when you are"
-                  : `Step ${step + 1} · ${step === 5 && !trialEligible ? "Your plan" : steps[step]}`}
-              </p>
-              <h1
-                ref={headingRef}
-                tabIndex={-1}
-                className="outline-none max-w-2xl font-[family-name:var(--font-ui-display)] text-4xl leading-[1.06] sm:text-5xl"
-              >
-                {headings[step]}
+              <h1 ref={headingRef} tabIndex={-1}>
+                {intro[1]}
               </h1>
-              <p className="mt-4 max-w-xl text-sm leading-6 text-slate-500 sm:text-base">
-                {step === 5 && (selfHosted || !trialEligible)
-                  ? selfHosted
-                    ? "Your preparation is saved. Activate your self-hosted workspace."
-                    : "Choose your plan and billing period. A new trial is not available for this workspace."
-                  : subtitles[step]}
-              </p>
-              <div className="mt-8 space-y-5">
-                {step === 0 && (
-                  <>
-                    <div className="grid gap-3">
-                      {[
-                        {
-                          icon: Globe,
-                          title: "Your page, already taking shape",
-                          detail: "One link for your work, offers and socials.",
-                        },
-                        {
-                          icon: Brain,
-                          title: "Your voice, remembered",
-                          detail: "Your audience, expertise and writing style in one Brain.",
-                        },
-                        {
-                          icon: FileText,
-                          title: "A head start on content",
-                          detail: "Three editable starter drafts and a practical next step.",
-                        },
-                      ].map((item, index) => (
-                        <motion.div
-                          key={item.title}
-                          initial={reduced ? false : { opacity: 0, y: 8 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ ...transition, delay: reduced ? 0 : index * 0.08 }}
-                          className="flex items-start gap-4 rounded-2xl border border-black/5 bg-white p-4"
-                        >
-                          <span className="rounded-xl bg-[#e9f0ff] p-3 text-[#3478f6]">
-                            <item.icon className="size-5" />
-                          </span>
-                          <div>
-                            <p className="text-sm font-semibold">{item.title}</p>
-                            <p className="mt-1 text-sm text-slate-500">{item.detail}</p>
-                          </div>
-                        </motion.div>
-                      ))}
-                    </div>
-                    <p className="text-xs leading-5 text-slate-500">
-                      {selfHosted ? (
-                        "Free Forever, on your own infrastructure. Connect your own services and make this workspace yours."
-                      ) : trialEligible ? (
-                        <>
-                          Store $19 · Creator $39 · Creator Plus $49 per month. A card is required
-                          at the end of setup. $0 today; your first charge follows the {TRIAL_DAYS}
-                          -day trial unless you cancel. Free Forever is available with the
-                          self-hosted open-source edition.
-                        </>
-                      ) : (
-                        <>
-                          Store $19 · Creator $39 · Creator Plus $49 per month. Your account has
-                          already used its trial; the selected plan is charged at checkout after you
-                          review your preparation.
-                        </>
-                      )}
-                    </p>
-                  </>
-                )}
-                {step === 1 && (
-                  <>
-                    {!!query.data?.connections.length && (
-                      <div className="space-y-2">
-                        {query.data.connections.map((connection) => (
-                          <button
-                            key={connection.id}
-                            disabled={busy}
-                            className={`${secondary} w-full justify-between text-left`}
-                            onClick={() =>
-                              void action(async () => {
-                                const imported = await importOnboardingSocial({
-                                  data: { connectionId: connection.id },
-                                });
-                                const value = {
-                                  ...brief,
-                                  ...imported,
-                                  bio: imported.bio || brief.bio,
-                                  links: [
-                                    ...brief.links,
-                                    ...imported.links.filter(
-                                      (link) =>
-                                        !brief.links.some((existing) => existing.url === link.url),
-                                    ),
-                                  ].slice(0, 8),
-                                };
-                                setBrief(value);
-                                await save(1, value);
-                                setImportNote(
-                                  imported.importedPosts
-                                    ? `Profile and ${imported.importedPosts} writing samples imported.`
-                                    : "Profile imported. No post history is available yet; you can describe your voice in the next steps.",
-                                );
-                              })
-                            }
-                          >
-                            <span>
-                              <span className="block font-semibold">
-                                {connection.provider_display_name || connection.provider_handle}
-                              </span>
-                              <span className="text-xs text-slate-500">{connection.provider}</span>
-                            </span>
-                            {brief.primaryConnectionId === connection.id ? (
-                              <Check className="size-4 text-emerald-600" />
-                            ) : (
-                              "Use profile"
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    <div className="grid grid-cols-2 gap-2">
-                      {ONBOARDING_PLATFORMS.map((provider) => {
-                        const Icon = icons[provider];
-                        return (
-                          <button
-                            key={provider}
-                            className={`${secondary} justify-start`}
-                            disabled={busy}
-                            onClick={() => void connect(provider)}
-                          >
-                            <Icon className="size-4" />
-                            {SOCIAL_PROVIDER_DEFINITIONS[provider].name}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <p className="flex items-start gap-2 text-xs leading-5 text-slate-500">
-                      <LockKeyhole className="mt-1 size-3.5 shrink-0" /> Connecting gives Bento the
-                      permissions shown by the provider. Nothing is posted or sent automatically.
-                    </p>
-                    {importNote && (
-                      <p
-                        role="status"
-                        className="rounded-xl bg-[#e8f3ea] p-3 text-sm text-emerald-800"
-                      >
-                        {importNote}
-                      </p>
-                    )}
-                  </>
-                )}
-                {step === 2 && (
-                  <>
-                    <div className="space-y-2">
-                      {ONBOARDING_GOALS.map((goal) => (
-                        <button
-                          key={goal.id}
-                          type="button"
-                          aria-pressed={brief.goal === goal.id}
-                          onClick={() => patch("goal", goal.id)}
-                          className={`flex w-full items-center justify-between rounded-xl border p-3.5 text-left transition-colors ${brief.goal === goal.id ? "border-[#3478f6] bg-[#e9f0ff]" : "border-black/8 bg-white hover:border-[#3478f6]/40"}`}
-                        >
-                          <span>
-                            <span className="block text-sm font-semibold">{goal.label}</span>
-                            <span className="mt-1 block text-xs text-slate-500">{goal.detail}</span>
-                          </span>
-                          {brief.goal === goal.id && (
-                            <CheckCircle2 className="size-5 shrink-0 text-[#3478f6]" />
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                    {textField("displayName", "What should we call you?")}
-                    {textField(
-                      "expertise",
-                      "What do you know or create?",
-                      "For example: photography lessons, career coaching, or handmade ceramics.",
-                    )}
-                    {textField(
-                      "audience",
-                      "Who do you want to help?",
-                      "Still exploring? Describe the people you'd like to reach.",
-                    )}
-                    {["sell", "bookings"].includes(brief.goal) &&
-                      textField(
-                        "offer",
-                        brief.goal === "sell"
-                          ? "Do you already have an offer?"
-                          : "What could people book you for?",
-                        "Optional. Leave this empty if you're still working it out.",
-                      )}
-                  </>
-                )}
-                {step === 3 && (
-                  <>
-                    {building && (
-                      <div
-                        className="flex items-center gap-3 rounded-2xl bg-white p-4 text-sm"
-                        role="status"
-                      >
-                        <Loader2 className="size-5 motion-safe:animate-spin text-[#3478f6]" />
-                        Writing and checking three distinct drafts… Completed drafts are saved if
-                        preparation is interrupted.
-                      </div>
-                    )}
-                    {textField("voice", "How should your writing feel?", undefined, 3)}
-                    <div className="grid grid-cols-2 gap-3">
-                      <Field label="Draft platform">
-                        <select
-                          className={inputClass}
-                          value={brief.platform}
-                          onChange={(e) =>
-                            patch("platform", e.target.value as OnboardingBrief["platform"])
-                          }
-                        >
-                          {!(ONBOARDING_OUTPUT_PLATFORMS as readonly string[]).includes(
-                            brief.platform,
-                          ) && (
-                            <option value={brief.platform}>
-                              Choose a supported draft platform
-                            </option>
-                          )}
-                          {ONBOARDING_OUTPUT_PLATFORMS.map((provider) => (
-                            <option key={provider} value={provider}>
-                              {SOCIAL_PROVIDER_DEFINITIONS[provider].name}
-                            </option>
-                          ))}
-                        </select>
-                      </Field>
-                      <Field label="Posts per week">
-                        <select
-                          className={inputClass}
-                          value={brief.postsPerWeek}
-                          onChange={(e) => patch("postsPerWeek", Number(e.target.value))}
-                        >
-                          {[1, 2, 3, 4, 5, 6, 7].map((value) => (
-                            <option key={value}>{value}</option>
-                          ))}
-                        </select>
-                      </Field>
-                    </div>
-                    <details className="rounded-xl border border-black/8 bg-white p-4">
-                      <summary className="cursor-pointer text-sm font-medium">
-                        Writing sample, language & timezone
-                      </summary>
-                      <div className="mt-4 space-y-3">
-                        {textField(
-                          "writingSample",
-                          "An example of your writing",
-                          "Optional. Imported posts appear here when available.",
-                          3,
-                        )}
-                        {textField("language", "Language")}
-                        {textField("timezone", "Timezone")}
-                      </div>
-                    </details>
-                    {candidates?.warning && (
-                      <p role="status" className="text-sm text-amber-800">
-                        {candidates.warning}
-                      </p>
-                    )}
-                    {session.jobError && (
-                      <p role="status" className="text-sm leading-relaxed text-amber-800">
-                        {session.jobError}
-                      </p>
-                    )}
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        className={secondary}
-                        disabled={building || session.generationCount >= 2}
-                        onClick={() => void generate()}
-                      >
-                        <RefreshCw className="size-4" />
-                        {session.generationCount ? "Refresh my drafts" : "Prepare my drafts"}
-                      </button>
-                      <button
-                        className={secondary}
-                        disabled={building}
-                        onClick={() => void generate(true)}
-                      >
-                        Use my answers without AI drafts
-                      </button>
-                    </div>
-                    {candidates && (
-                      <>
-                        <div className="rounded-2xl border border-[#3478f6]/15 bg-white p-5">
-                          <p className="mb-3 flex items-center gap-2 text-xs font-semibold text-[#3478f6]">
-                            <Sparkles className="size-4" />
-                            {candidates.drafts.length
-                              ? "A first draft in your voice"
-                              : "Your Brain has a starting point"}
-                          </p>
-                          <p className="whitespace-pre-wrap text-sm leading-6">
-                            {candidates.drafts[0]?.body || candidates.brain[1].content}
-                          </p>
-                          {candidates.drafts[0]?.slides?.map((slide, index) => (
-                            <div key={index} className="mt-3 text-sm">
-                              <strong>{slide.heading}</strong>
-                              <p className="whitespace-pre-wrap">{slide.body}</p>
-                            </div>
-                          ))}
-                          {candidates.warning && (
-                            <p role="status" className="mt-3 text-sm">
-                              {candidates.warning}
-                            </p>
-                          )}
-                          {["instagram", "youtube", "tiktok"].includes(brief.platform) &&
-                            candidates.drafts.length > 0 && (
-                              <p className="mt-3 text-xs text-slate-500">
-                                Review the copy and add any required media before publishing
-                              </p>
-                            )}
-                        </div>
-                        <details className="rounded-xl border border-black/8 bg-white p-4">
-                          <summary className="cursor-pointer text-sm font-medium">
-                            Review and edit what Brain remembers
-                          </summary>
-                          <div className="mt-4 space-y-4">
-                            {candidates.brain.map((item, index) => (
-                              <Field key={item.kind} label={item.title}>
-                                <textarea
-                                  className={inputClass}
-                                  rows={index === 2 ? 10 : 5}
-                                  value={item.content}
-                                  onChange={(e) => {
-                                    const next = {
-                                      ...candidates,
-                                      brain: candidates.brain.map((row, i) =>
-                                        i === index ? { ...row, content: e.target.value } : row,
-                                      ),
-                                    };
-                                    candidateEdits.current = next;
-                                    setCandidates(next);
-                                  }}
-                                />
-                              </Field>
-                            ))}
-                          </div>
-                        </details>
-                      </>
-                    )}
-                  </>
-                )}
-                {step === 4 && (
-                  <>
-                    {textField(
-                      "username",
-                      "Your Bento link",
-                      "bento.surf/your-name · your page stays private until you publish.",
-                    )}
-                    {textField("bio", "A short introduction", undefined, 3)}
-                    <fieldset>
-                      <legend className="mb-3 text-sm font-medium">
-                        Choose a visual direction
-                      </legend>
-                      <div className="flex gap-3">
-                        {(Object.keys(previewThemes) as Array<keyof typeof previewThemes>).map(
-                          (style) => (
-                            <button
-                              key={style}
-                              aria-label={`${style} style`}
-                              aria-pressed={brief.style === style}
-                              onClick={() => patch("style", style)}
-                              className={`flex h-14 flex-1 items-center justify-center rounded-xl border-2 transition-colors ${brief.style === style ? "border-[#17213a]" : "border-transparent"}`}
-                              style={{ backgroundColor: previewThemes[style].background }}
-                            >
-                              {brief.style === style ? (
-                                <Check className="size-5" />
-                              ) : (
-                                <span
-                                  className="size-4 rounded-full"
-                                  style={{ background: previewThemes[style].accent }}
-                                />
-                              )}
-                            </button>
-                          ),
-                        )}
-                      </div>
-                    </fieldset>
-                    <div className="space-y-2">
-                      {brief.links.map((link, index) => (
-                        <div
-                          key={`${link.url}:${index}`}
-                          className="flex items-center gap-2 rounded-xl bg-white p-3"
-                        >
-                          <span className="min-w-0 flex-1 truncate text-sm">{link.title}</span>
-                          <button
-                            aria-label={`Remove ${link.title}`}
-                            onClick={() =>
-                              patch(
-                                "links",
-                                brief.links.filter((_, i) => i !== index),
-                              )
-                            }
-                          >
-                            <X className="size-4 text-slate-400" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                    <details className="rounded-xl border border-black/8 p-4">
-                      <summary className="cursor-pointer text-sm font-medium">
-                        Add a useful destination
-                      </summary>
-                      <div className="mt-3 space-y-3">
-                        <Field label="Link title">
-                          <input
-                            className={inputClass}
-                            value={linkTitle}
-                            maxLength={80}
-                            onChange={(e) => setLinkTitle(e.target.value)}
-                          />
-                        </Field>
-                        <Field label="Destination URL">
-                          <input
-                            type="url"
-                            className={inputClass}
-                            value={linkUrl}
-                            onChange={(e) => setLinkUrl(e.target.value)}
-                          />
-                        </Field>
-                        <button
-                          className={secondary}
-                          onClick={() => {
-                            const parsed = onboardingBriefSchema.safeParse({
-                              ...brief,
-                              links: [...brief.links, { title: linkTitle, url: linkUrl }],
-                            });
-                            if (!parsed.success) {
-                              setError("Give your link a title and a valid public URL.");
-                              return;
-                            }
-                            setBrief(parsed.data);
-                            setLinkTitle("");
-                            setLinkUrl("");
-                          }}
-                        >
-                          <Plus className="size-4" />
-                          Add link
-                        </button>
-                      </div>
-                    </details>
-                    <label className="flex items-start gap-3 rounded-xl border border-black/8 bg-white p-4 text-sm">
-                      <input
-                        type="checkbox"
-                        className="mt-1 size-4 accent-[#3478f6]"
-                        checked={brief.publishPage}
-                        onChange={(e) => patch("publishPage", e.target.checked)}
-                      />
-                      <span>
-                        Publish this reviewed page when my trial starts.
-                        <span className="mt-1 block text-xs text-slate-500">
-                          Your Brain and drafts remain private.
-                        </span>
-                      </span>
-                    </label>
-                    <div className="flex flex-wrap gap-3 text-xs text-slate-500">
-                      <span>Page prepared</span>
-                      <span>Brain: {candidates ? "3 core documents" : "needs review"}</span>
-                      <span>Starter drafts: {candidates?.drafts.length ?? 0}</span>
-                      {!!candidates?.deferredDrafts?.length && (
-                        <span>
-                          {candidates.deferredDrafts.length} earlier drafts saved in your
-                          preparation download; not included in activation.
-                        </span>
-                      )}
-                    </div>
-                    {!candidates?.drafts.length && (
-                      <label className="flex items-start gap-2 text-sm text-slate-600">
-                        <input
-                          type="checkbox"
-                          checked={allowPartial}
-                          onChange={(e) => setAllowPartial(e.target.checked)}
-                          className="mt-1"
-                        />
-                        Continue with my page and Brain. I'll create post drafts later.
-                      </label>
-                    )}
-                  </>
-                )}
-                {step === 5 && !selfHosted && (
-                  <>
-                    <div className="flex items-center gap-4 rounded-2xl border border-black/5 bg-white p-4">
-                      <Globe className="size-7 shrink-0 text-[#3478f6]" />
-                      <div>
-                        <p className="text-sm font-semibold">
-                          {brief.displayName}'s Bento is prepared
-                        </p>
-                        <p className="mt-1 text-xs leading-5 text-slate-500">
-                          bento.surf/{brief.username} · 3 core Brain documents ·{" "}
-                          {candidates?.drafts.length ?? 0} starter drafts. Your reviewed work is
-                          saved.
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap gap-2" role="group" aria-label="Billing period">
-                      {(["monthly", "yearly"] as const).map((value) => (
-                        <button
-                          key={value}
-                          type="button"
-                          aria-pressed={period === value}
-                          onClick={() => setPeriod(value)}
-                          className={`rounded-full px-4 py-2 text-sm font-semibold ${period === value ? "bg-[#17213a] text-white" : "border border-black/10 bg-white text-[#17213a]"}`}
-                        >
-                          {value === "monthly" ? "Monthly" : "Yearly · 2 months free"}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="grid gap-4 md:grid-cols-3">
-                      {PAID_PLAN_IDS.map((value) => (
-                        <button
-                          type="button"
-                          key={value}
-                          aria-pressed={plan === value}
-                          onClick={() => setPlan(value)}
-                          className={`rounded-2xl border bg-white p-5 text-left transition-colors ${plan === value ? "border-[#3478f6] ring-2 ring-[#3478f6]/10" : "border-black/10"}`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="font-semibold">{planName(value)}</span>
-                            {plan === value && <CheckCircle2 className="size-5 text-[#3478f6]" />}
-                          </div>
-                          <p className="my-4">
-                            <span className="text-3xl font-semibold">
-                              {PLAN_PRICING[value][period].label}
-                            </span>
-                            <span className="text-sm text-slate-500">
-                              {PLAN_PRICING[value][period].cadence}
-                            </span>
-                          </p>
-                          {period === "yearly" && (
-                            <p className="mb-4 text-xs font-medium text-[#245fd0]">2 months free</p>
-                          )}
-                          <ul className="space-y-2">
-                            {{
-                              store: [
-                                "0% Bento commission",
-                                "Link in bio and every store product",
-                                "Bookings, Priority DMs, communities and courses",
-                                "Basic Auto DMs without follow or email gates",
-                              ],
-                              creator: [
-                                "Everything in Store",
-                                "Discover and Post Scheduler",
-                                "Advanced Auto DMs with follow and email gates",
-                                "Social analytics and Newsletter",
-                                "MCP posting and Auto DMs",
-                              ],
-                              creator_plus: [
-                                "Everything in Creator",
-                                "Brain remembers your business and voice",
-                                "Agent turns context into content",
-                                "Routines handle repeat work",
-                                "Weekly strategy reviews",
-                              ],
-                            }[value].map((feature) => (
-                              <li
-                                key={feature}
-                                className="flex gap-2 text-xs leading-5 text-slate-600"
-                              >
-                                <Check className="mt-1 size-3 shrink-0 text-[#3478f6]" />
-                                {feature}
-                              </li>
-                            ))}
-                          </ul>
-                        </button>
-                      ))}
-                    </div>
-                    <div className="flex flex-col gap-5 rounded-2xl bg-[#e9f0ff] p-6 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <p className="text-2xl font-semibold">
-                          {trialEligible ? "$0 today" : `${selectedPrice.label} today`}
-                        </p>
-                        <p className="mt-2 text-sm leading-6 text-slate-600">
-                          {trialEligible ? (
-                            <>
-                              Then {selectedPrice.label}
-                              {selectedPrice.cadence} after {TRIAL_DAYS} full days, plus applicable
-                              taxes. Cancel before then to avoid the charge. We'll email you 24
-                              hours beforehand and ask how Bento is working for you.
-                            </>
-                          ) : (
-                            <>
-                              A new trial is not available for this workspace. {selectedPrice.label}
-                              {selectedPrice.cadence}, plus applicable taxes, starts at checkout.
-                              You can cancel renewal in Billing.
-                            </>
-                          )}
-                        </p>
-                        {plan !== "creator_plus" && (
-                          <p className="mt-2 text-xs leading-5 text-slate-500">
-                            {trialEligible
-                              ? "Brain, Agent and Routines are included during your Plus trial. Afterward, "
-                              : ""}
-                            {planName(plan)} includes the features listed above. Your prepared Brain
-                            and starter drafts remain saved and downloadable; ongoing Brain, Agent
-                            and Routines require Creator Plus.
-                          </p>
-                        )}
-                      </div>
-                      <button
-                        className={`${primary} shrink-0`}
-                        disabled={busy}
-                        onClick={() =>
-                          void (query.data?.selfHosted ? action(activate) : checkout())
-                        }
-                      >
-                        {busy ? (
-                          <Loader2 className="size-4 motion-safe:animate-spin" />
-                        ) : (
-                          <CreditCard className="size-4" />
-                        )}
-                        {trialEligible ? `Start my ${TRIAL_DAYS}-day trial` : "Activate my plan"}
-                      </button>
-                    </div>
-                    <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500">
-                      <span className="flex items-center gap-2">
-                        <LockKeyhole className="size-3.5" />
-                        Secure card checkout ·{" "}
-                        {trialEligible
-                          ? "no subscription charge today"
-                          : `${selectedPrice.label}${selectedPrice.cadence}`}
-                      </span>
-                      <button
-                        className="underline underline-offset-4"
-                        onClick={() =>
-                          void action(async () => {
-                            await query.refetch();
-                            await activate();
-                          })
-                        }
-                      >
-                        Already completed checkout? Verify my access
-                      </button>
-                    </div>
-                  </>
-                )}
-                {step === 5 && selfHosted && (
-                  <button className={primary} disabled={busy} onClick={() => void action(activate)}>
-                    Activate my workspace <ArrowRight className="size-4" />
-                  </button>
-                )}
-                {step === 6 && candidates && (
-                  <>
-                    <div className="grid gap-4 md:grid-cols-3">
-                      <motion.div
-                        initial={reduced ? false : { opacity: 0, y: 16 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={transition}
-                        className="rounded-2xl border border-black/8 bg-white p-6"
-                      >
-                        <Globe className="mb-6 size-6 text-[#3478f6]" />
-                        <h2 className="text-lg font-semibold">
-                          {brief.publishPage ? "Your page is live" : "Your page is prepared"}
-                        </h2>
-                        <p className="mb-6 mt-2 break-words text-sm text-slate-500">
-                          {publicProfileUrl(brief.username)}
-                        </p>
-                        <button
-                          className={primary}
-                          disabled={busy}
-                          onClick={() =>
-                            void action(async () => {
-                              if (brief.publishPage) {
-                                await navigator.clipboard.writeText(
-                                  publicProfileUrl(brief.username),
-                                );
-                                toast.success("Link copied");
-                                captureProductEvent("onboarding_first_result_used", {
-                                  result: "link",
-                                });
-                              } else accept(await publishOnboardingPage(), true);
-                            })
-                          }
-                        >
-                          <Copy className="size-4" />
-                          {brief.publishPage ? "Copy my link" : "Publish my page"}
-                        </button>
-                      </motion.div>
-                      {[
-                        {
-                          icon: Brain,
-                          title: "Your Brain knows you",
-                          detail: "Your identity, writing voice and starting strategy are saved.",
-                          action: "Open my Brain",
-                          href: "/content?tab=brain",
-                        },
-                        {
-                          icon: FileText,
-                          title: `${candidates.drafts.length} starter drafts`,
-                          detail:
-                            candidates.drafts[0]?.title ||
-                            "Your core context is ready for your first writing session.",
-                          action: "Open my drafts",
-                          href: `/content?tab=agent${session.threadId ? `&thread=${session.threadId}` : ""}`,
-                        },
-                      ].map((card, index) => (
-                        <motion.div
-                          key={card.title}
-                          initial={reduced ? false : { opacity: 0, y: 16 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ ...transition, delay: reduced ? 0 : (index + 1) * 0.1 }}
-                          className="flex flex-col rounded-2xl border border-black/8 bg-white p-6"
-                        >
-                          <card.icon className="mb-6 size-6 text-[#3478f6]" />
-                          <h2 className="text-lg font-semibold">{card.title}</h2>
-                          <p className="mb-6 mt-2 flex-1 text-sm leading-6 text-slate-500">
-                            {card.detail}
-                          </p>
-                          {premium ? (
-                            <a className={secondary} href={card.href}>
-                              {card.action}
-                              <ArrowRight className="size-4" />
-                            </a>
-                          ) : (
-                            <button
-                              className={secondary}
-                              onClick={() => void action(exportPreparation)}
-                            >
-                              Download my preparation
-                            </button>
-                          )}
-                        </motion.div>
-                      ))}
-                    </div>
-                    <button
-                      className="text-sm text-slate-500 underline underline-offset-4"
-                      onClick={() => void action(exportPreparation)}
-                    >
-                      Download my Brain and saved drafts
-                    </button>
-                    <div className="rounded-2xl bg-[#e8f3ea] p-5">
-                      <p className="text-xs font-semibold text-emerald-800">YOUR NEXT SMALL WIN</p>
-                      <p className="mt-2 text-sm leading-6">{candidates.nextAction}</p>
-                      <a
-                        className={`${secondary} mt-4`}
-                        href={
-                          brief.goal === "sell"
-                            ? "/store"
-                            : brief.goal === "bookings"
-                              ? "/calendar"
-                              : brief.goal === "grow"
-                                ? "/content?tab=discover"
-                                : brief.goal === "publish"
-                                  ? "/content?tab=agent"
-                                  : "/link"
-                        }
-                      >
-                        Let's do this <ArrowRight className="size-4" />
-                      </a>
-                    </div>
-                    {query.data?.trialEndsAt && (
-                      <p className="text-xs text-slate-500">
-                        Your trial ends {new Date(query.data.trialEndsAt).toLocaleString()}. Manage
-                        or cancel your plan in{" "}
-                        <a href="/settings?section=plan" className="underline">
-                          Settings
-                        </a>
-                        .
-                      </p>
-                    )}
-                  </>
-                )}
-              </div>
-              {error && (
-                <div
-                  role="alert"
-                  className="mt-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm leading-6 text-rose-800"
-                >
-                  {error}
-                </div>
-              )}
-              {step < 5 && (
-                <div className="mt-8 flex items-center justify-between gap-3 border-t border-black/5 pt-6">
-                  {step > 0 ? (
-                    <button
-                      className={secondary}
-                      disabled={busy}
-                      onClick={() =>
-                        void action(async () => {
-                          await save(step - 1);
-                          setStep(step - 1);
-                        })
+              <p>{intro[2]}</p>
+            </div>
+            {step === 0 && (
+              <div className="ob-question">
+                <label className="sr-only" htmlFor="bento-username">
+                  Your Bento username
+                </label>
+                <div className="ob-username">
+                  <span>
+                    {new URL(configuredPublicOrigin(import.meta.env.VITE_PUBLIC_URL)).host}/
+                  </span>
+                  <input
+                    id="bento-username"
+                    value={brief.username}
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    maxLength={24}
+                    placeholder="your-name"
+                    onChange={(event) => patch("username", event.target.value.toLowerCase())}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void forward();
                       }
-                    >
-                      <ArrowLeft className="size-4" />
-                      Back
-                    </button>
-                  ) : (
-                    <span />
-                  )}
-                  <button
-                    className={primary}
-                    disabled={building || (step === 3 && !candidates)}
-                    onClick={() => void forward()}
-                  >
-                    {busy && <Loader2 className="size-4 motion-safe:animate-spin" />}
-                    {step === 0
-                      ? "Build my Bento"
-                      : step === 1
-                        ? brief.primaryConnectionId
-                          ? "Use this head start"
-                          : "Continue without connecting"
-                        : step === 2
-                          ? "Prepare my starting point"
-                          : step === 3
-                            ? "Use this Brain"
-                            : selfHosted
-                              ? "Activate my workspace"
-                              : trialEligible
-                                ? "Continue to plan & trial"
-                                : "Continue to plan"}
-                    <ArrowRight className="size-4" />
-                  </button>
+                    }}
+                  />
                 </div>
-              )}
-              {step === 5 && (
-                <button className={`${secondary} mt-6`} disabled={busy} onClick={() => setStep(4)}>
-                  <ArrowLeft className="size-4" />
-                  Review my preparation
-                </button>
-              )}
-            </motion.section>
-          </AnimatePresence>
-          {step < 5 && (
-            <aside className="lg:sticky lg:top-12 lg:self-start">
-              <OnboardingPreview brief={brief} />
-              <div className="mx-auto mt-6 max-w-sm rounded-2xl border border-black/5 bg-white/70 p-4">
-                <p className="flex items-center gap-2 text-xs font-semibold text-slate-600">
-                  <Brain className="size-4 text-[#3478f6]" />
-                  Answer once. Use it everywhere.
-                </p>
-                <p className="mt-2 text-xs leading-5 text-slate-500">
-                  {step < 2
-                    ? "Your profile becomes the starting point for your page and Brain."
-                    : step === 2
-                      ? "Your audience shapes what you say. Your goal shapes what visitors do next."
-                      : step === 3
-                        ? "Your confirmed voice and strategy guide future drafts and business advice."
-                        : "The same context will help you set up each app, without another interview."}
+                <p className="ob-username-status" aria-live="polite">
+                  {usernameStatus === "available" ? (
+                    <>
+                      <CheckCircle2 />
+                      Looks good. This link is available to you.
+                    </>
+                  ) : usernameStatus === "checking" ? (
+                    <>
+                      <Loader2 className="motion-safe:animate-spin" />
+                      Checking your link…
+                    </>
+                  ) : usernameStatus === "taken" ? (
+                    "That link is taken. Try another name."
+                  ) : (
+                    "3–24 letters, numbers, or underscores."
+                  )}
                 </p>
               </div>
-            </aside>
-          )}
-        </div>
+            )}
+            {step === 1 && (
+              <>
+                <SocialConnections
+                  connections={connections}
+                  primaryId={brief.primaryConnectionId}
+                  busy={busy}
+                  onConnect={(provider) => void connect(provider)}
+                  onUse={(id) =>
+                    void action(async () => {
+                      await importProfile(id);
+                    })
+                  }
+                />
+                <p className="ob-center-note">
+                  <LockKeyhole />
+                  Connect with the permissions shown by each platform. You stay in control of what
+                  gets published.
+                </p>
+              </>
+            )}
+            {step === 2 && (
+              <div className="ob-question">
+                <textarea
+                  key={contextField}
+                  className="ob-answer"
+                  aria-label={question.title}
+                  rows={contextField === "displayName" ? 1 : 3}
+                  maxLength={contextField === "displayName" ? 60 : 500}
+                  value={brief[contextField]}
+                  placeholder={question.placeholder}
+                  onChange={(event) => patch(contextField, event.target.value)}
+                />
+                <p className="ob-question-hint">
+                  {contextField === "audience"
+                    ? "For example: first-time founders, new photographers, or people finding their creative confidence."
+                    : "A few honest words are a great start."}
+                </p>
+              </div>
+            )}
+            {step === 3 && (
+              <>
+                {building ? (
+                  <PreparationInProgress
+                    name={brief.displayName}
+                    accountCount={connections.length}
+                    jobStatus={session.jobStatus}
+                  />
+                ) : candidates ? (
+                  <>
+                    {currentReveal === "standout" && evidence?.standout && (
+                      <StandoutPost post={evidence.standout} brief={brief} />
+                    )}
+                    {currentReveal === "inspiration" && evidence && (
+                      <RelatedInspiration items={evidence.inspirations} />
+                    )}
+                    {currentReveal === "brain" && (
+                      <BrainBook
+                        brief={brief}
+                        candidates={candidates}
+                        onEdit={(index, content) => {
+                          const next = {
+                            ...candidates,
+                            brain: candidates.brain.map((item, i) =>
+                              i === index ? { ...item, content } : item,
+                            ),
+                          };
+                          candidateEdits.current = next;
+                          setCandidates(next);
+                        }}
+                      />
+                    )}
+                    {currentReveal === "draft" && candidates.drafts[0] && (
+                      <FirstDraft draft={candidates.drafts[0]} brief={brief} />
+                    )}
+                    <div className="ob-reveal-progress" aria-label="Your personal preview">
+                      {reveals.map((item, index) => (
+                        <span key={item} aria-current={index === reveal ? "step" : undefined} />
+                      ))}
+                    </div>
+                    {session.jobError && <p className="ob-center-note">{session.jobError}</p>}
+                    {!candidates.drafts.length && (
+                      <div className="ob-center-note">
+                        Your Brain is saved. A starter draft is optional.{" "}
+                        {session.generationCount < 2 && (
+                          <button
+                            className="ob-text-link"
+                            onClick={() => void action(() => prepare())}
+                          >
+                            Try preparing a draft
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="ob-ready">
+                    <p className="ob-small">
+                      Your answers are saved. Let's prepare your personal starting point.
+                    </p>
+                    <button className="ob-primary" onClick={() => void action(() => prepare())}>
+                      Prepare my Brain <Sparkles />
+                    </button>
+                    <button
+                      className="ob-back"
+                      onClick={() => void action(() => prepare(briefRef.current, true))}
+                    >
+                      Continue with my answers
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+            {step === 5 &&
+              (hasHostedAccess ? (
+                <div className="ob-ready">
+                  <button
+                    className="ob-primary"
+                    disabled={busy}
+                    onClick={() => void action(activate)}
+                  >
+                    {busy && <Loader2 className="motion-safe:animate-spin" />}Activate my workspace{" "}
+                    <ArrowRight />
+                  </button>
+                </div>
+              ) : (
+                <div className="ob-payment">
+                  <div className="ob-payment-person">
+                    <PersonAvatar url={brief.avatarUrl} name={brief.displayName} />
+                    <span>
+                      <strong>{brief.displayName}'s Bento</strong>
+                      <small>
+                        {new URL(configuredPublicOrigin(import.meta.env.VITE_PUBLIC_URL)).host}/
+                        {brief.username} · {candidates?.brain.length || 0} personal Brain chapters
+                      </small>
+                    </span>
+                    <CheckCircle2 />
+                  </div>
+                  <OnboardingPlanChoices
+                    plan={plan}
+                    period={period}
+                    onPlan={setPlan}
+                    onPeriod={setPeriod}
+                  />
+                  <div className="ob-price-row">
+                    <div>
+                      <span className="ob-eyebrow">Your selected plan</span>
+                      <h2>Bento {planName(plan)}</h2>
+                      <p>
+                        {plan === "creator_plus"
+                          ? "Your Brain, Agent, and tools to grow."
+                          : "Your page and the tools included in your plan."}
+                      </p>
+                    </div>
+                    <div className="ob-price">
+                      <strong>{trialEligible ? "$0" : price.label}</strong>
+                      <span>{trialEligible ? "today" : price.cadence}</span>
+                    </div>
+                  </div>
+                  <button className="ob-primary" disabled={busy} onClick={() => void checkout()}>
+                    {busy ? <Loader2 className="motion-safe:animate-spin" /> : <CreditCard />}
+                    {trialEligible ? `Start my ${TRIAL_DAYS}-day trial` : "Activate my plan"}
+                    <ArrowRight />
+                  </button>
+                  <p className="ob-billing-copy">
+                    {trialEligible ? (
+                      <>
+                        Then {price.label}
+                        {price.cadence} after {TRIAL_DAYS} days. Card required. Cancel before your
+                        trial ends to avoid the subscription charge. We'll remind you 24 hours
+                        before.
+                      </>
+                    ) : (
+                      <>
+                        {price.label}
+                        {price.cadence}, charged at checkout. This account has already used its
+                        trial.
+                      </>
+                    )}{" "}
+                    Prices are in USD; any applicable tax is shown at checkout.
+                  </p>
+                </div>
+              ))}
+            {step === 6 && (
+              <div className="ob-ready">
+                <div className="ob-ready-summary">
+                  <span>
+                    <Check />
+                    Your page is prepared
+                  </span>
+                  <span>
+                    <Check />
+                    {candidates?.brain.length || 0} Brain chapters
+                  </span>
+                  <span>
+                    <Check />
+                    {candidates?.drafts.length || 0} saved drafts
+                  </span>
+                </div>
+                <div className="ob-ready-actions">
+                  <a
+                    className="ob-primary"
+                    href={
+                      query.data?.plan === "creator_plus" || query.data?.selfHosted
+                        ? `/content?tab=agent${session.threadId ? `&thread=${encodeURIComponent(session.threadId)}` : ""}`
+                        : "/link"
+                    }
+                  >
+                    Open my workspace <ArrowRight />
+                  </a>
+                  <button
+                    className="ob-secondary"
+                    disabled={busy}
+                    onClick={() =>
+                      void action(async () => {
+                        if (brief.publishPage) {
+                          await navigator.clipboard.writeText(publicProfileUrl(brief.username));
+                          setSavedLabel("Link copied");
+                        } else accept(await publishOnboardingPage(), true);
+                      })
+                    }
+                  >
+                    {brief.publishPage ? "Copy my page link" : "Publish my page"}
+                  </button>
+                </div>
+                <p className="ob-center-note">
+                  {brief.publishPage
+                    ? "Your page is live."
+                    : "Your page stays private until you choose to publish it."}
+                </p>
+                <button className="ob-text-link" onClick={() => void action(exportPreparation)}>
+                  Download my Brain and drafts
+                </button>
+                {query.data?.trialEndsAt && (
+                  <p className="ob-center-note">
+                    Your trial ends {new Date(query.data.trialEndsAt).toLocaleDateString()}. Manage
+                    your plan in{" "}
+                    <a href="/settings?section=plan" className="ob-text-link">
+                      Settings
+                    </a>
+                    .
+                  </p>
+                )}
+              </div>
+            )}
+          </motion.section>
+        </AnimatePresence>
+        {error && (
+          <div className="ob-error" role="alert">
+            {error}
+          </div>
+        )}
+        {step < 5 && !(step === 3 && (!candidates || building)) && (
+          <div className="ob-footer">
+            {step > 0 ? (
+              <button
+                className="ob-back"
+                disabled={busy}
+                onClick={() => {
+                  setError(null);
+                  if (step === 3 && reveal > 0) setReveal((value) => value - 1);
+                  else setStep(step === 3 ? 1 : step - 1);
+                }}
+              >
+                <ArrowLeft />
+                Back
+              </button>
+            ) : (
+              <span className="ob-small">Your corner of the internet.</span>
+            )}
+            <button
+              className="ob-primary"
+              disabled={building || (step === 0 && usernameStatus === "taken")}
+              onClick={() => void forward()}
+            >
+              {busy && <Loader2 className="motion-safe:animate-spin" />}
+              {step === 0
+                ? "Make it mine"
+                : step === 1
+                  ? connections.length
+                    ? "Continue"
+                    : "Continue without connecting"
+                  : step === 2
+                    ? missingContext({ ...brief, [contextField]: "answered" })
+                      ? "Continue"
+                      : "Meet my Brain"
+                    : reveal < reveals.length - 1
+                      ? currentReveal === "standout" || currentReveal === "inspiration"
+                        ? "Keep going"
+                        : "See my first draft"
+                      : candidates?.drafts.length
+                        ? "This feels like me"
+                        : "Continue with my Brain"}
+              <ArrowRight />
+            </button>
+          </div>
+        )}
+        {step === 5 && (
+          <div className="ob-footer">
+            <button className="ob-back" disabled={busy} onClick={() => setStep(3)}>
+              <ArrowLeft />
+              Back to my Brain
+            </button>
+            {!hasHostedAccess && (
+              <button
+                className="ob-text-link"
+                disabled={busy}
+                onClick={() =>
+                  void action(async () => {
+                    await query.refetch();
+                    await activate();
+                  })
+                }
+              >
+                Already checked out? Verify access
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </main>
   );

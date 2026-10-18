@@ -15,13 +15,25 @@ import {
   type OnboardingCandidates,
 } from "./brief";
 import { onboardingDb } from "./session.server";
+import { prepareOnboardingInstagramPhoto } from "./media.server";
+import { loadOnboardingResearch, type OnboardingSource } from "./research.server";
+import { prepareOnboardingBrain } from "./personalization.server";
 
-type OnboardingSource = {
-  provider: string;
-  caption: string | null;
-  remote_post_url: string | null;
-  published_at?: string | null;
-};
+export function citedInstagramPhoto(
+  draft: OnboardingCandidates["drafts"][number],
+  sources: OnboardingSource[],
+) {
+  if (draft.platform !== "linkedin") return undefined;
+  return sources
+    .filter((source) => source.caption)
+    .find(
+      (source, index) =>
+        source.id &&
+        source.provider === "instagram" &&
+        ["image", "carousel"].includes(source.content_type || "") &&
+        draft.editorial?.sourceIds.includes(`source-${index}`),
+    )?.id;
+}
 /** Before trial activation, use only the approved preparation and owned imported samples. */
 export async function generateOnboardingDrafts(
   brief: OnboardingBrief,
@@ -30,6 +42,7 @@ export async function generateOnboardingDrafts(
   generate = generateEditorialDraft,
   deadline = Date.now() + 90_000,
   preserveExisting = true,
+  photoPostId?: string | null,
 ) {
   if (!(ONBOARDING_OUTPUT_PLATFORMS as readonly string[]).includes(brief.platform))
     return {
@@ -44,9 +57,13 @@ export async function generateOnboardingDrafts(
         "Your earlier drafts remain saved. Choose X text, LinkedIn text, or Instagram carousel and refresh your starter drafts to prepare supported structured output.",
       retry: false,
     };
+  const photoSourceIndex =
+    brief.platform === "linkedin" && photoPostId
+      ? sources.filter((source) => source.caption).findIndex((source) => source.id === photoPostId)
+      : -1;
   const context: EditorialContext = {
     platform: brief.platform as EditorialPlatform,
-    request: `Prepare an original useful draft for ${brief.audience} about ${brief.expertise}. Goal: ${brief.goal}. Language: ${brief.language}. Use a distinct argument and reader decision for each of the three starter drafts.`,
+    request: `Prepare one original useful starter draft for ${brief.audience} about ${brief.expertise}. Goal: ${brief.goal}. Language: ${brief.language}. Develop one specific argument and useful reader decision in the creator's voice.${photoSourceIndex >= 0 ? ` Adapt the supported experience or lesson from source-${photoSourceIndex} into an original LinkedIn post and cite that source. Its owned Instagram photo can accompany the draft. Do not describe unseen image contents or invent new events.` : ""}`,
     brain: candidates.brain.map((item) => ({ ...item, status: "confirmed" })),
     sources: [
       ...candidates.brain
@@ -67,7 +84,9 @@ export async function generateOnboardingDrafts(
           occurredAt: item.published_at || null,
           url: item.remote_post_url,
           external: false,
-        })),
+        }))
+        // Keep the photo's story in the bounded evidence pack; other samples still teach voice.
+        .filter((_, index) => photoSourceIndex < 0 || index === photoSourceIndex),
     ],
     representativePosts: sources
       .filter((item) => item.caption)
@@ -88,11 +107,10 @@ export async function generateOnboardingDrafts(
   const drafts: OnboardingCandidates["drafts"] = preserveExisting ? [...candidates.drafts] : [];
   let warning: string | null = null;
   let retry = false;
-  for (let index = drafts.length; index < 3; index++) {
+  for (let index = drafts.length; index < 1; index++) {
     const remaining = deadline - Date.now();
     if (remaining <= 0) {
-      warning =
-        "Draft checking timed out. Your completed drafts are saved; retry to prepare all three.";
+      warning = "Draft checking timed out. Your Brain is saved; retry to prepare your first draft.";
       retry = true;
       break;
     }
@@ -136,17 +154,32 @@ async function processOnboardingGenerationScoped(workspaceId: string) {
       Date.parse(session.job_lease_until || "") - 10_000 || Infinity,
     );
     const brief = onboardingBriefSchema.parse(session.brief);
-    const candidates = session.candidates
+    let candidates = session.candidates
       ? onboardingCandidatesSchema.parse(session.candidates)
       : buildManualCandidates(brief);
-    const { data: sources, error: sourceError } = await onboardingDb
-      .from("social_content_insights")
-      .select("provider,caption,remote_post_url,published_at")
-      .eq("user_id", workspaceId)
-      .eq("connection_id", brief.primaryConnectionId ?? "00000000-0000-0000-0000-000000000000")
-      .order("published_at", { ascending: false })
-      .limit(20);
-    if (sourceError) throw new Error("Connected post samples could not be read.");
+    const research = await loadOnboardingResearch(workspaceId);
+    const sources = research.posts;
+    const saveCheckpoint = async (value: OnboardingCandidates) => {
+      const saved = await onboardingDb
+        .from("onboarding_sessions")
+        .update({ candidates: value })
+        .eq("workspace_id", workspaceId)
+        .eq("revision", session.revision)
+        .eq("job_lease", session.job_lease)
+        .select("revision")
+        .maybeSingle();
+      if (saved.error || !saved.data)
+        throw new Error("Your preparation changed or could not be saved.");
+    };
+    candidates = await prepareOnboardingBrain(
+      brief,
+      candidates,
+      research,
+      session.generation_count,
+      session.job_attempts > 1,
+      deadline,
+      saveCheckpoint,
+    );
     const generated = await generateOnboardingDrafts(
       brief,
       candidates,
@@ -155,8 +188,49 @@ async function processOnboardingGenerationScoped(workspaceId: string) {
       deadline,
       // The claim increments attempts. A deliberate refresh starts at one; recovery retains partial work.
       session.job_attempts > 1,
+      research.photoPostId,
     );
-    const parsed = onboardingCandidatesSchema.parse(generated);
+    let parsed = onboardingCandidatesSchema.parse(generated);
+    parsed = {
+      ...parsed,
+      drafts: parsed.drafts.map((draft) => ({
+        // Existing checked drafts retain their original source mapping on recovery.
+        ...draft,
+        photoSourcePostId:
+          draft.photoSourcePostId ||
+          (session.job_attempts > 1 &&
+          candidates.drafts.some(
+            (previous) => previous.body === draft.body && previous.platform === draft.platform,
+          )
+            ? undefined
+            : citedInstagramPhoto(draft, sources)),
+      })),
+    };
+    // Save the checked copy before downloading a photo. Recovery retains the same source post.
+    const checkpoint = await onboardingDb
+      .from("onboarding_sessions")
+      .update({ candidates: parsed })
+      .eq("workspace_id", workspaceId)
+      .eq("revision", session.revision)
+      .eq("job_lease", session.job_lease)
+      .select("revision")
+      .maybeSingle();
+    if (checkpoint.error) throw new Error("Your checked draft could not be saved.");
+    if (!checkpoint.data) return;
+    for (const draft of parsed.drafts) {
+      if (!draft.photoSourcePostId || draft.mediaIds?.length || draft.platform !== "linkedin")
+        continue;
+      try {
+        const photo = await prepareOnboardingInstagramPhoto(workspaceId, draft.photoSourcePostId);
+        if (photo) Object.assign(draft, photo);
+        else
+          draft.mediaNote =
+            "No photo was attached. You can add an owned image in the draft editor.";
+      } catch {
+        draft.mediaNote =
+          "Your draft is saved. Its Instagram photo could not be prepared; choose an image in the draft editor.";
+      }
+    }
     const { error: saveError } = await onboardingDb
       .from("onboarding_sessions")
       .update({
