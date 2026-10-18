@@ -618,6 +618,13 @@ export const completeSocialConnection = createServerFn({ method: "POST" })
               last_health_check_at: null,
               token_refresh_lease_id: null,
               token_refresh_lease_until: null,
+              ...(data.provider === "twitter"
+                ? {
+                    twitter_webhook_check_after: new Date().toISOString(),
+                    twitter_webhook_check_lease_until: null,
+                    webhook_fields: [],
+                  }
+                : {}),
             };
           }),
         ),

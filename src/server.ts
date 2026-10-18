@@ -103,6 +103,7 @@ import {
   getTwitterDmRetryDelaySeconds,
   handleTwitterWebhook,
   handleTwitterWebhookCrc,
+  auditTwitterWebhookConnections,
   processTwitterDmQueueMessage,
   type TwitterDmQueueMessage,
 } from "./lib/twitter-auto-dm.server";
@@ -1435,9 +1436,10 @@ export default {
           auditSocialConnections(),
           auditInstagramConnections(),
           auditFacebookConnections(),
+          auditTwitterWebhookConnections(),
         ]);
         for (const [index, result] of audits.entries()) {
-          const provider = ["social", "instagram", "facebook"][index];
+          const provider = ["social", "instagram", "facebook", "twitter-webhook"][index];
           if (result.status === "fulfilled") {
             if (result.value.checked > 0)
               console.log(`[${provider}] connection health audit`, result.value);

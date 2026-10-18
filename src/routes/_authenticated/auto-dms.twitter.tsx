@@ -202,8 +202,10 @@ function TwitterAutoDmPage() {
       void queryClient.invalidateQueries({ queryKey: ["twitter-auto-dm"] });
       toast.success("X Auto-DM connection verified");
     },
-    onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Could not verify this X account"),
+    onError: (error) => {
+      void queryClient.invalidateQueries({ queryKey: ["twitter-auto-dm"] });
+      toast.error(error instanceof Error ? error.message : "Could not verify this X account");
+    },
   });
   const preflight = useMutation({
     mutationFn: (id: string) => preflightTwitterAutoDmAutomation({ data: { id } }),
@@ -550,9 +552,9 @@ function TwitterAutoDmPage() {
                                 )}
                               </div>
                               {!connection.ready &&
-                                (connection.readinessMessage || connection.lastError) && (
+                                (connection.lastError || connection.readinessMessage) && (
                                   <p className="mt-1 text-xs leading-4 text-rose-600">
-                                    {connection.readinessMessage || connection.lastError}
+                                    {connection.lastError || connection.readinessMessage}
                                   </p>
                                 )}
                             </div>
