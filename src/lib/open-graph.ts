@@ -5,6 +5,8 @@ import {
   publicProductUrl,
   publicProfileUrl,
 } from "./application-urls";
+import { avatarDeliveryUrl } from "./media-variants";
+import { seoDocumentTitle, seoMetaDescription } from "./seo-description";
 import { jsonLdScript } from "./seo-structured-data";
 import { safePublicMediaUrl } from "./safe-url";
 
@@ -81,10 +83,13 @@ export type PublicProductHeadData = {
   };
 };
 
-export function creatorIndexingMeta(profile: {
-  noindex?: boolean | null;
-  onboarded?: boolean | null;
-}, _options?: { surface?: "profile" | "store" }) {
+export function creatorIndexingMeta(
+  profile: {
+    noindex?: boolean | null;
+    onboarded?: boolean | null;
+  },
+  _options?: { surface?: "profile" | "store" },
+) {
   return profile.noindex === true || profile.onboarded === false
     ? [{ name: "robots", content: "noindex, nofollow, noarchive" }]
     : [];
@@ -197,8 +202,12 @@ export function publicNewsletterDirectoryHead(
   baseUrl?: string,
 ) {
   const title = newsletterMetadataText(`Newsletters by ${data.creator.displayName}`);
-  const description = newsletterMetadataText(
-    `Read ${data.publications.map((publication) => publication.title).join(", ")}.`,
+  const titles = data.publications
+    .map((publication) => publication.title.trim())
+    .filter((publicationTitle) => publicationTitle.length > 0);
+  const description = seoMetaDescription(
+    titles.length ? `Read ${titles.join(", ")}.` : "",
+    `Read newsletters from ${data.creator.displayName} (@${data.creator.username}) on bento.surf. Browse public issues and subscribe from their page.`,
   );
   const canonical = absolutePublicPath(publicNewslettersPath(data.creator.username), baseUrl);
   return {
@@ -364,19 +373,29 @@ export function publicPageHead(data: PublicPagePreviewData, baseUrl?: string) {
   const pageSlug = publicPageSlug(data);
   const activePage = data.pages.find((page) => page.id === data.activePageId);
   const pageName = data.activePageName || activePage?.name || null;
+  const handle = `@${data.profile.username}`;
+  const customTitle = data.profile.meta_title?.trim() || "";
   const title = pageSlug
-    ? pageSlug === "insights"
-      ? `Social Media Insights for ${creatorName} | bento.surf`
-      : `${pageName || pageSlug} by ${creatorName} | bento.surf`
-    : data.profile.meta_title?.trim() || `${creatorName} | bento.surf`;
-  const description = metadataDescription(
+    ? seoDocumentTitle(
+        pageSlug === "insights"
+          ? `Social Media Insights for ${creatorName}`
+          : `${pageName || pageSlug} by ${creatorName}`,
+      )
+    : customTitle && customTitle.toLowerCase().includes(handle.toLowerCase())
+      ? seoDocumentTitle(customTitle)
+      : seoDocumentTitle(customTitle ? `${customTitle} (${handle})` : `${creatorName} (${handle})`);
+  const profileFallback = `${handle} on bento.surf. Explore this creator page, links, and latest work in one place.`;
+  const pageFallback =
+    pageSlug === "insights"
+      ? `View public social media performance and audience insights for ${creatorName} (${handle}) on bento.surf.`
+      : `Explore ${pageName || pageSlug} from ${creatorName} (${handle}) on bento.surf. See what this creator shares in public.`;
+  const description = seoMetaDescription(
     pageSlug
       ? pageSlug === "insights"
-        ? `View public social media performance and audience insights for ${creatorName} on bento.surf.`
-        : `Explore ${pageName || pageSlug} from ${creatorName} on bento.surf.${data.profile.bio ? ` ${data.profile.bio}` : ""}`
-      : data.profile.meta_description?.trim() ||
-          data.profile.bio ||
-          `Find ${data.profile.username} on bento.surf.`,
+        ? pageFallback
+        : `${pageFallback}${data.profile.bio ? ` ${data.profile.bio}` : ""}`
+      : data.profile.meta_description?.trim() || data.profile.bio,
+    pageSlug ? pageFallback : profileFallback,
   );
   const image = publicPageOpenGraphImageUrl(data, baseUrl);
   const canonical = publicPageCanonicalUrl(data, baseUrl);
@@ -388,7 +407,7 @@ export function publicPageHead(data: PublicPagePreviewData, baseUrl?: string) {
     "@id": `${profileUrl}#creator`,
     name: creatorName,
     alternateName: `@${data.profile.username}`,
-    description: data.profile.bio || `Find ${data.profile.username} on bento.surf.`,
+    description: description || profileFallback,
     url: profileUrl,
     ...(avatar ? { image: new URL(avatar, publicBaseUrl(baseUrl)).toString() } : {}),
   };
@@ -445,8 +464,14 @@ export function publicPageHead(data: PublicPagePreviewData, baseUrl?: string) {
     ],
     links: [
       { rel: "canonical", href: canonical },
-      ...(data.profile.avatar_url
-        ? [{ rel: "preload", as: "image", href: data.profile.avatar_url }]
+      ...(avatarDeliveryUrl(data.profile.avatar_url)
+        ? [
+            {
+              rel: "preload" as const,
+              as: "image" as const,
+              href: avatarDeliveryUrl(data.profile.avatar_url)!,
+            },
+          ]
         : []),
     ],
     scripts: [jsonLdScript(pageSchema)],
@@ -456,11 +481,10 @@ export function publicPageHead(data: PublicPagePreviewData, baseUrl?: string) {
 export function publicProductHead(data: PublicProductHeadData, baseUrl?: string) {
   const base = publicBaseUrl(baseUrl);
   const creatorName = data.creator.display_name || data.creator.username;
-  const title = `${data.product.title} by ${creatorName} | bento.surf`;
-  const description = metadataDescription(
-    data.product.subtitle ||
-      data.product.description ||
-      `Buy ${data.product.title} from ${creatorName} on bento.surf.`,
+  const title = seoDocumentTitle(`${data.product.title} by ${creatorName}`);
+  const description = seoMetaDescription(
+    data.product.subtitle || data.product.description,
+    `Buy ${data.product.title} from ${creatorName} (@${data.creator.username}) on bento.surf. Secure checkout stays with this creator.`,
   );
   const canonical = publicProductUrl(data.creator.username, data.product.public_slug, base);
   const uploadedCover = data.product.cover_url?.trim() || null;

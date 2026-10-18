@@ -12,6 +12,7 @@ import { normalizePlan, planHasEntitlement } from "@/lib/plans";
 import {
   normalizePublicUsername,
   publicNewslettersPath,
+  publicProductPath,
   publicProfilePath,
 } from "@/lib/application-urls";
 import { openPublicCreatorPageFromWebMcp, useWebMcpTools, webMcpResult } from "@/lib/webmcp";
@@ -208,8 +209,27 @@ export function PublicProfileView({
     }).catch(() => {});
   }, [profile?.id]);
 
+  const documentHeading =
+    data.activePageId &&
+    !blocks.some((block) => {
+      const content = block.content;
+      return (
+        block.type === "heading" &&
+        !!content &&
+        typeof content === "object" &&
+        !Array.isArray(content) &&
+        (content as { headingLevel?: unknown }).headingLevel === "h1"
+      );
+    })
+      ? data.activePageName || activeSlug || "Page"
+      : null;
+
   return (
-    <PublicCreatorShell chrome={data.chrome} activePageId={data.activePageId}>
+    <PublicCreatorShell
+      chrome={data.chrome}
+      activePageId={data.activePageId}
+      documentHeading={documentHeading}
+    >
       <PublicSystemPageCanvas
         username={profile.username}
         systemItems={data.systemItems}
@@ -236,6 +256,23 @@ export function PublicProfileView({
           }).catch(() => {});
         }}
       />
+      {!data.activePageId && data.productLinks.length ? (
+        <section className="mt-8" aria-label="Products">
+          <h2 className="font-display text-xl text-foreground">Products</h2>
+          <ul className="mt-3 space-y-2 text-sm">
+            {data.productLinks.map((product) => (
+              <li key={product.slug}>
+                <a
+                  href={publicProductPath(profile.username, product.slug)}
+                  className="underline underline-offset-4"
+                >
+                  {product.title}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
     </PublicCreatorShell>
   );
 }

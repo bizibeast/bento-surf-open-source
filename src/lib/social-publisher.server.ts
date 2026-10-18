@@ -28,6 +28,7 @@ import {
   type YouTubePostFormat,
 } from "./social-scheduler";
 import { getPlan } from "./plan.server";
+import { SOCIAL_CONNECTION_COLUMNS } from "./large-table-columns";
 import { prepareSocialImageUrl } from "./social-image-variants.server";
 import { socialMediaByteLimit } from "./social-media-limits";
 import { validateMediaObjectKey } from "./r2-storage.server";
@@ -2081,7 +2082,7 @@ export async function processSocialPublishMessage(message: SocialPublishMessage)
   const db = supabaseAdmin as any;
   const { data: target, error } = await db
     .from("social_post_targets")
-    .select("*, post:social_posts(*), connection:social_connections(*)")
+    .select(`*, post:social_posts(*), connection:social_connections(${SOCIAL_CONNECTION_COLUMNS})`)
     .eq("id", message.targetId)
     .eq("idempotency_key", message.idempotencyKey)
     .maybeSingle();

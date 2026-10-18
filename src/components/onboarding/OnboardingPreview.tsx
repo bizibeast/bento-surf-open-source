@@ -1,3 +1,4 @@
+import { configuredPublicOrigin } from "@/lib/application-urls";
 import { motion, useReducedMotion } from "motion/react";
 import { ArrowUpRight, Link2, LockKeyhole, Sparkles } from "lucide-react";
 import { motionTokens } from "@/lib/motion";
@@ -19,7 +20,9 @@ export function OnboardingPreview({ brief }: { brief: OnboardingBrief }) {
         className="overflow-hidden rounded-[2rem] border border-black/8 bg-white p-3 shadow-xl shadow-slate-900/5"
       >
         <div className="flex items-center justify-center gap-2 py-3 text-xs text-slate-500">
-          <LockKeyhole className="size-3" /> bento.surf/{brief.username || "your-name"}
+          <LockKeyhole className="size-3" />{" "}
+          {new URL(configuredPublicOrigin(import.meta.env.VITE_PUBLIC_URL)).host}/
+          {brief.username || "your-name"}
         </div>
         <motion.div
           animate={{ backgroundColor: theme.background }}

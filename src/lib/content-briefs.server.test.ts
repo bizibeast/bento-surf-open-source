@@ -38,7 +38,8 @@ describe("shared niche briefs", () => {
     await fetchTrendSources(input, {
       search,
       reserveSearch,
-      youtube: vi.fn().mockResolvedValue(free),
+      news: vi.fn().mockResolvedValue(free),
+      youtube: vi.fn().mockResolvedValue([]),
       reddit: vi.fn().mockResolvedValue([]),
       hackerNews: vi.fn().mockResolvedValue([]),
     });
@@ -117,7 +118,7 @@ describe("shared niche briefs", () => {
     expect(normalizeNicheKey([" Creator Economy ", "AI Agents"])).toBe(
       normalizeNicheKey(["ai agents", "creator economy"]),
     );
-    expect(normalizeNicheKey(["creator AI"])).toMatch(/^social-v14:/);
+    expect(normalizeNicheKey(["creator AI"])).toMatch(/^social-v15:/);
   });
 
   it("reuses one fresh brief for the same niche, language, region, and day", async () => {
@@ -266,6 +267,7 @@ it("rotates two social platforms and widens sparse results within four paid requ
     {
       search,
       reserveSearch,
+      news: vi.fn().mockResolvedValue([]),
       youtube: vi.fn().mockResolvedValue([]),
       reddit: vi.fn().mockResolvedValue([]),
       hackerNews,
@@ -278,7 +280,7 @@ it("rotates two social platforms and widens sparse results within four paid requ
   expect(new Set(search.mock.calls.slice(0, 2).map(([query]) => query.group)).size).toBe(2);
   expect(search.mock.calls[0][0]).toMatchObject({ limit: 20, query: '"comedy" OR "Trevor Noah"' });
   expect(hackerNews).not.toHaveBeenCalled();
-  expect(results).toHaveLength(4);
+  expect(results).toHaveLength(5);
 });
 
 it("counts transient retries against the same per-brief provider allowance", async () => {
@@ -292,6 +294,7 @@ it("counts transient retries against the same per-brief provider allowance", asy
   await fetchTrendSources(input, {
     search,
     reserveSearch,
+    news: vi.fn().mockResolvedValue([]),
     youtube: vi.fn().mockResolvedValue([]),
     reddit: vi.fn().mockResolvedValue([]),
     hackerNews: vi.fn().mockResolvedValue([]),

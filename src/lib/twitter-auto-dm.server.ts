@@ -99,7 +99,7 @@ function webhookSigningSecret() {
 }
 
 function webhookUrl() {
-  return `${(process.env.VITE_APP_URL?.trim() || "https://app.bento.surf").replace(/\/$/, "")}/api/webhooks/twitter`;
+  return `${(process.env.VITE_APP_URL?.trim() || "http://localhost:8080").replace(/\/$/, "")}/api/webhooks/twitter`;
 }
 
 function timingSafeEqual(left: Uint8Array, right: Uint8Array) {
@@ -257,7 +257,7 @@ async function xRequest(
     headers: {
       Accept: "application/json",
       Authorization: `Bearer ${token}`,
-      "User-Agent": "bento.surf-twitter-auto-dm",
+      "User-Agent": "bento-twitter-auto-dm",
       ...(init.body ? { "Content-Type": "application/json" } : {}),
       ...init.headers,
     },
@@ -513,8 +513,44 @@ export async function verifyTwitterAutoDmConnection(connection: TwitterVerificat
     );
   }
   if (process.env.X_ACCOUNT_ACTIVITY_ENABLED !== "true") {
+    // Existing X Activity subscriptions can deliver DMs without creating a
+    // second, legacy Account Activity feed. This is control-plane inspection.
+    const activityUrl = `https://api.x.com/2/activity/subscriptions?user_id=${encodeURIComponent(connection.provider_user_id)}&max_results=100`;
+    let activity = await xRequest(activityUrl, token);
+    if (activity.status === 401) {
+      token = await tokenForConnection(connection, true);
+      activity = await xRequest(activityUrl, token);
+    }
+    if (twitterRequestFailed(activity.status, activity.data)) {
+      throw webhookApiError("X activity subscriptions", activity, true);
+    }
+    if (!Array.isArray(activity.data?.data)) {
+      throw new TwitterDeliveryError(
+        "X did not return a valid Activity subscription list. Auto-DMs remain unverified.",
+        "webhook_invalid_response",
+        true,
+      );
+    }
+    const fields = new Set<string>();
+    for (const subscription of activity.data.data) {
+      if (
+        String(subscription?.webhook_id) !== webhook.id ||
+        String(subscription?.filter?.user_id) !== connection.provider_user_id
+      )
+        continue;
+      const field = {
+        "dm.received": "direct_messages",
+        "post.mention.create": "mentions",
+        "like.create": "likes",
+        "post.repost.create": "retweets",
+      }[String(subscription?.event_type)] as string | undefined;
+      if (field) fields.add(field);
+    }
+    if (fields.has("direct_messages")) {
+      return { fields: [...fields], verifiedAt: webhook.verifiedAt };
+    }
     throw new TwitterDeliveryError(
-      "The X webhook passed verification, but account event delivery is not enabled. X bills delivered post events. The administrator must set a hard spending limit in the X Developer Console before enabling X_ACCOUNT_ACTIVITY_ENABLED. No paid polling or event feed was started.",
+      "The X webhook passed verification, but no DM Received Activity subscription is attached to this account and webhook. Set a hard X Developer Console spending limit before enabling delivery. No paid polling or event feed was started.",
       "webhook_events_disabled",
       false,
     );
@@ -627,7 +663,7 @@ export async function auditTwitterWebhookConnections() {
   return { checked: data?.length || 0, verified };
 }
 
-async function sendTwitterDm(connection: any, senderId: string | null, text: string) {
+export async function sendTwitterDm(connection: any, senderId: string | null, text: string) {
   if (!senderId) {
     throw new TwitterDeliveryError(
       "X did not provide a recipient for this message.",
@@ -639,6 +675,7 @@ async function sendTwitterDm(connection: any, senderId: string | null, text: str
     return { id: `staging-dm-${crypto.randomUUID()}` };
   }
   const token = await tokenForConnection(connection);
+  await reserveProviderUsage("x_dm_deliveries", 1, { workspaceId: connection.user_id });
   await reserveProviderUsage("x_write_actions", 1, { workspaceId: connection.user_id });
   const result = await xRequest(
     `https://api.x.com/2/dm_conversations/with/${encodeURIComponent(senderId)}/messages`,

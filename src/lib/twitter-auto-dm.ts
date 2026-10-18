@@ -30,6 +30,15 @@ export const TWITTER_AUTO_DM_REQUIRED_SCOPES = [
 
 export const TWITTER_AUTO_DM_WEBHOOK_FIELDS = ["direct_messages", "mentions"] as const;
 
+const TWITTER_TRIGGER_WEBHOOK_FIELD: Record<TwitterDmTriggerType, string> = {
+  dm_keyword: "direct_messages",
+  any_dm: "direct_messages",
+  mention_keyword: "mentions",
+  any_mention: "mentions",
+  any_like: "likes",
+  any_retweet: "retweets",
+};
+
 export const TWITTER_CONNECTION_VERIFICATION_MAX_AGE_MS = 48 * 60 * 60 * 1_000;
 
 export type TwitterConnectionReadinessIssue =
@@ -62,6 +71,7 @@ function validTimestamp(value: string | null | undefined) {
 export function getTwitterConnectionReadiness(
   connection: TwitterConnectionReadinessInput | null | undefined,
   now = new Date(),
+  triggerType: TwitterDmTriggerType = "any_dm",
 ) {
   const issues: TwitterConnectionReadinessIssue[] = [];
   if (!connection || connection.status !== "active") issues.push("inactive");
@@ -74,7 +84,7 @@ export function getTwitterConnectionReadiness(
   }
 
   const webhookFields = new Set(connection?.webhook_fields || []);
-  if (TWITTER_AUTO_DM_WEBHOOK_FIELDS.some((field) => !webhookFields.has(field))) {
+  if (!webhookFields.has(TWITTER_TRIGGER_WEBHOOK_FIELD[triggerType])) {
     issues.push("missing_webhook_subscription");
   }
 

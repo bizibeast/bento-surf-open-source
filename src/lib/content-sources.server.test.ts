@@ -5,6 +5,7 @@ import {
   fetchGdeltStories,
   fetchHackerNewsStories,
   fetchHackerNewsStoryPage,
+  fetchNewsStories,
   fetchRedditStories,
   fetchYouTubeStories,
   fetchYouTubeStoryPage,
@@ -335,6 +336,21 @@ it("follows public RSS redirects on Workers without accepting private redirect t
     "public HTTPS",
   );
   expect(unsafe).toHaveBeenCalledTimes(1);
+});
+
+it("queries a bounded current news feed for the creator's niche", async () => {
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(rssFixture));
+  const items = await fetchNewsStories("startup founder", {
+    fetcher,
+    limit: 1,
+    language: "en",
+    region: "global",
+  });
+  const url = new URL(String(fetcher.mock.calls[0][0]));
+  expect(url.hostname).toBe("news.google.com");
+  expect(url.searchParams.get("q")).toContain("startup founder when:7d");
+  expect(items).toHaveLength(1);
+  expect(items[0]).toMatchObject({ kind: "rss", publishedAt: "2026-09-18T08:00:00.000Z" });
 });
 
 it("uses real YouTube pagination and observed subscriber counts without turning hidden or missing counts into zero", async () => {

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 const mcpMocks = vi.hoisted(() => ({
   from: vi.fn(),
+  hasPlanEntitlement: vi.fn(async () => true),
   requirePlanEntitlement: vi.fn(),
   enforceRequestRateLimit: vi.fn(),
 }));
@@ -14,6 +15,7 @@ vi.mock("@/integrations/supabase/client.server", () => ({
 
 vi.mock("./plan.server", async () => ({
   ...(await vi.importActual<typeof import("./plan.server")>("./plan.server")),
+  hasPlanEntitlement: mcpMocks.hasPlanEntitlement,
   requirePlanEntitlement: mcpMocks.requirePlanEntitlement,
 }));
 
@@ -526,7 +528,11 @@ describe("Bento MCP tools", () => {
         { id: "00000000-0000-4000-8000-000000000099", name: "Unowned" },
       ),
     ).rejects.toThrow("The instagram automation could not be loaded.");
-    expect(mcpMocks.requirePlanEntitlement).not.toHaveBeenCalled();
+    expect(mcpMocks.requirePlanEntitlement).toHaveBeenCalledExactlyOnceWith(
+      authInfo.extra?.userId,
+      "mcpSocialAutomation",
+      "MCP Auto DMs require Creator or Creator Plus.",
+    );
   });
 
   it("advertises the Bento toolset and importable skill", async () => {

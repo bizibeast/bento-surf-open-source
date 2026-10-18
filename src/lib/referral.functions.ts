@@ -10,6 +10,7 @@ import { REFERRAL_COOKIE, referralCookieSettings, referralTokenHash } from "./re
 import { enforceRequestRateLimit } from "./request-security.server";
 import { canonicalReachPostUrl, isReferralCode, reachPostFromUrl } from "./referrals";
 import type { ReferralQueueMessage } from "./referral-worker.server";
+import { SOCIAL_CONNECTION_LIST_LIMIT } from "./large-table-columns";
 
 const codeSchema = z
   .string()
@@ -270,7 +271,8 @@ export const submitReachReward = createServerFn({ method: "POST" })
         .select("id")
         .eq("user_id", context.userId)
         .eq("provider", post.provider)
-        .eq("status", "active"),
+        .eq("status", "active")
+        .limit(SOCIAL_CONNECTION_LIST_LIMIT),
       db
         .from("referral_program_settings")
         .select("enabled,reach_rates,reach_cap")

@@ -26,6 +26,11 @@ import {
   type SocialContentInsight,
 } from "./social-content-insights.server";
 import { accessTokenForConnection, ProviderError } from "./social-publisher.server";
+import {
+  SOCIAL_CONNECTION_COLUMNS,
+  SOCIAL_CONNECTION_LIST_LIMIT,
+  SOCIAL_INSIGHT_COLUMNS,
+} from "./large-table-columns";
 import type { SocialProvider } from "./social-scheduler";
 import { nextLocalRefreshAt } from "./timezones";
 import {
@@ -1236,7 +1241,8 @@ async function persistSocialInsightsContentPage(connection: any, content: Social
     .in(
       "remote_post_id",
       storable.map((item) => item.remotePostId),
-    );
+    )
+    .limit(storable.length);
   if (existingError) throw new Error("Historical social thumbnails could not be loaded.");
   const storedThumbnails = new Map<string, string>(
     (existing || []).flatMap((row: any) =>
@@ -1442,10 +1448,11 @@ async function queueSocialInsightsBackfill(userId: string, force: boolean) {
     await Promise.all([
       db
         .from("social_connections")
-        .select("*")
+        .select(SOCIAL_CONNECTION_COLUMNS)
         .eq("user_id", userId)
         .eq("status", "active")
-        .order("created_at", { ascending: true }),
+        .order("created_at", { ascending: true })
+        .limit(SOCIAL_CONNECTION_LIST_LIMIT),
       db
         .from("social_analytics_snapshots")
         .select(
@@ -1496,7 +1503,7 @@ export async function queueInitialSocialInsightsImport(
         await Promise.all([
           db
             .from("social_connections")
-            .select("*")
+            .select(SOCIAL_CONNECTION_COLUMNS)
             .eq("id", connectionId)
             .eq("user_id", userId)
             .eq("status", "active")
@@ -1575,7 +1582,7 @@ export async function processSocialInsightsBackfillMessage(
     await Promise.all([
       db
         .from("social_connections")
-        .select("*")
+        .select(SOCIAL_CONNECTION_COLUMNS)
         .eq("id", message.connectionId)
         .eq("user_id", message.userId)
         .eq("status", "active")
@@ -1740,12 +1747,13 @@ export async function requeueStaleSocialInsightsBackfills(queue?: SocialInsights
   if (!snapshots?.length) return { queued: 0 };
   const { data: connections, error: connectionError } = await db
     .from("social_connections")
-    .select("*")
+    .select(SOCIAL_CONNECTION_COLUMNS)
     .in(
       "id",
       snapshots.map((snapshot: SocialInsightsSnapshotLease) => snapshot.connection_id),
     )
-    .eq("status", "active");
+    .eq("status", "active")
+    .limit(snapshots.length);
   if (connectionError) throw new Error("Stale social analytics connections could not be loaded.");
   const messages = await claimSocialInsightsJobs(connections || [], snapshots, now);
   for (const message of messages) {
@@ -1846,12 +1854,14 @@ export async function loadSocialAnalyticsPages(
   fetchPage: (from: number, to: number) => PromiseLike<{ data: any[] | null; error: unknown }>,
 ) {
   const rows: any[] = [];
-  for (let from = 0; ; from += 1000) {
+  // ponytail: 10 pages. A year of stored posts fits; raise if a creator exceeds 10k insights.
+  for (let from = 0; from < 10_000; from += 1000) {
     const page = await fetchPage(from, from + 999);
     if (page.error) throw new Error("Historical social analytics could not be loaded.");
     rows.push(...(page.data || []));
     if (!page.data || page.data.length < 1000) return rows;
   }
+  return rows;
 }
 
 async function loadSocialAnalytics(userId: string, allContent = false) {
@@ -1881,7 +1891,8 @@ async function loadSocialAnalytics(userId: string, allContent = false) {
     .from("social_connections")
     .select("id,provider_avatar_url")
     .eq("user_id", userId)
-    .eq("status", "active");
+    .eq("status", "active")
+    .limit(SOCIAL_CONNECTION_LIST_LIMIT);
   if (connectionResult.error) throw new Error("Social analytics could not be loaded.");
   const connectionAvatars = new Map<string, string | null>(
     (connectionResult.data || []).map(
@@ -1905,7 +1916,10 @@ async function loadSocialAnalytics(userId: string, allContent = false) {
         .range(from, to),
     ),
     loadSocialAnalyticsPages((from, to) => {
-      let query = db.from("social_content_insights").select("*").eq("user_id", userId);
+      let query = db
+        .from("social_content_insights")
+        .select(SOCIAL_INSIGHT_COLUMNS)
+        .eq("user_id", userId);
       if (!allContent) query = query.gte("published_at", cutoff);
       return query
         .order("published_at", { ascending: false })
@@ -1935,14 +1949,80 @@ async function loadSocialAnalytics(userId: string, allContent = false) {
   };
 }
 
+const PUBLIC_CONTENT_COLUMNS =
+  "connection_id, provider, remote_post_id, remote_post_url, content_type, caption, thumbnail_url, published_at, views, impressions, reach, engagements, likes, comments, shares, saves, fetched_at";
+
 export async function loadPublicSocialAnalytics(userId: string) {
-  const analytics = await loadSocialAnalytics(userId);
-  const accounts = socialAnalyticsAccountsForPeriod(
-    analytics.accounts,
-    analytics.content,
-    analytics.displayPeriodDays,
+  const db = supabaseAdmin as any;
+  let profileResult = await db
+    .from("profiles")
+    .select("username,social_insights_enabled,social_insights_period_days")
+    .eq("id", userId)
+    .maybeSingle();
+  if (profileResult.error?.code === "42703") {
+    profileResult = await db
+      .from("profiles")
+      .select("username,social_insights_enabled")
+      .eq("id", userId)
+      .maybeSingle();
+  }
+  const { data: profile, error: profileError } = profileResult;
+  if (profileError) throw new Error("Social analytics could not be loaded.");
+  const displayPeriodDays = normalizeSocialInsightsDisplayPeriod(
+    profile?.social_insights_period_days,
   );
-  return { ...analytics, accounts, summary: summarizeSocialAnalytics(accounts) };
+  const cutoff = new Date(Date.now() - displayPeriodDays * 24 * 60 * 60_000).toISOString();
+  const [snapshotResult, connectionResult, contentResult] = await Promise.all([
+    db
+      .from("social_analytics_snapshots")
+      .select("*")
+      .eq("user_id", userId)
+      .order("provider", { ascending: true }),
+    db
+      .from("social_connections")
+      .select("id,provider_avatar_url")
+      .eq("user_id", userId)
+      .eq("status", "active")
+      .limit(SOCIAL_CONNECTION_LIST_LIMIT),
+    db
+      .from("social_content_insights")
+      .select(PUBLIC_CONTENT_COLUMNS)
+      .eq("user_id", userId)
+      .gte("published_at", cutoff)
+      .order("published_at", { ascending: false })
+      .limit(1000),
+  ]);
+  if (snapshotResult.error || connectionResult.error || contentResult.error) {
+    throw new Error("Social analytics could not be loaded.");
+  }
+  const connectionAvatars = new Map<string, string | null>(
+    (connectionResult.data || []).map(
+      (connection: any) =>
+        [connection.id, connection.provider_avatar_url] as [string, string | null],
+    ),
+  );
+  const accounts = (snapshotResult.data || []).map((row: any) =>
+    snapshotRow(row, connectionAvatars.get(row.connection_id)),
+  );
+  const activeIds = new Set(
+    accounts.map((account: SocialAnalyticsAccount) => account.connectionId),
+  );
+  // ponytail: 1000 newest posts in the display window. Upgrade path is the dashboard pager.
+  const content = (contentResult.data || [])
+    .map(contentRow)
+    .filter((item: SocialContentInsight) => activeIds.has(item.connectionId));
+  const periodAccounts = socialAnalyticsAccountsForPeriod(accounts, content, displayPeriodDays);
+  return {
+    accounts: periodAccounts,
+    history: [] as ReturnType<typeof historyRow>[],
+    content,
+    summary: summarizeSocialAnalytics(periodAccounts),
+    shareEnabled: Boolean(profile?.social_insights_enabled),
+    displayPeriodDays,
+    username: profile?.username || null,
+    publicUrl: profile?.username ? publicProfileUrl(profile.username, "insights") : null,
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 export const getSocialAnalytics = createServerFn({ method: "GET" })

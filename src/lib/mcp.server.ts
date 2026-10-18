@@ -1,3 +1,12 @@
+import { SOCIAL_CONNECTION_COLUMNS, SOCIAL_CONNECTION_LIST_LIMIT } from "./large-table-columns";
+import type { TwitterDmTriggerType } from "./twitter-auto-dm";
+import {
+  CHATGPT_MCP_INSTRUCTIONS,
+  CHATGPT_MCP_PATH,
+  chatGptOperations,
+  registerChatGptTools,
+  type ChatGptToolOperations,
+} from "./mcp.chatgpt.server";
 import { autoDmDelaySchema } from "./auto-dm-delay";
 import { readAutoDmDelay, writeAutoDmDelay } from "./auto-dm-delay-settings.server";
 import { searchStockPhotos, importStockPhoto, type StockProvider } from "./scheduler-stock.server";
@@ -35,8 +44,8 @@ import {
   sanitizeFileExtension,
   type UploadKind,
 } from "./r2-storage.server";
-import { getPlan, requirePlanEntitlement } from "./plan.server";
-import { planHasEntitlement, planName, usesAdvancedAutoDm } from "./plans";
+import { getPlan, hasPlanEntitlement, requirePlanEntitlement } from "./plan.server";
+import { planName, usesAdvancedAutoDm } from "./plans";
 import {
   getInstagramConnectionReadiness,
   instagramDmAutomationInputSchema,
@@ -234,10 +243,14 @@ async function getBentoOverview(userId: string, origin: string) {
   };
 }
 
-function autoDmReadiness(platform: AutoDmPlatform, connection: any) {
+function autoDmReadiness(
+  platform: AutoDmPlatform,
+  connection: any,
+  triggerType?: TwitterDmTriggerType,
+) {
   if (platform === "instagram") return getInstagramConnectionReadiness(connection);
   if (platform === "facebook") return getFacebookConnectionReadiness(connection);
-  return getTwitterConnectionReadiness(connection);
+  return getTwitterConnectionReadiness(connection, new Date(), triggerType);
 }
 
 async function listSocialAccounts(userId: string, provider?: string) {
@@ -249,7 +262,7 @@ async function listSocialAccounts(userId: string, provider?: string) {
     .eq("user_id", userId)
     .order("created_at", { ascending: true });
   if (provider) query = query.eq("provider", provider);
-  const { data, error } = await query;
+  const { data, error } = await query.limit(SOCIAL_CONNECTION_LIST_LIMIT);
   if (error) throw new Error("Connected social accounts could not be loaded.");
   return (data || []).map((connection: any) => {
     const autoDm = ["instagram", "facebook", "twitter"].includes(connection.provider)
@@ -285,6 +298,11 @@ async function listSocialAccounts(userId: string, provider?: string) {
 }
 
 async function listSocialPosts(userId: string, status: string | undefined, limit: number) {
+  await requirePlanEntitlement(
+    userId,
+    "mcpSocialAutomation",
+    "MCP posting and Auto DMs require Creator or Creator Plus.",
+  );
   let query = db()
     .from("social_posts")
     .select(
@@ -301,6 +319,11 @@ async function listSocialPosts(userId: string, status: string | undefined, limit
 
 async function saveSocialPostForUser(userId: string, input: unknown) {
   const data = socialPostInputSchema.parse(input);
+  await requirePlanEntitlement(
+    userId,
+    "mcpSocialAutomation",
+    "MCP posting requires Creator or Creator Plus.",
+  );
   const result = await saveSchedulerPostForUser(userId, data);
   return (
     result.posts.find((post: { id: string }) => post.id === result.savedPostId) || {
@@ -310,6 +333,11 @@ async function saveSocialPostForUser(userId: string, input: unknown) {
 }
 
 async function listAutoDmAutomations(userId: string, platform?: AutoDmPlatform) {
+  await requirePlanEntitlement(
+    userId,
+    "mcpSocialAutomation",
+    "MCP posting and Auto DMs require Creator or Creator Plus.",
+  );
   const platforms = platform ? [platform] : (Object.keys(AUTO_DM) as AutoDmPlatform[]);
   const results = await Promise.all(
     platforms.map(async (name) => {
@@ -330,6 +358,11 @@ async function listAutoDmAutomations(userId: string, platform?: AutoDmPlatform) 
 }
 
 async function saveAutoDmAutomation(userId: string, platform: AutoDmPlatform, input: unknown) {
+  await requirePlanEntitlement(
+    userId,
+    "mcpSocialAutomation",
+    "MCP Auto DMs require Creator or Creator Plus.",
+  );
   const config = AUTO_DM[platform];
   let candidate = input;
   if (input && typeof input === "object" && !Array.isArray(input) && Object.hasOwn(input, "id")) {
@@ -382,13 +415,13 @@ async function saveAutoDmAutomation(userId: string, platform: AutoDmPlatform, in
     };
   }
   const data = config.schema.parse(candidate) as any;
-  const plan = await requirePlanEntitlement(
+  await requirePlanEntitlement(
     userId,
     config.entitlement,
     `${platform} Auto-DMs are not available on this plan.`,
   );
-  if (usesAdvancedAutoDm(data) && !planHasEntitlement(plan, "advancedAutoDM")) {
-    throw new Error("Advanced Auto-DMs require the Store plan.");
+  if (usesAdvancedAutoDm(data) && !(await hasPlanEntitlement(userId, "advancedAutoDM"))) {
+    throw new Error("Advanced Auto-DMs require the Creator plan.");
   }
   await enforceRequestRateLimit(
     "EXPENSIVE_API_RATE_LIMITER",
@@ -397,13 +430,20 @@ async function saveAutoDmAutomation(userId: string, platform: AutoDmPlatform, in
   );
   const { data: connection, error: connectionError } = await db()
     .from("social_connections")
-    .select("*")
+    .select(SOCIAL_CONNECTION_COLUMNS)
     .eq("id", data.connectionId)
     .eq("user_id", userId)
     .eq("provider", platform)
     .maybeSingle();
   if (connectionError || !connection) throw new Error(`Connect this ${platform} account first.`);
-  if (data.enabled && !autoDmReadiness(platform, connection).ready) {
+  if (
+    data.enabled &&
+    !autoDmReadiness(
+      platform,
+      connection,
+      platform === "twitter" ? (data.triggerType as TwitterDmTriggerType) : undefined,
+    ).ready
+  ) {
     throw new Error(`Reconnect and verify ${platform} before enabling this automation.`);
   }
 
@@ -464,6 +504,11 @@ async function setAutoDmEnabled(
   id: string,
   enabled: boolean,
 ) {
+  await requirePlanEntitlement(
+    userId,
+    "mcpSocialAutomation",
+    "MCP Auto DMs require Creator or Creator Plus.",
+  );
   const config = AUTO_DM[platform];
   if (enabled) {
     await requirePlanEntitlement(
@@ -473,18 +518,25 @@ async function setAutoDmEnabled(
     );
     const { data: automation } = await db()
       .from(config.table)
-      .select("connection_id")
+      .select("connection_id,trigger_type")
       .eq("id", id)
       .eq("user_id", userId)
       .maybeSingle();
     if (!automation) throw new Error("Automation not found.");
     const { data: connection } = await db()
       .from("social_connections")
-      .select("*")
+      .select(SOCIAL_CONNECTION_COLUMNS)
       .eq("id", automation.connection_id)
       .eq("user_id", userId)
       .maybeSingle();
-    if (!connection || !autoDmReadiness(platform, connection).ready) {
+    if (
+      !connection ||
+      !autoDmReadiness(
+        platform,
+        connection,
+        platform === "twitter" ? (automation.trigger_type as TwitterDmTriggerType) : undefined,
+      ).ready
+    ) {
       throw new Error(`Reconnect and verify ${platform} before enabling this automation.`);
     }
   }
@@ -500,6 +552,11 @@ async function setAutoDmEnabled(
 }
 
 async function deleteAutoDmAutomation(userId: string, platform: AutoDmPlatform, id: string) {
+  await requirePlanEntitlement(
+    userId,
+    "mcpSocialAutomation",
+    "MCP posting and Auto DMs require Creator or Creator Plus.",
+  );
   const { data, error } = await db()
     .from(AUTO_DM[platform].table)
     .delete()
@@ -2554,11 +2611,55 @@ export function createBentoMcpServer(
   return server;
 }
 
+export function createChatGptMcpServer(
+  authInfo: AuthInfo,
+  origin: string,
+  operations?: ChatGptToolOperations,
+) {
+  const userId = userIdFrom(authInfo);
+  let cachedCreatorContext: CreatorMcpContext | undefined;
+  const creatorContext = (): CreatorMcpContext => {
+    if (cachedCreatorContext) return cachedCreatorContext;
+    const publishableKey = process.env.SUPABASE_PUBLISHABLE_KEY?.trim();
+    if (!publishableKey) throw new Error("SUPABASE_PUBLISHABLE_KEY is not configured.");
+    cachedCreatorContext = {
+      userId,
+      supabase: createClient<Database>(configuredSupabaseUrl(), publishableKey, {
+        global: { headers: { Authorization: `Bearer ${authInfo.token}` } },
+        auth: { storage: undefined, persistSession: false, autoRefreshToken: false },
+      }),
+    };
+    return cachedCreatorContext;
+  };
+  const server = new McpServer(
+    { name: "bento", version: "1.1.0" },
+    { instructions: CHATGPT_MCP_INSTRUCTIONS },
+  );
+  installScannerSafeToolSchemas(server);
+  advertiseSkillsOnlyWhenRequested(server);
+  registerChatGptTools(
+    server,
+    authInfo,
+    origin,
+    operations ?? chatGptOperations(defaultBentoMcpOperations),
+    creatorContext,
+  );
+  return server;
+}
+
 const mcpHandler = createMcpHandler((context) => {
   if (!context.authInfo) throw new Error("Bento MCP requires authorization.");
   if (!context.requestInfo) throw new Error("Bento MCP request origin is missing.");
   const origin = new URL(context.requestInfo.url).origin;
   return createBentoMcpServer(context.authInfo, origin);
+});
+
+const chatGptMcpHandler = createMcpHandler((context) => {
+  if (!context.authInfo) throw new Error("Bento ChatGPT MCP requires authorization.");
+  const origin = context.requestInfo
+    ? new URL(context.requestInfo.url).origin
+    : process.env.VITE_APP_URL || "http://localhost:8080";
+  return createChatGptMcpServer(context.authInfo, origin);
 });
 
 function configuredSupabaseUrl() {
@@ -2614,11 +2715,11 @@ async function authenticateMcpRequest(request: Request): Promise<AuthInfo> {
   };
 }
 
-function protectedResourceMetadata(request: Request) {
+function protectedResourceMetadata(request: Request, path = MCP_PATH) {
   const origin = new URL(request.url).origin;
   return Response.json(
     {
-      resource: `${origin}${MCP_PATH}`,
+      resource: `${origin}${path}`,
       authorization_servers: [`${configuredSupabaseUrl()}/auth/v1`],
       scopes_supported: OAUTH_SCOPES,
       bearer_methods_supported: ["header"],
@@ -2640,8 +2741,8 @@ function applyMcpCors(response: Response, request: Request) {
   return response;
 }
 
-function unauthorized(request: Request, message = "Authorization required") {
-  const metadata = `${new URL(request.url).origin}/.well-known/oauth-protected-resource`;
+function unauthorized(request: Request, message = "Authorization required", path = MCP_PATH) {
+  const metadata = `${new URL(request.url).origin}/.well-known/oauth-protected-resource${path === MCP_PATH ? "" : path}`;
   return Response.json(
     { error: "unauthorized", message },
     {
@@ -2704,13 +2805,18 @@ async function routeBentoMcpRequest(
     return null;
   }
   if (url.origin !== expectedOrigin) return null;
+  const chatgptRequest = url.pathname === CHATGPT_MCP_PATH;
   if (
     url.pathname === "/.well-known/oauth-protected-resource" ||
-    url.pathname === "/.well-known/oauth-protected-resource/mcp"
+    url.pathname === "/.well-known/oauth-protected-resource/mcp" ||
+    url.pathname === `/.well-known/oauth-protected-resource${CHATGPT_MCP_PATH}`
   ) {
-    return protectedResourceMetadata(request);
+    return protectedResourceMetadata(
+      request,
+      url.pathname.endsWith(CHATGPT_MCP_PATH) ? CHATGPT_MCP_PATH : MCP_PATH,
+    );
   }
-  if (url.pathname !== MCP_PATH) return null;
+  if (url.pathname !== MCP_PATH && !chatgptRequest) return null;
   const origin = request.headers.get("origin");
   if (origin && origin !== url.origin && !MCP_BROWSER_ORIGINS.has(origin)) {
     return Response.json({ error: "Invalid origin" }, { status: 403 });
@@ -2722,7 +2828,12 @@ async function routeBentoMcpRequest(
   try {
     authInfo = await authenticate(request);
   } catch (error) {
-    if (error instanceof RequestHttpError && error.statusCode === 401) return unauthorized(request);
+    if (error instanceof RequestHttpError && error.statusCode === 401)
+      return unauthorized(
+        request,
+        "Authorization required",
+        chatgptRequest ? CHATGPT_MCP_PATH : MCP_PATH,
+      );
     throw error;
   }
   try {
@@ -2736,7 +2847,9 @@ async function routeBentoMcpRequest(
     }
     throw error;
   }
-  const response = await mcpHandler.fetch(request, { authInfo });
+  const response = await (chatgptRequest ? chatGptMcpHandler : mcpHandler).fetch(request, {
+    authInfo,
+  });
   response.headers.set("cache-control", "no-store");
   return response;
 }

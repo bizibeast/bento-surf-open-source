@@ -1,5 +1,13 @@
 const PUBLIC_PAGE_CACHE_VERSION = "v2";
 const DEFAULT_PUBLIC_PAGE_TTL_SECONDS = 30;
+const BLOG_FRESH_SECONDS = 600;
+const BLOG_LAST_GOOD_SECONDS = 604800;
+
+export const PUBLIC_BLOG_CACHE_CONTROL =
+  "public, max-age=600, s-maxage=600, stale-while-revalidate=86400, stale-if-error=604800";
+
+export const PUBLIC_SITEMAP_CACHE_CONTROL =
+  "public, max-age=300, s-maxage=600, stale-while-revalidate=86400, stale-if-error=604800";
 
 const RESERVED_APPLICATION_SEGMENTS = new Set([
   "_server",
@@ -118,10 +126,22 @@ function defaultCache() {
     : (caches as CacheStorage & { default: Cache }).default;
 }
 
-function cacheRequestFor(request: Request) {
+export function isPublicBlogPage(request: Request) {
+  if (!isPublicPageRequest(request)) return false;
+  const path = new URL(request.url).pathname;
+  return (
+    path === "/blog" || (path.startsWith("/blog/") && !path.slice("/blog/".length).includes("."))
+  );
+}
+
+function cacheRequestFor(request: Request, generation = PUBLIC_PAGE_CACHE_VERSION) {
   const key = new URL(request.url);
-  key.search = `?__bento_public_page_cache=${PUBLIC_PAGE_CACHE_VERSION}`;
+  key.search = `?__bento_public_page_cache=${generation}`;
   return new Request(key.toString(), { method: "GET" });
+}
+
+function lastGoodRequestFor(request: Request) {
+  return cacheRequestFor(request, `${PUBLIC_PAGE_CACHE_VERSION}-last-good`);
 }
 
 function cacheTtlSeconds(env: CacheEnvironment) {
@@ -134,7 +154,7 @@ function cacheTtlSeconds(env: CacheEnvironment) {
   return DEFAULT_PUBLIC_PAGE_TTL_SECONDS;
 }
 
-function withCacheStatus(response: Response, status: "HIT" | "MISS" | "BYPASS") {
+function withCacheStatus(response: Response, status: "HIT" | "MISS" | "BYPASS" | "STALE") {
   const headers = new Headers(response.headers);
   headers.set("x-bento-cache", status);
   return new Response(response.body, {
@@ -150,7 +170,9 @@ export async function readPublicPageCache(request: Request, env?: CacheEnvironme
   if (!cache) return null;
   try {
     const cached = await cache.match(cacheRequestFor(request));
-    return cached ? withCacheStatus(cached, "HIT") : null;
+    if (!cached) return null;
+    const hit = withCacheStatus(cached, "HIT");
+    return hit;
   } catch (error) {
     // Edge cache availability must never decide whether a public profile is
     // available. A cache miss is slower but still correct.
@@ -175,21 +197,71 @@ export async function storePublicPageCache(
   // explicit status makes this safety decision visible in staging load tests.
   if (response.headers.has("set-cookie")) return withCacheStatus(response, "BYPASS");
 
+  const blog = isPublicBlogPage(request);
   const ttl = cacheTtlSeconds(env);
+  const cacheControl = blog
+    ? `public, max-age=${BLOG_FRESH_SECONDS}`
+    : `public, max-age=${ttl}, stale-while-revalidate=86400`;
   const cacheHeaders = new Headers(response.headers);
-  cacheHeaders.set("cache-control", `public, max-age=${ttl}, stale-while-revalidate=${ttl * 4}`);
+  cacheHeaders.set("cache-control", cacheControl);
   cacheHeaders.set("x-bento-cache", "HIT");
   const cacheable = new Response(response.clone().body, {
     status: response.status,
     statusText: response.statusText,
     headers: cacheHeaders,
   });
-  const write = cache.put(cacheRequestFor(request), cacheable).catch((error) => {
-    console.warn("[public-page-cache] write failed; response was still served", error);
-  });
+  const writes = [
+    cache.put(cacheRequestFor(request), cacheable).catch((error) => {
+      console.warn("[public-page-cache] write failed; response was still served", error);
+    }),
+  ];
+  if (blog) {
+    const lastGoodHeaders = new Headers(cacheHeaders);
+    lastGoodHeaders.set("cache-control", `public, max-age=${BLOG_LAST_GOOD_SECONDS}`);
+    writes.push(
+      cache
+        .put(
+          lastGoodRequestFor(request),
+          new Response(response.clone().body, {
+            status: response.status,
+            statusText: response.statusText,
+            headers: lastGoodHeaders,
+          }),
+        )
+        .catch((error) => {
+          console.warn("[public-page-cache] last-good write failed", error);
+        }),
+    );
+  }
+  const write = Promise.all(writes);
   if (typeof context?.waitUntil === "function") context.waitUntil(write);
   else await write;
 
-  return withCacheStatus(response, "MISS");
+  const missHeaders = new Headers(response.headers);
+  missHeaders.set("cache-control", blog ? PUBLIC_BLOG_CACHE_CONTROL : cacheControl);
+  missHeaders.set("x-bento-cache", "MISS");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: missHeaders,
+  });
+}
+
+export async function publicBlogFailureFallback(request: Request, response: Response) {
+  if (response.status < 500 || !isPublicBlogPage(request)) return response;
+  const cache = defaultCache();
+  if (!cache) return response;
+  try {
+    const cached = await cache.match(lastGoodRequestFor(request));
+    if (!cached || cached.status !== 200) return response;
+    const headers = new Headers(cached.headers);
+    headers.set("cache-control", PUBLIC_BLOG_CACHE_CONTROL);
+    headers.set("x-bento-cache", "STALE");
+    headers.set("x-bento-content", "last-good");
+    return new Response(cached.body, { status: 200, statusText: "OK", headers });
+  } catch (error) {
+    console.warn("[public-page-cache] last-good read failed", error);
+    return response;
+  }
 }
 import { configuredAppOrigin, configuredPublicOrigin } from "./application-urls";

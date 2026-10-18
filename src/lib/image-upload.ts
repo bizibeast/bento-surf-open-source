@@ -1,21 +1,48 @@
 export type OptimizableImageKind = "avatar" | "image" | "cover";
 
-type ImageUploadPreset = {
-  maxDimension: number;
-  quality: number;
-  transcodeAboveBytes: number;
+const IMAGE_UPLOAD_QUALITY: Record<OptimizableImageKind, number> = {
+  avatar: 0.88,
+  image: 0.9,
+  cover: 0.88,
 };
 
-const IMAGE_UPLOAD_PRESETS: Record<OptimizableImageKind, ImageUploadPreset> = {
-  // Avatars are never rendered above 160 CSS pixels. 640px keeps them sharp
-  // on high-density displays without making every profile download a camera
-  // original.
-  avatar: { maxDimension: 640, quality: 0.88, transcodeAboveBytes: 96 * 1024 },
-  // Bento image blocks can span the full desktop grid. 2400px leaves enough
-  // resolution for retina screens while keeping first visits lightweight.
-  image: { maxDimension: 2_400, quality: 0.9, transcodeAboveBytes: 384 * 1024 },
-  cover: { maxDimension: 2_000, quality: 0.88, transcodeAboveBytes: 320 * 1024 },
-};
+/** Avatars render at 160 CSS pixels. Other display images stay sharp on a full desktop grid. */
+export function imageUploadMaxDimension(kind: string) {
+  return kind === "avatar" ? 512 : 2_000;
+}
+
+function asciiAt(bytes: Uint8Array, needle: string, offset: number) {
+  if (offset < 0 || offset + needle.length > bytes.length) return false;
+  for (let index = 0; index < needle.length; index += 1) {
+    if (bytes[offset + index] !== needle.charCodeAt(index)) return false;
+  }
+  return true;
+}
+
+function findAscii(bytes: Uint8Array, needle: string) {
+  const limit = bytes.length - needle.length;
+  for (let offset = 0; offset <= limit; offset += 1) {
+    if (asciiAt(bytes, needle, offset)) return true;
+  }
+  return false;
+}
+
+/**
+ * GIF, animated WebP, APNG, and animated AVIF must not be flattened.
+ * ponytail: callers pass either the whole upload or a prefix. An animation
+ * marker past that prefix is treated as a still image.
+ */
+export function isAnimatedImage(bytes: Uint8Array, contentType = "") {
+  const type = contentType.split(";", 1)[0].trim().toLowerCase();
+  if (type === "image/gif" || asciiAt(bytes, "GIF87a", 0) || asciiAt(bytes, "GIF89a", 0)) {
+    return true;
+  }
+  const webp = type === "image/webp" || (asciiAt(bytes, "RIFF", 0) && asciiAt(bytes, "WEBP", 8));
+  if (webp && (findAscii(bytes, "ANIM") || findAscii(bytes, "ANMF"))) return true;
+  const png = type === "image/png" || (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e);
+  if (png && findAscii(bytes, "acTL")) return true;
+  return type === "image/avif" && asciiAt(bytes, "avis", 8);
+}
 
 function imageFilename(name: string, extension: "webp" | "jpg") {
   const base = name.replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9._-]+/g, "-") || "image";
@@ -97,9 +124,9 @@ export async function prepareSchedulerImageUpload(
 }
 
 /**
- * Resize and strip metadata from user-uploaded display images before they ever
- * cross the network. Animated GIFs stay untouched and every failure safely
- * falls back to the original file.
+ * Resize every still display image to its max dimension, encode WebP, and
+ * strip metadata by redrawing. GIF and animated images stay untouched. Any
+ * failure returns the original file.
  */
 export async function optimizeImageUpload(file: File, kind: OptimizableImageKind) {
   if (
@@ -113,17 +140,15 @@ export async function optimizeImageUpload(file: File, kind: OptimizableImageKind
 
   let bitmap: ImageBitmap | null = null;
   try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (isAnimatedImage(bytes, file.type)) return file;
+
     bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
-    const preset = IMAGE_UPLOAD_PRESETS[kind];
+    const maxDimension = imageUploadMaxDimension(kind);
     const longestSide = Math.max(bitmap.width, bitmap.height);
-    const scale = Math.min(1, preset.maxDimension / Math.max(1, longestSide));
+    const scale = Math.min(1, maxDimension / Math.max(1, longestSide));
     const width = Math.max(1, Math.round(bitmap.width * scale));
     const height = Math.max(1, Math.round(bitmap.height * scale));
-    const needsResize = scale < 1;
-    const needsTranscode = file.type !== "image/webp" && file.size > preset.transcodeAboveBytes;
-
-    if (!needsResize && !needsTranscode) return file;
-
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
@@ -131,10 +156,9 @@ export async function optimizeImageUpload(file: File, kind: OptimizableImageKind
     if (!context) return file;
     context.drawImage(bitmap, 0, 0, width, height);
 
-    const blob = await canvasBlob(canvas, "image/webp", preset.quality);
-    if (!blob) return file;
-    // Never replace an already correctly sized image with a larger encoding.
-    if (!needsResize && blob.size >= file.size) return file;
+    const blob = await canvasBlob(canvas, "image/webp", IMAGE_UPLOAD_QUALITY[kind]);
+    if (!blob || blob.type !== "image/webp") return file;
+    if (file.type === "image/webp" && scale === 1 && blob.size >= file.size) return file;
 
     return new File([blob], imageFilename(file.name, "webp"), {
       type: "image/webp",

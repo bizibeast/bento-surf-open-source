@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import {
   getTwitterConnectionReadiness,
   twitterConnectionReadinessMessage,
+  type TwitterDmTriggerType,
 } from "./twitter-auto-dm";
 import {
   getFacebookConnectionReadiness,
@@ -17,9 +18,10 @@ import {
 export function scheduledPostAutoDmBlockReason(
   provider: ScheduledPostAutoDmProvider,
   connection: any,
+  triggerType: TwitterDmTriggerType = "any_mention",
 ) {
   if (provider === "twitter") {
-    const readiness = getTwitterConnectionReadiness(connection);
+    const readiness = getTwitterConnectionReadiness(connection, new Date(), triggerType);
     return readiness.ready ? null : twitterConnectionReadinessMessage(readiness.issues);
   }
   const readiness = getFacebookConnectionReadiness(connection);
@@ -34,11 +36,17 @@ export async function validateScheduledPostAutoDms(
   for (const provider of ["twitter", "facebook"] as const) {
     if (settings[provider]?.scheduledAutoDm == null) continue;
     const network = provider === "twitter" ? "X" : "Facebook";
-    scheduledPostAutoDmSchemas[provider].parse(settings[provider].scheduledAutoDm);
+    const scheduledAutoDm = scheduledPostAutoDmSchemas[provider].parse(
+      settings[provider].scheduledAutoDm,
+    );
     const destinations = connections.filter((connection) => connection.provider === provider);
     if (!destinations.length) throw new Error(`Select a ${network} account for the Auto DM.`);
     for (const connection of destinations) {
-      const reason = scheduledPostAutoDmBlockReason(provider, connection);
+      const reason = scheduledPostAutoDmBlockReason(
+        provider,
+        connection,
+        scheduledAutoDm.triggerType as TwitterDmTriggerType,
+      );
       if (reason) throw new Error(`${network} Auto DM: ${reason}`);
     }
     await requirePlanEntitlement(

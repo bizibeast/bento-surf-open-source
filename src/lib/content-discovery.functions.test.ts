@@ -614,7 +614,7 @@ describe("personalized Discover", () => {
       storedDiscoverData(
         [recommendation],
         {
-          nicheKey: "social-v14:creator ai",
+          nicheKey: "social-v15:creator ai",
           warnings: [],
           fetchedAt: "2026-09-20T09:00:00.000Z",
           expiresAt: "2026-09-21T09:00:00.000Z",

@@ -5,6 +5,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { SOCIAL_CONNECTION_LIST_LIMIT } from "./large-table-columns";
 import { enforceRequestRateLimit, readResponseText } from "./request-security.server";
 import {
   FACEBOOK_AUTO_DM_REQUIRED_SCOPES,
@@ -69,7 +70,8 @@ async function ownedConnections(userId: string): Promise<ConnectionRow[]> {
     )
     .eq("user_id", userId)
     .eq("provider", "facebook")
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: true })
+    .limit(SOCIAL_CONNECTION_LIST_LIMIT);
   if (error) throw new Error("Unable to load Facebook connections.");
   return (data || []) as ConnectionRow[];
 }

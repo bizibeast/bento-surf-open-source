@@ -1142,7 +1142,7 @@ function DashboardPage() {
       </div>
 
       <div
-        className={`link-editor-shell mx-auto w-full ${effectiveViewMode === "phone" ? "max-w-none px-0 pb-32 pt-8" : "max-w-6xl px-3 pb-32 pt-8 lg:px-6 lg:pb-32 lg:min-h-[calc(100vh-4rem)]"}`}
+        className={`link-editor-shell mx-auto w-full ${effectiveViewMode === "phone" ? "max-w-none px-0 pb-32" : "max-w-6xl px-3 pb-32 lg:px-6 lg:pb-32"}`}
       >
         <div
           className={

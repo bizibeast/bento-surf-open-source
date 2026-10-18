@@ -6,7 +6,7 @@ import { requireContentWorkspace } from "./content-access.server";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Routine rows span new and existing tables. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { getOrBuildTrendBrief } from "./content-briefs.server";
-import type { ContentSourceItem } from "./content-sources.server";
+import { selectFreshEditorialSignals, type ContentSourceItem } from "./content-sources.server";
 import {
   authorizeContentAgentWork,
   enqueueContentAgentSignal,
@@ -108,6 +108,8 @@ function socialPostFromRow(row: any): SchedulerPost {
   };
 }
 
+export const selectFreshRoutineSignals = selectFreshEditorialSignals;
+
 export async function prepareRoutineDrafts(
   input: {
     userId: string;
@@ -125,23 +127,33 @@ export async function prepareRoutineDrafts(
   },
 ) {
   const deadline = Date.now() + 90_000;
+  const freshSignals = input.trendSources ? selectFreshRoutineSignals(input.trendSources) : null;
+  if (freshSignals && !freshSignals.length) return 0;
   const context = await dependencies.loadContext(
     input.userId,
     input.instructions || "Prepare useful original drafts for creator review.",
   );
   const platforms = input.platforms.length ? input.platforms : [context.platform || "twitter"];
-  if (input.trendSources?.length)
+  const trendIds = freshSignals?.map((source) => `trend:${source.canonicalUrl}`.slice(0, 500));
+  if (freshSignals) {
+    context.request =
+      `${context.request || ""} Write a timely, reader-facing post about one of these current external developments. Use its specific verified fact and explain why it matters to this audience. Historical workspace updates and old creator posts are voice context, not news. Do not include internal tool identifiers.`.trim();
+    context.requiredRecentSourceIds = trendIds;
     context.sources = [
-      ...input.trendSources.slice(0, 6).map((source) => ({
-        id: `trend:${source.canonicalUrl}`,
+      ...freshSignals.map((source) => ({
+        id: `trend:${source.canonicalUrl}`.slice(0, 500),
         title: source.title,
         text: source.summary,
+        sourceName: source.sourceName,
         occurredAt: source.publishedAt,
         url: source.canonicalUrl,
         external: true,
       })),
-      ...context.sources,
+      ...context.sources.filter(
+        (source) => source.id === "request" || source.id.startsWith("brain:"),
+      ),
     ];
+  }
   if (platforms.some((platform) => !["twitter", "linkedin", "instagram"].includes(platform)))
     throw new Error("Review the routine's supported platforms.");
   const result: ContentAgentResult = {
@@ -183,6 +195,12 @@ export async function prepareRoutineDrafts(
       throw new Error(checked.message);
     }
     const card = { ...checked.card, cardId: `routine-${index + 1}` };
+    if (
+      trendIds &&
+      (card.type !== "draft" ||
+        !card.editorial?.sourceIds.some((sourceId) => trendIds.includes(sourceId)))
+    )
+      continue;
     result.cards.push(card);
     if (card.type === "draft")
       recentOutputs.push({
@@ -196,6 +214,7 @@ export async function prepareRoutineDrafts(
       });
     else result.message = checked.message;
   }
+  if (trendIds && !result.cards.some((card) => card.type === "draft")) return 0;
   if (!input.run) return result.cards.filter((card) => card.type === "draft").length;
   return dependencies.save({
     userId: input.userId,
@@ -416,8 +435,8 @@ async function processContentRoutineRunScoped(
     );
     if (!remainingDrafts || (context.postingSchedule.slots.length && !slots.length))
       return { resultCount: 0 };
-    // Reuses the shared daily brief prepared by the nightly routine. A provider
-    // outage must not prevent a grounded evergreen draft from existing context.
+    // Reuse the shared daily brief; without current external evidence, skip
+    // automatic drafts instead of presenting workspace history as news.
     const brief = await dependencies
       .refreshBrief({
         nicheKeywords: context.profile.nicheKeywords,

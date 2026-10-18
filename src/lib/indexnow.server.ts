@@ -48,8 +48,28 @@ export function indexNowUrlsForSeoArticle(
   const urlFor = (row: SeoArticleUrl | null) =>
     row?.status === "published" && ARTICLE_SLUG.test(row.slug) ? `${base}/blog/${row.slug}` : null;
   const current = urlFor(after);
-  const previous = before && before.slug !== after.slug ? urlFor(before) : null;
-  return [...new Set([current, previous].filter((url): url is string => Boolean(url)))];
+  const previous =
+    before && (before.slug !== after.slug || after.status !== "published") ? urlFor(before) : null;
+  if (!current && !previous) return [];
+  return [
+    ...new Set(
+      [current, previous, `${base}/blog`, `${base}/sitemaps/blog.xml`].filter(
+        (url): url is string => Boolean(url),
+      ),
+    ),
+  ];
+}
+
+const PROFILE_HANDLE = /^[a-z0-9_]{3,24}$/;
+
+export function indexNowUrlsForProfile(origin: string, username: string) {
+  const handle = username.replace(/^@/, "").trim().toLowerCase();
+  if (!PROFILE_HANDLE.test(handle)) return [];
+  return [`${origin.replace(/\/$/, "")}/@${handle}`];
+}
+
+export function indexNowUrlsFromSitemap(xml: string) {
+  return [...xml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map((match) => match[1]);
 }
 
 export async function notifyIndexNow(
@@ -59,7 +79,12 @@ export async function notifyIndexNow(
 ) {
   const origin = publicOrigin(env);
   const key = readIndexNowKey(env);
-  if (env?.APP_ENV !== "production" || !env?.VITE_PUBLIC_URL || !origin.startsWith("https://") || !key) {
+  if (
+    env?.APP_ENV !== "production" ||
+    !env?.VITE_PUBLIC_URL ||
+    !origin.startsWith("https://") ||
+    !key
+  ) {
     return { submitted: [] as string[] };
   }
   const host = new URL(origin).hostname;

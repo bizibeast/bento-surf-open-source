@@ -47,6 +47,7 @@ import {
   verifyTwitterAutoDmConnection,
   verifyTwitterWebhookRegistration,
   refreshTwitterAutoDmHealth,
+  sendTwitterDm,
   twitterAutoDmErrorNeedsReauth,
 } from "./twitter-auto-dm.server";
 const connection = () => ({
@@ -89,6 +90,17 @@ afterEach(() => {
 });
 
 describe("X webhook verification", () => {
+  it("stops an outbound DM before the provider call when the Bento DM cap is exhausted", async () => {
+    const fetch = responses();
+    state.reserve.mockRejectedValueOnce(new Error("DM budget exhausted"));
+    await expect(sendTwitterDm({ user_id: "owner" }, "recipient", "Hello")).rejects.toThrow(
+      "DM budget exhausted",
+    );
+    expect(state.reserve).toHaveBeenCalledWith("x_dm_deliveries", 1, {
+      workspaceId: "owner",
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("prevents staging from consuming a production app's webhook allowance", async () => {
     vi.stubEnv("APP_ENV", "staging");
     const fetch = responses();
@@ -173,11 +185,43 @@ describe("X webhook verification", () => {
     },
   );
   it("does not open a billable event feed when only verification was requested", async () => {
-    const fetch = responses({ data: validWebhook }, { data: { data: { subscribed: false } } });
+    const fetch = responses(
+      { data: validWebhook },
+      { data: { data: { subscribed: false } } },
+      { data: { data: [] } },
+    );
     await expect(verifyTwitterAutoDmConnection(connection())).rejects.toMatchObject({
       code: "webhook_events_disabled",
     });
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+  it("recognizes an existing DM Received Activity subscription without adding a feed", async () => {
+    const fetch = responses(
+      { data: validWebhook },
+      { data: { data: { subscribed: false } } },
+      {
+        data: {
+          data: [
+            {
+              webhook_id: "987",
+              filter: { user_id: "123" },
+              event_type: "dm.received",
+            },
+          ],
+        },
+      },
+    );
+    await expect(verifyTwitterAutoDmConnection(connection())).resolves.toMatchObject({
+      fields: ["direct_messages"],
+    });
+    expect(fetch.mock.calls.map((call) => call[0])).toEqual([
+      "https://api.x.com/2/webhooks",
+      "https://api.x.com/2/account_activity/webhooks/987/subscriptions/all",
+      "https://api.x.com/2/activity/subscriptions?user_id=123&max_results=100",
+    ]);
+    expect(fetch.mock.calls.every((call) => !call[1]?.method || call[1].method === "GET")).toBe(
+      true,
+    );
   });
   it("requires explicit subscription confirmation after enabling account delivery", async () => {
     vi.stubEnv("X_ACCOUNT_ACTIVITY_ENABLED", "true");

@@ -1,10 +1,12 @@
 import { checkoutEligibility } from "../billing-checkout.server";
 import { resolvePublicUsername } from "../username-alias.server";
+import { indexNowUrlsForProfile, notifyIndexNow } from "../indexnow.server";
 import { clearPublicProfileCache } from "../public-profile-cache.server";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getPlan, isSelfHostedEdition, requirePlanEntitlement } from "../plan.server";
+import { SOCIAL_CONNECTION_LIST_LIMIT } from "../large-table-columns";
 import { contentProfileToRow } from "../content-brain";
 import { enforceRequestRateLimit } from "../request-security.server";
 import { parsePublicHttpUrl, safeMediaUrl } from "../safe-url";
@@ -25,6 +27,8 @@ import {
   sessionView,
 } from "./session.server";
 import { processOnboardingGeneration } from "./generation.server";
+import { loadOnboardingEvidence } from "./evidence.server";
+import { carryOnboardingDraftMedia, validateOnboardingDraftMedia } from "./media.server";
 
 export const getOnboarding = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -60,7 +64,8 @@ export const getOnboarding = createServerFn({ method: "GET" })
       .from("social_connections")
       .select("id,provider,provider_handle,provider_display_name,provider_avatar_url,status")
       .eq("user_id", context.userId)
-      .eq("status", "active");
+      .eq("status", "active")
+      .limit(SOCIAL_CONNECTION_LIST_LIMIT);
     if (connectionError) throw new Error("Connected accounts could not be loaded.");
     return {
       session: sessionView(session),
@@ -147,7 +152,9 @@ export const saveOnboarding = createServerFn({ method: "POST" })
               job_status: "idle",
               job_lease: null,
             }
-          : {}),
+          : session.status === "prepared" && session.approved_revision !== null
+            ? { approved_revision: session.revision + 1 }
+            : {}),
       })
       .eq("workspace_id", context.userId)
       .eq("revision", data.revision)
@@ -245,16 +252,20 @@ export const prepareOnboarding = createServerFn({ method: "POST" })
       throw new Error(
         "You've used your starter generation allowance. You can still edit and use your preparation.",
       );
+    const evidence = await loadOnboardingEvidence(context.userId);
     const { data: saved, error } = await db
       .from("onboarding_sessions")
       .update({
-        candidates: data.generate
-          ? (session.candidates ?? buildManualCandidates(brief))
-          : continueWithoutOnboardingDrafts(
-              session.candidates
-                ? onboardingCandidatesSchema.parse(session.candidates)
-                : buildManualCandidates(brief),
-            ),
+        candidates: {
+          ...(data.generate
+            ? (session.candidates ?? buildManualCandidates(brief))
+            : continueWithoutOnboardingDrafts(
+                session.candidates
+                  ? onboardingCandidatesSchema.parse(session.candidates)
+                  : buildManualCandidates(brief),
+              )),
+          evidence,
+        },
         status: "draft",
         approved_revision: null,
         job_status: data.generate ? "queued" : "ready",
@@ -292,6 +303,7 @@ export const approveOnboarding = createServerFn({ method: "POST" })
     if (JSON.stringify(savedCandidates) !== JSON.stringify(data.candidates))
       throw new Error("Save your latest Brain and draft edits before approving them.");
     const owner = await resolvePublicUsername(db, session.brief.username);
+    await validateOnboardingDraftMedia(context.userId, savedCandidates);
     if (owner && owner.userId !== context.userId)
       throw new Error("That username is taken. Choose another link before checkout.");
     if (!preparationReady(onboardingBriefSchema.parse(session.brief), data.candidates))
@@ -332,11 +344,19 @@ export const editOnboardingCandidates = createServerFn({ method: "POST" })
       .update({
         candidates: onboardingCandidatesSchema.parse({
           ...data.candidates,
+          evidence: session.candidates?.evidence,
+          personalization: session.candidates?.personalization,
           // The archive is server-owned; older clients may omit this optional field.
           deferredDrafts: session.candidates?.deferredDrafts,
           drafts:
             JSON.stringify(session.candidates?.brain) === JSON.stringify(data.candidates.brain)
-              ? data.candidates.drafts
+              ? data.candidates.drafts.map((draft, index) => ({
+                  ...draft,
+                  mediaIds: session.candidates?.drafts[index]?.mediaIds,
+                  mediaPreview: session.candidates?.drafts[index]?.mediaPreview,
+                  photoSourcePostId: session.candidates?.drafts[index]?.photoSourcePostId,
+                  mediaNote: session.candidates?.drafts[index]?.mediaNote,
+                }))
               : [],
           warning:
             JSON.stringify(session.candidates?.brain) === JSON.stringify(data.candidates.brain)
@@ -377,6 +397,13 @@ export const publishOnboardingPage = createServerFn({ method: "POST" })
     if (sessionError)
       throw new Error("Publication status could not be saved. Reload to check your page.");
     await clearPublicProfileCache(session.brief.username);
+    await notifyIndexNow(
+      indexNowUrlsForProfile(
+        process.env.VITE_PUBLIC_URL || "http://localhost:8080",
+        session.brief.username,
+      ),
+      process.env,
+    );
     return sessionView(await readOnboardingSession(context.userId));
   });
 
@@ -390,6 +417,26 @@ export const activateOnboarding = createServerFn({ method: "POST" })
     );
     const session = await readOnboardingSession(context.userId);
     if (!session) throw new Error("Complete your preparation first.");
+    if (
+      session.status === "prepared" &&
+      session.candidates &&
+      typeof session.approved_revision === "number" &&
+      session.approved_revision < session.revision
+    ) {
+      // Earlier versions advanced the revision on step-only saves without
+      // invalidating the prepared review. Content edits set status to draft.
+      const { data: reconciled, error: reconcileError } = await db
+        .from("onboarding_sessions")
+        .update({ approved_revision: session.revision })
+        .eq("workspace_id", context.userId)
+        .eq("status", "prepared")
+        .eq("revision", session.revision)
+        .eq("approved_revision", session.approved_revision)
+        .select("revision")
+        .maybeSingle();
+      if (reconcileError || !reconciled)
+        throw new Error("Your preparation changed. Review it again before activating.");
+    }
     const { error } = await db.rpc("apply_onboarding_preparation", {
       p_workspace_id: context.userId,
       p_revision: session.revision,
@@ -398,6 +445,8 @@ export const activateOnboarding = createServerFn({ method: "POST" })
       ),
     });
     if (error) throw new Error(error.message);
+    if (session.candidates?.drafts.some((draft: { mediaIds?: string[] }) => draft.mediaIds?.length))
+      await carryOnboardingDraftMedia(context.userId, session.revision);
     await clearPublicProfileCache(session.brief.username);
     return sessionView(await readOnboardingSession(context.userId));
   });

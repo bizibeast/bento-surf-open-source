@@ -1,3 +1,4 @@
+import { configuredPublicOrigin } from "@/lib/application-urls";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link as LinkIcon } from "lucide-react";
 import { dominantColorFromRgba } from "@/lib/dominant-color";
@@ -71,23 +72,28 @@ export function FaviconTile({
       return null;
     }
   })();
-  const duckFavicon = (() => {
-    try {
-      return `https://icons.duckduckgo.com/ip3/${new URL(safeHref).hostname}.ico`;
-    } catch {
-      return null;
-    }
-  })();
   const customFavicon = favicon?.includes("google.com/s2/favicons")
     ? googleFavicon
     : safeMediaUrl(favicon);
-  const [imgSrc, setImgSrc] = useState<string | null>(
-    platform ? null : customFavicon || googleFavicon,
-  );
+  const hostedIcon = (() => {
+    if (!customFavicon) return false;
+    try {
+      const url = new URL(customFavicon, configuredPublicOrigin(import.meta.env.VITE_PUBLIC_URL));
+      return (
+        url.pathname.startsWith("/cdn/") ||
+        url.pathname.startsWith("/api/favicon") ||
+        url.origin === configuredPublicOrigin(import.meta.env.VITE_PUBLIC_URL)
+      );
+    } catch {
+      return false;
+    }
+  })();
+  const visibleFavicon = hostedIcon ? customFavicon : googleFavicon;
+  const [imgSrc, setImgSrc] = useState<string | null>(platform ? null : visibleFavicon);
 
   useEffect(() => {
-    setImgSrc(platform ? null : customFavicon || googleFavicon);
-  }, [customFavicon, googleFavicon, platform]);
+    setImgSrc(platform ? null : visibleFavicon);
+  }, [platform, visibleFavicon]);
 
   useEffect(() => {
     if (colorOverride || platform) return;
@@ -112,12 +118,7 @@ export function FaviconTile({
     "shadow-[0_1px_2px_rgba(0,0,0,0.04),0_8px_24px_-12px_rgba(0,0,0,0.08)] " +
     "hover:-translate-y-0.5 hover:shadow-[0_2px_4px_rgba(0,0,0,0.06),0_16px_32px_-12px_rgba(0,0,0,0.12)]";
 
-  const onImgError = () => {
-    if (imgSrc === customFavicon && googleFavicon) setImgSrc(googleFavicon);
-    else if ((imgSrc === customFavicon || imgSrc === googleFavicon) && duckFavicon)
-      setImgSrc(duckFavicon);
-    else setImgSrc(null);
-  };
+  const onImgError = () => setImgSrc(null);
 
   const Favicon = () => {
     if (PlatformIcon) return <PlatformIcon className="size-[52%]" />;

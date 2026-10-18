@@ -128,7 +128,9 @@ export function parseSyndicationFeed(xml: string, sourceUrl: string): ContentSou
         summary: tagText(block, ["description", "summary", "content"]).slice(0, 4_000),
         sourceName: reddit
           ? `r/${new URL(canonicalUrl).pathname.split("/")[2] || "reddit"}`
-          : sourceName.slice(0, 160) || new URL(source).hostname,
+          : tagText(block, ["source"]).slice(0, 160) ||
+            sourceName.slice(0, 160) ||
+            new URL(source).hostname,
         publishedAt,
         retrievedAt,
         kind: reddit ? "reddit" : "rss",
@@ -722,4 +724,82 @@ export async function fetchSyndicationFeed(
     },
     { timeoutMs, signal },
   );
+}
+
+/** One public RSS request per daily niche brief; provider dates are checked again at selection. */
+export async function fetchNewsStories(
+  topic: string,
+  options: {
+    fetcher?: typeof fetch;
+    limit?: number;
+    language?: string;
+    region?: string;
+    signal?: AbortSignal;
+  } = {},
+): Promise<ContentSourceItem[]> {
+  const subject = topic.trim().replace(/\s+/g, " ").slice(0, 120);
+  if (!subject) return [];
+  const language = /^[a-z]{2}$/i.test(options.language || "")
+    ? options.language!.toLowerCase()
+    : "en";
+  const region = (options.region || "").trim().toLowerCase();
+  const country =
+    region === "india"
+      ? "IN"
+      : region === "united kingdom"
+        ? "GB"
+        : /^[a-z]{2}$/.test(region)
+          ? region.toUpperCase()
+          : "US";
+  const url = new URL("https://news.google.com/rss/search");
+  url.searchParams.set("q", `${subject} when:7d`);
+  url.searchParams.set("hl", `${language}-${country}`);
+  url.searchParams.set("gl", country);
+  url.searchParams.set("ceid", `${country}:${language}`);
+  const items = await fetchSyndicationFeed(
+    url.toString(),
+    options.fetcher || fetch,
+    5_000,
+    options.signal,
+  );
+  return items.slice(0, Math.max(1, Math.min(25, options.limit || 25)));
+}
+
+/** Prefer current reporting to evergreen video inspiration in automatic drafts. */
+export function selectFreshEditorialSignals(items: ContentSourceItem[], now = Date.now()) {
+  const seen = new Set<string>();
+  return items
+    .filter((item) => {
+      const published = Date.parse(item.publishedAt || "");
+      const currentReport =
+        item.kind !== "rss" ||
+        /\b(?:announc(?:e|es|ed)|launch(?:es|ed)?|releas(?:e|es|ed)|rais(?:e|es|ed)|fund(?:s|ed|ing)|acquir(?:e|es|ed)|sell(?:s|ing)?|sold|buy(?:s|ing)?|bought|unveil(?:s|ed)?|introduc(?:e|es|ed)|roll(?:s|ed)? out|switch(?:es|ed)?|shift(?:s|ed)?|chang(?:e|es|ed)|mak(?:e|es|ing)|receiv(?:e|es|ed)|updat(?:e|es|ed)|report (?:finds?|shows?)|survey (?:finds?|shows?)|study (?:finds?|shows?)|new policy|new rules?)\b/i.test(
+          item.title,
+        );
+      if (
+        !["rss", "hackernews", "reddit", "social_search"].includes(item.kind) ||
+        !currentReport ||
+        (item.kind === "rss" &&
+          /^(?:how to\b|(?:a|the) (?:complete |ultimate )?guide to\b|\d+ (?:ways|tips|steps|lessons)\b)/i.test(
+            item.title,
+          )) ||
+        !item.canonicalUrl ||
+        item.title.trim().length < 24 ||
+        item.summary.trim().length < 80 ||
+        !(published <= now && published >= now - 3 * 86400000) ||
+        seen.has(item.canonicalUrl)
+      )
+        return false;
+      seen.add(item.canonicalUrl);
+      return true;
+    })
+    .sort((a, b) => {
+      const priority = (item: ContentSourceItem) =>
+        item.kind === "rss" ? 2 : item.kind === "hackernews" ? 1 : 0;
+      return (
+        priority(b) - priority(a) ||
+        Date.parse(b.publishedAt || "") - Date.parse(a.publishedAt || "")
+      );
+    })
+    .slice(0, 6);
 }

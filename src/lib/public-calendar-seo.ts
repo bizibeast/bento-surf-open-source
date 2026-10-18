@@ -5,6 +5,7 @@ import {
   LANDING_OPEN_GRAPH_IMAGE_VERSION,
 } from "./open-graph";
 import { safePublicMediaUrl } from "./safe-url";
+import { seoMetaDescription } from "./seo-description";
 import { jsonLdScript } from "./seo-structured-data";
 
 type PublicCalendarSeoData = {
@@ -30,9 +31,12 @@ export function publicCalendarHead(data: PublicCalendarSeoData, baseUrl?: string
   const creatorName = data.profile.displayName || data.profile.username;
   const calendarName = data.pages.find((page) => page.system === "calendar")?.name || "Calendar";
   const title = `Book ${creatorName} | bento.surf`;
-  const description = data.sessions.length
-    ? `Choose from ${data.sessions.length} bookable ${data.sessions.length === 1 ? "session" : "sessions"} with ${creatorName}.`
-    : `View ${calendarName} for ${creatorName} on bento.surf.`;
+  const description = seoMetaDescription(
+    data.sessions.length
+      ? `Choose from ${data.sessions.length} bookable ${data.sessions.length === 1 ? "session" : "sessions"} with ${creatorName} (@${data.profile.username}) on bento.surf.`
+      : "",
+    `Book time with ${creatorName} (@${data.profile.username}) on bento.surf. See open sessions and request a time that works for you.`,
+  );
   const avatar = safePublicMediaUrl(data.profile.avatarUrl);
   const image = avatar
     ? new URL(avatar, base).toString()

@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import { checkOpenSourceHistory } from "./check-open-source-history";
+import {
+  checkOpenSourceHistory,
+  reviewedHistoricalIdentityContents,
+} from "./check-open-source-history";
 
 const run = promisify(execFile);
 const roots: string[] = [];
@@ -50,4 +53,30 @@ describe("open-source Git history", () => {
 
     await expect(checkOpenSourceHistory(root)).resolves.toEqual([]);
   });
+});
+
+it("limits the reviewed legacy fallback exception to its exact blob and path", () => {
+  const object = "e2273b116de932b6099f7059169ff1b17298305c";
+  const file = "src/lib/twitter-auto-dm.server.ts";
+  const origin = ["https://app", "bento", "surf"].join(".");
+  const input = `const fallback = "${origin}"; const other = "https://another.example";`;
+  expect(reviewedHistoricalIdentityContents(object, file, input)).toContain(
+    '"http://localhost:8080"',
+  );
+  expect(reviewedHistoricalIdentityContents("0".repeat(40), file, input)).toBe(input);
+  expect(reviewedHistoricalIdentityContents(object, "src/other.ts", input)).toBe(input);
+  expect(reviewedHistoricalIdentityContents(object, file, input)).toContain(
+    "https://another.example",
+  );
+});
+
+it("preserves credential contents even in the reviewed legacy blob", () => {
+  const credential = ["sk", "live", "abcdefghijklmnopqrstuvwxyz"].join("_");
+  expect(
+    reviewedHistoricalIdentityContents(
+      "e2273b116de932b6099f7059169ff1b17298305c",
+      "src/lib/twitter-auto-dm.server.ts",
+      credential,
+    ),
+  ).toBe(credential);
 });

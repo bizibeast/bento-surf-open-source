@@ -57,7 +57,7 @@ describe("ContentRoutines", () => {
         onClose={vi.fn()}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: /Fill my schedule Drafts/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Fill my schedule/ }));
     expect(screen.getByText("Next run")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "All routines" }));
     fireEvent.click(screen.getByRole("switch", { name: "Pause Fill my schedule" }));
@@ -106,7 +106,7 @@ it("shows why legacy routines are paused and restricts new outputs to reviewable
   expect(screen.getByRole("switch", { name: "Resume Fill my schedule" })).toHaveTextContent(
     /Review this routine/,
   );
-  fireEvent.click(screen.getByRole("button", { name: /Fill my schedule Drafts/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Fill my schedule/ }));
   expect(screen.queryByText("Schedule automatically")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Youtube")).not.toBeInTheDocument();
   expect(screen.getByText(/Each post needs your approval/)).toBeVisible();

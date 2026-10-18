@@ -1,5 +1,13 @@
 # Verification status
 
+## Current shared-app parity release
+
+Shared source: `ec0f7d37f41263d0a692fbce85f9b30f5a29e755`. The public edition includes the focused ChatGPT MCP catalog, current-reporting Agent drafts, personalized onboarding, starter-photo handoff, and current provider limits. Instance URLs, self-hosted setup, legal pages, license and deployment configuration remain operator-owned; hosted marketing and operational jobs are excluded.
+
+Validation: 3,742 tests across 496 files, TypeScript, changed-source lint (zero errors; existing Fast Refresh warnings), production build, Worker packaging dry run, current-tree boundary checks and public history checks. Shared-source parity reports zero missing, stale, removed or unclassified files. The exact approved historical non-secret exception is documented below. No self-hosted instance was deployed and no live paid AI call or social publication was made during verification.
+
+Apply the included database migrations before upgrading an existing instance. In particular, the X DM budget and onboarding photo migration must precede the corresponding Worker code.
+
 ## October 16, 2026 creator workflow update
 
 The shared app adds separate posting, editing and preview account controls,
@@ -42,3 +50,13 @@ Public-only instance configuration, legal pages, provider defaults, license and 
 Fresh Supabase migrations, two-tenant runtime isolation, provider delivery and OAuth approvals still require a fresh database and the deployer's credentials. The local suite exercises migration contracts, workspace isolation and mocked provider behavior; it does not prove a deployed database or real integrations.
 
 MCP initialization and browser WebMCP discovery require the final application origin; Origin Trial tokens are domain-bound. Successful builds, dry runs and unit tests are not recorded as live-provider verification. No GitHub push, database migration or public deployment is included in this local update.
+
+## Reviewed historical non-secret fallback
+
+The pre-existing public blob `e2273b116de932b6099f7059169ff1b17298305c` for
+`src/lib/twitter-auto-dm.server.ts` contained a hosted callback-origin fallback.
+The current source uses the operator's configured instance origin. An explicitly
+approved historical exception covers only that origin literal in that exact
+immutable blob and path. Every credential check still inspects the original
+contents, all other identity findings still fail, and current-source checks have
+no exception. Public history was preserved without a force-push.

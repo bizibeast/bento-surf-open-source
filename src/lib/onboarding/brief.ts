@@ -9,6 +9,7 @@ import { parsePublicHttpUrl, safeMediaUrl } from "../safe-url";
 import { isValidTimeZone } from "../timezones";
 import { completeContentStrategy, contentProfileSchema } from "../content-brain";
 import type { PaidPlanId } from "../plans";
+import { onboardingEvidenceSchema } from "./evidence";
 
 export const ONBOARDING_GOALS = [
   { id: "presence", label: "Build my online presence", detail: "One link for everything I do" },
@@ -50,7 +51,7 @@ export const onboardingBriefSchema = z.object({
     .max(2000)
     .default("Clear, warm and practical. Avoid hype and unsupported claims."),
   writingSample: z.string().trim().max(4000).default(""),
-  platform: z.enum(ONBOARDING_PLATFORMS).default("instagram"),
+  platform: z.enum(ONBOARDING_PLATFORMS).default("linkedin"),
   postsPerWeek: z.number().int().min(1).max(7).default(3),
   language: z.string().trim().min(2).max(12).default("en"),
   timezone: z.string().max(100).refine(isValidTimeZone).default("UTC"),
@@ -83,18 +84,46 @@ const onboardingCandidateDraftSchema = z.object({
   rationale: z.string().max(2000).optional(),
   visualBrief: z.string().max(2000).nullable().optional(),
   editorial: editorialMetadataSchema.optional(),
+  mediaIds: z.array(z.string().uuid()).max(1).optional(),
+  photoSourcePostId: z.string().uuid().optional(),
+  mediaNote: z.string().max(500).optional(),
+  mediaPreview: z
+    .object({
+      mediaId: z.string().uuid(),
+      url: z
+        .string()
+        .url()
+        .refine((value) => Boolean(safeMediaUrl(value))),
+      sourceUrl: z
+        .string()
+        .nullable()
+        .refine((value) => !value || Boolean(parsePublicHttpUrl(value, { requireHttps: true }))),
+      alt: z.string().max(300),
+    })
+    .optional(),
 });
 
 export const onboardingCandidatesSchema = z.object({
   brain: z
     .array(
       z.object({
-        kind: z.enum(["profile", "instruction", "strategy"]),
+        kind: z.enum(["profile", "instruction", "strategy", "story"]),
         title: z.string().min(1).max(160),
         content: z.string().min(1).max(20000),
       }),
     )
-    .length(3),
+    .min(3)
+    .max(12),
+  evidence: onboardingEvidenceSchema.optional(),
+  personalization: z
+    .object({
+      generation: z.number().int().min(1).max(2),
+      status: z.enum(["running", "ready", "unavailable"]),
+      profileCount: z.number().int().min(0).max(20),
+      postCount: z.number().int().min(0).max(24),
+      note: z.string().max(500),
+    })
+    .optional(),
   drafts: z.array(onboardingCandidateDraftSchema).max(3),
   // Kept in preparation/export only; explicitly excluded from starter activation.
   deferredDrafts: z.array(onboardingCandidateDraftSchema).max(20).optional(),

@@ -25,6 +25,7 @@ import { enforceRequestRateLimit } from "@/lib/request-security.server";
 import { safeMediaUrl } from "@/lib/safe-url";
 import { isGoogleFont } from "@/lib/google-fonts";
 import { PATTERN_BY_ID } from "@/lib/patterns/registry";
+import { publicProductPath } from "@/lib/application-urls";
 import { hydratePublicCommerceBlocks, type CommerceProductBlockSource } from "@/lib/commerce";
 import { exploreCategorySchema } from "@/lib/explore";
 import { loadPublicSocialAnalytics } from "@/lib/social-analytics.functions";
@@ -157,6 +158,7 @@ export async function updateProfileForCreator(
     }
   }
 
+  const previousUsername = data.username ? await previousUsernameFor(supabase, userId) : null;
   const profile = await updateProfileWithRls(userId, data, (authenticatedUserId, updates) =>
     supabase
       .from("profiles")
@@ -168,7 +170,27 @@ export async function updateProfileForCreator(
   if (data.store_page_enabled !== undefined) {
     await setSystemPageVisibility(supabase, userId, "store", data.store_page_enabled);
   }
+  if (previousUsername && data.username && previousUsername !== data.username) {
+    const { indexNowUrlsForProfile, notifyIndexNow } = await import("./indexnow.server");
+    const origin = process.env.VITE_PUBLIC_URL || "http://localhost:8080";
+    await notifyIndexNow(
+      [
+        ...indexNowUrlsForProfile(origin, previousUsername),
+        ...indexNowUrlsForProfile(origin, data.username),
+      ],
+      process.env,
+    );
+  }
   return profile;
+}
+
+async function previousUsernameFor(supabase: SupabaseClient<Database>, userId: string) {
+  const { data } = await supabase
+    .from("profiles")
+    .select("username")
+    .eq("id", userId)
+    .maybeSingle();
+  return data?.username ?? null;
 }
 
 const timeZoneSchema = z
@@ -244,12 +266,33 @@ async function loadPublicProfile(
       ? await resolvePublicUsername(supabaseAdmin, selector.username)
       : { userId: selector.userId };
   if (!resolvedSelector) return null;
-  const chrome = await loadPublicCreatorChrome(
-    resolvedSelector.userId,
-    "username" in selector ? selector.username : undefined,
-    undefined,
-    requestHost,
-  );
+  const userId = resolvedSelector.userId;
+  const blockColumns = "id, type, content, cover_url, x, y, w, h, position, updated_at";
+  const [chrome, homeBlocksResult, publishedProductsResult] = await Promise.all([
+    loadPublicCreatorChrome(
+      userId,
+      "username" in selector ? selector.username : undefined,
+      undefined,
+      requestHost,
+    ),
+    pageSlug
+      ? Promise.resolve(null)
+      : supabaseAdmin
+          .from("blocks")
+          .select(blockColumns)
+          .eq("user_id", userId)
+          .is("page_id", null)
+          .order("position", { ascending: true }),
+    pageSlug
+      ? Promise.resolve(null)
+      : supabaseAdmin
+          .from("commerce_products")
+          .select("public_slug, title")
+          .eq("creator_id", userId)
+          .eq("status", "published")
+          .order("updated_at", { ascending: false })
+          .limit(24),
+  ]);
   if (!chrome || (customDomain && chrome.customDomain !== customDomain)) return null;
   const { creator: profile, pages } = chrome;
   customDomain = chrome.customDomain;
@@ -280,6 +323,7 @@ async function loadPublicProfile(
         activePageName: null,
         socialInsights: null,
         newsletterPageEnabled,
+        productLinks: [],
         notFound: true as const,
         customDomain,
       };
@@ -290,14 +334,15 @@ async function loadPublicProfile(
     activeSystemPage = match.system as PageSystem | null;
   }
 
-  let blocksQuery = supabaseAdmin
-    .from("blocks")
-    .select("id, type, content, cover_url, x, y, w, h, position, updated_at")
-    .eq("user_id", profile.id)
-    .order("position", { ascending: true });
-  if (activePageId) blocksQuery = blocksQuery.eq("page_id", activePageId);
-  else blocksQuery = blocksQuery.is("page_id", null);
-  const blocksResult = await blocksQuery;
+  const blocksResult = pageSlug
+    ? await supabaseAdmin
+        .from("blocks")
+        .select(blockColumns)
+        .eq("user_id", profile.id)
+        .eq("page_id", activePageId ?? "")
+        .order("position", { ascending: true })
+    : homeBlocksResult;
+  if (!blocksResult) throw new Error("Unable to load public profile");
   const allBlocks: PublicProfileBlock[] = readPublicProfileResult("blocks", blocksResult) ?? [];
   const commerceProductIds = [
     ...new Set(
@@ -333,6 +378,25 @@ async function loadPublicProfile(
       profile.username,
     ),
   );
+  if (publishedProductsResult?.error) {
+    console.error("Public profile product links query failed", publishedProductsResult.error);
+    throw new Error("Unable to load public profile");
+  }
+  const linkedProductHrefs = new Set(
+    blocks.flatMap((block) => {
+      const content = block.content;
+      if (!content || typeof content !== "object" || Array.isArray(content)) return [];
+      const href = (content as { href?: unknown }).href;
+      return typeof href === "string" ? [href] : [];
+    }),
+  );
+  const productLinks = (publishedProductsResult?.data ?? []).flatMap((product) => {
+    const slug = product.public_slug?.trim();
+    const title = product.title?.trim();
+    if (!slug || !title) return [];
+    const href = publicProductPath(profile.username, slug);
+    return linkedProductHrefs.has(href) ? [] : [{ slug, title }];
+  });
   const socialInsights =
     activeSystemPage === "insights" ? await loadPublicSocialAnalytics(profile.id) : null;
 
@@ -357,6 +421,7 @@ async function loadPublicProfile(
     activePageName,
     socialInsights,
     newsletterPageEnabled,
+    productLinks,
     notFound: false as const,
     customDomain,
   };
@@ -398,7 +463,7 @@ export const getPublicProfileForRequest = createServerFn({ method: "GET" })
         : null;
 
     const result = await (async () => {
-      if (requestHostname) {
+      if (requestHostname && !isBentoLandingHost(requestHostname)) {
         const { data: domain, error } = await supabaseAdmin
           .from("custom_domains")
           .select("user_id, hostname, status, ssl_status")

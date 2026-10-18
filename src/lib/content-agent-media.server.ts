@@ -62,7 +62,8 @@ export async function resolveOwnedAgentMedia(
       .select("id,storage_key,mime_type,byte_size")
       .eq("user_id", userId)
       .eq("status", "ready")
-      .in("id", ids),
+      .in("id", ids)
+      .limit(ids.length),
   ]);
   if (registered.error || imported.error) throw new Error("Your media library is unavailable.");
   const rows = [...(registered.data || []), ...(imported.data || [])];

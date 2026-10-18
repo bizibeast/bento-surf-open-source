@@ -165,7 +165,7 @@ const presets: Preset[] = [
   {
     key: "fill_schedule",
     label: "Fill my schedule",
-    description: "Drafts for your empty posting slots",
+    description: "Fresh, sourced drafts for empty slots; skips when evidence is thin",
     group: "Cross-platform",
     template: "fill_schedule",
     time: "03:00",

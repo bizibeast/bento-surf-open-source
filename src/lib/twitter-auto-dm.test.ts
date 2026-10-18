@@ -45,7 +45,7 @@ describe("X Auto-DM connection readiness", () => {
 
   it("requires a repair when delivery fields are missing", () => {
     const readiness = getTwitterConnectionReadiness(
-      { ...readyConnection, webhook_fields: ["direct_messages"] },
+      { ...readyConnection, webhook_fields: [] },
       now,
     );
     expect(readiness).toMatchObject({
@@ -53,6 +53,14 @@ describe("X Auto-DM connection readiness", () => {
       issues: ["missing_webhook_subscription"],
       needsReconnect: false,
     });
+  });
+
+  it("allows DM rules with DM delivery but requires the matching feed for mention rules", () => {
+    const dmOnly = { ...readyConnection, webhook_fields: ["direct_messages"] };
+    expect(getTwitterConnectionReadiness(dmOnly, now).ready).toBe(true);
+    expect(getTwitterConnectionReadiness(dmOnly, now, "any_mention").issues).toContain(
+      "missing_webhook_subscription",
+    );
   });
 });
 
@@ -191,6 +199,38 @@ describe("X Auto-DM webhook parsing", () => {
         text: "info please",
         occurredAt: "2026-08-13T08:00:00.000Z",
       },
+    ]);
+  });
+
+  it("accepts the current X Activity dm.received envelope", () => {
+    const events = parseTwitterWebhook({
+      data: {
+        event_uuid: "delivery-1",
+        filter: { user_id: "creator-1" },
+        event_type: "dm.received",
+        payload: {
+          direct_message_events: [
+            {
+              type: "message_create",
+              id: "dm-2",
+              created_timestamp: String(Date.parse("2026-10-18T06:00:00.000Z")),
+              message_create: {
+                sender_id: "sender-1",
+                target: { recipient_id: "creator-1" },
+                message_data: { text: "info please" },
+              },
+            },
+          ],
+        },
+      },
+    });
+    expect(events).toEqual([
+      expect.objectContaining({
+        externalEventId: "dm:dm-2",
+        twitterUserId: "creator-1",
+        senderId: "sender-1",
+        text: "info please",
+      }),
     ]);
   });
 

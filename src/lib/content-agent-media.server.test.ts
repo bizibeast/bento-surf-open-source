@@ -8,7 +8,7 @@ vi.mock("@/integrations/supabase/client.server", () => ({
   supabaseAdmin: {
     from: () => {
       const q: Record<string, unknown> = {};
-      for (const m of ["select", "eq", "in"]) q[m] = () => q;
+      for (const m of ["select", "eq", "in", "limit"]) q[m] = () => q;
       q.upsert = (value: unknown) => {
         mocks.upsert(value);
         return q;

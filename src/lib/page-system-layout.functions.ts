@@ -14,6 +14,7 @@ import { getPlan } from "./plan.server";
 import { commerceEntitlement, planHasEntitlement } from "./plans";
 import { invalidateCreatorPageCaches, pageSystemSchema } from "./pages.functions";
 import { loadPublicSocialAnalytics, summarizeSocialAnalytics } from "./social-analytics.functions";
+import { SOCIAL_CONNECTION_LIST_LIMIT } from "./large-table-columns";
 import {
   mergeSystemItemLayout,
   MAX_SYSTEM_PAGE_ITEMS,
@@ -208,7 +209,12 @@ export async function loadSystemPageItems(
   ) {
     const [analytics, connections] = await Promise.all([
       socialInsights ?? loadPublicSocialAnalytics(userId),
-      db.from("social_connections").select("id").eq("user_id", userId).eq("status", "active"),
+      db
+        .from("social_connections")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("status", "active")
+        .limit(SOCIAL_CONNECTION_LIST_LIMIT),
     ]);
     if (connections.error) throw new Error(connections.error.message);
     const activeIds = new Set(

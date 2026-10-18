@@ -37,6 +37,7 @@ vi.mock("@/integrations/supabase/client.server", () => ({
       const chain: any = {
         select: () => chain,
         eq: () => chain,
+        limit: () => chain,
         delete: () => chain,
         upsert: (rows: any[]) => {
           write = true;

@@ -59,8 +59,22 @@ it("always shows identity and every ordered page around the route body", () => {
       .map((link) => link.textContent),
   ).toEqual(["About", "Calendar", "Store", "Insights", "Newsletters"]);
   expect(within(screen.getByRole("main")).getByText("Calendar body")).toBeVisible();
+  expect(screen.queryAllByRole("heading", { level: 1 })).toHaveLength(0);
   expect(screen.getByRole("img", { name: "Bizibeast avatar" })).toBeVisible();
   expect(screen.getByRole("link", { name: /Made with/ })).toBeVisible();
+});
+
+it("gives a profile subpage one document heading", () => {
+  render(
+    <PublicCreatorShell chrome={chrome} activePageId="Calendar" documentHeading="Calendar">
+      <p>Calendar body</p>
+    </PublicCreatorShell>,
+  );
+
+  expect(
+    screen.getAllByRole("heading", { level: 1 }).map((heading) => heading.textContent),
+  ).toEqual(["Calendar"]);
+  expect(document.querySelector("aside > p")).toHaveTextContent("Bizibeast");
 });
 
 it("treats no_banner as without photo while keeping identity, navigation and branding", () => {

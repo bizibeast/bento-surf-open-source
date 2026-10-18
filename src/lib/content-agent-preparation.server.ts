@@ -20,8 +20,32 @@ async function rpc(name: string, args: Record<string, unknown>) {
 
 /** Prefer the creator's chosen portrait, then relevant photos; rotate equally relevant choices. */
 export function rankAgentPhotos(rows: any[], card: Draft, heroId: string | null, used: string[]) {
+  const generic = new Set([
+    "about",
+    "better",
+    "could",
+    "every",
+    "from",
+    "have",
+    "help",
+    "into",
+    "more",
+    "people",
+    "photo",
+    "post",
+    "their",
+    "there",
+    "these",
+    "this",
+    "those",
+    "with",
+    "would",
+    "your",
+  ]);
   const terms = new Set(
-    `${card.title} ${card.body}`.toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) || [],
+    (
+      `${card.title} ${card.visualBrief || ""}`.toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) || []
+    ).filter((word) => !generic.has(word)),
   );
   return rows
     .map((row) => {
@@ -33,7 +57,7 @@ export function rankAgentPhotos(rows: any[], card: Draft, heroId: string | null,
       const relevance = [...terms].filter((word) => words.has(word)).length;
       return {
         row,
-        score: row.id === heroId ? 1000 : relevance * 10 + (row.singleFace ? 5 : 0),
+        score: row.id === heroId ? 1000 : relevance ? relevance * 10 + (row.singleFace ? 5 : 0) : 0,
         uses: used.filter((id) => id === row.id).length,
       };
     })

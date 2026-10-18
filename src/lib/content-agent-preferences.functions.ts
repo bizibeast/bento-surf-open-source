@@ -4,6 +4,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { requireContentWorkspace } from "./content-access.server";
+import { SOCIAL_CONNECTION_LIST_LIMIT } from "./large-table-columns";
 import { agentBrandingSchema } from "./content-agent-branding";
 import {
   getOrCreateNamedAgentThreadForWorkspace,
@@ -144,7 +145,8 @@ export const getContentPublishingAccounts = createServerFn({ method: "GET" })
         .eq("status", "active")
         .eq("reauth_required", false)
         .in("provider", ["twitter", "linkedin", "instagram"])
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false })
+        .limit(SOCIAL_CONNECTION_LIST_LIMIT);
       if (error) throw new Error("Your connected accounts could not be loaded.");
       return data || [];
     },

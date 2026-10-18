@@ -166,7 +166,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         {
           name: "description",
           content:
-            "Run your creator page, store, bookings, social posts, Instagram automations, courses, and community from one beautiful Bento.",
+            "Run your creator page, store, bookings, posts, automations, courses, and community from one Bento.",
         },
         { name: "author", content: "bento.surf" },
         { property: "og:site_name", content: "bento.surf" },

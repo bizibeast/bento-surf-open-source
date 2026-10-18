@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   prepareRoutineDrafts,
+  selectFreshRoutineSignals,
   prepareRoutineReview,
   processContentRoutineRun,
   processDueContentRoutines,
@@ -215,6 +216,160 @@ it("does not prepare a batch or ask for evidence on a transient editorial failur
     prepareRoutineDrafts({ userId: "creator", platforms: ["linkedin"], run }, deps),
   ).rejects.toThrow("Provider unavailable; retry");
   expect(deps.save).not.toHaveBeenCalled();
+});
+
+it("selects current reporting over evergreen social inspiration for automatic drafts", () => {
+  const now = Date.parse("2026-10-18T12:00:00Z");
+  const news = {
+    canonicalUrl: "https://example.com/current-news",
+    title: "Startup announces a new funding round",
+    summary:
+      "The company announced its funding round and described the next product milestone for founders.",
+    sourceName: "Example News",
+    publishedAt: "2026-10-17T10:00:00Z",
+    retrievedAt: "2026-10-18T08:00:00Z",
+    kind: "rss" as const,
+  };
+  const inspiration = {
+    ...news,
+    canonicalUrl: "https://example.com/old-video",
+    title: "How to stay motivated as a founder",
+    kind: "youtube" as const,
+  };
+  const evergreen = {
+    ...news,
+    canonicalUrl: "https://example.com/founder-guide",
+    title: "How to set founder salary before revenue",
+  };
+  const tangential = {
+    ...news,
+    canonicalUrl: "https://example.com/founder-incubator-drama",
+    title: "There was drama at a founder incubator last night",
+  };
+  const promotion = {
+    ...news,
+    canonicalUrl: "https://example.com/founder-summit-pass",
+    title: "Last chance to save on your Founder Summit pass",
+  };
+  expect(
+    selectFreshRoutineSignals([inspiration, evergreen, tangential, promotion, news], now),
+  ).toEqual([news]);
+  expect(
+    selectFreshRoutineSignals([{ ...news, publishedAt: "2026-10-10T10:00:00Z" }], now),
+  ).toEqual([]);
+});
+
+it("holds automatic schedule drafts when no current external signal is available", async () => {
+  const deps = {
+    loadContext: vi.fn(),
+    generate: vi.fn(),
+    save: vi.fn(),
+  };
+  expect(
+    await prepareRoutineDrafts(
+      { userId: "creator", platforms: ["twitter"], run, trendSources: [] },
+      deps,
+    ),
+  ).toBe(0);
+  expect(deps.loadContext).not.toHaveBeenCalled();
+  expect(deps.generate).not.toHaveBeenCalled();
+});
+
+it("withholds a routine draft that cites only workspace history instead of the current signal", async () => {
+  const news = {
+    canonicalUrl: "https://example.com/current-news",
+    title: "Startup announces a new funding round",
+    summary:
+      "The company announced its funding round and described the next product milestone for founders.",
+    sourceName: "Example News",
+    publishedAt: new Date().toISOString(),
+    retrievedAt: new Date().toISOString(),
+    kind: "rss" as const,
+  };
+  const deps = {
+    loadContext: vi.fn().mockResolvedValue({
+      brain: [],
+      sources: [
+        {
+          id: "github:old",
+          title: "Old product update",
+          text: "A tool was shipped.",
+          external: false,
+          occurredAt: null,
+        },
+      ],
+      recentOutputs: [],
+    }),
+    generate: vi.fn().mockResolvedValue({
+      status: "ready",
+      message: "Ready",
+      issues: [],
+      card: {
+        type: "draft",
+        cardId: "draft",
+        platform: "twitter",
+        format: "post",
+        body: "Just shipped a tool.",
+        editorial: { sourceIds: ["github:old"] },
+      },
+    }),
+    save: vi.fn(),
+  };
+  expect(
+    await prepareRoutineDrafts(
+      { userId: "creator", platforms: ["twitter"], run, trendSources: [news] },
+      deps,
+    ),
+  ).toBe(0);
+  expect(deps.generate.mock.calls[0][0].requiredRecentSourceIds).toContain(
+    `trend:${news.canonicalUrl}`,
+  );
+  expect(deps.save).not.toHaveBeenCalled();
+});
+
+it("saves a checked post that uses the current report as its evidence", async () => {
+  const news = {
+    canonicalUrl: "https://example.com/current-news",
+    title: "Startup announces a new funding round",
+    summary:
+      "The company announced its funding round and described the next product milestone for founders.",
+    sourceName: "Example News",
+    publishedAt: new Date().toISOString(),
+    retrievedAt: new Date().toISOString(),
+    kind: "rss" as const,
+  };
+  const deps = {
+    loadContext: vi.fn().mockResolvedValue({ brain: [], sources: [], recentOutputs: [] }),
+    generate: vi.fn().mockResolvedValue({
+      status: "ready",
+      message: "Ready",
+      issues: [],
+      card: {
+        type: "draft",
+        cardId: "draft",
+        platform: "twitter",
+        format: "post",
+        body: "A new funding round is a test of what founders choose to build next.",
+        sourceUrls: [news.canonicalUrl],
+        editorial: {
+          sourceIds: [`trend:${news.canonicalUrl}`],
+          validationState: "passed",
+        },
+      },
+    }),
+    save: vi.fn().mockResolvedValue(1),
+  };
+  expect(
+    await prepareRoutineDrafts(
+      { userId: "creator", platforms: ["twitter"], run, trendSources: [news] },
+      deps,
+    ),
+  ).toBe(1);
+  expect(deps.save).toHaveBeenCalledWith(
+    expect.objectContaining({
+      result: expect.objectContaining({ cards: [expect.objectContaining({ type: "draft" })] }),
+    }),
+  );
 });
 
 it("prepares weekly advice for cadence delivery without draft cards", async () => {

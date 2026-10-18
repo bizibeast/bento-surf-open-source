@@ -13,6 +13,7 @@ import {
   type BrainSuggestion,
   type BrainItem,
 } from "./content-brain";
+import { BRAIN_ITEM_COLUMNS, CONTENT_PROFILE_COLUMNS } from "./large-table-columns";
 
 export async function contentSourceFingerprint(
   posts: Array<Record<string, unknown>>,
@@ -83,9 +84,9 @@ async function saveIndexedBrain(
           .eq("user_id", userId)
           .eq("locked", false)
           .eq("provenance", "social_post")
-          .select("*")
+          .select(BRAIN_ITEM_COLUMNS)
           .maybeSingle()
-      : await db.from("creator_brain_items").insert(row).select("*").maybeSingle();
+      : await db.from("creator_brain_items").insert(row).select(BRAIN_ITEM_COLUMNS).maybeSingle();
     if (result.error) throw new Error("Source-backed Brain documents could not be saved.");
     if (result.data) {
       saved += 1;
@@ -140,8 +141,12 @@ const defaults: ContentIndexDependencies = {
         .from("social_content_insights")
         .select("id", { count: "exact", head: true })
         .eq("user_id", userId),
-      db.from("creator_brain_items").select("*").eq("user_id", userId).limit(1000),
-      db.from("creator_content_profiles").select("*").eq("user_id", userId).maybeSingle(),
+      db.from("creator_brain_items").select(BRAIN_ITEM_COLUMNS).eq("user_id", userId).limit(1000),
+      db
+        .from("creator_content_profiles")
+        .select(CONTENT_PROFILE_COLUMNS)
+        .eq("user_id", userId)
+        .maybeSingle(),
       db.from("profiles").select("account_timezone").eq("id", userId).maybeSingle(),
     ]);
     if (posts.error || sourceTotal.error || brain.error || profile.error || identity.error)
@@ -280,7 +285,9 @@ export async function processDueContentIndexes(dependencies: ContentIndexDepende
             .from("creator_content_media")
             .select("id,provider,post_id")
             .eq("user_id", job.user_id)
-            .in("post_id", [...new Set(postIds)]);
+            .in("post_id", [...new Set(postIds)])
+            // ponytail: one index pass tags at most 500 assets. Raise if a creator's tagged posts exceed that.
+            .limit(500);
           if (error) throw new Error("Media topic index could not be loaded.");
           const topics = (media || []).flatMap((asset: any) => {
             const tags = tagsByPost.get(`${asset.provider}:${asset.post_id}`);

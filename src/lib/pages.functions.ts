@@ -343,23 +343,26 @@ export async function deletePageForCreator(
   return { ok: true };
 }
 
+const reorderPageIdsSchema = z
+  .array(z.string().uuid())
+  .max(100)
+  .refine((ids) => new Set(ids).size === ids.length, "Page IDs must be unique.");
+
+export async function reorderPagesForCreator(
+  supabase: SupabaseClient<Database>,
+  userId: string,
+  pageIds: string[],
+) {
+  const ids = reorderPageIdsSchema.parse(pageIds);
+  const { error } = await supabase.rpc("reorder_creator_pages", { page_ids: ids });
+  if (error) throw new Error(error.message);
+  await invalidateCreatorPageCaches(supabase, userId);
+  return { ok: true as const };
+}
+
 export const reorderMyPages = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator((input) =>
-    z
-      .object({
-        pageIds: z
-          .array(z.string().uuid())
-          .max(100)
-          .refine((ids) => new Set(ids).size === ids.length, "Page IDs must be unique."),
-      })
-      .parse(input),
-  )
-  .handler(async ({ data, context }) => {
-    const { error } = await context.supabase.rpc("reorder_creator_pages", {
-      page_ids: data.pageIds,
-    });
-    if (error) throw new Error(error.message);
-    await invalidateCreatorPageCaches(context.supabase, context.userId);
-    return { ok: true as const };
-  });
+  .validator((input) => z.object({ pageIds: reorderPageIdsSchema }).parse(input))
+  .handler(({ data, context }) =>
+    reorderPagesForCreator(context.supabase, context.userId, data.pageIds),
+  );

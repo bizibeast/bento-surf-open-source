@@ -11,21 +11,26 @@ export async function resolvePublicUsername(
   requestedUsername: string,
 ): Promise<ResolvedPublicUsername | null> {
   const username = requestedUsername.replace(/^@/, "").trim().toLowerCase();
-  const { data: profile, error: profileError } = await db
-    .from("profiles")
-    .select("id,username")
-    .eq("username", username)
-    .maybeSingle();
-  if (profileError) throw new Error(profileError.message);
-  if (profile) return { userId: profile.id, username: profile.username, isAlias: false };
+  const [profileResult, aliasResult] = await Promise.all([
+    db.from("profiles").select("id,username").eq("username", username).maybeSingle(),
+    db
+      .from("profile_username_aliases")
+      .select("user_id")
+      .eq("username", username)
+      .gt("expires_at", new Date().toISOString())
+      .maybeSingle(),
+  ]);
+  if (profileResult.error) throw new Error(profileResult.error.message);
+  if (profileResult.data) {
+    return {
+      userId: profileResult.data.id,
+      username: profileResult.data.username,
+      isAlias: false,
+    };
+  }
 
-  const { data: alias, error: aliasError } = await db
-    .from("profile_username_aliases")
-    .select("user_id")
-    .eq("username", username)
-    .gt("expires_at", new Date().toISOString())
-    .maybeSingle();
-  if (aliasError) throw new Error(aliasError.message);
+  const alias = aliasResult.data;
+  if (aliasResult.error) throw new Error(aliasResult.error.message);
   if (!alias) return null;
 
   const { data: currentProfile, error: currentProfileError } = await db

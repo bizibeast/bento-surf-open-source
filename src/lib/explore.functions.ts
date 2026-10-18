@@ -11,6 +11,7 @@ import {
 } from "@/lib/explore";
 import { enforceRequestRateLimit } from "@/lib/request-security.server";
 import { publicPagePreviewVersion } from "@/lib/open-graph";
+import { avatarDeliveryUrl } from "@/lib/media-variants";
 import { safePublicMediaUrl } from "@/lib/safe-url";
 
 const EXPLORE_PAGE_SIZE = 24;
@@ -134,7 +135,7 @@ export const getExploreProfiles = createServerFn({ method: "GET" })
       username: profile.username,
       displayName: profile.display_name || profile.username,
       bio: profile.bio,
-      avatarUrl: safePublicMediaUrl(profile.avatar_url),
+      avatarUrl: avatarDeliveryUrl(safePublicMediaUrl(profile.avatar_url)),
       category: exploreCategorySchema.catch("creator").parse(profile.explore_category),
       previewUrl: previewUrls.get(profile.username) ?? explorePreviewUrl(profile.username),
     }));

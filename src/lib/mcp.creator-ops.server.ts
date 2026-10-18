@@ -50,6 +50,7 @@ import { clearPublicBookingCalendarCache } from "./public-booking-calendar-cache
 import { normalizeCommerceDiscountCode } from "./commerce-growth";
 import { creatorPaymentSupportsCheckoutAdjustments } from "./payment-providers";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { SOCIAL_CONNECTION_LIST_LIMIT } from "./large-table-columns";
 import { scheduleAudienceCampaignForCreator } from "./email.server";
 import {
   communityTokenHash,
@@ -1671,7 +1672,8 @@ export async function getIntegrationWorkspace(context: CreatorMcpContext) {
         "id,provider,provider_handle,provider_display_name,status,scopes,connection_health,last_error,reauth_required,provider_error_code,token_expires_at,last_refreshed_at",
       )
       .eq("user_id", context.userId)
-      .order("created_at"),
+      .order("created_at")
+      .limit(SOCIAL_CONNECTION_LIST_LIMIT),
     client
       .from("booking_calendar_connections")
       .select("id,provider,email,display_name,status,is_default,last_error")
