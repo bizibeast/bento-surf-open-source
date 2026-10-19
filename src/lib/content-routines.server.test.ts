@@ -92,7 +92,9 @@ describe("content routine processor", () => {
       { id: "occupied", status: "scheduled", scheduledAt: "2026-09-18T09:00:00.000Z" } as any,
     ];
     vi.mocked(deps.loadContext).mockResolvedValue(context);
-    expect(await processContentRoutineRun(run, deps)).toEqual({ resultCount: 0 });
+    expect(await processContentRoutineRun(run, deps)).toEqual(
+      expect.objectContaining({ resultCount: 0, note: expect.any(String) }),
+    );
     expect(deps.refreshBrief).not.toHaveBeenCalled();
     expect(deps.generateDraftBatch).not.toHaveBeenCalled();
   });
@@ -105,7 +107,9 @@ describe("content routine processor", () => {
       (_, i) => ({ id: String(i), status: "draft" }) as any,
     );
     vi.mocked(deps.loadContext).mockResolvedValue(context);
-    expect(await processContentRoutineRun(run, deps)).toEqual({ resultCount: 0 });
+    expect(await processContentRoutineRun(run, deps)).toEqual(
+      expect.objectContaining({ resultCount: 0, note: expect.any(String) }),
+    );
     expect(deps.refreshBrief).not.toHaveBeenCalled();
     expect(deps.generateDraftBatch).not.toHaveBeenCalled();
   });
@@ -218,6 +222,66 @@ it("does not prepare a batch or ask for evidence on a transient editorial failur
   expect(deps.save).not.toHaveBeenCalled();
 });
 
+it("uses personal evidence when research is empty and respects the selected batch size", async () => {
+  const deps = {
+    loadContext: vi.fn().mockResolvedValue({
+      brain: [],
+      sources: [
+        {
+          id: "brain:story",
+          title: "First launch",
+          text: "I launched a product in 2025.",
+          external: false,
+        },
+      ],
+    }),
+    generate: vi.fn().mockResolvedValue({
+      status: "ready",
+      message: "Ready",
+      card: {
+        type: "draft",
+        cardId: "draft",
+        platform: "twitter",
+        format: "post",
+        body: "A practical lesson",
+        editorial: { sourceIds: ["brain:story"] },
+      },
+    }),
+    save: vi.fn().mockResolvedValue(1),
+  };
+  await prepareRoutineDrafts(
+    {
+      userId: "creator",
+      platforms: ["twitter", "linkedin"],
+      run: { ...run, schedule: { ...run.schedule, draftsPerRun: 1 } },
+      trendSources: [],
+    },
+    deps,
+  );
+  expect(deps.generate).toHaveBeenCalledOnce();
+  expect(deps.generate.mock.calls[0][0].requiredRecentSourceIds).toEqual([]);
+  expect(deps.generate.mock.calls[0][0].sources).toEqual(
+    expect.arrayContaining([expect.objectContaining({ id: "brain:story" })]),
+  );
+  expect(deps.generate.mock.calls[0][0].request).toContain(
+    "never present old events as happening today",
+  );
+  expect(deps.save).toHaveBeenCalledOnce();
+});
+
+it("reports zero output and preserves budget failures without claiming drafts exist", async () => {
+  const deps = dependencies();
+  vi.mocked(deps.generateDraftBatch).mockRejectedValue(new Error("Workspace AI budget reached"));
+  await processDueContentRoutines(deps);
+  expect(deps.finishRun).toHaveBeenCalledWith(
+    expect.objectContaining({
+      status: "failed",
+      resultCount: 0,
+      error: "Workspace AI budget reached",
+    }),
+  );
+});
+
 it("selects current reporting over evergreen social inspiration for automatic drafts", () => {
   const now = Date.parse("2026-10-18T12:00:00Z");
   const news = {
@@ -259,18 +323,23 @@ it("selects current reporting over evergreen social inspiration for automatic dr
   ).toEqual([]);
 });
 
-it("holds automatic schedule drafts when no current external signal is available", async () => {
+it("explains why a trends-only run cannot draft without current evidence", async () => {
   const deps = {
     loadContext: vi.fn(),
     generate: vi.fn(),
     save: vi.fn(),
   };
-  expect(
-    await prepareRoutineDrafts(
-      { userId: "creator", platforms: ["twitter"], run, trendSources: [] },
+  await expect(
+    prepareRoutineDrafts(
+      {
+        userId: "creator",
+        platforms: ["twitter"],
+        run: { ...run, schedule: { ...run.schedule, contentMix: "trends" } },
+        trendSources: [],
+      },
       deps,
     ),
-  ).toBe(0);
+  ).rejects.toThrow("No relevant current trends");
   expect(deps.loadContext).not.toHaveBeenCalled();
   expect(deps.generate).not.toHaveBeenCalled();
 });
@@ -315,12 +384,17 @@ it("withholds a routine draft that cites only workspace history instead of the c
     }),
     save: vi.fn(),
   };
-  expect(
-    await prepareRoutineDrafts(
-      { userId: "creator", platforms: ["twitter"], run, trendSources: [news] },
+  await expect(
+    prepareRoutineDrafts(
+      {
+        userId: "creator",
+        platforms: ["twitter"],
+        run: { ...run, schedule: { ...run.schedule, contentMix: "trends" } },
+        trendSources: [news],
+      },
       deps,
     ),
-  ).toBe(0);
+  ).rejects.toThrow("No draft passed");
   expect(deps.generate.mock.calls[0][0].requiredRecentSourceIds).toContain(
     `trend:${news.canonicalUrl}`,
   );
@@ -361,7 +435,12 @@ it("saves a checked post that uses the current report as its evidence", async ()
   };
   expect(
     await prepareRoutineDrafts(
-      { userId: "creator", platforms: ["twitter"], run, trendSources: [news] },
+      {
+        userId: "creator",
+        platforms: ["twitter"],
+        run: { ...run, schedule: { ...run.schedule, contentMix: "trends" } },
+        trendSources: [news],
+      },
       deps,
     ),
   ).toBe(1);

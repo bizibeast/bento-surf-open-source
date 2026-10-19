@@ -33,6 +33,7 @@ function query() {
 }
 
 vi.mock("@tanstack/react-start", () => ({
+  createServerOnlyFn: (handler: unknown) => handler,
   createServerFn: () => {
     let validate = (value: unknown) => value;
     const fn: Record<string, unknown> = {};

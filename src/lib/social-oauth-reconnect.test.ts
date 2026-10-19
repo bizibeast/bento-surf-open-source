@@ -7,6 +7,7 @@ const state = vi.hoisted(() => ({
   existing: [] as any[],
 }));
 vi.mock("@tanstack/react-start", () => ({
+  createServerOnlyFn: (handler: unknown) => handler,
   createServerFn: () => {
     const chain: any = {
       middleware: () => chain,

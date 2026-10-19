@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import template from "./self-hosted-template.txt?raw";
-import { buildSetupEnv, parseSetupFields, validateSetup } from "./self-hosted-setup";
+import {
+  buildSetupEnv,
+  isSetupBootstrapPath,
+  parseSetupFields,
+  validateSetup,
+} from "./self-hosted-setup";
 
 const values = {
   VITE_APP_URL: "http://localhost:8080",
@@ -15,6 +20,20 @@ const values = {
 };
 
 describe("self-hosted setup", () => {
+  it("allows only the setup page and unconfigured root to skip database checks", () => {
+    expect(isSetupBootstrapPath("/self-hosted-setup", false)).toBe(true);
+    expect(isSetupBootstrapPath("/self-hosted-setup", true)).toBe(true);
+    expect(isSetupBootstrapPath("/", false)).toBe(true);
+    expect(isSetupBootstrapPath("/", true)).toBe(false);
+    for (const path of [
+      "/@creator",
+      "/creator/products/course",
+      "/settings",
+      "/api/storage",
+      "/p/course",
+    ])
+      expect(isSetupBootstrapPath(path, false)).toBe(false);
+  });
   it("keeps the browser template aligned with the operator template", () => {
     expect(template).toBe(readFileSync(".env.example", "utf8"));
   });

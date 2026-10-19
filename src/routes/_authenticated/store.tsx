@@ -371,7 +371,7 @@ function ProductsPage() {
             feature="storeCards"
             trigger={
               <button className="mt-7 rounded-2xl bg-[#3478f6] px-6 py-3.5 text-sm font-semibold text-white hover:bg-[#2168e5]">
-                Start a {TRIAL_DAYS}-day free trial
+                Start a {TRIAL_DAYS}-day trial
               </button>
             }
           />

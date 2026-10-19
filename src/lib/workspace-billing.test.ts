@@ -31,6 +31,7 @@ function subscriptionQuery() {
 }
 
 vi.mock("@tanstack/react-start", () => ({
+  createServerOnlyFn: (handler: unknown) => handler,
   createServerFn: () => {
     let validate = (value: unknown) => value;
     const builder: Record<string, unknown> = {};

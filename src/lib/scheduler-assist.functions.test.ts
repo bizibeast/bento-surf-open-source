@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   requirePlan: vi.fn(),
 }));
 vi.mock("@tanstack/react-start", () => ({
+  createServerOnlyFn: (handler: unknown) => handler,
   createServerFn: () => {
     const builder: any = {};
     builder.middleware = builder.validator = () => builder;

@@ -271,3 +271,7 @@ export function buildSetupEnv(template: string, values: Record<string, string>):
       `${name}=${envValue(merged[name] ?? defaultValue)}`,
   );
 }
+/** Bootstrap pages must render before an operator has installed database keys. */
+export function isSetupBootstrapPath(path: string, databaseConfigured: boolean) {
+  return path === "/self-hosted-setup" || (path === "/" && !databaseConfigured);
+}

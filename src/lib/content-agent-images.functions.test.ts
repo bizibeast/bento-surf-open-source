@@ -10,6 +10,7 @@ const m = vi.hoisted(() => ({
   draft: vi.fn(),
 }));
 vi.mock("@tanstack/react-start", () => ({
+  createServerOnlyFn: (handler: unknown) => handler,
   createServerFn: () => {
     let validator = (value: unknown) => value;
     const fn = {

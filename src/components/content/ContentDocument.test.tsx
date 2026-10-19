@@ -23,7 +23,7 @@ describe("Content documents", () => {
   it("edits visible prose and saves automatically without an Edit or Save step", async () => {
     const onSave = vi.fn();
     render(<ContentDocument label="Instructions" value="A rule" onSave={onSave} />);
-    expect(screen.queryByRole("button", { name: "Edit Instructions" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Edit Instructions" })).toBeVisible();
     const editor = screen.getByRole("textbox", { name: "Instructions" });
     expect(editor).toHaveTextContent("A rule");
     editor.innerHTML = "<h3>Voice</h3><p>Write <strong>clearly</strong>.</p>";

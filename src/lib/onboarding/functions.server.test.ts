@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   activateRpc: vi.fn(),
 }));
 vi.mock("@tanstack/react-start", () => ({
+  createServerOnlyFn: (handler: unknown) => handler,
   createServerFn: () => {
     let validate = (value: unknown) => value;
     const chain = {

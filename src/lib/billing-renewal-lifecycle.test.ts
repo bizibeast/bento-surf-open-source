@@ -23,6 +23,7 @@ vi.mock("@/integrations/supabase/client.server", () => ({
   },
 }));
 vi.mock("@tanstack/react-start", () => ({
+  createServerOnlyFn: (handler: unknown) => handler,
   createServerFn: () => {
     let validate = (v: unknown) => v;
     const q = {

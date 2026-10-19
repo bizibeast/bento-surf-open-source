@@ -2,11 +2,13 @@
 
 ## Current shared-app parity release
 
-Shared source: `ec0f7d37f41263d0a692fbce85f9b30f5a29e755`. The public edition includes the focused ChatGPT MCP catalog, current-reporting Agent drafts, personalized onboarding, starter-photo handoff, and current provider limits. Instance URLs, self-hosted setup, legal pages, license and deployment configuration remain operator-owned; hosted marketing and operational jobs are excluded.
+Shared source: `ea9e90003e331db1a41c5916f68d83a1ab2b479d`. Includes the latest Brain cleanup, personalized Topics, Stories navigation, routine content mix and draft quantity, AI-image settings access, and browser-safe server primitives. Operator setup, instance URLs, legal pages and deployment configuration retain their public-edition behavior.
 
-Validation: 3,742 tests across 496 files, TypeScript, changed-source lint (zero errors; existing Fast Refresh warnings), production build, Worker packaging dry run, current-tree boundary checks and public history checks. Shared-source parity reports zero missing, stale, removed or unclassified files. The exact approved historical non-secret exception is documented below. No self-hosted instance was deployed and no live paid AI call or social publication was made during verification.
+Validation: 3,763 tests across 498 files, TypeScript, production build, Worker packaging dry run, public boundary/history scans, and two fresh-install desktop/mobile browser tests. The setup test covers interactive key generation, private input visibility, no horizontal overflow, no browser exceptions, and no outbound mutations before configuration. The fresh-install route no longer needs a database before setup; controls wait for hydration. The public root no longer embeds a hosted Google Analytics tag.
 
-Apply the included database migrations before upgrading an existing instance. In particular, the X DM budget and onboarding photo migration must precede the corresponding Worker code.
+The shared-source parity check reports zero missing, stale, removed or unclassified files; manually transformed files retain the edition differences described in `source-boundary.md`. The reviewed historical non-secret exception below is unchanged. Private source history, credentials and customer data were not imported.
+
+These checks establish source and packaging readiness. No operator-owned self-hosted instance, real provider generation, paid transaction or social publication was exercised. Existing hosted deployment status is not evidence that an operator instance has upgraded. Apply included migrations and configure the operator's credentials before upgrading an instance.
 
 ## October 16, 2026 creator workflow update
 

@@ -109,6 +109,7 @@ const contentSearchSchema = z.object({
       "profile",
       "instruction",
       "strategy",
+      "topics",
       "story",
       "library",
       "file",
@@ -294,7 +295,7 @@ export function ContentPage({
   const agentIdentity = useQuery({
     queryKey: ["content-agent-identity"],
     queryFn: () => getOrCreateNamedAgentThread(),
-    enabled: tab === "agent" && !showRoutines,
+    enabled: tab === "agent",
   });
   const threads = useInfiniteQuery({
     queryKey: ["content-agent-threads"],
@@ -636,6 +637,7 @@ export function ContentPage({
     >
       {(tab !== "agent" || showRoutines) && (
         <AppHeader
+          fullWidth={tab === "brain" || showRoutines}
           title={
             tab === "brain"
               ? "Brain"
@@ -710,6 +712,7 @@ export function ContentPage({
           {tab === "agent" &&
             (showRoutines ? (
               <ContentRoutines
+                onSettings={() => setAgentSettingsOpen(true)}
                 routines={(routines.data || []) as ContentRoutineView[]}
                 timezone={brain.data?.profile.timezone || "UTC"}
                 activity={routineActivity.data || []}
@@ -819,7 +822,7 @@ export function ContentPage({
                 }
               />
             ))}
-          {tab === "agent" && !showRoutines && agentSettingsOpen && agentIdentity.data && (
+          {tab === "agent" && agentSettingsOpen && agentIdentity.data && (
             <ContentAgentSettings
               preferences={agentIdentity.data.preferences}
               onClose={() => setAgentSettingsOpen(false)}

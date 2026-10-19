@@ -56,6 +56,7 @@ export type SeoSerpDependencies = {
   delay?: (ms: number) => Promise<void>;
   maxAttempts?: number;
   timeoutMs?: number;
+  dataFormat?: "parsed" | "parsed_light";
   onReserved?: () => Promise<void> | void;
 };
 
@@ -223,8 +224,14 @@ export async function fetchSeoSerp(
   if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 3) {
     throw new Error("Invalid SEO request attempt limit.");
   }
+  const dataFormat = dependencies.dataFormat ?? "parsed";
+  if (dataFormat !== "parsed" && dataFormat !== "parsed_light") {
+    throw new Error("Invalid SEO SERP format.");
+  }
   const timeoutMs = dependencies.timeoutMs ?? 20_000;
-  if (!Number.isFinite(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 20_000) {
+  // parsed stays at the 20s caller cap. parsed_light may use the cloud pair budget.
+  const timeoutCap = dataFormat === "parsed_light" ? 45_000 : 20_000;
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 1_000 || timeoutMs > timeoutCap) {
     throw new Error("Invalid SEO request timeout.");
   }
   let payload: unknown;
@@ -252,8 +259,9 @@ export async function fetchSeoSerp(
         body: JSON.stringify({
           zone,
           url: target.toString(),
-          format: "json",
-          data_format: "parsed",
+          // parsed_light is the faster organic-only parser. Bright Data expects format raw for it.
+          format: dataFormat === "parsed_light" ? "raw" : "json",
+          data_format: dataFormat,
         }),
         signal: AbortSignal.timeout(timeoutMs),
       });
@@ -279,7 +287,14 @@ export async function fetchSeoSerp(
     } catch {
       throw new Error("Bright Data SEO returned invalid JSON.");
     }
-    if (payload && typeof payload === "object" && "status_code" in payload) {
+    // format json wraps {status_code, body}. format raw (parsed_light) is the parsed
+    // object itself, so a top-level status_code there is not an envelope.
+    if (
+      dataFormat === "parsed" &&
+      payload &&
+      typeof payload === "object" &&
+      "status_code" in payload
+    ) {
       const envelope = z
         .object({ status_code: z.number().int(), body: z.string() })
         .safeParse(payload);

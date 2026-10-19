@@ -69,7 +69,7 @@ export async function verifyFreeTrialCheckout(
     // No provider payload, customer data or validation details in logs/errors.
     console.error("Dodo free card-required trial verification failed.");
     throw new Error(
-      "Your free trial checkout could not be verified. Please try again or contact your instance administrator.",
+      "Your trial checkout could not be verified. Please try again or contact your instance administrator.",
     );
   }
 }

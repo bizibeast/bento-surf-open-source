@@ -60,6 +60,7 @@ vi.mock("./billing-sync.server", () => ({
 vi.mock("@/integrations/dodo/webhook.server", () => ({ refreshWorkspaceSubscription: vi.fn() }));
 
 vi.mock("@tanstack/react-start", () => ({
+  createServerOnlyFn: (handler: unknown) => handler,
   createServerFn: () => {
     let validate = (input: unknown) => input;
     const builder = {

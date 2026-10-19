@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 
 const mocks = vi.hoisted(() => ({ rpc: vi.fn(), access: vi.fn(), validatePhotos: vi.fn() }));
 vi.mock("@tanstack/react-start", () => ({
+  createServerOnlyFn: (handler: unknown) => handler,
   createServerFn: () => {
     let validate = (input: unknown) => input;
     const fn = {

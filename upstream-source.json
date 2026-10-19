@@ -1,6 +1,6 @@
 {
   "source": "Bento shared application",
-  "syncedAt": "2026-10-18T18:43:31.531690Z",
+  "syncedAt": "2026-10-19T19:22:15.618730Z",
   "features": [
     "proactive content agent",
     "Brain and Discover editorial context",
@@ -19,7 +19,10 @@
     "current niche reporting and publishable Agent drafts",
     "personal onboarding and visible plan choices",
     "owned Instagram photos in LinkedIn starter drafts",
-    "bounded social reads and X DM delivery caps"
+    "bounded social reads and X DM delivery caps",
+    "simplified Brain and personalized Topics",
+    "mixed personal and trend routine drafts with explicit outcomes",
+    "browser-safe server primitives and first-run setup"
   ],
   "editionDifferences": [
     "Configurable instance URLs and self-hosted setup",
@@ -27,5 +30,5 @@
     "No hosted credentials or customer data",
     "AGPL license and public release tooling retained"
   ],
-  "sharedSourceCommit": "ec0f7d37f41263d0a692fbce85f9b30f5a29e755"
+  "sharedSourceCommit": "ea9e90003e331db1a41c5916f68d83a1ab2b479d"
 }

@@ -32,6 +32,7 @@ function queryFor(table: string) {
 }
 
 vi.mock("@tanstack/react-start", () => ({
+  createServerOnlyFn: (handler: unknown) => handler,
   createServerFn: () => {
     const fn: Record<string, unknown> = {};
     fn.middleware = () => fn;

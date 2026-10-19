@@ -5,9 +5,9 @@ is a route. Do **not** create `src/pages/`, `src/routes/_app/index.tsx`, or
 `app/layout.tsx` - those are Next.js / Remix conventions. The only root layout
 is `src/routes/__root.tsx`.
 
-The Google tag for `G-JEX5V76CMP` is in that root layout's `<head>`. Every new
-route inherits it. Do not add another Google tag in individual routes or nested
-layouts.
+Analytics is configured by the instance operator. The public root does not
+include a hosted Google tag. Keep any operator-configured shared tracking in
+the root layout and avoid duplicate tags in individual routes.
 
 ## Conventions
 

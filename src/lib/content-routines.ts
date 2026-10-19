@@ -10,6 +10,8 @@ export type ContentRoutineSchedule = {
   catalogKey?: string;
   reviewReason?: string;
   outputMode?: "draft" | "schedule";
+  contentMix?: "balanced" | "life" | "trends";
+  draftsPerRun?: number;
 };
 
 export type ContentRoutineTemplate =

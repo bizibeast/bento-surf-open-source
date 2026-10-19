@@ -484,7 +484,7 @@ async function loadContentWorkspaceContext(
   ] = await Promise.all([
     db
       .from("creator_brain_items")
-      .select("id,kind,title,content,status,locked,source_url,source_ref,provenance")
+      .select("id,kind,title,content,status,locked,source_url,source_ref,provenance,tags")
       .eq("user_id", userId)
       .eq("status", "confirmed")
       .order("updated_at", { ascending: false })
@@ -575,7 +575,14 @@ async function loadContentWorkspaceContext(
   }
   const history = [...(messages.data || [])].reverse();
   return {
-    brain: brain.data || [],
+    brain: (brain.data || []).filter((item: any) => {
+      const voice =
+        item.kind === "instruction" && /^writing voice(?: instructions?)?$/i.test(item.title || "");
+      const canonical = (brain.data || []).some(
+        (entry: any) => entry.kind === "instruction" && entry.tags?.includes("canonical-voice"),
+      );
+      return !voice || !canonical || item.tags?.includes("canonical-voice");
+    }),
     media: (media.data || []).flatMap((asset: any) => {
       const parsed = contentMediaAssetSchema.safeParse({
         id: asset.id,

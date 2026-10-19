@@ -41,6 +41,8 @@ export const routineInputSchema = z
     instructions: z.string().trim().min(1).max(4_000).optional(),
     catalogKey: z.string().trim().max(100).optional(),
     outputMode: z.literal("draft").optional(),
+    contentMix: z.enum(["balanced", "life", "trends"]).optional(),
+    draftsPerRun: z.number().int().min(1).max(3).optional(),
   })
   .superRefine((value, context) => {
     if (value.template.startsWith("custom:") && (!value.name || !value.instructions))
@@ -70,6 +72,8 @@ export const saveContentRoutine = createServerFn({ method: "POST" })
       outputMode: data.outputMode || "draft",
       intervalMinutes: data.intervalMinutes,
       time: data.time,
+      contentMix: data.contentMix || "balanced",
+      draftsPerRun: data.draftsPerRun || 3,
       ...(data.name ? { name: data.name } : {}),
       ...(data.instructions ? { instructions: data.instructions } : {}),
       ...(data.catalogKey ? { catalogKey: data.catalogKey } : {}),
