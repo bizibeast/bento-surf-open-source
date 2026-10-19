@@ -15,6 +15,9 @@ import {
 import { ContentDocument, ContentMarkdown } from "./ContentDocument";
 import {
   buildContentStrategy,
+  brainDocumentBody,
+  contentTopics,
+  writingVoiceDocument,
   groupBrainItems,
   profileDocuments,
   type BrainItem,
@@ -47,6 +50,7 @@ export type ContentBrainSection =
   | "profile"
   | "instruction"
   | "strategy"
+  | "topics"
   | "story"
   | "library"
   | "file"
@@ -58,6 +62,7 @@ const sections: Array<[Section, string]> = [
   ["profile", "My Human"],
   ["instruction", "Instructions"],
   ["strategy", "Strategy"],
+  ["topics", "Topics"],
   ["story", "Stories"],
   ["file", "Files"],
   ["photo", "Media"],
@@ -180,6 +185,8 @@ export function ContentBrain({
 }) {
   const [section, setSection] = useState<Section>(initialSection);
   const [selected, setSelected] = useState<string | null>(initialItemId);
+  const [storiesOpen, setStoriesOpen] = useState(initialSection === "story");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [platform, setPlatform] = useState<StrategyPlatform>(initialPlatform);
   const [newTitle, setNewTitle] = useState("");
@@ -214,22 +221,26 @@ export function ContentBrain({
     setSelected(initialItemId);
     setPlatform(initialPlatform);
   }, [initialSection, initialItemId, initialPlatform]);
-  const selectItem = (id: string | null) => {
+  const selectItem = (id: string | null, next = section) => {
+    setSection(next);
     setSelected(id);
-    onNavigate?.(section, id, platform);
+    onNavigate?.(next, id, platform);
   };
   const grouped = useMemo(() => groupBrainItems(items), [items]);
-  const { human, humanContent, memories } = profileDocuments(items);
+  const { human, humanContent, details, memories } = profileDocuments(items);
+  const voice = writingVoiceDocument(
+    grouped.instruction.filter((item) => !item.tags?.includes("skill")),
+  );
   const visible =
     section === "library"
       ? [...grouped.inspiration, ...grouped.link]
-      : section === "sources"
+      : ["sources", "topics"].includes(section)
         ? []
         : section === "skill"
           ? grouped.instruction.filter((item) => item.tags?.includes("skill"))
           : section === "instruction"
-            ? grouped.instruction.filter((item) => !item.tags?.includes("skill"))
-            : grouped[section];
+            ? voice.others
+            : grouped[section as keyof typeof grouped];
   const filtered = visible.filter((item) =>
     `${item.title} ${item.content}`.toLowerCase().includes(search.toLowerCase()),
   );
@@ -308,31 +319,43 @@ export function ContentBrain({
           aria-label="Brain sections"
           className="flex overflow-x-auto md:grid md:overflow-visible"
         >
-          {sections.map(([id, label], index) => (
-            <div key={id} className={`shrink-0 min-w-0 ${index === 3 ? "md:mt-5" : ""}`}>
+          {sections.map(([id, label]) => (
+            <div key={id} className={`shrink-0 min-w-0 ${id === "story" ? "md:mt-5" : ""}`}>
               <button
                 type="button"
                 className="content-nav flex items-center gap-2"
                 aria-current={section === id ? "page" : undefined}
-                onClick={() => changeSection(id)}
+                aria-expanded={id === "story" ? storiesOpen : undefined}
+                onClick={() => (id === "story" ? setStoriesOpen(!storiesOpen) : changeSection(id))}
               >
-                {index >= 3 && <ChevronRight className="hidden size-3 md:block" />} {label}
+                {id === "story" && (
+                  <ChevronRight
+                    className={`size-3 transition-transform ${storiesOpen ? "rotate-90" : ""}`}
+                  />
+                )}{" "}
+                {label}
               </button>
-              {section === id && ["story", "file", "library"].includes(id) && (
-                <div className="ml-3 mt-1 hidden border-l border-neutral-200 pl-1 md:block">
+              {(id === "story"
+                ? storiesOpen
+                : section === id && ["file", "library"].includes(id)) && (
+                <div className="ml-3 mt-1 border-l border-neutral-200 pl-1">
                   {id === "story" && (
-                    <button className="content-nav" onClick={() => selectItem(null)}>
+                    <button
+                      className="content-nav"
+                      aria-current={section === "story" && !selected ? "page" : undefined}
+                      onClick={() => selectItem(null, "story")}
+                    >
                       Index
                     </button>
                   )}
-                  {visible.map((item) => (
+                  {(id === "story" ? grouped.story : visible).map((item) => (
                     <button
                       key={item.id}
                       type="button"
                       className="content-nav truncate"
                       aria-current={selected === item.id ? "page" : undefined}
                       onClick={() => {
-                        selectItem(item.id);
+                        selectItem(item.id, id);
                         setAdding(false);
                       }}
                     >
@@ -357,7 +380,7 @@ export function ContentBrain({
         )}
       </aside>
       <div className="min-h-0 min-w-0 overflow-y-auto px-5 py-8 sm:px-8 md:py-10 lg:px-10">
-        <div className="mx-auto max-w-[760px]">
+        <div className="max-w-[760px]">
           {selected && (
             <button
               type="button"
@@ -367,18 +390,20 @@ export function ContentBrain({
               {title} / Back to index
             </button>
           )}
-          {indexing && (
-            <p
-              role="status"
-              className={`mb-5 text-xs leading-5 ${indexing.status === "error" ? "text-red-700" : "text-neutral-500"}`}
-            >
-              {indexing.status === "pending" || indexing.status === "running"
-                ? "Learning from your connected posts…"
-                : indexing.status === "error"
-                  ? indexing.error || "Source indexing will retry shortly."
-                  : `${indexing.sourceCount} source posts indexed · ${indexing.mediaCount} reusable assets imported`}
-            </p>
-          )}
+          {indexing &&
+            (section === "sources" ||
+              ["pending", "running", "error"].includes(indexing.status)) && (
+              <p
+                role="status"
+                className={`mb-5 text-xs leading-5 ${indexing.status === "error" ? "text-red-700" : "text-neutral-500"}`}
+              >
+                {indexing.status === "pending" || indexing.status === "running"
+                  ? "Learning from your connected posts…"
+                  : indexing.status === "error"
+                    ? indexing.error || "Source indexing will retry shortly."
+                    : `${indexing.sourceCount} source posts indexed · ${indexing.mediaCount} reusable assets imported`}
+              </p>
+            )}
           <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-[28px] font-semibold tracking-tight">
               {selectedItem?.title ||
@@ -425,14 +450,28 @@ export function ContentBrain({
           </header>
           {section === "profile" ? (
             <>
+              <h3 className="mb-3 text-lg font-semibold">Summary</h3>
               <ContentDocument
                 key="human"
-                label="My Human"
+                label="Summary"
                 value={humanContent || humanSummary}
                 placeholder="Everything Bento should know about you - background, product facts, audience notes, offers, positioning, examples to remember…"
                 onSave={(content) => saveText(human, "profile", "My Human", content)}
               />
-              <div className="my-10 text-center tracking-[12px] text-neutral-400">···</div>
+              {details.length > 0 && (
+                <section className="mt-10" aria-label="Profile">
+                  <h3 className="mb-3 text-lg font-semibold">Profile</h3>
+                  {details.map((item) => (
+                    <ContentDocument
+                      key={item.id}
+                      label="Profile"
+                      value={brainDocumentBody(item.content, item.title)}
+                      onSave={(content) => saveText(item, "profile", item.title, content)}
+                    />
+                  ))}
+                </section>
+              )}
+              <div className="my-8 border-t border-neutral-100" />
               <h3 className="text-lg font-semibold">Bento Memories</h3>
               <p className="mt-1 mb-6 text-xs leading-5 text-neutral-500">
                 Remembered from your conversations and posts. Edit anything to correct Bento - your
@@ -443,6 +482,7 @@ export function ContentBrain({
                   <KnowledgeItem
                     key={item.id}
                     item={item}
+                    showTitle={item.title.toLowerCase() !== "bento memories"}
                     onSave={(content) => saveText(item, item.kind, item.title, content)}
                     onConfirm={onConfirm}
                     onLock={onLock}
@@ -457,23 +497,35 @@ export function ContentBrain({
                   onSave={(content) => saveText(undefined, "profile", "Bento Memories", content)}
                 />
               )}
-              <details className="mt-10 border-t border-neutral-100 pt-5">
-                <summary className="cursor-pointer text-sm text-neutral-500">
+              <section className="mt-10 border-t border-neutral-100 pt-5">
+                <button
+                  type="button"
+                  aria-expanded={settingsOpen}
+                  aria-controls="brain-publishing-settings"
+                  onClick={() => setSettingsOpen(!settingsOpen)}
+                  className="text-sm text-neutral-600"
+                >
                   <span className="inline-flex items-center gap-2">
                     <Eye className="size-4" /> Publishing settings
                   </span>
-                </summary>
-                <p className="mt-2 text-xs leading-5 text-neutral-500">
-                  Your topics, weekly targets, and timezone guide Discover and Agent. Choose whether
-                  each routine saves drafts or schedules posts in Routines.
-                </p>
-                <ProfileSettings
-                  key={JSON.stringify(profile)}
-                  profile={profile}
-                  onSave={onSaveProfile}
-                />
-              </details>
+                </button>
+                {settingsOpen && (
+                  <div id="brain-publishing-settings">
+                    <p className="mt-2 text-xs leading-5 text-neutral-500">
+                      Your topics, weekly targets, and timezone guide Discover and Agent. Choose
+                      creation frequency in Routines. Posts stay as drafts until you approve them.
+                    </p>
+                    <ProfileSettings
+                      key={JSON.stringify(profile)}
+                      profile={profile}
+                      onSave={onSaveProfile}
+                    />
+                  </div>
+                )}
+              </section>
             </>
+          ) : section === "topics" ? (
+            <Topics profile={profile} items={items} onSave={onSaveProfile} />
           ) : section === "strategy" ? (
             (() => {
               const item = grouped.strategy.find((candidate) =>
@@ -486,7 +538,10 @@ export function ContentBrain({
                   <ContentDocument
                     key={platform}
                     label={`${providers[platform]} Strategy`}
-                    value={item?.content || buildContentStrategy(platform, profile, items)}
+                    value={brainDocumentBody(
+                      item?.content || buildContentStrategy(platform, profile, items),
+                      `${providers[platform]} Strategy`,
+                    )}
                     onSave={(content) =>
                       saveText(item, "strategy", `${providers[platform]} Strategy`, content)
                     }
@@ -937,12 +992,36 @@ export function ContentBrain({
             />
           ) : (
             <>
+              {section === "instruction" && (
+                <section className="mb-8">
+                  <h3 className="mb-3 text-lg font-semibold">Writing voice</h3>
+                  <ContentDocument
+                    label="Writing voice"
+                    value={voice.content}
+                    placeholder="How should Bento sound? Add your tone, examples, and words to avoid."
+                    onSave={(content) =>
+                      onSaveItem({
+                        ...(voice.primary || {}),
+                        kind: "instruction",
+                        title: "Writing voice",
+                        content,
+                        tags: ["canonical-voice"],
+                        provenance: "creator",
+                        status: "confirmed",
+                        locked: true,
+                      })
+                    }
+                  />
+                </section>
+              )}
               <p className="mb-5 text-sm leading-6 text-neutral-500">
                 {section === "instruction"
                   ? "Standing rules Bento applies to every reply. Add a rule, or edit an existing one."
                   : section === "story"
                     ? `${visible.length} stories from your own experience. Open a story to read, correct, and reuse it.`
-                    : "Reference material Bento can use when planning and writing."}
+                    : section === "library"
+                      ? "Saved ideas and links for inspiration. Edit a note to tell Bento what you want to learn from it; these are not facts about your life."
+                      : "Reference material Bento can use when planning and writing."}
               </p>
               {visible.length > 3 && (
                 <label className="relative mb-6 block">
@@ -1025,19 +1104,6 @@ export function ContentBrain({
                     onDelete={onDelete}
                   />
                 ))
-              )}
-              {!visible.length && section === "instruction" && (
-                <>
-                  <h3 className="mb-3 text-lg font-semibold">Writing voice</h3>
-                  <ContentDocument
-                    label="Writing voice"
-                    value=""
-                    placeholder="Describe how you write: tone, sentence length, words to use, and things to avoid. Click here to start."
-                    onSave={(content) =>
-                      saveText(undefined, "instruction", "Writing voice", content)
-                    }
-                  />
-                </>
               )}
               {!filtered.length && section !== "instruction" && (
                 <p className="py-6 text-sm text-neutral-400">
@@ -1127,6 +1193,101 @@ export function ContentBrain({
   );
 }
 
+function Topics({
+  profile,
+  items,
+  onSave,
+}: {
+  profile: ContentProfile;
+  items: BrainItem[];
+  onSave: (profile: ContentProfile) => void | Promise<void>;
+}) {
+  const topics = contentTopics(profile, items);
+  const [interests, setInterests] = useState(profile.nicheKeywords.join(", "));
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  return (
+    <div className="space-y-10">
+      <p className="text-sm leading-7 text-neutral-500">
+        Learned from your Brain strategies and stories. Your interests guide the news, ideas, and
+        trends Bento brings to you.
+      </p>
+      {(
+        [
+          ["Pillars", topics.pillars],
+          ["Other topics", topics.other],
+        ] as const
+      ).map(([label, values]) => (
+        <section key={label}>
+          <h3 className="mb-5 text-lg font-semibold">{label}</h3>
+          <ul className="flex flex-wrap gap-x-8 gap-y-5">
+            {values.map((value) => (
+              <li
+                key={value}
+                className={
+                  label === "Pillars"
+                    ? "text-2xl font-semibold tracking-tight"
+                    : "text-lg font-medium"
+                }
+              >
+                {value}
+              </li>
+            ))}
+          </ul>
+          {!values.length && (
+            <p className="text-sm text-neutral-500">
+              Add stories or refresh from your posts to learn your {label.toLowerCase()}.
+            </p>
+          )}
+        </section>
+      ))}
+      <form
+        onSubmit={async (event) => {
+          event.preventDefault();
+          setSaving(true);
+          setMessage("");
+          try {
+            await onSave({
+              ...profile,
+              nicheKeywords: interests
+                .split(",")
+                .map((value) => value.trim())
+                .filter(Boolean),
+            });
+            setMessage("Interests saved.");
+          } catch (cause) {
+            setMessage(cause instanceof Error ? cause.message : "Could not save interests.");
+          } finally {
+            setSaving(false);
+          }
+        }}
+      >
+        <label htmlFor="brain-interests" className="mb-3 block text-lg font-semibold">
+          Interests
+        </label>
+        <p className="mb-3 text-sm text-neutral-500">
+          Add up to 20 topics, separated by commas. These are your editable research preferences.
+        </p>
+        <input
+          id="brain-interests"
+          className="content-field"
+          value={interests}
+          placeholder="Add an interest…"
+          onChange={(event) => setInterests(event.target.value)}
+        />
+        <button disabled={saving} className="content-action mt-3" type="submit">
+          {saving ? "Saving…" : "Save interests"}
+        </button>
+        {message && (
+          <p role="status" className="mt-3 text-sm">
+            {message}
+          </p>
+        )}
+      </form>
+    </div>
+  );
+}
+
 function storyPoint(content: string) {
   return (
     content.match(/(?:^|\n)#{1,6}\s+Point\s*\n+\s*([^\n]+)/i)?.[1] ||
@@ -1177,7 +1338,12 @@ function KnowledgeItem({
           )}
         </>
       ) : (
-        <ContentDocument label={item.title} value={item.content} onSave={onSave} />
+        <ContentDocument
+          label={item.title}
+          value={/^[.\s]*$/.test(item.content) ? "" : brainDocumentBody(item.content, item.title)}
+          placeholder="Add your note here. What should Bento take from this reference?"
+          onSave={onSave}
+        />
       )}
       {item.sourceUrl && item.kind !== "file" && (
         <a
@@ -1218,10 +1384,10 @@ function ItemActions({
       )}
       <button
         type="button"
-        aria-label={`${item.locked ? "Unlock" : "Lock"} ${name}`}
+        aria-label={`${item.locked ? "Protected from refresh" : "Protect from refresh"} ${name}`}
         onClick={() => void onLock(item.id, !item.locked)}
       >
-        {item.locked ? "Unlock" : "Lock"}
+        {item.locked ? "Protected from refresh" : "Protect from refresh"}
       </button>
       <AlertDialog>
         <AlertDialogTrigger asChild>

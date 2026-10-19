@@ -294,7 +294,10 @@ export function validateEditorialDraft(
   ]);
   const definition = SOCIAL_PROVIDER_DEFINITIONS[brief.platform];
   if (draft.body.length > definition.maxText)
-    add("provider_limit", `Keep the post within ${definition.maxText} characters.`);
+    add(
+      "provider_limit",
+      `The body has ${draft.body.length} characters; the maximum is ${definition.maxText}, including spaces, line breaks and links. Rewrite the argument more concisely before returning it. Keep evidence quotes and analysis in metadata only.`,
+    );
   if (
     brief.platform === "instagram" &&
     (!draft.slides || draft.slides.length < 2 || draft.slides.length > definition.maxMedia)

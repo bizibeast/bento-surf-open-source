@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Shared brief table ships with its migration. */
-import { createHash } from "node:crypto";
+import { serverSha256 } from "./server-sha256.server";
 import { fetchSocialSearch, socialSearchPlatforms } from "./content-social-search.server";
 import { enrichContentSources } from "./content-source-enrichment.server";
 import { discoverTopicMatches } from "./content-discover-personalization";
@@ -57,7 +57,7 @@ export function normalizeNicheKey(keywords: string[], creatorNames: string[] = [
   const characters = Array.from(key);
   if (characters.length <= 500) return key;
   // Hash the complete direction before truncation, including the far end of creator lists.
-  const digest = createHash("sha256").update(key).digest("hex");
+  const digest = serverSha256(key).toString("hex");
   return `${characters.slice(0, 500 - digest.length - 1).join("")}:${digest}`;
 }
 
@@ -205,9 +205,7 @@ export async function fetchTrendSources(
     }
   };
   // Rotate two social sources across dates/niches instead of paying for eight on every refresh.
-  const rotation =
-    createHash("sha256").update(`${input.date}:${query}`).digest()[0] %
-    socialSearchPlatforms.length;
+  const rotation = serverSha256(`${input.date}:${query}`)[0] % socialSearchPlatforms.length;
   const selectedPlatforms = [rotation, (rotation + 1) % socialSearchPlatforms.length];
   const social = async () => {
     const search = (index: number, windowDays: 7 | 30) => {

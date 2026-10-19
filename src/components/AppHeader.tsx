@@ -4,14 +4,18 @@ export function AppHeader({
   title,
   afterTitle,
   actions,
+  fullWidth = false,
 }: {
   title: string;
   afterTitle?: ReactNode;
   actions?: ReactNode;
+  fullWidth?: boolean;
 }) {
   return (
     <header className="sticky top-14 z-40 border-b border-border bg-background/95 backdrop-blur-xl lg:top-0">
-      <div className="mx-auto flex h-[3.4rem] max-w-7xl items-center gap-3 px-4 sm:px-6">
+      <div
+        className={`flex h-[3.4rem] items-center gap-3 px-4 sm:px-6 ${fullWidth ? "w-full" : "mx-auto max-w-7xl"}`}
+      >
         <h1
           className={`min-w-0 truncate font-ui-display text-xl text-foreground sm:text-2xl ${afterTitle ? "shrink-0" : "flex-1"}`}
         >

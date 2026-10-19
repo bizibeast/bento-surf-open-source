@@ -1,9 +1,13 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { createServerOnlyFn } from "@tanstack/react-start";
 
 /** Trusted workspace context only. Never derive this from a provider URL or user payload. */
-const workspaceScope = new AsyncLocalStorage<string>();
+let workspaceScope: AsyncLocalStorage<string> | undefined;
+const getWorkspaceScope = createServerOnlyFn(
+  () => (workspaceScope ??= new AsyncLocalStorage<string>()),
+);
 export function withProviderBudgetWorkspace<T>(workspaceId: string, work: () => T): T {
-  return workspaceScope.run(workspaceId, work);
+  return getWorkspaceScope().run(workspaceId, work);
 }
 
 export type PaidResource =
@@ -51,7 +55,7 @@ export async function reserveProviderUsage(
     const { data, error } = await (client as BudgetClient).rpc("reserve_provider_usage", {
       p_resource: resource,
       p_units: units,
-      p_workspace_id: options.workspaceId || workspaceScope.getStore() || null,
+      p_workspace_id: options.workspaceId || getWorkspaceScope().getStore() || null,
     });
     if (error || data !== true) throw new ProviderBudgetError(resource);
   } catch {

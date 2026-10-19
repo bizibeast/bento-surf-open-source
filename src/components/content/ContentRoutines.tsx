@@ -223,6 +223,7 @@ export function ContentRoutines({
   onSave,
   onPause,
   onClose,
+  onSettings,
 }: {
   routines: ContentRoutineView[];
   timezone: string;
@@ -231,6 +232,7 @@ export function ContentRoutines({
   onSave: (value: ContentRoutineInput) => void | Promise<void>;
   onPause: (id: string, paused: boolean) => void | Promise<void>;
   onClose: () => void;
+  onSettings?: () => void;
 }) {
   const [selection, setSelection] = useState<{
     preset?: Preset;
@@ -266,7 +268,7 @@ export function ContentRoutines({
       aria-label="Content routines"
       className="content-workspace min-h-[calc(100dvh-3.5rem)] px-5 py-8 sm:px-8"
     >
-      <div className="mx-auto max-w-5xl">
+      <div className="max-w-5xl">
         <header className="mb-8 flex flex-wrap items-start justify-between gap-4">
           <div>
             <h2 className="text-[28px] font-semibold tracking-tight">Set Bento's rhythm.</h2>
@@ -274,7 +276,12 @@ export function ContentRoutines({
               Your head of content and monetization, working to your schedule.
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            {onSettings && (
+              <button type="button" className="content-action" onClick={onSettings}>
+                AI images & agent settings
+              </button>
+            )}
             <button
               type="button"
               onClick={onClose}
@@ -434,12 +441,13 @@ export function ContentRoutines({
             </p>
           )}
         </section>
-        <details className="border-t border-neutral-100 pt-4">
-          <summary className="cursor-pointer text-sm text-neutral-500">
-            System activity · {activity.length} runs
-          </summary>
+        <section className="border-t border-neutral-100 pt-4" aria-label="Routine activity">
+          <h3 className="text-sm font-semibold">Recent activity</h3>
+          <a href="/post-scheduler" className="mt-2 inline-block text-sm underline">
+            Open saved drafts
+          </a>
           <Activity activity={activity} timezone={timezone} />
-        </details>
+        </section>
       </div>
     </section>
   );
@@ -463,6 +471,8 @@ function RoutineEditor({
   const [instructions, setInstructions] = useState(
     routine?.schedule.instructions || preset?.instructions || "",
   );
+  const [contentMix, setContentMix] = useState(routine?.schedule.contentMix || "balanced");
+  const [draftsPerRun, setDraftsPerRun] = useState(routine?.schedule.draftsPerRun || 3);
   const [time, setTime] = useState(routine?.schedule.time || preset?.time || "09:00");
   const [zone, setZone] = useState(routine?.timezone || timezone);
   const [interval, setInterval] = useState<1440 | 10080>(
@@ -488,6 +498,8 @@ function RoutineEditor({
         timezone: zone,
         platforms,
         outputMode: "draft",
+        contentMix,
+        draftsPerRun,
         ...(!preset?.template
           ? { name, instructions, ...(preset ? { catalogKey: preset.key } : {}) }
           : {}),
@@ -501,7 +513,7 @@ function RoutineEditor({
   };
   return (
     <section className="content-workspace min-h-[calc(100dvh-3.5rem)] px-5 py-8">
-      <div className="mx-auto max-w-2xl">
+      <div className="max-w-2xl">
         <button
           type="button"
           onClick={onBack}
@@ -572,6 +584,40 @@ function RoutineEditor({
               />
             </label>
           </div>
+          {(!preset?.template || preset.template === "fill_schedule") && (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="block text-sm">
+                Content sources
+                <select
+                  className="content-field mt-2"
+                  value={contentMix}
+                  onChange={(event) => setContentMix(event.target.value as typeof contentMix)}
+                >
+                  <option value="balanced">My stories + current trends</option>
+                  <option value="life">My life, work, and expertise</option>
+                  <option value="trends">Current trends only</option>
+                </select>
+              </label>
+              <label className="block text-sm">
+                Drafts per run
+                <select
+                  className="content-field mt-2"
+                  value={draftsPerRun}
+                  onChange={(event) => setDraftsPerRun(Number(event.target.value))}
+                >
+                  {[1, 2, 3].map((count) => (
+                    <option key={count} value={count}>
+                      {count}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="sm:col-span-2 text-xs leading-5 text-neutral-500">
+                Bento uses your voice and stories from Brain, plus relevant news and trends from
+                Discover and web research. Up to nine drafts can wait for review.
+              </p>
+            </div>
+          )}
           <label className="block text-sm">
             Timezone
             <input
@@ -673,9 +719,17 @@ function Activity({
         activity.map((run) => (
           <div key={run.id} className="border-b border-neutral-100 py-3 text-xs">
             <p>
-              {date(run.scheduled_for, timezone)} · {run.status} · {run.result_count} results
+              {date(run.scheduled_for, timezone)} ·{" "}
+              {run.status === "succeeded" && run.result_count === 0 ? "No new drafts" : run.status}{" "}
+              · {run.result_count} results
             </p>
-            {run.error_message && <p className="mt-1 text-red-700">{run.error_message}</p>}
+            {run.error_message && (
+              <p
+                className={`mt-1 ${run.status === "failed" ? "text-red-700" : "text-neutral-600"}`}
+              >
+                {run.error_message}
+              </p>
+            )}
           </div>
         ))
       ) : (

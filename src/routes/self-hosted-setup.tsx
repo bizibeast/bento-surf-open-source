@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowRight, Download, Eye, EyeOff, KeyRound, LockKeyhole, RefreshCw } from "lucide-react";
 import envTemplate from "@/lib/self-hosted-template.txt?raw";
 import {
@@ -27,6 +27,8 @@ export const Route = createFileRoute("/self-hosted-setup")({
 });
 
 function SelfHostedSetup() {
+  const [ready, setReady] = useState(false);
+  useEffect(() => setReady(true), []);
   const [values, setValues] = useState<Record<string, string>>(() => ({ ...initialValues }));
   const [errors, setErrors] = useState<string[]>([]);
   const [visible, setVisible] = useState<string[]>([]);
@@ -91,6 +93,7 @@ function SelfHostedSetup() {
         </p>
         <div className="mt-3 flex gap-2">
           <input
+            disabled={!ready}
             id={`setup-${field.name}`}
             type={field.secret && !isVisible ? "password" : "text"}
             value={values[field.name] ?? ""}
@@ -104,6 +107,7 @@ function SelfHostedSetup() {
           {field.secret && (
             <button
               type="button"
+              disabled={!ready}
               onClick={() =>
                 setVisible((current) =>
                   isVisible
@@ -121,6 +125,7 @@ function SelfHostedSetup() {
         {field.name === "WORKSPACE_COOKIE_SIGNING_KEY" && (
           <button
             type="button"
+            disabled={!ready}
             onClick={generateSigningKey}
             className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-black/65 underline underline-offset-4 hover:text-black"
           >
@@ -257,6 +262,7 @@ function SelfHostedSetup() {
           <div className="mt-6 flex flex-wrap items-center gap-3">
             <button
               type="button"
+              disabled={!ready}
               onClick={download}
               className="inline-flex h-11 items-center gap-2 rounded-xl bg-white px-5 text-sm font-semibold text-[#192131] hover:bg-white/90"
             >

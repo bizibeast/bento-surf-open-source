@@ -25,7 +25,10 @@ for (const route of routes) {
     const response = await page.goto(route, { waitUntil: "domcontentloaded" });
     expect(response?.status(), `${route} document response`).toBeLessThan(500);
     await expect(page.locator("body")).toBeVisible();
-    await page.waitForLoadState("networkidle").catch(() => undefined);
+    await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
+    // Explore embeds creator media; background requests must not consume the
+    // whole test timeout before the error and layout assertions can run.
+    await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
 
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,

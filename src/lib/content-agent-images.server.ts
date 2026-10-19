@@ -400,7 +400,7 @@ export async function generateDraftImage(input: {
   return reserveImageGeneration({
     ...input,
     count: 1,
-    prompt: `Create a tasteful editorial illustration for this visual brief. Do not add text, logos, watermarks, explicit content or misleading claims. ${prompt.slice(0, 2000)}`,
+    prompt: `Create a polished, art-directed editorial image with a distinctive visual concept specific to this post. Use strong composition, a clear focal point, a restrained cohesive palette, rich texture, intentional lighting, and generous negative space. Make it compelling at feed size and worth saving. Avoid generic stock imagery, clip art, random decorative objects, and glossy AI cliches. Do not add text, logos, watermarks, explicit content or misleading claims. ${prompt.slice(0, 2000)}`,
   });
 }
 export async function attachDraftImage(

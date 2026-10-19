@@ -239,16 +239,80 @@ export function profileDocuments(items: readonly BrainItem[]) {
         Number(b.provenance === "creator") - Number(a.provenance === "creator") ||
         b.updatedAt.localeCompare(a.updatedAt),
     );
-  const human = canonical[0] || profiles.find((item) => item.provenance === "social_post");
+  const human =
+    canonical.find((item) => /^(my human|summary|about me)$/i.test(item.title.trim())) ||
+    canonical[0];
   const body = (item: BrainItem) =>
     item.content.replace(/^#{1,3}\s+(?:my human(?: profile)?|human profile)\s*\n+/i, "").trim();
   const seen = new Set(human ? [body(human)] : []);
+  const details = canonical.filter((item) => item.id !== human?.id && !seen.has(body(item)));
+  details.forEach((item) => seen.add(body(item)));
   const memories = profiles.filter((item) => {
     if (item.id === human?.id || seen.has(body(item))) return false;
     seen.add(body(item));
     return true;
   });
-  return { human, humanContent: human ? body(human) : "", memories };
+  return { human, humanContent: human ? body(human) : "", details, memories };
+}
+
+/** Remove a repeated document title while keeping all substantive text editable. */
+export function brainDocumentBody(content: string, title: string) {
+  const lines = content.trim().split("\n");
+  const normalize = (value: string) =>
+    value
+      .replace(/^#{1,6}\s+/, "")
+      .replace(/\*\*/g, "")
+      .trim()
+      .toLowerCase();
+  while (lines.length && (!lines[0].trim() || normalize(lines[0]) === normalize(title)))
+    lines.shift();
+  return lines.join("\n").trim();
+}
+
+export function writingVoiceDocument(items: readonly BrainItem[]) {
+  const voices = items.filter(
+    (item) =>
+      item.kind === "instruction" && /^writing voice(?: instructions?)?$/i.test(item.title.trim()),
+  );
+  const canonical = voices.find((item) => item.tags?.includes("canonical-voice"));
+  const primary = canonical || voices[0];
+  const content = canonical
+    ? brainDocumentBody(canonical.content, canonical.title)
+    : [...new Set(voices.map((item) => brainDocumentBody(item.content, item.title)))].join("\n\n");
+  return { primary, content, others: items.filter((item) => !voices.includes(item)) };
+}
+
+export function contentTopics(profile: ContentProfile, items: readonly BrainItem[]) {
+  const distinct = (values: string[]) =>
+    [...new Map(values.map((value) => [value.trim().toLowerCase(), value.trim()])).values()].filter(
+      Boolean,
+    );
+  const pillars = distinct(
+    items
+      .filter((item) => item.kind === "strategy")
+      .flatMap((item) =>
+        [...item.content.matchAll(/^###\s+(?:\d+%\s+)(.+)$/gm)].map((match) =>
+          match[1].replace(/\*\*/g, ""),
+        ),
+      ),
+  ).slice(0, 8);
+  const counts = new Map<string, number>();
+  for (const item of items.filter((item) => ["story", "strategy"].includes(item.kind))) {
+    for (const tag of item.tags || [])
+      if (!/^(story|strategy|profile|writing style|skill)$/i.test(tag))
+        counts.set(tag, (counts.get(tag) || 0) + 1);
+  }
+  const learned = [...counts]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([tag]) => tag);
+  const primary = pillars.length ? pillars : learned.slice(0, 6);
+  return {
+    pillars: primary,
+    other: distinct(learned)
+      .filter((tag) => !primary.some((pillar) => pillar.toLowerCase() === tag.toLowerCase()))
+      .slice(0, 20),
+    interests: profile.nicheKeywords,
+  };
 }
 
 export function groupBrainItems(items: readonly BrainItem[]) {

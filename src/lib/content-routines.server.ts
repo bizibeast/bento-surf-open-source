@@ -70,6 +70,8 @@ export type ContentRoutineServerDependencies = {
   }): Promise<number>;
   generateWeeklyReview(input: { userId: string; run?: ContentRoutineRun }): Promise<number>;
   generateCustomRoutine?(input: {
+    trendSources?: ContentSourceItem[];
+    maxDrafts?: number;
     userId: string;
     instructions: string;
     platforms: string[];
@@ -127,33 +129,28 @@ export async function prepareRoutineDrafts(
   },
 ) {
   const deadline = Date.now() + 90_000;
-  const freshSignals = input.trendSources ? selectFreshRoutineSignals(input.trendSources) : null;
-  if (freshSignals && !freshSignals.length) return 0;
+  const mix = input.run?.schedule.contentMix || (input.instructions ? "life" : "balanced");
+  const freshSignals = input.trendSources ? selectFreshRoutineSignals(input.trendSources) : [];
+  if (mix === "trends" && !freshSignals.length)
+    throw new Error(
+      "No relevant current trends were found. Choose a mix of your stories and trends, or wait for fresh reporting.",
+    );
   const context = await dependencies.loadContext(
     input.userId,
     input.instructions || "Prepare useful original drafts for creator review.",
   );
   const platforms = input.platforms.length ? input.platforms : [context.platform || "twitter"];
-  const trendIds = freshSignals?.map((source) => `trend:${source.canonicalUrl}`.slice(0, 500));
-  if (freshSignals) {
-    context.request =
-      `${context.request || ""} Write a timely, reader-facing post about one of these current external developments. Use its specific verified fact and explain why it matters to this audience. Historical workspace updates and old creator posts are voice context, not news. Do not include internal tool identifiers.`.trim();
-    context.requiredRecentSourceIds = trendIds;
-    context.sources = [
-      ...freshSignals.map((source) => ({
-        id: `trend:${source.canonicalUrl}`.slice(0, 500),
-        title: source.title,
-        text: source.summary,
-        sourceName: source.sourceName,
-        occurredAt: source.publishedAt,
-        url: source.canonicalUrl,
-        external: true,
-      })),
-      ...context.sources.filter(
-        (source) => source.id === "request" || source.id.startsWith("brain:"),
-      ),
-    ];
-  }
+  const trendIds = freshSignals.map((source) => `trend:${source.canonicalUrl}`.slice(0, 500));
+  const personalSources = context.sources.filter((source) => !source.external);
+  const trendSources = freshSignals.map((source) => ({
+    id: `trend:${source.canonicalUrl}`.slice(0, 500),
+    title: source.title,
+    text: source.summary,
+    sourceName: source.sourceName,
+    occurredAt: source.publishedAt,
+    url: source.canonicalUrl,
+    external: true,
+  }));
   if (platforms.some((platform) => !["twitter", "linkedin", "instagram"].includes(platform)))
     throw new Error("Review the routine's supported platforms.");
   const result: ContentAgentResult = {
@@ -162,23 +159,40 @@ export async function prepareRoutineDrafts(
     cards: [],
   };
   const recentOutputs = [...(context.recentOutputs || [])];
-  for (
-    let index = 0;
-    index < Math.min(Math.max(input.slots?.length || platforms.length, 1), input.maxDrafts ?? 3, 3);
-    index++
-  ) {
+  const batchSize = Math.min(
+    input.run?.schedule.draftsPerRun ?? Math.max(input.slots?.length || platforms.length, 1),
+    input.slots?.length || 3,
+    input.maxDrafts ?? 3,
+    input.run?.schedule.draftsPerRun ?? 3,
+    3,
+  );
+  const dailyRotation = input.run
+    ? Math.floor(new Date(input.run.scheduledFor).getTime() / 86_400_000)
+    : 0;
+  for (let index = 0; index < batchSize; index++) {
     const remaining = deadline - Date.now();
     if (remaining <= 0) {
       if (result.cards.some((card) => card.type === "draft")) break;
       throw new Error("Draft preparation timed out. Retry this routine.");
     }
+    const useTrend =
+      mix !== "life" &&
+      trendIds.length > 0 &&
+      (mix === "trends" || (index + (batchSize === 1 ? dailyRotation : 0)) % 2 === 0);
     const checked = await dependencies.generate(
       buildEditorialBrief({
         ...context,
+        request: `${context.request || ""} ${
+          useTrend
+            ? "Write about a specific verified current development and why it matters to this creator's audience. Attribute the report; do not invent personal participation."
+            : "Draw on a real creator story, recent life or work update, or a useful application of their expertise. Preserve dates; never present old events as happening today or invent an experience."
+        }`,
+        requiredRecentSourceIds: useTrend ? trendIds : undefined,
+        sources: useTrend ? [...trendSources, ...personalSources] : personalSources,
         platform: platforms[index % platforms.length] as EditorialPlatform,
         recentOutputs,
       }),
-      { timeoutMs: Math.min(30_000, remaining) },
+      { timeoutMs: Math.min(45_000, remaining) },
     );
     void recordContentEvent(input.userId, "content_agent_draft_review", {
       status: checked.status,
@@ -195,8 +209,15 @@ export async function prepareRoutineDrafts(
       throw new Error(checked.message);
     }
     const card = { ...checked.card, cardId: `routine-${index + 1}` };
+    if (card.type !== "draft")
+      result.message = checked.issues?.length
+        ? `No draft passed review. ${checked.issues
+            .slice(0, 2)
+            .map((issue) => issue.message)
+            .join(" ")}`.slice(0, 1000)
+        : checked.message;
     if (
-      trendIds &&
+      useTrend &&
       (card.type !== "draft" ||
         !card.editorial?.sourceIds.some((sourceId) => trendIds.includes(sourceId)))
     )
@@ -212,9 +233,13 @@ export async function prepareRoutineDrafts(
         createdAt: new Date().toISOString(),
         platform: card.platform,
       });
-    else result.message = checked.message;
   }
-  if (trendIds && !result.cards.some((card) => card.type === "draft")) return 0;
+  if (!result.cards.some((card) => card.type === "draft"))
+    throw new Error(
+      result.message === "Prepared drafts for your review. Choose when to schedule each post."
+        ? "No draft passed the evidence and quality checks. Review your Brain stories or try again with fresh sources."
+        : result.message,
+    );
   if (!input.run) return result.cards.filter((card) => card.type === "draft").length;
   return dependencies.save({
     userId: input.userId,
@@ -434,17 +459,24 @@ async function processContentRoutineRunScoped(
       9 - context.posts.filter((post) => post.status === "draft").length,
     );
     if (!remainingDrafts || (context.postingSchedule.slots.length && !slots.length))
-      return { resultCount: 0 };
-    // Reuse the shared daily brief; without current external evidence, skip
-    // automatic drafts instead of presenting workspace history as news.
-    const brief = await dependencies
-      .refreshBrief({
-        nicheKeywords: context.profile.nicheKeywords,
-        language: context.profile.language,
-        region: context.profile.region,
-        date: scheduledFor.toISOString().slice(0, 10),
-      })
-      .catch(() => ({ items: [] }));
+      return {
+        resultCount: 0,
+        note: !remainingDrafts
+          ? "You have nine drafts waiting for review. Review or remove them to make room for new drafts."
+          : "Your configured posting slots are already filled.",
+      };
+    // Research is shared with Discover. Personal stories can still be drafted when research is unavailable.
+    const brief =
+      run.schedule.contentMix === "life"
+        ? { items: [] }
+        : await dependencies
+            .refreshBrief({
+              nicheKeywords: context.profile.nicheKeywords,
+              language: context.profile.language,
+              region: context.profile.region,
+              date: scheduledFor.toISOString().slice(0, 10),
+            })
+            .catch(() => ({ items: [] }));
     const resultCount = await dependencies.generateDraftBatch({
       userId: run.userId,
       platforms: run.platforms,
@@ -463,8 +495,30 @@ async function processContentRoutineRunScoped(
     run.schedule.instructions &&
     dependencies.generateCustomRoutine
   ) {
+    const remainingDrafts = Math.max(
+      0,
+      9 - context.posts.filter((post) => post.status === "draft").length,
+    );
+    if (!remainingDrafts)
+      return {
+        resultCount: 0,
+        note: "You have nine drafts waiting for review. Review or remove them to make room for new drafts.",
+      };
+    const brief =
+      run.schedule.contentMix === "life"
+        ? { items: [] }
+        : await dependencies
+            .refreshBrief({
+              nicheKeywords: context.profile.nicheKeywords,
+              language: context.profile.language,
+              region: context.profile.region,
+              date: scheduledFor.toISOString().slice(0, 10),
+            })
+            .catch(() => ({ items: [] }));
     return {
       resultCount: await dependencies.generateCustomRoutine({
+        trendSources: brief.items as ContentSourceItem[],
+        maxDrafts: remainingDrafts,
         userId: run.userId,
         instructions: run.schedule.instructions,
         platforms: run.platforms,
@@ -502,6 +556,9 @@ export async function processDueContentRoutines(
         status: "succeeded",
         resultCount: result.resultCount,
         nextRunAt,
+        error:
+          result.note ||
+          (result.resultCount === 0 ? "No new results were prepared for this run." : null),
       });
       void recordContentEvent(run.userId, "content_routine_run", {
         template: run.template,

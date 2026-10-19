@@ -32,6 +32,9 @@ describe("ContentRoutines", () => {
     fireEvent.change(screen.getByLabelText("Instructions"), {
       target: { value: "Draft three sourced LinkedIn posts." },
     });
+    fireEvent.change(screen.getByLabelText("Frequency"), { target: { value: "10080" } });
+    fireEvent.change(screen.getByLabelText("Content sources"), { target: { value: "life" } });
+    fireEvent.change(screen.getByLabelText("Drafts per run"), { target: { value: "2" } });
     fireEvent.click(screen.getByRole("button", { name: "Enable routine" }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Offline"));
     expect(onSave).toHaveBeenCalledWith(
@@ -39,6 +42,9 @@ describe("ContentRoutines", () => {
         template: expect.stringMatching(/^custom:/),
         name: "Weekly plan",
         timezone: "Asia/Kolkata",
+        intervalMinutes: 10080,
+        contentMix: "life",
+        draftsPerRun: 2,
       }),
     );
     expect(screen.getByLabelText("Instructions")).toHaveValue(

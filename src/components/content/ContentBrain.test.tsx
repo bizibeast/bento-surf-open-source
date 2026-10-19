@@ -36,6 +36,92 @@ const handlers = () => ({
 });
 
 describe("ContentBrain", () => {
+  it("expands Stories without navigating and opens its index explicitly", () => {
+    render(
+      <ContentBrain profile={profile} items={[suggestedStory]} sources={[]} {...handlers()} />,
+    );
+    const stories = screen.getByRole("button", { name: "Stories" });
+    fireEvent.click(stories);
+    expect(stories).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("heading", { name: "My Human" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Index" }));
+    expect(screen.getByRole("heading", { name: "Stories", level: 2 })).toBeVisible();
+    fireEvent.click(stories);
+    expect(screen.queryByRole("button", { name: "Index" })).not.toBeInTheDocument();
+  });
+
+  it("opens publishing settings and saves personalized interests", async () => {
+    const actions = handlers();
+    render(
+      <ContentBrain
+        profile={profile}
+        items={[{ ...suggestedStory, tags: ["Building startups"] }]}
+        sources={[]}
+        {...actions}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Publishing settings" }));
+    expect(screen.getByLabelText("Goal")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Topics" }));
+    expect(screen.getByText("Building startups")).toBeVisible();
+    fireEvent.change(screen.getByLabelText("Interests"), {
+      target: { value: "creator economy, filmmaking" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save interests" }));
+    await waitFor(() =>
+      expect(actions.onSaveProfile).toHaveBeenCalledWith({
+        ...profile,
+        nicheKeywords: ["creator economy", "filmmaking"],
+      }),
+    );
+  });
+
+  it("shows one editable voice document and separates profile from memories", () => {
+    const item = { ...suggestedStory, status: "confirmed" as const };
+    render(
+      <ContentBrain
+        profile={profile}
+        items={[
+          { ...item, id: "summary", kind: "profile", title: "My Human", content: "A short bio." },
+          {
+            ...item,
+            id: "profile",
+            kind: "profile",
+            title: "My Human Profile",
+            content: "# My Human Profile\n\nMy background.",
+          },
+          {
+            ...item,
+            id: "voice1",
+            kind: "instruction",
+            title: "Writing Voice Instruction",
+            content: "# Writing Voice Instruction\n\nUse short sentences.",
+          },
+          {
+            ...item,
+            id: "voice2",
+            kind: "instruction",
+            title: "Writing Voice",
+            content: "Be conversational.",
+          },
+        ]}
+        sources={[]}
+        {...handlers()}
+      />,
+    );
+    expect(screen.getByRole("textbox", { name: "Summary" })).toHaveTextContent("A short bio.");
+    expect(screen.getByRole("textbox", { name: "Profile" })).toHaveTextContent("My background.");
+    expect(screen.queryByRole("heading", { name: "My Human Profile" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Instructions" }));
+    expect(screen.getAllByRole("textbox")).toHaveLength(1);
+    expect(screen.getByRole("textbox", { name: "Writing voice" })).toHaveTextContent(
+      "Be conversational.",
+    );
+    expect(
+      screen.queryByRole("heading", { name: "Writing Voice Instruction" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows a story's point instead of Markdown heading syntax in the index", () => {
     render(
       <ContentBrain
@@ -51,6 +137,7 @@ describe("ContentBrain", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Stories" }));
+    fireEvent.click(screen.getByRole("button", { name: "Index" }));
     expect(screen.getByText(/A lesson from startup failure/)).toBeVisible();
     expect(screen.queryByText(/### Point/)).not.toBeInTheDocument();
   });
@@ -114,6 +201,7 @@ describe("ContentBrain", () => {
     const actions = handlers();
     render(<ContentBrain profile={profile} items={[suggestedStory]} sources={[]} {...actions} />);
     fireEvent.click(screen.getByRole("button", { name: "Stories" }));
+    fireEvent.click(screen.getByRole("button", { name: "Index" }));
     expect(screen.getByText("Suggested from LinkedIn post")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Confirm story" }));
     expect(actions.onConfirm).toHaveBeenCalledWith(suggestedStory.id);
@@ -169,8 +257,9 @@ describe("ContentBrain", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Stories" }));
+    fireEvent.click(screen.getByRole("button", { name: "Index" }));
     fireEvent.click(screen.getAllByRole("button", { name: "The first launch" })[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Lock story" }));
+    fireEvent.click(screen.getByRole("button", { name: "Protect from refresh story" }));
     expect(actions.onLock).toHaveBeenCalledWith(suggestedStory.id, true);
     fireEvent.click(screen.getByRole("button", { name: "Delete story" }));
     expect(screen.getByRole("alertdialog", { name: "Delete this Brain item?" })).toBeVisible();

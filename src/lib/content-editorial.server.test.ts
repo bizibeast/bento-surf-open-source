@@ -36,6 +36,26 @@ const good = {
   claims: [],
 };
 const clean = { issues: [] };
+it("makes X's character budget explicit and gives the editor measured length feedback", async () => {
+  expect(editorialSystemPrompt(brief())).toContain("at most 280 characters INCLUDING");
+  const d = deps();
+  const body = "A useful point. ".repeat(25);
+  vi.mocked(d.write).mockResolvedValue({ ...good, body });
+  const result = await generateEditorialDraft(brief(), { dependencies: d });
+  expect(d.edit).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.anything(),
+    expect.anything(),
+    expect.arrayContaining([
+      expect.objectContaining({
+        code: "provider_limit",
+        message: expect.stringContaining(`The body has ${body.trim().length} characters`),
+      }),
+    ]),
+  );
+  expect(result.status).toBe("ready");
+  expect(result.card).toMatchObject({ body: good.body });
+});
 function deps(): EditorialGenerationDependencies {
   return {
     write: vi.fn().mockResolvedValue(good),

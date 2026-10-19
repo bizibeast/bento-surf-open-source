@@ -259,15 +259,6 @@ function RootShell({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <script async src="https://www.googletagmanager.com/gtag/js?id=G-JEX5V76CMP" />
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `window.dataLayer = window.dataLayer || [];
-function gtag(){dataLayer.push(arguments);}
-gtag('js', new Date());
-gtag('config', 'G-JEX5V76CMP');`,
-          }}
-        />
         <RouteHeadContent />
       </head>
       <body>
@@ -342,6 +333,8 @@ function AuthSync() {
   const router = useRouter();
   const queryClient = useQueryClient();
   useEffect(() => {
+    if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY)
+      return;
     // Public marketing and creator pages live on this hostname and cannot
     // navigate into the signed-in workspace without switching to the app host.
     const publicHost = new URL(import.meta.env.VITE_PUBLIC_URL || location.origin).hostname;

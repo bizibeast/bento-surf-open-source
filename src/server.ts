@@ -971,7 +971,11 @@ export default {
     const referralRedirect = await handleReferralRedirect(request);
     if (referralRedirect) return withDeploymentHeaders(referralRedirect, env, request);
 
-    const unavailablePage = await guardUnavailablePublicWorkspace(request);
+    const bootstrap = isSetupBootstrapPath(
+      path,
+      Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY),
+    );
+    const unavailablePage = bootstrap ? null : await guardUnavailablePublicWorkspace(request);
     if (unavailablePage) return withDeploymentHeaders(unavailablePage, env, request);
     const cachedPage = await readPublicPageCache(request, env);
     if (cachedPage) return withDeploymentHeaders(cachedPage, env, request);
@@ -1647,3 +1651,4 @@ export default {
     }
   },
 };
+import { isSetupBootstrapPath } from "./lib/self-hosted-setup";

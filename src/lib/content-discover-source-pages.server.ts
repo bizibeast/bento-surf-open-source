@@ -1,5 +1,12 @@
-import { createHash } from "node:crypto";
+import { serverSha256 } from "./server-sha256.server";
+import { createServerOnlyFn } from "@tanstack/react-start";
 import { Buffer } from "node:buffer";
+const decodeBase64Cursor = createServerOnlyFn((value: string) =>
+  Buffer.from(value, "base64url").toString("utf8"),
+);
+const encodeBase64Cursor = createServerOnlyFn((value: string) =>
+  Buffer.from(value).toString("base64url"),
+);
 import { discoverSearchQuery } from "./content-briefs.server";
 import { discoverPostKey } from "./content-discover-identity";
 import { sourceFreshnessTier } from "./content-source-recency";
@@ -51,8 +58,7 @@ type SourceCursor = {
   batches: BatchState[];
 };
 
-const fingerprint = (value: unknown) =>
-  createHash("sha256").update(JSON.stringify(value)).digest("hex");
+const fingerprint = (value: unknown) => serverSha256(JSON.stringify(value)).toString("hex");
 const normalized = (values: string[], limit: number) =>
   [...new Set(values.map((value) => value.trim().toLowerCase()).filter(Boolean))]
     .sort()
@@ -83,7 +89,7 @@ function decodeCursor(
 ): SourceCursor {
   try {
     if (value.length > 16_384 || !/^[A-Za-z0-9_-]+$/.test(value)) throw new Error();
-    const state = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as SourceCursor;
+    const state = JSON.parse(decodeBase64Cursor(value)) as SourceCursor;
     if (
       state.version !== 1 ||
       state.direction !== direction ||
@@ -276,7 +282,7 @@ export async function fetchDiscoverSourcePage(
       );
   return {
     items: relevant,
-    nextCursor: hasMore ? Buffer.from(JSON.stringify(state)).toString("base64url") : null,
+    nextCursor: hasMore ? encodeBase64Cursor(JSON.stringify(state)) : null,
     hasMore,
     warnings: repeated
       ? ["This source repeated its previous page; continuing with other interests."]

@@ -322,6 +322,16 @@ export function ContentDocument({
   return (
     <section className="content-document" aria-label={`${label} document`}>
       <div className="content-document-toolbar">
+        <button
+          type="button"
+          aria-label={`Edit ${label}`}
+          onClick={() => {
+            setPreview(false);
+            requestAnimationFrame(() => input.current?.focus());
+          }}
+        >
+          Edit
+        </button>
         {!preview && (
           <div className="flex gap-1" aria-label="Document formatting">
             <button

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ filters: [] as unknown[][] }));
 vi.mock("@tanstack/react-start", () => ({
+  createServerOnlyFn: (handler: unknown) => handler,
   createServerFn: () => {
     const query: any = {
       select: () => query,

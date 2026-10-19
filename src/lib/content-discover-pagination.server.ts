@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { serverSha256 } from "./server-sha256.server";
 import { fetchDiscoverSourcePage } from "./content-discover-source-pages.server";
 import {
   readDiscoverPage,
@@ -78,9 +78,9 @@ export async function loadDiscoverSourcePage(
     directionKey: input.directionKey,
     platform: input.platform,
   };
-  const requestKey = createHash("sha256")
-    .update(input.cursor || `first:${now.toISOString().slice(0, 10)}`)
-    .digest("hex");
+  const requestKey = serverSha256(
+    input.cursor || `first:${now.toISOString().slice(0, 10)}`,
+  ).toString("hex");
   const cached = await deps.read({ ...scope, requestKey });
   if (cached) {
     // Cache provider results and continuations immutably, but do not freeze a
