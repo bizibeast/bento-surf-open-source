@@ -41,6 +41,17 @@ describe("publishing to X communities", () => {
     });
   });
 
+  it("does not require Premium for a valid standard post containing a long URL", async () => {
+    const body = `${"a".repeat(255)} https://example.com/${"path".repeat(60)}`;
+    await expect(publishX("test-token", body, [], "", {}, {})).resolves.toMatchObject({ id: "99" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith(
+      "https://api.x.com/2/tweets",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(reserveProviderUsage).toHaveBeenCalledWith("x_write_actions");
+  });
+
   it("keeps image attachments on a community post", async () => {
     vi.mocked(fetch).mockImplementation(async (url) => {
       if (url === "https://bento.surf/photo.jpg")

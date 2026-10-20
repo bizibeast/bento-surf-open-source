@@ -52,6 +52,7 @@ import { enqueueEmail } from "./email.server";
 import {
   X_LONG_POST_LIMIT,
   X_STANDARD_POST_LIMIT,
+  xPostTextLength,
   xArticleContentState,
   xArticleDocument,
   xArticleDocumentError,
@@ -1144,7 +1145,7 @@ export async function publishX(
   if (body.length > X_LONG_POST_LIMIT) {
     throw new ProviderError("X allows up to 25,000 characters.", "text_limit", false);
   }
-  if (article || body.length > X_STANDARD_POST_LIMIT) {
+  if (article || xPostTextLength(body) > X_STANDARD_POST_LIMIT) {
     const capabilities = await fetchXAccountCapabilities(token, target.connection);
     if (article && !capabilities.canPublishArticles) {
       throw new ProviderError(

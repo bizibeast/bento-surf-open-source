@@ -1,7 +1,13 @@
 import { z } from "zod";
+import twitterText from "twitter-text";
 
 export const X_STANDARD_POST_LIMIT = 280;
 export const X_LONG_POST_LIMIT = 25_000;
+
+/** X weights URLs, emoji sequences and Unicode rather than JavaScript code units. */
+export function xPostTextLength(text: string) {
+  return twitterText.parseTweet(text).weightedLength;
+}
 
 const articleImageSchema = z.object({
   key: z.string().min(1),

@@ -37,7 +37,7 @@ const good = {
 };
 const clean = { issues: [] };
 it("makes X's character budget explicit and gives the editor measured length feedback", async () => {
-  expect(editorialSystemPrompt(brief())).toContain("at most 280 characters INCLUDING");
+  expect(editorialSystemPrompt(brief())).toContain("at most 280 X-weighted characters");
   const d = deps();
   const body = "A useful point. ".repeat(25);
   vi.mocked(d.write).mockResolvedValue({ ...good, body });
@@ -49,7 +49,9 @@ it("makes X's character budget explicit and gives the editor measured length fee
     expect.arrayContaining([
       expect.objectContaining({
         code: "provider_limit",
-        message: expect.stringContaining(`The body has ${body.trim().length} characters`),
+        message: expect.stringContaining(
+          `The body has ${body.trim().length} X-weighted characters`,
+        ),
       }),
     ]),
   );

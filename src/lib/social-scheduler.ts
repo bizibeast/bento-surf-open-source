@@ -9,6 +9,7 @@ import { xCommunityDraftSchema, xCommunityError } from "./x-community";
 import {
   X_LONG_POST_LIMIT,
   X_STANDARD_POST_LIMIT,
+  xPostTextLength,
   xArticleDocument,
   xArticleDocumentError,
   xArticlePlainText,
@@ -1362,7 +1363,11 @@ export function validatePostForProviders(
       provider === "twitter" && (xCapabilities?.canPostLong || validationStage === "draft_handoff")
         ? X_LONG_POST_LIMIT
         : definition.maxText;
-    if (textForLimit.length > maxText) {
+    const textLength =
+      provider === "twitter" && !xArticle && maxText === X_STANDARD_POST_LIMIT
+        ? xPostTextLength(textForLimit)
+        : textForLimit.length;
+    if (textLength > maxText) {
       errors[provider] = `${definition.name} allows ${maxText.toLocaleString()} characters.`;
       continue;
     }

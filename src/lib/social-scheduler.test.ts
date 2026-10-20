@@ -971,3 +971,14 @@ describe("calendar compose scheduling helpers", () => {
     expect(scheduleTimeForDate(new Date(2026, 7, 13, 8, 0, 0), now)).toBe(defaultScheduleTime(now));
   });
 });
+
+it("validates standard X links and Unicode using provider weights", () => {
+  expect(
+    validatePostForProviders(
+      `${"a".repeat(255)} https://example.com/${"path".repeat(60)}`,
+      [],
+      ["twitter"],
+    ),
+  ).toEqual({});
+  expect(validatePostForProviders("界".repeat(141), [], ["twitter"]).twitter).toContain("280");
+});

@@ -44,6 +44,44 @@ const codes = (body: string) =>
     context.recentOutputs || [],
   ).map((i) => i.code);
 
+it("applies X weights to source links and non-Latin text", () => {
+  expect(codes(`${"a".repeat(255)} https://example.com/${"path".repeat(60)}`)).not.toContain(
+    "provider_limit",
+  );
+  expect(codes("界".repeat(141))).toContain("provider_limit");
+});
+
+it("accepts equivalent quote typography and spacing without changing source wording", () => {
+  const brief = buildEditorialBrief({
+    ...context,
+    sources: [
+      {
+        id: "report",
+        title: "Notes",
+        text: "Acme said: “We shipped\n10 tools.”",
+        occurredAt: null,
+        external: false,
+      },
+    ],
+  });
+  const text = 'Acme said: "We shipped 10 tools."';
+  const claim = {
+    sourceId: "report",
+    text: "“We shipped 10 tools.”",
+    quote: '"We shipped 10 tools."',
+  };
+  const checked = (quote: string) =>
+    validateEditorialDraft(brief, { ...draft(text), claims: [{ ...claim, quote }] }, []);
+  expect(checked(claim.quote).map((issue) => issue.code)).not.toContain("unsupported_claim");
+  expect(checked('"We shipped 100 tools."').map((issue) => issue.code)).toContain(
+    "unsupported_claim",
+  );
+  expect(checked('"We did not ship 10 tools."').map((issue) => issue.code)).toContain(
+    "unsupported_claim",
+  );
+  expect(checked("         ").map((issue) => issue.code)).toContain("unsupported_claim");
+});
+
 describe("editorial briefing and deterministic gate", () => {
   it("keeps recent Discover evidence when a large historical Brain fills the context", () => {
     const sources = Array.from({ length: 20 }, (_, index) => ({

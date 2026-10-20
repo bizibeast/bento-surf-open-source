@@ -2,6 +2,7 @@ import { z } from "zod";
 import { carouselCopyIssues } from "./content-carousel";
 import { parsePublicHttpUrl } from "./safe-url";
 import { SOCIAL_PROVIDER_DEFINITIONS } from "./social-scheduler";
+import { xPostTextLength } from "./x-account";
 
 export const AUTOMATIC_EDITORIAL_FORMATS = {
   twitter: "post",
@@ -143,6 +144,8 @@ const evidenceExcerpt = (value: string, maxBytes: number) => {
     ? value
     : new TextDecoder().decode(bytes.slice(0, maxBytes), { stream: true });
 };
+const evidenceText = (value: string) =>
+  value.normalize("NFC").replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim();
 export function buildEditorialBrief(input: EditorialContext): EditorialBrief {
   const now = input.now || new Date().toISOString();
   const platform =
@@ -293,10 +296,11 @@ export function validateEditorialDraft(
     ...(draft.claims || []).map((claim) => claim.sourceId),
   ]);
   const definition = SOCIAL_PROVIDER_DEFINITIONS[brief.platform];
-  if (draft.body.length > definition.maxText)
+  const bodyLength = brief.platform === "twitter" ? xPostTextLength(draft.body) : draft.body.length;
+  if (bodyLength > definition.maxText)
     add(
       "provider_limit",
-      `The body has ${draft.body.length} characters; the maximum is ${definition.maxText}, including spaces, line breaks and links. Rewrite the argument more concisely before returning it. Keep evidence quotes and analysis in metadata only.`,
+      `The body has ${bodyLength} ${brief.platform === "twitter" ? "X-weighted " : ""}characters; the maximum is ${definition.maxText}. Rewrite the argument more concisely before returning it. Keep evidence quotes and analysis in metadata only.`,
     );
   if (
     brief.platform === "instagram" &&
@@ -391,7 +395,15 @@ export function validateEditorialDraft(
     );
   const verified = (draft.claims || []).filter((claim) => {
     const source = brief.sources.find((item) => item.id === claim.sourceId);
-    const valid = Boolean(source && source.text.includes(claim.quote) && text.includes(claim.text));
+    const quote = evidenceText(claim.quote);
+    const statement = evidenceText(claim.text);
+    const valid = Boolean(
+      source &&
+      quote.length >= 8 &&
+      statement &&
+      evidenceText(source.text).includes(quote) &&
+      evidenceText(text).includes(statement),
+    );
     if (!valid) add("unsupported_claim", "Ground each factual claim in an exact source excerpt.");
     return valid;
   });
@@ -422,7 +434,7 @@ export function validateEditorialDraft(
       /\b\d+(?:[.,]\d+)?\s*(?:%|customers|users|sales|million|revenue|followers)\b|\d+%|[$€£]\d|\b(?:I|we) (?:grew|earned|made|launched|built|sold|raised|interviewed|lost|hired|founded)\b/i.test(
         sentence,
       ) &&
-      !verified.some((claim) => sentence.includes(claim.text))
+      !verified.some((claim) => evidenceText(sentence).includes(evidenceText(claim.text)))
     )
       add(
         "unsupported_claim",
