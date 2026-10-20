@@ -5,12 +5,20 @@ import {
   xArticleDocumentError,
   xArticlePlainText,
   xArticlePostId,
+  xPostTextLength,
   xCapabilitiesFromMetadata,
   type XArticleDocument,
 } from "./x-account";
 import { fetchXAccountCapabilities } from "./x-account.server";
 
 describe("X account posting privileges", () => {
+  it("uses X URL, Unicode and emoji weights for standard posts", () => {
+    const body = `${"a".repeat(255)} https://example.com/${"path".repeat(60)}`;
+    expect(body.length).toBeGreaterThan(280);
+    expect(xPostTextLength(body)).toBe(279);
+    expect(xPostTextLength("界".repeat(141))).toBe(282);
+    expect(xPostTextLength("👨‍👩‍👧‍👦")).toBe(2);
+  });
   afterEach(() => vi.restoreAllMocks());
 
   it("allows long posts for Basic and Articles for Premium or organizations", () => {

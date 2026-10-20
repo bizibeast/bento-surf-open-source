@@ -86,7 +86,12 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { micro } from "@/lib/micro-app-ui";
-import { xArticleDocument, xArticlePlainText, type XArticleDocument } from "@/lib/x-account";
+import {
+  xArticleDocument,
+  xArticlePlainText,
+  xPostTextLength,
+  type XArticleDocument,
+} from "@/lib/x-account";
 import { uploadFileResult } from "@/lib/upload";
 import { prepareSchedulerImageUpload } from "@/lib/image-upload";
 import {
@@ -3230,10 +3235,15 @@ function SchedulerPage() {
                                 </span>
                                 {activeProviders.length > 0 && (
                                   <span className="text-[11px] tabular-nums text-muted-foreground">
-                                    {(activeProvider === "youtube" && usesCaption
-                                      ? youtubeDescription
-                                      : editorBody
-                                    ).length.toLocaleString()}
+                                    {(activeProvider === "twitter" &&
+                                    editorCaptionLimit === 280 &&
+                                    !isXArticle
+                                      ? xPostTextLength(editorBody)
+                                      : (activeProvider === "youtube" && usesCaption
+                                          ? youtubeDescription
+                                          : editorBody
+                                        ).length
+                                    ).toLocaleString()}
                                     /
                                     {(editorUsesCaption
                                       ? editorCaptionLimit

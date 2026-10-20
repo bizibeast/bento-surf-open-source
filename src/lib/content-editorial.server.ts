@@ -59,7 +59,7 @@ export type EditorialGenerationResult = {
 };
 const platformPrompt = {
   twitter:
-    "Write one X text post, at most 280 characters INCLUDING spaces, line breaks, attribution and links. Aim for 180–240 characters: one concrete point in one or two short sentences. Never a thread or a LinkedIn-length essay. Put evidence quotes and editorial reasoning only in the separate JSON metadata, not the post body.",
+    "Write one X text post, at most 280 X-weighted characters. Each URL counts as 23 characters; emoji and Unicode use X weights. Aim for 180–240 characters: one concrete point in one or two short sentences. Never a thread or a LinkedIn-length essay. Put evidence quotes and editorial reasoning only in the separate JSON metadata, not the post body.",
   linkedin:
     "Write a complete LinkedIn text post: a specific opening, developed reasoning or example, and a useful conclusion. Do not expand with filler or manufacture a personal story.",
   instagram:
@@ -81,7 +81,7 @@ function productionDependencies(env: AiProviderEnv): EditorialGenerationDependen
     (
       await runAiJson(
         {
-          system: `${editorialSystemPrompt(brief)}\n${naturalWritingRules}\n${instruction}\nFINAL OUTPUT CHECK: body must be no more than ${SOCIAL_PROVIDER_DEFINITIONS[brief.platform].maxText} characters total. ${brief.platform === "twitter" ? "Use one or two short sentences. Shorten the argument before returning it; do not move excess text into the title or create a thread." : "Keep only the copy needed to develop the argument."} Recheck every factual claim against its source and preserve historical dates.`,
+          system: `${editorialSystemPrompt(brief)}\n${naturalWritingRules}\n${instruction}\nFINAL OUTPUT CHECK: body must be no more than ${SOCIAL_PROVIDER_DEFINITIONS[brief.platform].maxText} ${brief.platform === "twitter" ? "X-weighted characters (URLs count as 23)" : "characters"} total. ${brief.platform === "twitter" ? "Use one or two short sentences. Shorten the argument before returning it; do not move excess text into the title or create a thread." : "Keep only the copy needed to develop the argument."} Recheck every factual claim against its source and preserve historical dates.`,
           input,
           schema: editorialDraftSchema,
           responseFormat: { type: "json_object" },
