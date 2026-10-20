@@ -105,6 +105,89 @@ it("passes the failing evidence field to the bounded editor and still independen
     expect.any(AbortSignal),
   );
 });
+describe("verified source attribution", () => {
+  const source = {
+    id: "report",
+    title: "Open formats",
+    text: "Acme introduced an open export format for customer records.",
+    occurredAt: "2026-10-20T00:00:00Z",
+    external: true,
+    sourceName: "Example News",
+    url: "https://example.com/reports/open-format",
+  };
+  const reportBrief = () =>
+    buildEditorialBrief({
+      now: "2026-10-20T12:00:00Z",
+      platform: "twitter",
+      brain: [],
+      sources: [source],
+      requiredRecentSourceIds: [source.id],
+    });
+  const report = {
+    ...good,
+    body: "Acme now offers an open export format. Check whether your customer data can leave with you before choosing a platform.",
+    sourceIds: [source.id],
+    sourceUrls: [source.url],
+    claims: [
+      { sourceId: source.id, text: "Acme now offers an open export format", quote: source.text },
+    ],
+  };
+  it("adds the verified source link before independent review without another paid edit", async () => {
+    const d = deps();
+    vi.mocked(d.write).mockResolvedValue(report);
+    const result = await generateEditorialDraft(reportBrief(), { dependencies: d });
+    expect(result.status).toBe("ready");
+    expect(result.card).toMatchObject({ body: `${report.body}\n\n${source.url}` });
+    expect(d.edit).not.toHaveBeenCalled();
+    expect(d.critique).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        body: `${report.body}\n\n${source.url}`,
+      }),
+      expect.any(AbortSignal),
+    );
+  });
+  it("still blocks a cited draft rejected by independent review", async () => {
+    const d = deps();
+    vi.mocked(d.write).mockResolvedValue(report);
+    vi.mocked(d.edit).mockResolvedValue(report);
+    vi.mocked(d.critique).mockResolvedValue({
+      issues: [
+        { code: "unsupported_claim", message: "The report does not support that assertion." },
+      ],
+    });
+    const result = await generateEditorialDraft(reportBrief(), { dependencies: d });
+    expect(result.status).toBe("needs_input");
+    expect(result.card.type).toBe("idea");
+    expect(result.issues).toContainEqual({
+      code: "unsupported_claim",
+      message: "The report does not support that assertion.",
+    });
+  });
+  it("does not append a link when it would exceed the provider limit", async () => {
+    const d = deps();
+    const long = { ...report, body: `${report.body} ${"x".repeat(157)}` };
+    vi.mocked(d.write).mockResolvedValue(long);
+    vi.mocked(d.edit).mockResolvedValue(long);
+    const result = await generateEditorialDraft(reportBrief(), { dependencies: d });
+    expect(result.status).toBe("needs_input");
+    expect(d.critique).not.toHaveBeenCalled();
+  });
+  it("does not repair attribution for unverified evidence", async () => {
+    const d = deps();
+    const unsupported = {
+      ...report,
+      claims: [{ ...report.claims[0], quote: "Acme sold all its customer records." }],
+    };
+    vi.mocked(d.write).mockResolvedValue(unsupported);
+    vi.mocked(d.edit).mockResolvedValue(unsupported);
+    const result = await generateEditorialDraft(reportBrief(), { dependencies: d });
+    expect(result.status).toBe("needs_input");
+    expect(result.issues.map((issue) => issue.code)).toContain("unsupported_claim");
+    expect(d.critique).not.toHaveBeenCalled();
+  });
+});
+
 describe("bounded editorial generation", () => {
   it("instructs the writer to match sample formatting while forbidding em dashes", () => {
     const prompt = editorialSystemPrompt(brief());
