@@ -2,9 +2,9 @@
 
 ## Current shared-app parity release
 
-Shared source: `ea9e90003e331db1a41c5916f68d83a1ab2b479d`. Includes the latest Brain cleanup, personalized Topics, Stories navigation, routine content mix and draft quantity, AI-image settings access, and browser-safe server primitives. Operator setup, instance URLs, legal pages and deployment configuration retain their public-edition behavior.
+Shared source: `34afc98b49a922028e7eddd1f3ecba68781b0b85`. Includes the latest Brain cleanup, personalized Topics, Stories navigation, routine content mix and draft quantity, AI-image settings access, and browser-safe server primitives. The shared SERP parser also includes the current bounded malformed-response and timeout handling. Operator setup, instance URLs, legal pages and deployment configuration retain their public-edition behavior.
 
-Validation: 3,763 tests across 498 files, TypeScript, production build, Worker packaging dry run, public boundary/history scans, and two fresh-install desktop/mobile browser tests. The setup test covers interactive key generation, private input visibility, no horizontal overflow, no browser exceptions, and no outbound mutations before configuration. The fresh-install route no longer needs a database before setup; controls wait for hydration. The public root no longer embeds a hosted Google Analytics tag.
+Validation: 3,769 tests across 498 files, TypeScript, production build, Worker packaging dry run, public boundary/history scans, and two fresh-install desktop/mobile browser tests. The setup test covers interactive key generation, private input visibility, no horizontal overflow, no browser exceptions, and no outbound mutations before configuration. The fresh-install route no longer needs a database before setup; controls wait for hydration. The public root no longer embeds a hosted Google Analytics tag.
 
 The shared-source parity check reports zero missing, stale, removed or unclassified files; manually transformed files retain the edition differences described in `source-boundary.md`. The reviewed historical non-secret exception below is unchanged. Private source history, credentials and customer data were not imported.
 

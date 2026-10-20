@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   SeoProviderBudgetError,
+  SeoSerpParseError,
   SeoSerpTransportError,
   fetchSeoSerp,
 } from "./seo-bright-data.server";
@@ -36,10 +37,10 @@ describe("Bright Data SEO research", () => {
     );
 
     expect(result.organic).toHaveLength(1);
-    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toMatchObject({
-      zone: "serp_api1",
-      data_format: "parsed",
-    });
+    const request = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body));
+    expect(request).toMatchObject({ zone: "serp_api1", format: "json" });
+    expect(request.data_format).toBeUndefined();
+    expect(new URL(request.url).searchParams.get("brd_json")).toBe("1");
   });
 
   it("parses a parsed_light body directly and ignores a json envelope", async () => {
@@ -88,10 +89,9 @@ describe("Bright Data SEO research", () => {
     ]);
     expect(result.questions).toEqual([]);
     expect(result.relatedSearches).toEqual([]);
-    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toMatchObject({
-      format: "raw",
-      data_format: "parsed_light",
-    });
+    const request = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body));
+    expect(request).toMatchObject({ format: "raw", data_format: "parsed_light" });
+    expect(new URL(request.url).searchParams.get("brd_json")).toBe("parsed_light");
   });
 
   it("rejects an upstream error inside a successful HTTP response", async () => {
@@ -114,7 +114,9 @@ describe("Bright Data SEO research", () => {
       .fn()
       .mockResolvedValueOnce(Response.json({ status_code: 502, body: "temporarily unavailable" }))
       .mockResolvedValueOnce(Response.json({ status_code: 503, body: "temporarily unavailable" }))
-      .mockResolvedValueOnce(Response.json({ status_code: 200, body: JSON.stringify({}) }));
+      .mockResolvedValueOnce(
+        Response.json({ status_code: 200, body: JSON.stringify({ organic: [] }) }),
+      );
     const reserve = vi.fn().mockResolvedValue(true);
 
     const result = await fetchSeoSerp(
@@ -179,7 +181,7 @@ describe("Bright Data SEO research", () => {
   });
 
   it("reserves one request before calling Bright Data", async () => {
-    const fetcher = vi.fn().mockResolvedValue(Response.json({}));
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ organic: [] }));
     const reserve = vi.fn().mockResolvedValue(false);
 
     await expect(
@@ -255,7 +257,10 @@ describe("Bright Data SEO research", () => {
 
     const request = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body));
     expect(request).toMatchObject({ zone: "serp_api1", format: "json" });
-    expect(request.url).toBe("https://www.google.com/search?q=creator+website&gl=us&hl=en&num=10");
+    expect(request.data_format).toBeUndefined();
+    expect(request.url).toBe(
+      "https://www.google.com/search?q=creator+website&gl=us&hl=en&num=10&brd_json=1",
+    );
   });
 
   it("preserves the operator research query without hosted SEO rewrites", async () => {
@@ -267,7 +272,8 @@ describe("Bright Data SEO research", () => {
     );
     const request = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body));
     expect(new URL(request.url).searchParams.get("q")).toBe("free bio link options for creators");
-    expect(request.data_format).toBe("parsed");
+    expect(new URL(request.url).searchParams.get("brd_json")).toBe("1");
+    expect(request.data_format).toBeUndefined();
   });
 
   it("caps parsed requests at 20s and parsed_light at 45s", async () => {
@@ -336,5 +342,157 @@ describe("Bright Data SEO research", () => {
       expect.objectContaining({ name: "TimeoutError", attempt: 0 }),
     );
     logged.mockRestore();
+  });
+
+  it("retries a malformed body and logs status, content type, and a short prefix", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response("<html><title>Bright Data error</title></html>", {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          organic: [
+            {
+              global_rank: 1,
+              title: "Creator website guide",
+              link: "https://example.com/guide",
+              description: "A useful creator guide.",
+            },
+          ],
+        }),
+      );
+
+    const result = await fetchSeoSerp(
+      { keyword: "creator website", country: "us", language: "en" },
+      env,
+      { fetcher, reserve: async () => true, delay: async () => undefined },
+    );
+
+    expect(result.organic).toHaveLength(1);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(logged).toHaveBeenCalledWith(
+      "Bright Data SEO response rejected",
+      expect.objectContaining({
+        reason: "malformed",
+        status: 200,
+        contentType: "text/html",
+        prefix: expect.stringContaining("<html>"),
+      }),
+    );
+    const details = JSON.stringify(logged.mock.calls);
+    expect(details).not.toMatch(/bearer\s+\S+/i);
+    logged.mockRestore();
+  });
+
+  it("does not spend a second attempt when malformed JSON is already the last try", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const fetcher = vi
+      .fn()
+      .mockResolvedValue(
+        new Response("not-json", { status: 200, headers: { "content-type": "text/plain" } }),
+      );
+    await expect(
+      fetchSeoSerp({ keyword: "creator website", country: "us", language: "en" }, env, {
+        fetcher,
+        reserve: async () => true,
+        maxAttempts: 1,
+      }),
+    ).rejects.toBeInstanceOf(SeoSerpParseError);
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it("treats an oversized body as invalid JSON without reading past the cap", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response("{}", {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          "content-length": String(3 * 1024 * 1024),
+        },
+      }),
+    );
+    const error = await fetchSeoSerp(
+      { keyword: "creator website", country: "us", language: "en" },
+      env,
+      { fetcher, reserve: async () => true, maxAttempts: 1 },
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(SeoSerpParseError);
+    expect((error as Error).message).toContain("too_large");
+    expect(logged).toHaveBeenCalledWith(
+      "Bright Data SEO response rejected",
+      expect.objectContaining({ reason: "too_large", status: 200, bytes: 3 * 1024 * 1024 }),
+    );
+    logged.mockRestore();
+  });
+
+  it("keeps valid organic rows when rank is a string and other rows are unusable", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      Response.json({
+        organic: [
+          { title: "Missing link", global_rank: 1, link: "not a url" },
+          {
+            rank: "2",
+            title: "Creator website guide",
+            link: "https://example.com/guide",
+          },
+        ],
+        people_also_ask: [{ question: "What belongs on a creator website?" }, { nope: true }],
+      }),
+    );
+    const result = await fetchSeoSerp(
+      { keyword: "creator website", country: "us", language: "en" },
+      env,
+      { fetcher, reserve: async () => true },
+    );
+    expect(result.organic).toEqual([
+      {
+        rank: 2,
+        title: "Creator website guide",
+        url: "https://example.com/guide",
+        domain: "example.com",
+        description: "",
+      },
+    ]);
+    expect(result.questions).toEqual(["What belongs on a creator website?"]);
+  });
+
+  it("rejects a nonempty organic array that has no valid rows", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      Response.json({
+        organic: [
+          { title: "Missing link", global_rank: 1 },
+          { link: "http://insecure.example/guide", title: "Creator website", global_rank: 2 },
+        ],
+      }),
+    );
+    const error = await fetchSeoSerp(
+      { keyword: "creator website", country: "us", language: "en" },
+      env,
+      { fetcher, reserve: async () => true, maxAttempts: 1 },
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(SeoSerpParseError);
+    expect((error as Error).message).toContain("invalid_rows");
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it("rejects JSON that has no recognised SERP shape", async () => {
+    const fetcher = vi.fn().mockResolvedValue(Response.json({ html: "<html>not a serp</html>" }));
+    const error = await fetchSeoSerp(
+      { keyword: "creator website", country: "us", language: "en" },
+      env,
+      { fetcher, reserve: async () => true, maxAttempts: 1 },
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(SeoSerpParseError);
+    expect((error as Error).message).toContain("unrecognized");
+    expect(fetcher).toHaveBeenCalledOnce();
   });
 });

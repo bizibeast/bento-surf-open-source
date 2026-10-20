@@ -2,7 +2,7 @@ import { reserveProviderUsage } from "./provider-budget.server";
 import { z } from "zod";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 const disambiguateSerpQuery = (query: string) => query;
-import { readResponseText } from "./request-security.server";
+import { readResponseText, RequestBodyTooLargeError } from "./request-security.server";
 
 const BRIGHT_DATA_ENDPOINT = "https://api.brightdata.com/request";
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
@@ -69,13 +69,6 @@ type ReservationClient = {
   ): Promise<{ data: boolean | null; error: { message?: string } | null }>;
 };
 
-const organicSchema = z.object({
-  global_rank: z.number().int().positive(),
-  title: z.string().trim().min(1).max(500),
-  link: z.string().url(),
-  description: z.string().trim().max(2_000).nullish(),
-});
-
 type RelatedSearchRow = {
   text?: string | null;
   items?: RelatedSearchRow[];
@@ -87,15 +80,6 @@ const relatedSchema: z.ZodType<RelatedSearchRow> = z.lazy(() =>
     items: z.array(relatedSchema).max(20).optional(),
   }),
 );
-
-const brightDataPayloadSchema = z.object({
-  organic: z.array(organicSchema).max(100).default([]),
-  people_also_ask: z
-    .array(z.object({ question: z.string().trim().min(1).max(300) }))
-    .max(30)
-    .default([]),
-  related: z.array(relatedSchema).max(30).default([]),
-});
 
 export class SeoProviderBudgetError extends Error {
   constructor() {
@@ -116,8 +100,26 @@ export class SeoSerpTransportError extends Error {
   }
 }
 
+export class SeoSerpParseError extends Error {
+  readonly reason: string;
+
+  constructor(message: string, reason = "malformed") {
+    super(message);
+    this.name = "SeoSerpParseError";
+    this.reason = reason;
+  }
+}
+
 export function isSeoSerpTimeout(error: unknown): error is SeoSerpTransportError {
   return error instanceof SeoSerpTransportError && error.causeName === "TimeoutError";
+}
+
+export function isSeoSerpRecoverable(error: unknown) {
+  if (error instanceof SeoSerpTransportError || error instanceof SeoSerpParseError) return true;
+  return (
+    error instanceof Error &&
+    /Bright Data SEO request failed \((?:408|500|502|503|504)\)/.test(error.message)
+  );
 }
 
 function transportErrorName(error: unknown) {
@@ -156,6 +158,127 @@ export async function brightDataSeoUsage(
     .lt("created_at", range.end);
   if (error) throw new Error("Bright Data SEO usage is unavailable.");
   return (data ?? []).reduce((total, row) => total + requestCount(row.provider_usage), 0);
+}
+
+function publicPrefix(value: string) {
+  return value
+    .replace(/bearer\s+\S+/gi, "bearer [redacted]")
+    .replace(/\b[a-f0-9]{32,}\b/gi, "[redacted]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+}
+
+function responseContentType(response: Response) {
+  return (response.headers.get("content-type") ?? "").split(";")[0]?.trim().slice(0, 80) ?? "";
+}
+
+function rejectSerpBody(response: Response, body: string, reason: string) {
+  const contentType = responseContentType(response);
+  const prefix = publicPrefix(body);
+  const declared = Number(response.headers.get("content-length"));
+  console.error("Bright Data SEO response rejected", {
+    reason,
+    status: response.status,
+    contentType: contentType || "missing",
+    bytes: body.length || (Number.isFinite(declared) ? declared : 0),
+    prefix,
+  });
+  const detail = [
+    reason,
+    `status ${response.status}`,
+    contentType || "no content-type",
+    `${body.length || (Number.isFinite(declared) ? declared : 0)} bytes`,
+    prefix,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  return new SeoSerpParseError(
+    `Bright Data SEO returned invalid JSON (${detail}).`.slice(0, 500),
+    reason,
+  );
+}
+
+function parseJsonBody(response: Response, body: string) {
+  const trimmed = body.replace(/^\uFEFF/, "").trim();
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+    if (fenced?.[1]) {
+      try {
+        return JSON.parse(fenced[1]) as unknown;
+      } catch {
+        // Fall through to the same diagnostic as a raw non-JSON body.
+      }
+    }
+    throw rejectSerpBody(response, body, "malformed");
+  }
+}
+
+function organicRank(value: unknown) {
+  const rank =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && /^\d+$/.test(value)
+        ? Number(value)
+        : NaN;
+  return Number.isInteger(rank) && rank >= 1 && rank <= 100 ? rank : null;
+}
+
+function serpOrganic(
+  payload: unknown,
+): { ok: true; rows: ReturnType<typeof normalizeOrganic> } | { ok: false; reason: string } {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return { ok: false, reason: "unrecognized" };
+  }
+  if (!Object.prototype.hasOwnProperty.call(payload, "organic")) {
+    return { ok: false, reason: "unrecognized" };
+  }
+  const organic = (payload as { organic?: unknown }).organic;
+  if (!Array.isArray(organic)) return { ok: false, reason: "unrecognized" };
+  const rows = normalizeOrganic(organic);
+  // An empty organic array is a real SERP. A nonempty array with no usable rows is not.
+  if (organic.length > 0 && rows.length === 0) return { ok: false, reason: "invalid_rows" };
+  return { ok: true, rows };
+}
+
+function normalizeOrganic(value: unknown[]) {
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const row = item as Record<string, unknown>;
+    const rank = organicRank(row.global_rank ?? row.rank);
+    const title = typeof row.title === "string" ? row.title.trim() : "";
+    const link = typeof row.link === "string" ? row.link.trim() : "";
+    const description = typeof row.description === "string" ? row.description.trim() : "";
+    if (!rank || !title || title.length > 500 || !link) return [];
+    try {
+      const url = new URL(link);
+      if (url.protocol !== "https:") return [];
+      return [
+        {
+          rank,
+          title,
+          url: url.toString(),
+          domain: url.hostname.toLowerCase().replace(/^www\./, ""),
+          description: description.slice(0, 2_000),
+        },
+      ];
+    } catch {
+      return [];
+    }
+  });
+}
+
+function questionList(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const question = (item as { question?: unknown }).question;
+    if (typeof question !== "string") return [];
+    const text = question.trim();
+    return text && text.length <= 300 ? [text] : [];
+  });
 }
 
 function uniqueStrings(values: string[], limit: number) {
@@ -211,11 +334,18 @@ export async function fetchSeoSerp(
   const month = now.toISOString().slice(0, 7);
   const limit = monthlyLimit(env);
 
+  const dataFormat = dependencies.dataFormat ?? "parsed";
+  if (dataFormat !== "parsed" && dataFormat !== "parsed_light") {
+    throw new Error("Invalid SEO SERP format.");
+  }
   const target = new URL("https://www.google.com/search");
   target.searchParams.set("q", disambiguateSerpQuery(keyword));
   target.searchParams.set("gl", "us");
   target.searchParams.set("hl", "en");
   target.searchParams.set("num", "10");
+  // brd_json is the documented SERP parser switch. data_format "parsed" is not a
+  // SERP value and comes back as HTML or plain text, which JSON.parse rejects.
+  target.searchParams.set("brd_json", dataFormat === "parsed_light" ? "parsed_light" : "1");
 
   const fetcher = dependencies.fetcher ?? globalThis.fetch.bind(globalThis);
   const delay =
@@ -223,10 +353,6 @@ export async function fetchSeoSerp(
   const maxAttempts = dependencies.maxAttempts ?? 3;
   if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 3) {
     throw new Error("Invalid SEO request attempt limit.");
-  }
-  const dataFormat = dependencies.dataFormat ?? "parsed";
-  if (dataFormat !== "parsed" && dataFormat !== "parsed_light") {
-    throw new Error("Invalid SEO SERP format.");
   }
   const timeoutMs = dependencies.timeoutMs ?? 20_000;
   // parsed stays at the 20s caller cap. parsed_light may use the cloud pair budget.
@@ -260,8 +386,9 @@ export async function fetchSeoSerp(
           zone,
           url: target.toString(),
           // parsed_light is the faster organic-only parser. Bright Data expects format raw for it.
+          // Full JSON omits data_format: "parsed" is not a documented SERP value.
           format: dataFormat === "parsed_light" ? "raw" : "json",
-          data_format: dataFormat,
+          ...(dataFormat === "parsed_light" ? { data_format: "parsed_light" } : {}),
         }),
         signal: AbortSignal.timeout(timeoutMs),
       });
@@ -282,71 +409,81 @@ export async function fetchSeoSerp(
       throw new Error(`Bright Data SEO request failed (${response.status}).`);
     }
 
+    let text = "";
     try {
-      payload = JSON.parse(await readResponseText(response, MAX_RESPONSE_BYTES));
-    } catch {
-      throw new Error("Bright Data SEO returned invalid JSON.");
+      text = await readResponseText(response, MAX_RESPONSE_BYTES);
+      payload = parseJsonBody(response, text);
+    } catch (error) {
+      const parseError =
+        error instanceof SeoSerpParseError
+          ? error
+          : error instanceof RequestBodyTooLargeError
+            ? rejectSerpBody(response, "", "too_large")
+            : null;
+      if (!parseError) throw error;
+      if (attempt === maxAttempts - 1) throw parseError;
+      await delay((attempt + 1) * 1_000);
+      continue;
     }
-    // format json wraps {status_code, body}. format raw (parsed_light) is the parsed
-    // object itself, so a top-level status_code there is not an envelope.
-    if (
-      dataFormat === "parsed" &&
-      payload &&
-      typeof payload === "object" &&
-      "status_code" in payload
-    ) {
-      const envelope = z
-        .object({ status_code: z.number().int(), body: z.string() })
-        .safeParse(payload);
-      if (!envelope.success)
-        throw new Error("Bright Data SEO returned an invalid response envelope.");
-      if (envelope.data.status_code !== 200) {
-        if (envelope.data.status_code === 429) {
-          throw new Error("Bright Data SEO request failed (429).");
-        }
-        if (attempt < maxAttempts - 1 && RETRYABLE_STATUSES.has(envelope.data.status_code)) {
+    // format json may wrap {status_code, body}. parsed_light is the object itself.
+    // A top-level organic array wins so a light body is not read as an envelope.
+    if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+      const record = payload as Record<string, unknown>;
+      if (!Array.isArray(record.organic) && typeof record.body === "string") {
+        const envelope = z
+          .object({ status_code: z.number().int(), body: z.string() })
+          .safeParse(payload);
+        if (!envelope.success) {
+          const parseError = rejectSerpBody(response, text, "envelope");
+          if (attempt === maxAttempts - 1) throw parseError;
           await delay((attempt + 1) * 1_000);
           continue;
         }
-        throw new Error(`Bright Data SEO request failed (${envelope.data.status_code}).`);
-      }
-      try {
-        payload = JSON.parse(envelope.data.body);
-      } catch {
-        throw new Error("Bright Data SEO returned invalid parsed JSON.");
+        if (envelope.data.status_code !== 200) {
+          if (envelope.data.status_code === 429) {
+            throw new Error("Bright Data SEO request failed (429).");
+          }
+          if (attempt < maxAttempts - 1 && RETRYABLE_STATUSES.has(envelope.data.status_code)) {
+            await delay((attempt + 1) * 1_000);
+            continue;
+          }
+          throw new Error(`Bright Data SEO request failed (${envelope.data.status_code}).`);
+        }
+        try {
+          payload = parseJsonBody(response, envelope.data.body);
+        } catch (error) {
+          const parseError =
+            error instanceof SeoSerpParseError
+              ? error
+              : rejectSerpBody(response, envelope.data.body, "parsed_body");
+          if (attempt === maxAttempts - 1) throw parseError;
+          await delay((attempt + 1) * 1_000);
+          continue;
+        }
       }
     }
-    break;
+    const organic = serpOrganic(payload);
+    if (!organic.ok) {
+      const parseError = rejectSerpBody(response, text, organic.reason);
+      if (attempt === maxAttempts - 1) throw parseError;
+      await delay((attempt + 1) * 1_000);
+      continue;
+    }
+    const record =
+      payload && typeof payload === "object" && !Array.isArray(payload)
+        ? (payload as { people_also_ask?: unknown; related?: unknown })
+        : {};
+    const related = z
+      .array(relatedSchema)
+      .max(30)
+      .safeParse(record.related ?? []);
+    if (dependencies.usage) await dependencies.recordUsage?.(requestsUsed);
+    return {
+      organic: organic.rows,
+      questions: uniqueStrings(questionList(record.people_also_ask), 20),
+      relatedSearches: uniqueStrings(related.success ? flattenRelated(related.data) : [], 20),
+      requestsUsed,
+    };
   }
-  const parsed = brightDataPayloadSchema.safeParse(payload);
-  if (!parsed.success) throw new Error("Bright Data SEO returned an invalid result shape.");
-
-  const organic = parsed.data.organic.flatMap((row) => {
-    try {
-      const url = new URL(row.link);
-      if (url.protocol !== "https:") return [];
-      return [
-        {
-          rank: row.global_rank,
-          title: row.title,
-          url: url.toString(),
-          domain: url.hostname.toLowerCase().replace(/^www\./, ""),
-          description: row.description ?? "",
-        },
-      ];
-    } catch {
-      return [];
-    }
-  });
-
-  if (dependencies.usage) await dependencies.recordUsage?.(requestsUsed);
-  return {
-    organic,
-    questions: uniqueStrings(
-      parsed.data.people_also_ask.map((item) => item.question),
-      20,
-    ),
-    relatedSearches: uniqueStrings(flattenRelated(parsed.data.related), 20),
-    requestsUsed,
-  };
+  throw new SeoSerpParseError("Bright Data SEO returned invalid JSON.");
 }
