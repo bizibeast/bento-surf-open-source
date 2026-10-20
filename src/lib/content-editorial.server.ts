@@ -241,14 +241,30 @@ export async function generateEditorialDraft(
             ? { angle: brief.angle, whyNow: brief.whyNow, ...written }
             : written,
         );
-        const edited =
+        let edited =
           attempt === 0 && !options.initialDraft
             ? draft
             : editorialDraftSchema.parse(
                 await bounded(dependencies.edit(brief, draft, signal, issues), signal),
               );
-        lastEdited = edited;
         issues = validateEditorialDraft(brief, edited, brief.recentOutputs);
+        // Attribution is mechanical once every other evidence/format check passes.
+        // Revalidate the complete post and still require independent semantic review.
+        if (issues.length === 1 && issues[0].code === "source_attribution") {
+          const claim = edited.claims.find((item) =>
+            brief.requiredRecentSourceIds?.includes(item.sourceId),
+          );
+          const source = brief.sources.find((item) => item.id === claim?.sourceId);
+          if (source?.url && edited.sourceUrls.includes(source.url)) {
+            const attributed = { ...edited, body: `${edited.body}\n\n${source.url}` };
+            const remainingIssues = validateEditorialDraft(brief, attributed, brief.recentOutputs);
+            if (!remainingIssues.length) {
+              edited = attributed;
+              issues = remainingIssues;
+            }
+          }
+        }
+        lastEdited = edited;
         reportEditorialIssues("validation", issues);
         if (!issues.length) {
           issues = (await bounded(dependencies.critique(brief, edited, signal), signal)).issues;
