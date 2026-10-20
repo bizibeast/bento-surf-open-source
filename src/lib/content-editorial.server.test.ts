@@ -65,6 +65,46 @@ function deps(): EditorialGenerationDependencies {
     critique: vi.fn().mockResolvedValue(clean),
   };
 }
+it("passes the failing evidence field to the bounded editor and still independently reviews the repair", async () => {
+  const d = deps();
+  const corrected = {
+    ...good,
+    sourceIds: ["s"],
+    body: "The notes recommend asking one question at a time. Let the customer finish before moving on.",
+    claims: [
+      {
+        sourceId: "s",
+        text: "asking one question at a time",
+        quote: "Ask one question at a time.",
+      },
+    ],
+  };
+  vi.mocked(d.write).mockResolvedValue({
+    ...corrected,
+    claims: [{ ...corrected.claims[0], quote: "Ask several questions together." }],
+  });
+  vi.mocked(d.edit).mockResolvedValue(corrected);
+  const result = await generateEditorialDraft(brief(), { dependencies: d });
+  expect(d.edit).toHaveBeenCalledTimes(1);
+  expect(d.edit).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.anything(),
+    expect.any(AbortSignal),
+    expect.arrayContaining([
+      expect.objectContaining({
+        code: "unsupported_claim",
+        message: expect.stringMatching(/Claim 1: quote/),
+      }),
+    ]),
+  );
+  expect(result.status).toBe("ready");
+  expect(result.card).toMatchObject({ body: corrected.body, editorial: { sourceIds: ["s"] } });
+  expect(d.critique).toHaveBeenCalledExactlyOnceWith(
+    expect.anything(),
+    expect.objectContaining(corrected),
+    expect.any(AbortSignal),
+  );
+});
 describe("bounded editorial generation", () => {
   it("instructs the writer to match sample formatting while forbidding em dashes", () => {
     const prompt = editorialSystemPrompt(brief());

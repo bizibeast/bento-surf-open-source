@@ -393,20 +393,28 @@ export function validateEditorialDraft(
       "stale_context",
       "Do not write a fresh launch announcement unless the creator asked for one.",
     );
-  const verified = (draft.claims || []).filter((claim) => {
+  const invalidClaims: string[] = [];
+  const verified = (draft.claims || []).filter((claim, index) => {
     const source = brief.sources.find((item) => item.id === claim.sourceId);
     const quote = evidenceText(claim.quote);
     const statement = evidenceText(claim.text);
-    const valid = Boolean(
-      source &&
-      quote.length >= 8 &&
-      statement &&
-      evidenceText(source.text).includes(quote) &&
-      evidenceText(text).includes(statement),
-    );
-    if (!valid) add("unsupported_claim", "Ground each factual claim in an exact source excerpt.");
-    return valid;
+    const repairs: string[] = [];
+    if (!source) repairs.push("the source reference must match one of the supplied sources");
+    if (quote.length < 8)
+      repairs.push("quote needs at least 8 characters copied from the source text");
+    else if (source && !evidenceText(source.text).includes(quote))
+      repairs.push(
+        "quote must be copied from that source's text, without paraphrasing or using its title",
+      );
+    if (!statement || !evidenceText(text).includes(statement))
+      repairs.push(
+        "text must match the final body or slide text; update it after editing the draft",
+      );
+    if (repairs.length) invalidClaims.push(`Claim ${index + 1}: ${repairs.join("; ")}.`);
+    return repairs.length === 0;
   });
+  if (invalidClaims.length)
+    add("unsupported_claim", `Repair the evidence metadata. ${invalidClaims.join(" ")}`);
   const currentClaim = verified.find((claim) =>
     brief.requiredRecentSourceIds?.includes(claim.sourceId),
   );

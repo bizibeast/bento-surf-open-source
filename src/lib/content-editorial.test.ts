@@ -44,6 +44,50 @@ const codes = (body: string) =>
     context.recentOutputs || [],
   ).map((i) => i.code);
 
+it.each([
+  ["unknown source", { sourceId: "missing" }, "source reference"],
+  ["paraphrased quote", { quote: "I shipped a tiny prototype" }, "quote"],
+  ["empty quote", { quote: "   " }, "quote"],
+  ["edited claim", { text: "I interviewed users" }, "text"],
+] as const)("identifies the claim field that needs repair: %s", (_name, change, field) => {
+  const claim = {
+    sourceId: "launch",
+    text: "I launched a small prototype",
+    quote: "I launched a small prototype",
+  };
+  const issues = validateEditorialDraft(
+    buildEditorialBrief(context),
+    {
+      ...draft("In January 2024 I launched a small prototype."),
+      claims: [{ ...claim, ...change }],
+    },
+    [],
+  );
+  const message = issues.find((issue) => issue.code === "unsupported_claim")?.message;
+  expect(message).toContain("Claim 1");
+  expect(message).toContain(field);
+});
+
+it("reports each invalid claim so one repair can fix the whole draft", () => {
+  const issues = validateEditorialDraft(
+    buildEditorialBrief(context),
+    {
+      ...draft("In January 2024 I launched a small prototype and interviewed customers."),
+      claims: [
+        { sourceId: "missing", text: "I launched a small prototype", quote: "a small prototype" },
+        { sourceId: "launch", text: "interviewed customers", quote: "interviewed 20 customers" },
+      ],
+    },
+    [],
+  );
+  const message = issues.find((issue) => issue.code === "unsupported_claim")?.message;
+  expect(message).toContain("Claim 1");
+  expect(message).toContain("Claim 2");
+  expect(message).toContain("source reference");
+  expect(message).toContain("quote");
+  expect(message).not.toContain("20 customers");
+});
+
 it("applies X weights to source links and non-Latin text", () => {
   expect(codes(`${"a".repeat(255)} https://example.com/${"path".repeat(60)}`)).not.toContain(
     "provider_limit",
