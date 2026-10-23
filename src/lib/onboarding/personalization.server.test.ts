@@ -11,6 +11,8 @@ import {
   prepareOnboardingBrain,
 } from "./personalization.server";
 import { onboardingProfile } from "./evidence";
+import { AiProviderRequestError } from "../ai-json.server";
+import { ProviderBudgetError } from "../provider-budget.server";
 
 const brief = onboardingBriefSchema.parse({
   displayName: "Ari",
@@ -125,12 +127,25 @@ describe("bounded personal Brain evidence", () => {
       }).success,
     ).toBe(false);
   });
-  it("uses one bounded AI call and adds source links only after validation", async () => {
-    const generate = vi.fn().mockResolvedValue({ value: { documents: documents() } });
+  it("uses one generation and one independent bounded review before adding source links", async () => {
+    const generate = vi
+      .fn()
+      .mockResolvedValueOnce({ value: { documents: documents() } })
+      .mockImplementation(async ({ input }) => ({
+        value: {
+          reviews: input.documents.map((doc: { id: string }) => ({
+            id: doc.id,
+            approved: true,
+            sourceIds: ["answers"],
+            issues: [],
+          })),
+        },
+      }));
     const result = await personalizeOnboardingBrain(brief, research, Date.now() + 90000, generate);
-    expect(generate).toHaveBeenCalledOnce();
+    expect(generate).toHaveBeenCalledTimes(2);
+    // Real post history keeps the full output budget.
     expect(generate.mock.calls[0][0].maxTokens).toBe(6000);
-    expect(generate.mock.calls[0][0].timeoutMs).toBeLessThanOrEqual(40000);
+    expect(generate.mock.calls[0][0].timeoutMs).toBeLessThanOrEqual(75000);
     expect(JSON.stringify(generate.mock.calls[0][0].input)).not.toContain("https://");
     expect(result[0].content).toContain("Source notes");
   });
@@ -235,5 +250,175 @@ describe("personalization recovery and caps", () => {
       ),
     ).rejects.toThrow("Lost lease");
     expect(personalize).not.toHaveBeenCalled();
+  });
+});
+
+it("does not replace onboarding Brain when a real quote fails the independent ownership review", async () => {
+  const docs = documents();
+  docs[0].content += "\nI founded Studio North and made $10 million.";
+  docs[0].claims.push({
+    text: "I founded Studio North and made $10 million.",
+    sourceId: "answers",
+    quote: "I work as a photographer at Studio North.",
+  });
+  expect(
+    onboardingBrainSchema(onboardingBrainSources(brief, research)).safeParse({ documents: docs })
+      .success,
+  ).toBe(true);
+  const generate = vi
+    .fn()
+    .mockResolvedValueOnce({ value: { documents: docs } })
+    .mockImplementation(async ({ input }) => ({
+      value: {
+        reviews: input.documents.map((doc: { id: string }, index: number) => ({
+          id: doc.id,
+          approved: index !== 0,
+          sourceIds: ["answers"],
+          issues: index === 0 ? ["Employment does not support founding or revenue claims."] : [],
+        })),
+      },
+    }));
+  const result = await prepareOnboardingBrain(
+    brief,
+    base,
+    research,
+    1,
+    false,
+    Date.now() + 90000,
+    vi.fn(),
+    (b, r, deadline) => personalizeOnboardingBrain(b, r, deadline, generate),
+  );
+  expect(result.brain).toEqual(base.brain);
+  expect(result.personalization?.status).toBe("unavailable");
+  expect(generate).toHaveBeenCalledTimes(2);
+});
+
+it("spends no more than the remaining shared onboarding review window", async () => {
+  const start = Date.now();
+  const now = vi.spyOn(Date, "now");
+  now.mockReturnValue(start);
+  const generate = vi
+    .fn()
+    .mockImplementationOnce(async () => {
+      now.mockReturnValue(start + 38000);
+      return { value: { documents: documents() } };
+    })
+    .mockImplementation(async ({ input }) => ({
+      value: {
+        reviews: input.documents.map((doc: { id: string }) => ({
+          id: doc.id,
+          approved: true,
+          sourceIds: ["answers"],
+          issues: [],
+        })),
+      },
+    }));
+  try {
+    await personalizeOnboardingBrain(brief, research, start + 90000, generate);
+    // Writing leaves 5s of the job deadline for the review: 90s - 5s.
+    expect(generate.mock.calls[0][0].timeoutMs).toBe(75000);
+    // The review gets up to 25s of what is left (capped at 15s per review call).
+    expect(generate.mock.calls[1][0].timeoutMs).toBe(15000);
+  } finally {
+    now.mockRestore();
+  }
+});
+
+it("gives the Brain up to 110s: 75s to write, then up to 25s of what remains to review", async () => {
+  const start = Date.now();
+  const now = vi.spyOn(Date, "now");
+  now.mockReturnValue(start);
+  const generate = vi
+    .fn()
+    .mockImplementationOnce(async () => {
+      now.mockReturnValue(start + 100_000);
+      return { value: { documents: documents() } };
+    })
+    .mockImplementation(async ({ input }) => ({
+      value: {
+        reviews: input.documents.map((doc: { id: string }) => ({
+          id: doc.id,
+          approved: true,
+          sourceIds: ["answers"],
+          issues: [],
+        })),
+      },
+    }));
+  try {
+    await personalizeOnboardingBrain(brief, research, start + 150_000, generate);
+    expect(generate.mock.calls[0][0].timeoutMs).toBe(75000);
+    // Step ends at 110s, so only 10s remain for the review.
+    expect(generate.mock.calls[1][0].timeoutMs).toBe(10000);
+  } finally {
+    now.mockRestore();
+  }
+});
+
+it("asks for three shorter documents when there is no post history", async () => {
+  const generate = vi
+    .fn()
+    .mockResolvedValueOnce({ value: { documents: documents().slice(0, 3) } })
+    .mockImplementation(async ({ input }) => ({
+      value: {
+        reviews: input.documents.map((doc: { id: string }) => ({
+          id: doc.id,
+          approved: true,
+          sourceIds: ["answers"],
+          issues: [],
+        })),
+      },
+    }));
+  await personalizeOnboardingBrain(
+    brief,
+    { ...research, posts: [], photoPostId: null },
+    Date.now() + 150_000,
+    generate,
+  );
+  expect(generate.mock.calls[0][0].maxTokens).toBe(2500);
+  expect(generate.mock.calls[0][0].system).toContain("return exactly 3 documents");
+});
+
+describe("Brain failure reporting", () => {
+  const run = (error: unknown) => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    return prepareOnboardingBrain(
+      brief,
+      base,
+      research,
+      1,
+      false,
+      Date.now() + 150_000,
+      vi.fn().mockResolvedValue(undefined),
+      vi.fn().mockRejectedValue(error),
+    ).then((result) => ({ result, log }));
+  };
+  it("mentions the allowance only for a real budget error", async () => {
+    const { result, log } = await run(new ProviderBudgetError("ai_microusd"));
+    expect(result.personalization?.note).toContain("allowance");
+    expect(log.mock.calls[0][1]).toEqual(
+      expect.objectContaining({ errorClass: "ProviderBudgetError", budget: "ai_microusd" }),
+    );
+    log.mockRestore();
+  });
+  it("logs the provider status and elapsed time without the allowance wording", async () => {
+    const { result, log } = await run(new AiProviderRequestError(504, "openrouter"));
+    expect(result.personalization?.status).toBe("unavailable");
+    expect(result.personalization?.note).not.toContain("allowance");
+    expect(result.personalization?.note).not.toMatch(/[\u2013\u2014]/);
+    expect(log.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        errorClass: "AiProviderRequestError",
+        providerStatus: 504,
+        provider: "openrouter",
+        elapsedMs: expect.any(Number),
+        postCount: 1,
+      }),
+    );
+    log.mockRestore();
+  });
+  it("names timeouts", async () => {
+    const { log } = await run(new DOMException("AI generation timed out.", "TimeoutError"));
+    expect(log.mock.calls[0][1]).toEqual(expect.objectContaining({ errorClass: "TimeoutError" }));
+    log.mockRestore();
   });
 });

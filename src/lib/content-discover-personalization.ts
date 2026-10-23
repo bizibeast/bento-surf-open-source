@@ -327,9 +327,17 @@ export function discoverTopicMatches(text: string, topic: string) {
   return Boolean(phrase) && ` ${words} `.includes(` ${phrase} `);
 }
 
+// These describe presentation or ambition, not a subject. A random challenge or
+// creativity hashtag must never qualify a post for a founder/AI audience.
+export function isDiscoverSubjectTopic(topic: string) {
+  return !/^(?:public )?challenges?$|^(?:creativity|creative|innovation|inspiration|learning|insights?|success|motivation|viral|trending|tips|hustle|strategy|content|growth|journey|style)$/i.test(
+    topic.trim(),
+  );
+}
+
 export function discoverBrainTopics(context: CreatorDiscoverContext) {
   if (context.useBrainContext === false) return [];
-  if (context.research) return context.research.topics;
+  if (context.research) return context.research.topics.filter(isDiscoverSubjectTopic);
   const excluded = discoverExcludedTopics(context);
   const tags = context.brainItems
     .filter((item) => item.status === "confirmed")
@@ -338,7 +346,7 @@ export function discoverBrainTopics(context: CreatorDiscoverContext) {
     .filter(Boolean);
   return subjectTopics(
     [...new Set([...tags, ...topicsIn(positiveBrainText(context))])].filter(
-      (topic) => !excluded.includes(topic),
+      (topic) => isDiscoverSubjectTopic(topic) && !excluded.includes(topic),
     ),
   ).slice(0, 10);
 }

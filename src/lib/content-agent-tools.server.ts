@@ -11,6 +11,7 @@ import {
   contentAgentResponseFormat,
   type ContentAgentResult,
 } from "./content-agent";
+import { proseHasForbiddenDash, normalizeDashes } from "./text/dashes";
 import {
   agentAppActionSchema,
   agentPostEditSchema,
@@ -116,6 +117,7 @@ function toolSchema(tool: BentoAppTool) {
 const initialTools = [
   "list_social_accounts",
   "list_social_posts",
+  "get_social_post",
   "create_social_post",
   "list_auto_dm_automations",
   "get_auto_dm_delay",
@@ -173,6 +175,7 @@ export async function generateAgentWithTools(
       schema: responseSchema,
       responseFormat,
       maxTokens: 4000,
+      modelTier: "balanced" as const,
       temperature: 0.3,
       timeoutMs: Math.max(1, 60000 - (Date.now() - started)),
     };
@@ -245,7 +248,7 @@ export async function generateAgentWithTools(
           ]),
           ...Object.values(post.connectionOverrides || {}).map((v: any) => v.bodyOverride),
         ].filter(Boolean);
-        if (copy.some((value: string) => value.includes("\u2014")))
+        if (copy.some((value: string) => proseHasForbiddenDash(String(value))))
           throw new Error(
             "Posts must not contain em dashes. Rewrite the punctuation naturally without changing the meaning.",
           );
@@ -497,8 +500,7 @@ export async function editAgentPostAction(
     throw new Error("This review changed. Refresh it before editing.");
   if (!row.arguments.connectionIds?.includes(edit.connectionId))
     throw new Error("Choose one of this post's destinations.");
-  if (edit.body.includes("\u2014"))
-    throw new Error("Replace em dashes with natural punctuation before saving.");
+  const body = normalizeDashes(edit.body);
   if (
     edit.scheduledAt &&
     (row.arguments.mode !== "schedule" || Date.parse(edit.scheduledAt) <= Date.now())
@@ -515,7 +517,7 @@ export async function editAgentPostAction(
       ...row.arguments.connectionOverrides,
       [edit.connectionId]: {
         ...row.arguments.connectionOverrides?.[edit.connectionId],
-        bodyOverride: edit.body,
+        bodyOverride: body,
       },
     },
     ...(edit.scheduledAt ? { scheduledAt: edit.scheduledAt } : {}),

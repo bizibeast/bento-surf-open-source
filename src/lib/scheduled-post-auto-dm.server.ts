@@ -14,6 +14,7 @@ import {
   scheduledPostAutoDmSchemas,
   type ScheduledPostAutoDmProvider,
 } from "./scheduled-post-auto-dm";
+import { normalizeDashes, normalizeOptionalCopy } from "./text/dashes";
 
 export function scheduledPostAutoDmBlockReason(
   provider: ScheduledPostAutoDmProvider,
@@ -115,7 +116,7 @@ export async function activateScheduledPostAutoDm(target: any) {
     keywords: config.data.keywords,
     excluded_keywords: config.data.excludedKeywords,
     match_type: config.data.matchType,
-    reply_message: config.data.replyMessage,
+    reply_message: normalizeDashes(config.data.replyMessage),
     enabled: true,
   };
   let row: Record<string, unknown>;
@@ -126,15 +127,15 @@ export async function activateScheduledPostAutoDm(target: any) {
       ...common,
       media_scope: "specific",
       media_ids: [String(target.remote_post_id)],
-      opening_message: facebook.openingMessage,
-      confirmation_button_label: facebook.confirmationButtonLabel,
+      opening_message: normalizeDashes(facebook.openingMessage),
+      confirmation_button_label: normalizeDashes(facebook.confirmationButtonLabel),
       public_reply_enabled: facebook.publicReplyEnabled,
-      public_reply_message: facebook.publicReplyMessages[0] || null,
-      public_reply_messages: facebook.publicReplyMessages,
+      public_reply_message: normalizeOptionalCopy(facebook.publicReplyMessages[0]),
+      public_reply_messages: facebook.publicReplyMessages.map(normalizeDashes),
       email_capture_enabled: facebook.emailCaptureEnabled,
-      email_prompt_message: facebook.emailPromptMessage,
+      email_prompt_message: normalizeOptionalCopy(facebook.emailPromptMessage),
       email_marketing_consent_enabled: facebook.emailMarketingConsentEnabled,
-      reply_button_label: facebook.replyButtonLabel,
+      reply_button_label: normalizeOptionalCopy(facebook.replyButtonLabel),
       reply_button_url: facebook.replyButtonUrl,
     };
   }

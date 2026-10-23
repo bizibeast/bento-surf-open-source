@@ -731,7 +731,7 @@ export function ContentPage({
               <ContentAgent
                 previewAccounts={previewAccounts.data || []}
                 threads={sidebarThreads as ContentAgentThread[]}
-                agentName={agentIdentity.data?.preferences.display_name || "Bento"}
+                agentName={agentIdentity.data?.preferences.display_name || "Benny"}
                 agentThreadId={agentIdentity.data?.thread.id || null}
                 activeThreadTitle={thread.data?.thread?.title || undefined}
                 onPinThread={(threadId, pinned) => pinThread.mutate({ threadId, pinned })}

@@ -55,6 +55,7 @@ beforeEach(() => {
           if (op === "is") return (row[key] ?? null) === value;
           if (op === "gt") return String(row[key]) > String(value);
           if (op === "gte") return String(row[key]) >= String(value);
+          if (op === "lt") return String(row[key]) < String(value);
           if (op === "ilike")
             return String(row[key])
               .toLowerCase()
@@ -90,6 +91,10 @@ beforeEach(() => {
       },
       gte: (key: string, value: unknown) => {
         call.filters.push(["gte", key, value]);
+        return query;
+      },
+      lt: (key: string, value: unknown) => {
+        call.filters.push(["lt", key, value]);
         return query;
       },
       ilike: (key: string, value: unknown) => {
@@ -314,5 +319,81 @@ describe("stored MCP workspace data", () => {
       "fetched_at",
     );
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("imported social analytics filters", () => {
+  it.each(["video", "VIDEO", " ViDeO "])(
+    "filters canonical content type from %s while retaining owner, date bounds and freshness",
+    async (contentType) => {
+      rows.social_content_insights = [
+        {
+          id: id(1),
+          user_id: owner,
+          connection_id: id(5),
+          provider: "instagram",
+          content_type: "video",
+          caption: "Reel",
+          published_at: "2026-10-19T03:32:27Z",
+          fetched_at: "2026-10-22T02:01:00Z",
+          views: 1251,
+        },
+        {
+          id: id(2),
+          user_id: owner,
+          connection_id: id(5),
+          provider: "instagram",
+          content_type: "video",
+          published_at: "2026-10-20T03:32:27Z",
+        },
+        {
+          id: id(3),
+          user_id: other,
+          connection_id: id(5),
+          provider: "instagram",
+          content_type: "video",
+          published_at: "2026-10-19T03:32:27Z",
+        },
+        {
+          id: id(4),
+          user_id: owner,
+          connection_id: id(5),
+          provider: "youtube",
+          content_type: "video",
+          published_at: "2026-10-19T03:32:27Z",
+        },
+      ];
+      const result = await readWorkspaceData(context, {
+        collection: "social_posts",
+        provider: "instagram",
+        connectionId: id(5),
+        contentType,
+        dateFrom: "2026-10-18T18:30:00Z",
+        dateTo: "2026-10-19T18:30:00Z",
+      });
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0]).toMatchObject({
+        id: id(1),
+        views: 1251,
+        fetched_at: "2026-10-22T02:01:00Z",
+      });
+      const call = calls.find((call) => call.table === "social_content_insights")!;
+      expect(call.filters).toContainEqual(["eq", "user_id", owner]);
+      expect(call.filters).toContainEqual(["eq", "content_type", "video"]);
+      expect(call.filters).toContainEqual(["lt", "published_at", "2026-10-19T18:30:00Z"]);
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
+  it("rejects irrelevant social filters rather than silently ignoring them", async () => {
+    for (const input of [
+      { collection: "brain_items", provider: "instagram" },
+      { collection: "social_posts", targetStatus: "published" },
+      { collection: "social_accounts", dateFrom: "2026-10-19T00:00:00Z" },
+    ]) {
+      await expect(
+        readWorkspaceData(context, input as Parameters<typeof readWorkspaceData>[1]),
+      ).rejects.toThrow();
+    }
+    expect(mocks.from).not.toHaveBeenCalled();
   });
 });

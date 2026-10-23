@@ -6,6 +6,7 @@ import {
 } from "./provider-budget.server";
 /* eslint-disable @typescript-eslint/no-explicit-any -- New service-role tables are typed after the migration is deployed. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { normalizeDashes } from "./text/dashes";
 import { decryptServerSecret } from "./secret-crypto.server";
 import {
   getTwitterConnectionReadiness,
@@ -680,7 +681,7 @@ export async function sendTwitterDm(connection: any, senderId: string | null, te
   const result = await xRequest(
     `https://api.x.com/2/dm_conversations/with/${encodeURIComponent(senderId)}/messages`,
     token,
-    { method: "POST", body: JSON.stringify({ text }) },
+    { method: "POST", body: JSON.stringify({ text: normalizeDashes(text) }) },
   );
   if (twitterRequestFailed(result.status, result.data)) {
     throw twitterApiError(

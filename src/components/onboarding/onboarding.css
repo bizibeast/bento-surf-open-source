@@ -1420,3 +1420,8 @@
     transition-duration: 0s !important;
   }
 }
+
+.ob-checkout-failed {
+  color: #b42318;
+  font-weight: 600;
+}

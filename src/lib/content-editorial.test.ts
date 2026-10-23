@@ -44,6 +44,14 @@ const codes = (body: string) =>
     context.recentOutputs || [],
   ).map((i) => i.code);
 
+it("allows a bold curiosity hook and CTA when the post delivers useful advice", () => {
+  expect(
+    codes(
+      "The secret nobody tells you about launching: test one useful workflow with a real user before adding features. Ask where they get stuck. Agree? Comment YES below!",
+    ),
+  ).not.toContain("formulaic");
+});
+
 it.each([
   ["unknown source", { sourceId: "missing" }, "source reference"],
   ["paraphrased quote", { quote: "I shipped a tiny prototype" }, "quote"],

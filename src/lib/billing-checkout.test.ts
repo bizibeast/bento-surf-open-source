@@ -126,9 +126,11 @@ describe("checkout after preparation", () => {
           workspace_id: "workspace",
           billing_catalog: "2026-10",
         }),
-        return_url: expect.stringContaining("/onboarding?checkout=success"),
+        return_url: expect.stringContaining("/onboarding?checkout=return&trial=1"),
       }),
     );
+    // Adaptive Currency stays on: Dodo may show the buyer's local currency.
+    expect(mocks.create.mock.calls[0][0]).not.toHaveProperty("billing_currency");
     expect(mocks.save).toHaveBeenCalledWith(
       "owner",
       "checkout-one",
@@ -265,6 +267,35 @@ describe("checkout after preparation", () => {
     await expect(createCheckout({ data: input })).resolves.toEqual({
       url: "https://checkout.dodopayments.com/one",
     });
+  });
+  it("keeps the preparation gate in front of a payments return", async () => {
+    mocks.preparation.mockResolvedValueOnce({
+      status: "prepared",
+      revision: 5,
+      approved_revision: 4,
+    });
+    expect(await createCheckout({ data: { ...input, returnTo: "payments" } })).toEqual({
+      url: expect.stringContaining("/onboarding"),
+    });
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+  it("sends a Store trial back to the payment connect screen", async () => {
+    vi.stubEnv("DODO_STORE_19_MONTHLY_PRODUCT_ID", "store-19");
+    mocks.product.mockResolvedValueOnce({
+      product_id: "store-19",
+      is_recurring: true,
+      price: { type: "recurring_price" },
+    });
+    await createCheckout({
+      data: { ...input, plan: "store", returnTo: "payments" },
+    });
+    expect(mocks.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subscription_data: { trial_period_days: 3 },
+        product_cart: [{ product_id: "store-19", quantity: 1 }],
+        return_url: expect.stringContaining("/settings?section=integrations&integration=payments"),
+      }),
+    );
   });
   it("rejects add-ons before making a provider request", async () => {
     await expect(createCheckout({ data: { ...input, storageUnits: 1 } })).rejects.toThrow(

@@ -39,6 +39,7 @@ import {
   selectCreatorPaymentProvider,
 } from "@/lib/payment-connections.functions";
 import { CREATOR_PAYMENT_PROVIDERS, type CreatorPaymentProvider } from "@/lib/payment-providers";
+import { requestCurrentConnectPayments } from "@/lib/connect-payments";
 import { getMyProfile, setAccountTimeZone, updateProfile } from "@/lib/profile.functions";
 import { safeNavigationHref, trustedApplicationOrigin } from "@/lib/safe-url";
 import {
@@ -860,6 +861,24 @@ export function createSettingsWebMcpTools({
       },
       parse: (input) => paymentInputSchema.parse(input),
       run: async (input) => {
+        if (input.action === "connect_polar" || input.action === "open_setup") {
+          const checkout = await requestCurrentConnectPayments();
+          if (checkout.url) {
+            return {
+              destination: checkout.url,
+              refresh: false,
+              message:
+                checkout.outcome === "trial_checkout"
+                  ? "Opening the 3-day Store trial. You come back here to connect payments."
+                  : "Opening Store checkout. You come back here to connect payments.",
+              data: {
+                ok: true,
+                outcome: checkout.outcome,
+                provider: input.action === "open_setup" ? input.provider : "polar",
+              },
+            };
+          }
+        }
         if (input.action === "connect_polar") {
           const result = await beginPolarConnection();
           return {

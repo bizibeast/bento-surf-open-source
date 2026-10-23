@@ -913,3 +913,25 @@ it("honors image opt-out for composer requests even after a job has been queued"
   expect(m.fetch).not.toHaveBeenCalled();
   expect(updates.at(-1)).toMatchObject({ status: "failed" });
 });
+
+it("does not submit an image when its draft was rejected during moderation", async () => {
+  m.load
+    .mockResolvedValueOnce({ result: { cards: [{ ...card }], draftStates: {} } })
+    .mockResolvedValue({ result: { cards: [], draftStates: {}, rejectedDraftIds: ["draft"] } });
+  await processImageJob("owner", "job");
+  expect(m.moderate).toHaveBeenCalledOnce();
+  expect(m.fetch).not.toHaveBeenCalled();
+  expect(updates.at(-1)).toMatchObject({ status: "failed" });
+});
+
+it("rechecks rejection after provider budget reservation before sending an image request", async () => {
+  const current = { result: { cards: [{ ...card }], draftStates: {} } };
+  m.load
+    .mockResolvedValueOnce(current)
+    .mockResolvedValueOnce(current)
+    .mockResolvedValue({ result: { cards: [], draftStates: {}, rejectedDraftIds: ["draft"] } });
+  await processImageJob("owner", "job");
+  expect(m.load).toHaveBeenCalledTimes(3);
+  expect(m.fetch).not.toHaveBeenCalled();
+  expect(updates.at(-1)).toMatchObject({ status: "failed" });
+});

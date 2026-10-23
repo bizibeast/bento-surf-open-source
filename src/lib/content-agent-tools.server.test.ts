@@ -15,11 +15,16 @@ import {
   agentActionErrorMessage,
   agentEntityLabels,
   AGENT_TOOL_STEP_LIMIT,
+  type AgentToolContext,
 } from "./content-agent-tools.server";
 import type { BentoAppTool } from "./mcp.server";
 const id = "00000000-0000-4000-8000-000000000001";
 const revision = "2026-10-16T12:00:00.000Z";
-const context = { userId: id, accessToken: "user-jwt", supabase: {} as any };
+const context = {
+  userId: id,
+  accessToken: "user-jwt",
+  supabase: {} as AgentToolContext["supabase"],
+};
 const reply = { action: "answer", message: "Prepared", cards: [], memories: [], toolRequest: null };
 const call = (name: string, args = {}) => ({
   ...reply,
@@ -60,6 +65,42 @@ describe("Agent tool execution", () => {
     expect(result.actions[0].tool).toBe(write.name);
     expect(result.result.message).toContain("review");
   });
+  it("advertises and executes owned post details from Benny's real tool registry as a read", async () => {
+    const actual = await vi.importActual<typeof import("./mcp.server")>("./mcp.server");
+    const postId = "00000000-0000-4000-8000-000000000002";
+    const getSocialPost = vi.fn(async () => ({
+      post: { id: postId, body: "Owned caption", targets: [] },
+      attempts: [],
+      attemptsPagination: { limit: 20, hasMore: false, nextCursor: null },
+    }));
+    const tools = actual.createBentoAppTools(context, "https://app.bento.surf", {
+      ...actual.defaultBentoMcpOperations,
+      getSocialPost:
+        getSocialPost as unknown as typeof actual.defaultBentoMcpOperations.getSocialPost,
+    });
+    const generate = vi
+      .fn()
+      .mockResolvedValueOnce(call("get_social_post", { id: postId, userId: "untrusted-owner" }))
+      .mockResolvedValueOnce(reply);
+    const result = await generateAgentWithTools("{}", context, "rules", {}, { tools, generate });
+    const firstInput = generate.mock.calls[0][0].input;
+    expect(firstInput.catalog).toContainEqual(
+      expect.objectContaining({ name: "get_social_post", requiresApproval: false }),
+    );
+    expect(firstInput.schemas.get_social_post).toMatchObject({
+      type: "object",
+      required: expect.arrayContaining(["id"]),
+    });
+    expect(getSocialPost).toHaveBeenCalledExactlyOnceWith(id, { id: postId, attemptsLimit: 20 });
+    const observation = generate.mock.calls[1][0].input.observations.find(
+      (item: { tool: string }) => item.tool === "get_social_post",
+    );
+    expect(JSON.parse(observation.result).structuredContent.post).toMatchObject({
+      body: "Owned caption",
+    });
+    expect(result.actions).toEqual([]);
+  });
+
   it("deduplicates read requests and stops after five model steps", async () => {
     const read = tool("read", true),
       generate = vi.fn().mockResolvedValue(call("read"));
@@ -126,24 +167,25 @@ describe("Agent tool execution", () => {
     expect(JSON.stringify(generate.mock.calls[1][0].input.observations)).toContain("em dashes");
   });
 });
-function database(row: any, messageExists = true) {
+function database(row: Record<string, unknown>, messageExists = true) {
   row.updated_at ||= revision;
   mocks.from.mockImplementation((table: string) => {
     const filters: Record<string, unknown> = {};
-    let update: any;
-    const q: any = {
+    let update: Record<string, unknown> | undefined;
+    const q = {
       select: () => q,
       eq: (k: string, v: unknown) => {
         filters[k] = v;
         return q;
       },
       gt: () => q,
-      update: (v: any) => {
+      update: (v: Record<string, unknown>) => {
         update = v;
         return q;
       },
       maybeSingle: async () => run(),
-      then: (resolve: any) => Promise.resolve(run()).then(resolve),
+      then: (resolve: (value: ReturnType<typeof run>) => unknown) =>
+        Promise.resolve(run()).then(resolve),
     };
     function run() {
       if (table === "content_agent_messages")

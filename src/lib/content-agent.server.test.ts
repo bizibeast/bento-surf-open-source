@@ -1,3 +1,4 @@
+import * as providerBudget from "./provider-budget.server";
 import { describe, expect, it, vi } from "vitest";
 import { loadAgentAttachments } from "./content-agent-attachments.server";
 vi.mock("./content-agent-attachments.server", () => ({
@@ -16,7 +17,11 @@ vi.mock("./content-existing-sources.server", () => ({
 vi.mock("./content-business-context.server", () => ({
   loadContentBusinessContext: vi.fn().mockResolvedValue({}),
 }));
-import { buildContentStrategy, contentProfileSchema } from "./content-brain";
+import {
+  buildContentStrategy,
+  completeContentStrategy,
+  contentProfileSchema,
+} from "./content-brain";
 import {
   loadContentEditorialContext,
   editorialContextFromAgent,
@@ -41,6 +46,20 @@ function withStrategies(items: Array<Record<string, unknown>>) {
       content: buildContentStrategy(platform, contentProfileSchema.parse({}), []),
     })),
   ];
+}
+
+function brainReviewResponse(input: { messages: Array<{ role: string; content: string }> }) {
+  const payload = JSON.parse(input.messages.find((message) => message.role === "user")!.content);
+  return {
+    response: JSON.stringify({
+      reviews: payload.documents.map((document: { id: string }) => ({
+        id: document.id,
+        approved: true,
+        sourceIds: [payload.sources[0].id],
+        issues: [],
+      })),
+    }),
+  };
 }
 
 const threadId = "11111111-1111-4111-8111-111111111111";
@@ -312,9 +331,14 @@ describe("content Agent server", () => {
         }),
       }),
     };
+    const generationResponse = await ai.run();
+    ai.run
+      .mockReset()
+      .mockResolvedValueOnce(generationResponse)
+      .mockImplementation(async (_model, input) => brainReviewResponse(input));
     await generateConnectedBrainSuggestions(posts, undefined, { AI: ai });
     const input = ai.run.mock.calls[0][1] as Record<string, unknown>;
-    expect(input.max_tokens).toBe(4000);
+    expect(input.max_tokens).toBe(6000);
     expect(input.response_format).toEqual({ type: "json_object" });
     const messages = input.messages as Array<{ role: string; content: string }>;
     expect(messages.find((message) => message.role === "system")?.content).toContain(
@@ -322,7 +346,7 @@ describe("content Agent server", () => {
     );
     expect(messages.find((message) => message.role === "user")?.content.length).toBeLessThan(16000);
   });
-  it("falls back when the primary provider fabricates source references or quotes", async () => {
+  it("keeps grounded Brain generation and review on the explicitly selected provider", async () => {
     const item = {
       kind: "profile",
       title: "My Human",
@@ -354,6 +378,11 @@ describe("content Agent server", () => {
         .fn()
         .mockResolvedValue({ response: JSON.stringify({ suggestions: withStrategies([item]) }) }),
     };
+    const generationResponse = await ai.run();
+    ai.run
+      .mockReset()
+      .mockResolvedValueOnce(generationResponse)
+      .mockImplementation(async (_model, input) => brainReviewResponse(input));
     try {
       const result = await generateConnectedBrainSuggestions(
         [
@@ -364,10 +393,10 @@ describe("content Agent server", () => {
           },
         ],
         undefined,
-        { OPENROUTER_API_KEY: "test-key", AI: ai },
+        { AI_TEXT_PROVIDER: "workers-ai", OPENROUTER_API_KEY: "test-key", AI: ai },
       );
-      expect(ai.run).toHaveBeenCalledTimes(1);
-      expect(ai.run.mock.calls[0][0]).toBe("@cf/meta/llama-3.3-70b-instruct-fp8-fast");
+      expect(ai.run).toHaveBeenCalledTimes(2);
+      expect(ai.run.mock.calls[0][0]).toBe("@cf/openai/gpt-oss-120b");
       expect(result[0].sourceRef).toBe("threads:17900000000000001");
       expect(result[0].evidence?.[0].sourceRef).toBe("threads:17900000000000001");
     } finally {
@@ -435,7 +464,7 @@ describe("content Agent server", () => {
       message: "One idea",
     });
     expect(ai.run).toHaveBeenCalledWith(
-      "@cf/openai/gpt-oss-20b",
+      "@cf/openai/gpt-oss-120b",
       expect.objectContaining({
         messages: expect.arrayContaining([
           expect.objectContaining({
@@ -650,7 +679,22 @@ it("loads workspace drafts, historical dates and cross-chat rejection feedback w
     queries.push(query);
     const rows: Record<string, unknown[]> = {
       creator_brain_items: [],
-      creator_content_recommendations: [],
+      creator_content_recommendations: [
+        {
+          id: "fiction",
+          title: "A Rich CEO Humiliated a Courier… Then Learned Who Really Owned the Company!",
+          summary: "A ruthless tech founder arrives expecting a $20 million investment.",
+          source_url: "https://example.com/fiction",
+          feedback: "saved",
+        },
+        {
+          id: "relevant",
+          title: "A startup founder shares customer research",
+          summary: "Lessons from interviewing customers about their product.",
+          source_url: "https://example.com/relevant",
+          feedback: "pending",
+        },
+      ],
       social_connections: [],
       creator_content_media: [],
       social_content_insights: [
@@ -693,12 +737,20 @@ it("loads workspace drafts, historical dates and cross-chat rejection feedback w
     const builder: Record<string, unknown> = {};
     for (const method of ["select", "order", "limit", "is", "textSearch"])
       builder[method] = vi.fn(() => builder);
-    for (const method of ["eq", "gt"])
+    for (const method of ["eq", "gt", "gte"])
       builder[method] = vi.fn((key, value) => {
         query.filters.push([key, value]);
         return builder;
       });
-    builder.maybeSingle = vi.fn(() => Promise.resolve({ data: null, error: null }));
+    builder.maybeSingle = vi.fn(() =>
+      Promise.resolve({
+        data:
+          table === "creator_content_profiles"
+            ? { niche_keywords: ["startup journey"], language: "en", region: "global" }
+            : null,
+        error: null,
+      }),
+    );
     builder.then = (resolve: (value: unknown) => void) =>
       Promise.resolve({ data: rows[table] || [], error: null }).then(resolve);
     return builder;
@@ -711,9 +763,11 @@ it("loads workspace drafts, historical dates and cross-chat rejection feedback w
     );
     expect(requireContentWorkspace).toHaveBeenCalledWith("workspace", "contentAgent");
     expect(
-      queries.every((query) =>
-        query.filters.some(([key, value]) => key === "user_id" && value === "workspace"),
-      ),
+      queries
+        .filter((query) => query.table !== "content_trend_briefs")
+        .every((query) =>
+          query.filters.some(([key, value]) => key === "user_id" && value === "workspace"),
+        ),
     ).toBe(true);
     expect(queries.some((query) => query.table === "content_agent_threads")).toBe(false);
     expect(
@@ -728,6 +782,12 @@ it("loads workspace drafts, historical dates and cross-chat rejection feedback w
           body: "A recently saved post\nSlide thesis The saved carousel argument",
         }),
       ]),
+    );
+    expect(context.sources.some((source) => source.url === "https://example.com/fiction")).toBe(
+      false,
+    );
+    expect(context.sources.some((source) => source.url === "https://example.com/relevant")).toBe(
+      true,
     );
     expect(context.feedback).toEqual([{ type: "rejected", reason: "Repeated argument" }]);
     expect(context.sources).toEqual(
@@ -1397,4 +1457,240 @@ it("keeps named-agent restrictions for mixed explicit broader pairs", async () =
     deps,
   );
   expect(result.result.cards.map((card) => card.type)).toEqual(["idea", "idea"]);
+});
+
+it("rejects a full Brain batch when an exact quote supports a review but not product ownership", async () => {
+  const item = {
+    kind: "profile",
+    title: "My Human",
+    content: "I developed Instinct and raised $10 million.",
+    provenance: "social_post",
+    sourceRef: "post-1",
+    evidence: [{ sourceRef: "post-1", quote: "I reviewed Instinct" }],
+  };
+  const ai = {
+    run: vi
+      .fn()
+      .mockResolvedValueOnce({ response: JSON.stringify({ suggestions: withStrategies([item]) }) })
+      .mockImplementation(async (_model, input) => {
+        const payload = JSON.parse(
+          input.messages.find((message: { role: string }) => message.role === "user").content,
+        );
+        expect(payload.corrections).toEqual([
+          {
+            title: "Ownership correction",
+            content: "I only made a video reviewing Instinct; I never built it.",
+          },
+        ]);
+        expect(payload.documents[0].content).toContain("$10 million");
+        return {
+          response: JSON.stringify({
+            reviews: payload.documents.map((document: { id: string }, index: number) => ({
+              id: document.id,
+              approved: index !== 0,
+              sourceIds: [payload.sources[0].id],
+              issues:
+                index === 0 ? ["The quote refers to reviewing, not building or fundraising."] : [],
+            })),
+          }),
+        };
+      }),
+  };
+  await expect(
+    generateConnectedBrainSuggestions(
+      [
+        {
+          provider: "youtube",
+          remote_post_id: "review",
+          caption:
+            "I reviewed Instinct, built by another founder. This is my video about their app.",
+        },
+      ],
+      undefined,
+      { AI: ai },
+      [
+        {
+          id: "correction",
+          kind: "instruction",
+          title: "Ownership correction",
+          content: "I only made a video reviewing Instinct; I never built it.",
+          status: "confirmed",
+          provenance: "creator",
+          locked: true,
+          sourceUrl: null,
+          sourceRef: null,
+          createdAt: "",
+          updatedAt: "",
+        },
+      ],
+    ),
+  ).rejects.toThrow("could not be verified");
+  expect(ai.run).toHaveBeenCalledTimes(2);
+});
+
+it("generates a complete bounded Brain from concise factual documents without asking the model to format two strategies", async () => {
+  const suggestions = [
+    {
+      kind: "profile",
+      title: "My Human",
+      content: "I build creator tools and review other teams' AI products.",
+    },
+    {
+      kind: "instruction",
+      title: "Writing voice",
+      content: "I write short, direct explanations about building useful tools.",
+    },
+    {
+      kind: "story",
+      title: "Testing with one user",
+      content: "I tested my prototype with one real user before adding more features.",
+    },
+  ].map((item) => ({
+    ...item,
+    provenance: "social_post",
+    sourceRef: "post-1",
+    tags: ["creator tools"],
+    evidence: [{ sourceRef: "post-1", quote: "I build creator tools" }],
+  }));
+  const ai = {
+    run: vi
+      .fn()
+      .mockResolvedValueOnce({ response: JSON.stringify({ suggestions }) })
+      .mockImplementation(async (_model, input) => brainReviewResponse(input)),
+  };
+  const publishing = contentProfileSchema.parse({
+    nicheKeywords: ["creator tools"],
+    goal: "reach_growth",
+    timezone: "Asia/Kolkata",
+    platformFrequencies: { twitter: 0 },
+  });
+  const result = await generateConnectedBrainSuggestions(
+    [
+      {
+        provider: "youtube",
+        remote_post_id: "evidence",
+        caption:
+          "I build creator tools and review other teams' AI products. I tested my prototype with one real user before adding more features.",
+      },
+    ],
+    publishing,
+    { AI: ai },
+  );
+  expect(ai.run).toHaveBeenCalledTimes(2);
+  expect(ai.run.mock.calls[0][1]).toMatchObject({ max_tokens: 6000 });
+  expect(ai.run.mock.calls[0][1].messages[0].content).not.toContain("Extract up to six");
+  const plans = result.filter((item) => item.kind === "strategy");
+  expect(plans.map((item) => item.title)).toEqual(["X Strategy", "LinkedIn Strategy"]);
+  for (const plan of plans) expect(completeContentStrategy(plan.content)).toBe(true);
+  expect(plans[0].content).toContain("Publishing is paused");
+  expect(plans[1].content).toContain("Not configured");
+  expect(plans[1].content).not.toContain("Prepare 3 posts per week");
+  const reviewed = JSON.parse(
+    ai.run.mock.calls[1][1].messages.find((message: { role: string }) => message.role === "user")
+      .content,
+  );
+  expect(reviewed.documents).toHaveLength(5);
+  expect(
+    reviewed.documents.some((document: { title: string }) => document.title === "My Human"),
+  ).toBe(true);
+  expect(
+    reviewed.documents.filter((document: { kind: string }) => document.kind === "strategy"),
+  ).toHaveLength(2);
+});
+
+it("uses supported strict JSON schema for OpenRouter Brain generation and keeps full-batch verification", async () => {
+  const requests: Array<{
+    messages: Array<{ role: string; content: string }>;
+    response_format: { json_schema: { schema: { properties: { suggestions: unknown } } } };
+  }> = [];
+  const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+    const request = JSON.parse(String(init?.body));
+    requests.push(request);
+    const payload = JSON.parse(
+      request.messages.find((message: { role: string }) => message.role === "user").content,
+    );
+    const value = payload.documents
+      ? {
+          reviews: payload.documents.map((document: { id: string }) => ({
+            id: document.id,
+            approved: true,
+            sourceIds: [payload.sources[0].id],
+            issues: [],
+          })),
+        }
+      : {
+          suggestions: [
+            {
+              kind: "profile",
+              title: "My Human",
+              content: "I build creator tools.",
+              provenance: "social_post",
+              sourceRef: "post-1",
+              tags: ["creator tools"],
+              evidence: [{ sourceRef: "post-1", quote: "I build creator tools." }],
+            },
+          ],
+        };
+    return Response.json({
+      choices: [{ message: { content: JSON.stringify(value) }, finish_reason: "stop" }],
+      usage: { cost: 0.001 },
+    });
+  });
+  try {
+    const result = await generateConnectedBrainSuggestions(
+      [{ provider: "youtube", remote_post_id: "source", caption: "I build creator tools." }],
+      undefined,
+      { AI_TEXT_PROVIDER: "openrouter", OPENROUTER_API_KEY: "test-key" },
+    );
+    expect(result).toHaveLength(3);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(requests[0]).toMatchObject({
+      model: "z-ai/glm-5.3-flash",
+      max_tokens: 6000,
+      reasoning: { effort: "low" },
+      response_format: { type: "json_schema", json_schema: { strict: true } },
+    });
+    const shape = requests[0].response_format.json_schema.schema.properties.suggestions;
+    expect(shape).toMatchObject({
+      maxItems: 5,
+      items: {
+        properties: {
+          content: { maxLength: 1200 },
+          sourceRef: { enum: ["post-1"] },
+          evidence: { maxItems: 2 },
+        },
+      },
+    });
+    const review = JSON.parse(
+      requests[1].messages.find((message: { role: string }) => message.role === "user")!.content,
+    );
+    expect(review.documents).toHaveLength(3);
+  } finally {
+    fetcher.mockRestore();
+  }
+});
+
+it("reserves the full 6K Brain completion ceiling and sends nothing when its budget is denied", async () => {
+  const reservation = vi.spyOn(providerBudget, "aiReservationMicrousd");
+  vi.mocked(providerBudget.reserveAiProviderUsage).mockRejectedValueOnce(
+    new providerBudget.ProviderBudgetError("ai_microusd"),
+  );
+  const fetcher = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("No network allowed"));
+  try {
+    await expect(
+      generateConnectedBrainSuggestions(
+        [{ provider: "youtube", remote_post_id: "source", caption: "I build creator tools." }],
+        undefined,
+        { AI_TEXT_PROVIDER: "openrouter", OPENROUTER_API_KEY: "test-key" },
+      ),
+    ).rejects.toBeInstanceOf(providerBudget.ProviderBudgetError);
+    expect(reservation).toHaveBeenCalledWith(expect.any(Object), 6000, {
+      input: 0.15,
+      output: 0.5,
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+  } finally {
+    reservation.mockRestore();
+    fetcher.mockRestore();
+  }
 });

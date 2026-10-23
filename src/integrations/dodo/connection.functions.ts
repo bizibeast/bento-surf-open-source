@@ -3,7 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { requirePlanEntitlement } from "@/lib/plan.server";
+import { requireCreatorPaymentConnect } from "@/lib/plan.server";
 import { requireExclusiveCreatorPaymentProvider } from "@/lib/payment-connection-policy.server";
 import { encryptServerSecret } from "@/lib/secret-crypto.server";
 import {
@@ -66,11 +66,7 @@ export const connectDodoApiKey = createServerFn({ method: "POST" })
     z.object({ apiKey: apiKeySchema, environment: environmentSchema }).parse(input),
   )
   .handler(async ({ context, data }) => {
-    await requirePlanEntitlement(
-      context.userId,
-      "oneTapCheckout",
-      "Connected payments are included with the Store plan.",
-    );
+    await requireCreatorPaymentConnect(context.userId);
     await requireExclusiveCreatorPaymentProvider(context.userId, DODO_CREATOR_PROVIDER);
     const environment = assertDodoEnvironmentAllowed(data.environment);
     const apiKey = data.apiKey.trim();

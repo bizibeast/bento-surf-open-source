@@ -1,3 +1,5 @@
+import { founderPeriod } from "./founder-period";
+
 export type AnalyticsBreakdown = {
   label: string;
   visitors: number;
@@ -25,6 +27,7 @@ export type CrawlerBreakdown = {
 
 export type FounderWebAnalytics = {
   available: boolean;
+  unavailablePanels: string[];
   error: string | null;
   days: 7 | 30 | 90;
   offset: number;
@@ -80,11 +83,35 @@ type QueryConfig = {
   host?: string;
   projectId?: string;
   fetcher?: typeof fetch;
+  environment?: "production" | "staging";
+  report?: "all" | "audience" | "journeys";
 };
 
-type ResolvedQueryConfig = Required<Pick<QueryConfig, "apiKey" | "host" | "projectId" | "fetcher">>;
+type ResolvedQueryConfig = Required<
+  Pick<QueryConfig, "apiKey" | "host" | "projectId" | "fetcher" | "environment" | "report">
+>;
 
-const DAY_MS = 86_400_000;
+const PANEL_NAMES = [
+  "overview",
+  "sessions",
+  "daily",
+  "channels",
+  "referrers",
+  "campaigns",
+  "keywords",
+  "countries",
+  "regions",
+  "cities",
+  "hostnames",
+  "pages",
+  "entryPages",
+  "exitLinks",
+  "browsers",
+  "operatingSystems",
+  "devices",
+  "journeys",
+  "crawlers",
+] as const;
 const CACHE_MS = 55_000;
 const analyticsCache = new Map<
   string,
@@ -103,6 +130,7 @@ function emptyBreakdowns() {
 function emptyAnalytics(days: 7 | 30 | 90, error: string | null, offset = 0): FounderWebAnalytics {
   return {
     available: false,
+    unavailablePanels: [...PANEL_NAMES],
     error,
     days,
     offset,
@@ -145,14 +173,9 @@ function fillDaily(
   offset = 0,
 ) {
   const byDate = new Map(rows.map((row) => [row.date, row]));
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
-  return Array.from({ length: days }, (_, index) => {
-    const date = new Date(today.getTime() - (offset + days - index - 1) * DAY_MS)
-      .toISOString()
-      .slice(0, 10);
-    return byDate.get(date) ?? { date, visitors: 0, conversions: 0 };
-  });
+  return founderPeriod(days, offset).dates.map(
+    (date) => byDate.get(date) ?? { date, visitors: 0, conversions: 0 },
+  );
 }
 
 function appHost(value: string | undefined) {
@@ -162,28 +185,97 @@ function appHost(value: string | undefined) {
     .replace(/\/$/, "");
 }
 
-async function runHogQL(query: string, config: ResolvedQueryConfig) {
-  try {
-    const response = await config.fetcher(
-      `${config.host}/api/projects/${config.projectId}/query/`,
-      {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${config.apiKey}`,
-          "content-type": "application/json",
-        },
-        signal: AbortSignal.timeout(8_000),
-        body: JSON.stringify({ query: { kind: "HogQLQuery", query } }),
-      },
-    );
-    if (!response.ok) throw new Error(`PostHog query failed (${response.status})`);
-    const payload = (await response.json()) as HogQLResponse;
-    if (payload.error) throw new Error(payload.error);
-    return payload.results ?? [];
-  } catch (error) {
-    console.warn("[posthog] analytics panel unavailable", error);
-    return [];
+const POSTHOG_TIMEOUT_MS = 20_000;
+const MAX_CONCURRENT_QUERIES = 4;
+let activeQueries = 0;
+const queryWaiters: Array<() => void> = [];
+
+async function withQuerySlot<T>(work: () => Promise<T>) {
+  if (activeQueries >= MAX_CONCURRENT_QUERIES) {
+    await new Promise<void>((resolve) => queryWaiters.push(resolve));
+  } else {
+    activeQueries += 1;
   }
+  try {
+    return await work();
+  } finally {
+    const next = queryWaiters.shift();
+    if (next) next();
+    else activeQueries -= 1;
+  }
+}
+
+function queryCategory(query: string) {
+  if (query.includes("arrayJoin([")) return "breakdowns";
+  if (query.includes("countIf(event = '$pageview' AND timestamp")) return "overview";
+  if (query.includes("avg(duration_seconds)")) return "sessions";
+  if (query.includes("toDate(timestamp)")) return "daily";
+  if (query.includes("entry_page")) return "entryPages";
+  if (query.includes("AS exit_link")) return "exitLinks";
+  if (query.trimStart().startsWith("SELECT distinct_id,")) return "journeys";
+  return "crawlers";
+}
+
+async function runHogQL(query: string, config: ResolvedQueryConfig) {
+  const panel = queryCategory(query);
+  if (config.report === "journeys" && panel !== "journeys" && panel !== "overview") return [];
+  if (config.report === "audience" && panel === "journeys") return [];
+  // Missing JSON properties are NULL in HogQL: empty(toString(NULL)) is still
+  // NULL. Coalesce before comparing so untagged legacy events count as production.
+  // Self-hosted instances have no hosted staging hostnames to fall back on.
+  const legacy = "coalesce(toString(properties.deployment_environment), '') = ''";
+  const environmentFilter =
+    config.environment === "staging"
+      ? "properties.deployment_environment = 'staging'"
+      : `(properties.deployment_environment = 'production' OR ${legacy})`;
+  const scopedQuery = query.replace(
+    /FROM events\s+WHERE/g,
+    `FROM events WHERE ${environmentFilter} AND`,
+  );
+  const queuedAt = Date.now();
+  return withQuerySlot(async () => {
+    const startedAt = Date.now();
+    let status: number | null = null;
+    let reason = "network";
+    try {
+      const response = await config.fetcher(
+        `${config.host}/api/projects/${config.projectId}/query/`,
+        {
+          method: "POST",
+          headers: { authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" },
+          // Begin the timeout after obtaining a slot, not while waiting behind
+          // other reports or Workers' six simultaneous outbound connections.
+          signal: AbortSignal.timeout(POSTHOG_TIMEOUT_MS),
+          body: JSON.stringify({ query: { kind: "HogQLQuery", query: scopedQuery } }),
+        },
+      );
+      status = response.status;
+      if (!response.ok) {
+        reason = "http";
+        void response.body?.cancel().catch(() => undefined);
+        throw new Error("Reporting HTTP error");
+      }
+      reason = "invalid_response";
+      const payload = (await response.json()) as HogQLResponse;
+      if (payload.error) {
+        reason = "query";
+        throw new Error("Reporting query error");
+      }
+      if (!Array.isArray(payload.results)) throw new Error("Missing report results");
+      return payload.results;
+    } catch (error) {
+      const name = error && typeof error === "object" && "name" in error ? error.name : null;
+      if (name === "TimeoutError" || name === "AbortError") reason = "timeout";
+      console.warn("[posthog] analytics panel unavailable", {
+        panel,
+        reason,
+        status,
+        durationMs: Date.now() - startedAt,
+        queuedMs: startedAt - queuedAt,
+      });
+      return null;
+    }
+  });
 }
 
 function breakdown(rows: unknown[][]): AnalyticsBreakdown[] {
@@ -202,14 +294,16 @@ function breakdownQuery(
   currentEnd: string,
   eventFilter = "event IN ('$pageview', 'onboarding_completed')",
 ) {
+  const visitorEvent =
+    eventFilter === "event = 'outbound_link_clicked'" ? "outbound_link_clicked" : "$pageview";
   return `SELECT ${expression} AS ${alias},
-      uniqIf(distinct_id, event = '$pageview'),
+      uniqIf(distinct_id, event = '${visitorEvent}'),
       uniqIf(distinct_id, event = 'onboarding_completed'),
       0
     FROM events
     WHERE timestamp >= ${currentStart} AND timestamp < ${currentEnd} AND ${eventFilter}
     GROUP BY ${alias}
-    ORDER BY uniqIf(distinct_id, event = '$pageview') DESC
+    ORDER BY uniqIf(distinct_id, event = '${visitorEvent}') DESC
     LIMIT 12`;
 }
 
@@ -228,9 +322,13 @@ async function loadFounderWebAnalytics(
   offset: number,
   config: ResolvedQueryConfig,
 ): Promise<FounderWebAnalytics> {
-  const currentStart = `now() - INTERVAL ${days + offset} DAY`;
-  const currentEnd = `now() - INTERVAL ${offset} DAY`;
-  const previousStart = `now() - INTERVAL ${days * 2 + offset} DAY`;
+  const period = founderPeriod(days, offset);
+  const previous = founderPeriod(days, offset + days);
+  const timestamp = (value: string) =>
+    `toDateTime('${value.slice(0, 19).replace("T", " ")}', 'UTC')`;
+  const currentStart = timestamp(period.start);
+  const currentEnd = timestamp(period.end);
+  const previousStart = timestamp(previous.start);
   const source = `if(notEmpty(toString(properties.initial_source)), toString(properties.initial_source), if(properties.$referring_domain IN ('$direct', ''), 'Direct/None', coalesce(properties.$referring_domain, 'Direct/None')))`;
   const referrer = `if(notEmpty(toString(properties.initial_referring_domain)), toString(properties.initial_referring_domain), if(properties.$referring_domain IN ('$direct', ''), 'Direct/None', coalesce(properties.$referring_domain, 'Direct/None')))`;
   const campaign = `coalesce(nullIf(toString(properties.initial_utm_campaign), ''), nullIf(toString(properties.utm_campaign), ''), 'Direct/None')`;
@@ -244,6 +342,40 @@ async function loadFounderWebAnalytics(
     ${source} = 'Direct/None', 'Direct',
     'Referral')`;
   const path = `coalesce(nullIf(toString(properties.$pathname), ''), nullIf(toString(properties.path), ''), '/')`;
+
+  // One event scan and HTTP request serves all twelve standard breakdowns.
+  // Entry pages, outbound events and journeys retain their separate semantics.
+  const bundledBreakdowns =
+    config.report === "journeys"
+      ? Promise.resolve([])
+      : runHogQL(
+          `SELECT tupleElement(dimension, 1) AS panel, tupleElement(dimension, 2) AS label,
+      uniqIf(distinct_id, event = '$pageview') AS visitors,
+      uniqIf(distinct_id, event = 'onboarding_completed') AS conversions, 0 AS revenue
+    FROM (
+      SELECT event, distinct_id, arrayJoin([
+      tuple('channel', ${channel}),
+      tuple('referrer', ${referrer}),
+      tuple('campaign', ${campaign}),
+      tuple('keyword', ${keyword}),
+      tuple('country', ${`coalesce(nullIf(toString(properties.$geoip_country_name), ''), 'Unknown')`}),
+      tuple('region', ${`coalesce(nullIf(toString(properties.$geoip_subdivision_1_name), ''), 'Unknown')`}),
+      tuple('city', ${`coalesce(nullIf(toString(properties.$geoip_city_name), ''), 'Unknown')`}),
+      tuple('hostname', ${`coalesce(nullIf(toString(properties.$host), ''), 'unknown')`}),
+      tuple('page', ${path}),
+      tuple('browser', ${`coalesce(nullIf(toString(properties.$browser), ''), 'Unknown')`}),
+      tuple('operating_system', ${`coalesce(nullIf(toString(properties.$os), ''), 'Unknown')`}),
+      tuple('device', ${`coalesce(nullIf(toString(properties.$device_type), ''), 'Unknown')`})
+      ]) AS dimension FROM events
+      WHERE timestamp >= ${currentStart} AND timestamp < ${currentEnd}
+        AND event IN ('$pageview', 'onboarding_completed')
+    ) GROUP BY panel, label ORDER BY panel, visitors DESC LIMIT 12 BY panel`,
+          config,
+        );
+  const breakdownReport = async (name: string) => {
+    const rows = await bundledBreakdowns;
+    return rows === null ? null : rows.filter((row) => row[0] === name).map((row) => row.slice(1));
+  };
 
   const results = await Promise.all([
     runHogQL(
@@ -279,47 +411,15 @@ async function loadFounderWebAnalytics(
       GROUP BY toDate(timestamp) ORDER BY toDate(timestamp)`,
       config,
     ),
-    runHogQL(breakdownQuery(channel, "channel", currentStart, currentEnd), config),
-    runHogQL(breakdownQuery(referrer, "referrer", currentStart, currentEnd), config),
-    runHogQL(breakdownQuery(campaign, "campaign", currentStart, currentEnd), config),
-    runHogQL(breakdownQuery(keyword, "keyword", currentStart, currentEnd), config),
-    runHogQL(
-      breakdownQuery(
-        `coalesce(nullIf(toString(properties.$geoip_country_name), ''), 'Unknown')`,
-        "country",
-        currentStart,
-        currentEnd,
-      ),
-      config,
-    ),
-    runHogQL(
-      breakdownQuery(
-        `coalesce(nullIf(toString(properties.$geoip_subdivision_1_name), ''), 'Unknown')`,
-        "region",
-        currentStart,
-        currentEnd,
-      ),
-      config,
-    ),
-    runHogQL(
-      breakdownQuery(
-        `coalesce(nullIf(toString(properties.$geoip_city_name), ''), 'Unknown')`,
-        "city",
-        currentStart,
-        currentEnd,
-      ),
-      config,
-    ),
-    runHogQL(
-      breakdownQuery(
-        `coalesce(nullIf(toString(properties.$host), ''), 'bento.surf')`,
-        "hostname",
-        currentStart,
-        currentEnd,
-      ),
-      config,
-    ),
-    runHogQL(breakdownQuery(path, "page", currentStart, currentEnd), config),
+    breakdownReport("channel"),
+    breakdownReport("referrer"),
+    breakdownReport("campaign"),
+    breakdownReport("keyword"),
+    breakdownReport("country"),
+    breakdownReport("region"),
+    breakdownReport("city"),
+    breakdownReport("hostname"),
+    breakdownReport("page"),
     runHogQL(
       `SELECT entry_page, uniq(visitor), 0, 0 FROM (
         SELECT distinct_id AS visitor, argMin(${path}, timestamp) AS entry_page
@@ -339,33 +439,9 @@ async function loadFounderWebAnalytics(
       ),
       config,
     ),
-    runHogQL(
-      breakdownQuery(
-        `coalesce(nullIf(toString(properties.$browser), ''), 'Unknown')`,
-        "browser",
-        currentStart,
-        currentEnd,
-      ),
-      config,
-    ),
-    runHogQL(
-      breakdownQuery(
-        `coalesce(nullIf(toString(properties.$os), ''), 'Unknown')`,
-        "operating_system",
-        currentStart,
-        currentEnd,
-      ),
-      config,
-    ),
-    runHogQL(
-      breakdownQuery(
-        `coalesce(nullIf(toString(properties.$device_type), ''), 'Unknown')`,
-        "device",
-        currentStart,
-        currentEnd,
-      ),
-      config,
-    ),
+    breakdownReport("browser"),
+    breakdownReport("operating_system"),
+    breakdownReport("device"),
     runHogQL(
       `SELECT distinct_id,
         argMin(${source}, timestamp),
@@ -416,13 +492,30 @@ async function loadFounderWebAnalytics(
     deviceRows,
     journeyRows,
     crawlerResultRows,
-  ] = results;
+  ] = results.map((rows) => rows ?? []);
+  const requestedPanels =
+    config.report === "journeys"
+      ? ["overview", "journeys"]
+      : PANEL_NAMES.filter((name) => config.report !== "audience" || name !== "journeys");
+  const unavailablePanels = PANEL_NAMES.filter(
+    (name, index) =>
+      requestedPanels.includes(name) &&
+      (results[index] === null || (name === "overview" && results[index]?.length === 0)),
+  );
   const overview = overviewRows[0] ?? [];
   const sessions = sessionRows[0] ?? [];
 
   return {
-    available: overviewRows.length > 0,
-    error: overviewRows.length ? null : "PostHog overview query is unavailable.",
+    available: requestedPanels.some(
+      (name) => !unavailablePanels.includes(name as (typeof PANEL_NAMES)[number]),
+    ),
+    unavailablePanels,
+    error:
+      unavailablePanels.length === requestedPanels.length
+        ? "Product analytics is temporarily unavailable."
+        : unavailablePanels.length
+          ? "Some reports could not load. Available reports are shown below."
+          : null,
     days,
     offset,
     overview: {
@@ -505,10 +598,13 @@ export async function getFounderWebAnalytics(
   const fetcher = overrides.fetcher ?? globalThis.fetch.bind(globalThis);
   if (!apiKey) return emptyAnalytics(days, "PostHog reporting is not configured.", offset);
 
-  const config = { apiKey, projectId, host, fetcher };
-  const cacheable = Object.keys(overrides).length === 0;
+  const environment =
+    overrides.environment ?? (process.env.APP_ENV === "staging" ? "staging" : "production");
+  const report = overrides.report ?? "all";
+  const config = { apiKey, projectId, host, fetcher, environment, report };
+  const cacheable = Object.keys(overrides).every((key) => key === "report");
   if (cacheable) {
-    const cached = analyticsCache.get(`${days}:${offset}`);
+    const cached = analyticsCache.get(`${environment}:${report}:${days}:${offset}`);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
   }
 
@@ -517,6 +613,9 @@ export async function getFounderWebAnalytics(
     return emptyAnalytics(days, "PostHog reporting is temporarily unavailable.", offset);
   });
   if (cacheable)
-    analyticsCache.set(`${days}:${offset}`, { expiresAt: Date.now() + CACHE_MS, value });
+    analyticsCache.set(`${environment}:${report}:${days}:${offset}`, {
+      expiresAt: Date.now() + CACHE_MS,
+      value,
+    });
   return value;
 }

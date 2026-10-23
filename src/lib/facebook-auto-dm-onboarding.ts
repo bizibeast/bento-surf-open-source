@@ -1,3 +1,4 @@
+import { normalizeCustomerCopy } from "./text/dashes";
 import type {
   FacebookDmMatchType,
   FacebookDmMediaScope,
@@ -37,7 +38,7 @@ export type FacebookAutoDmStarterTemplate = {
   };
 };
 
-export const FACEBOOK_AUTO_DM_STARTER_TEMPLATES: FacebookAutoDmStarterTemplate[] = [
+const facebookAutoDmStarterTemplateList: FacebookAutoDmStarterTemplate[] = [
   {
     id: "comment-link",
     eyebrow: "Most popular",
@@ -95,6 +96,10 @@ export const FACEBOOK_AUTO_DM_STARTER_TEMPLATES: FacebookAutoDmStarterTemplate[]
     },
   },
 ];
+
+export const FACEBOOK_AUTO_DM_STARTER_TEMPLATES = normalizeCustomerCopy(
+  facebookAutoDmStarterTemplateList,
+);
 
 export function getFacebookAutoDmOnboardingStep({
   hasReadyConnection,

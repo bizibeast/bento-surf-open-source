@@ -105,6 +105,7 @@ export type BrainSuggestion = Omit<
   evidence?: Array<{ sourceRef: string; quote: string }>;
 };
 
+/** Structural citation check; semantic claim approval is performed independently on the server. */
 export function sourceBackedBrainItems(
   posts: Array<Record<string, unknown>>,
   generated: BrainSuggestion[],
@@ -115,8 +116,10 @@ export function sourceBackedBrainItems(
     if (
       !post ||
       !item.evidence?.length ||
+      !item.evidence.some((evidence) => evidence.sourceRef === item.sourceRef) ||
       item.evidence.some(
         (evidence) =>
+          evidence.quote.trim().length < 8 ||
           !byRef.has(evidence.sourceRef) ||
           !String(byRef.get(evidence.sourceRef)?.caption || "").includes(evidence.quote),
       )

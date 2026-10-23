@@ -265,6 +265,25 @@ it("saves chapter edits and removes drafts based on the older Brain", async () =
   expect(api.prepare).not.toHaveBeenCalled();
 });
 
+it("offers another draft attempt from checkout when generation failed", async () => {
+  state = {
+    ...state,
+    step: 5,
+    status: "prepared",
+    brief: profile(),
+    candidates: buildManualCandidates(profile()),
+    jobStatus: "failed",
+    jobError:
+      "I couldn't finish generating and checking this draft. This starter uses only the answers you already gave. You can edit it, try again, or continue and publish your page.",
+    generationCount: 1,
+  };
+  mount();
+  expect(await screen.findByRole("button", { name: "Start my 3-day trial" })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Try the draft again" }));
+  await waitFor(() => expect(api.prepare).toHaveBeenCalledOnce());
+  expect(api.checkout).not.toHaveBeenCalled();
+});
+
 it("resumes an older page-review step directly in the personal Brain", async () => {
   state = { ...state, step: 4, brief: profile(), candidates: prepared(), jobStatus: "ready" };
   mount();

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AiProviderRequestError } from "./ai-json.server";
+import { ProviderBudgetError } from "./provider-budget.server";
 import { contentAgentCardSchema } from "./content-agent";
 import { buildEditorialBrief } from "./content-editorial";
 import {
@@ -220,7 +221,7 @@ describe("bounded editorial generation", () => {
     expect(d.edit).not.toHaveBeenCalled();
     expect(d.critique).toHaveBeenCalledOnce();
   });
-  it.each(["repeated_argument", "voice_drift", "unsupported_claim"])(
+  it.each(["repeated_argument", "unsupported_claim"])(
     "uses structured critique for %s and falls back after two attempts",
     async (code) => {
       const d = deps();
@@ -255,6 +256,54 @@ describe("bounded editorial generation", () => {
       );
     },
   );
+  it.each(["reader_value", "voice_drift", "formulaic", "internal_jargon"])(
+    "retains a fact-checked draft with %s feedback for human review after revision",
+    async (code) => {
+      const d = deps();
+      const issue = { code, message: "Add a concrete takeaway for the reader." };
+      vi.mocked(d.critique).mockResolvedValue({ issues: [issue] });
+      const result = await generateEditorialDraft(brief(), { dependencies: d });
+      expect(result.status).toBe("ready");
+      expect(result.card).toMatchObject({
+        type: "draft",
+        body: good.body,
+        editorial: { validationState: "needs_review", reviewIssues: [issue] },
+      });
+      expect(result.card).not.toHaveProperty("editorial.reviewSkipped");
+      expect(d.write).toHaveBeenCalledTimes(1);
+      expect(d.edit).toHaveBeenCalledTimes(1);
+      expect(d.critique).toHaveBeenCalledTimes(2);
+    },
+  );
+  it("does not retain a draft when review includes an unsupported factual claim", async () => {
+    const d = deps();
+    vi.mocked(d.critique).mockResolvedValue({
+      issues: [
+        { code: "reader_value", message: "Add a takeaway." },
+        { code: "unsupported_claim", message: "The source does not support the stated result." },
+      ],
+    });
+    const result = await generateEditorialDraft(brief(), { dependencies: d });
+    expect(result.status).toBe("needs_input");
+    expect(result.card.type).toBe("idea");
+  });
+  it("keeps a fact-checked draft and its quality feedback when the revision budget is denied", async () => {
+    const d = deps();
+    const issue = { code: "reader_value", message: "Add a practical takeaway." };
+    vi.mocked(d.critique).mockResolvedValue({ issues: [issue] });
+    vi.mocked(d.edit).mockRejectedValue(new ProviderBudgetError("ai_microusd"));
+    const result = await generateEditorialDraft(brief(), { dependencies: d });
+    expect(result).toMatchObject({
+      status: "ready",
+      card: {
+        type: "draft",
+        body: good.body,
+        editorial: { validationState: "needs_review", reviewIssues: [issue] },
+      },
+    });
+    expect(d.critique).toHaveBeenCalledTimes(1);
+    expect(d.edit).toHaveBeenCalledTimes(1);
+  });
   it("asks a targeted question without AI when evidence is weak", async () => {
     const d = deps();
     const result = await generateEditorialDraft(
@@ -328,6 +377,38 @@ it("production provider calls share the workflow deadline", async () => {
   expect(result.reason).toBe("timeout");
 });
 
+it("keeps a validated draft when the reviewer never returns", async () => {
+  const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const d = deps();
+    vi.mocked(d.critique).mockImplementation(() => new Promise(() => {}));
+    const result = await generateEditorialDraft(brief(), { dependencies: d, timeoutMs: 50 });
+    expect(result.status).toBe("ready");
+    expect(result.card).toMatchObject({
+      type: "draft",
+      body: good.body,
+      editorial: { validationState: "needs_review", reviewSkipped: true },
+    });
+    expect(warning).toHaveBeenCalledWith("content_editorial_kept_validated_draft", {
+      phase: "timeout",
+    });
+    expect(d.write).toHaveBeenCalledOnce();
+    expect(d.edit).not.toHaveBeenCalled();
+  } finally {
+    warning.mockRestore();
+  }
+});
+it("keeps a validated draft when review fails before the deadline", async () => {
+  const d = deps();
+  vi.mocked(d.critique).mockRejectedValue(new Error("Provider unavailable"));
+  const result = await generateEditorialDraft(brief(), { dependencies: d });
+  expect(result.status).toBe("ready");
+  expect(result.card).toMatchObject({
+    type: "draft",
+    body: good.body,
+    editorial: { validationState: "needs_review", reviewSkipped: true },
+  });
+});
 it("reports a provider failure as retry even when source evidence is available", async () => {
   const d = deps();
   vi.mocked(d.write).mockRejectedValue(new Error("Provider unavailable"));
@@ -378,8 +459,13 @@ it("persists the verified revision identity while retaining edit and voice criti
     issues: [{ code: "voice_drift", message: "Preserve the creator's plain voice" }],
   });
   expect(await generateEditorialDraft(b, { dependencies: d })).toMatchObject({
-    status: "needs_input",
-    reason: "quality",
+    status: "ready",
+    card: {
+      editorial: {
+        validationState: "needs_review",
+        reviewIssues: [expect.objectContaining({ code: "voice_drift" })],
+      },
+    },
   });
 });
 

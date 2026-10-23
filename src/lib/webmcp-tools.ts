@@ -315,6 +315,18 @@ export function createAuthenticatedWebMcpTools(refresh: () => Promise<void>): We
             maxLength: 120,
           }),
           savedOnly: boolean("Discover bookmarks only."),
+          provider: platform,
+          connectionId: id("Owned social connection ID."),
+          contentType: string(
+            "Imported social_posts content type, e.g. video. Case and surrounding whitespace are normalized.",
+          ),
+          status: string("Scheduler parent status."),
+          targetStatus: string("Scheduler destination status."),
+          dateFrom: string("Inclusive ISO datetime with timezone."),
+          dateTo: string("Exclusive ISO datetime with timezone."),
+          dateField: string("Scheduler date field; defaults to destination published_at.", {
+            enum: ["published_at", "scheduled_at", "created_at"],
+          }),
           range: string("Social history range, always limited by the plan.", {
             enum: ["today", "3d", "7d", "30d", "90d", "all"],
             default: "all",
@@ -571,10 +583,34 @@ export function createAuthenticatedWebMcpTools(refresh: () => Promise<void>): We
     readTool(
       "list_social_posts",
       "Social posts",
-      "Lists recent drafts, scheduled posts, and publishing results.",
+      "Lists stored Scheduler posts with full text/media and pagination. Parent status and targetStatus are distinct; date bounds default to destination published_at. Follow pagination.nextCursor. Use get_social_post for all destinations, stored metrics and attempts.",
       "list_social_posts",
       objectSchema({
-        status: string("Optional post status filter.", {
+        provider: platform,
+        connectionId: id("Owned connection ID."),
+        query: string("Caption contains this text."),
+        cursor: string("pagination.nextCursor from prior page; keep filters unchanged."),
+        targetStatus: string("Destination status.", {
+          enum: [
+            "pending",
+            "queued",
+            "uploading",
+            "publishing",
+            "processing",
+            "published",
+            "retrying",
+            "failed",
+            "cancelled",
+            "outcome_unknown",
+          ],
+        }),
+        dateFrom: string("Inclusive ISO datetime with timezone."),
+        dateTo: string("Exclusive ISO datetime with timezone."),
+        dateField: string("Date to filter.", {
+          enum: ["published_at", "scheduled_at", "created_at"],
+          default: "published_at",
+        }),
+        status: string("Optional parent post status filter.", {
           enum: [
             "draft",
             "scheduled",
@@ -587,6 +623,20 @@ export function createAuthenticatedWebMcpTools(refresh: () => Promise<void>): We
         }),
         limit: number("Maximum posts to return.", { minimum: 1, maximum: 100 }),
       }),
+    ),
+    readTool(
+      "get_social_post",
+      "Social post detail",
+      "Reads full owned Scheduler post, all destinations, overrides, errors, retry state, exact matching stored metrics with fetched_at, and paginated attempt history. Does not refresh providers.",
+      "get_social_post",
+      objectSchema(
+        {
+          id: id("Scheduler post ID."),
+          attemptsCursor: string("attemptsPagination.nextCursor from prior result."),
+          attemptsLimit: number("Attempts per page.", { minimum: 1, maximum: 50, default: 20 }),
+        },
+        ["id"],
+      ),
     ),
     readTool(
       "list_auto_dm_automations",

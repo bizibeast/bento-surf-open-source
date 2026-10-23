@@ -376,6 +376,7 @@ export function buildContentAgentInput(input: {
 }) {
   return JSON.stringify({
     request: input.userText.slice(0, 20_000),
+    currentTime: new Date().toISOString(),
     confirmedBrain: input.brain
       .filter((item) => item.status === "confirmed")
       .map(safePromptValue)

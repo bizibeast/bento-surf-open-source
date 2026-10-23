@@ -163,7 +163,7 @@ export function UpgradeDialog({
             {offer?.active
               ? "Your current contract stays in place until you choose a change in Billing."
               : offer?.trialEligible
-                ? `Credit card required. $0 today, then ${price.label}${price.cadence} plus applicable tax after ${TRIAL_DAYS} full days. We’ll email you one day before the first charge and ask for feedback. Cancel before renewal to avoid a charge. Your trial includes Creator Plus; afterward access follows your selected plan.`
+                ? `Credit card required. $0 today, then ${price.label}${price.cadence} plus applicable tax after ${TRIAL_DAYS} full days. We’ll email you one day before the first charge and ask for feedback. Cancel before renewal to avoid a charge. Your trial includes the ${planName(plan)} plan.`
                 : offer
                   ? `Your trial has already been used. ${price.label}${price.cadence} plus applicable tax is due at checkout. Review the final total before paying.`
                   : offerError

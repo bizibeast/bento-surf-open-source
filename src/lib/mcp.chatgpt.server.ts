@@ -1,13 +1,17 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- ChatGPT adapters project heterogeneous service records. */
 import type { AuthInfo } from "@modelcontextprotocol/server";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod-v4";
 import type { CreatorMcpContext } from "./mcp.creator-ops.server";
 import { reorderPagesForCreator } from "./pages.functions";
+import { schedulerReadFiltersShape } from "./mcp-scheduler-read";
+import type { listSchedulerPosts } from "./mcp-scheduler-read.server";
+import { sanitizeMcpReadData } from "./mcp-read-results";
 import { postingScheduleSchema } from "./social-scheduler";
 
 export const CHATGPT_MCP_PATH = "/chatgpt/mcp";
 export const CHATGPT_MCP_INSTRUCTIONS =
-  "Use list tools to read IDs before creating or updating. Page tools edit the creator's public link-in-bio. Social tools save a draft or a scheduled post in Bento. Create Auto-DM starts paused unless enabled is true. This server has no store, product, discount, checkout, payment, booking, or referral tools.";
+  "Use list tools to read IDs before creating or updating. Counts are summaries, not proof of individual posts; paginate list_social_posts and retain publication and metric timestamps. Page tools edit the creator's public link-in-bio. Social tools save a draft or a scheduled post in Bento. Create Auto-DM starts paused unless enabled is true. This server has no store, product, discount, checkout, payment, booking, or referral tools.";
 
 /** Checkout, paid booking, and tip blocks stay on the full MCP server. */
 const HIDDEN_BLOCK_TYPES = new Set(["booking", "commerce", "tip_jar"]);
@@ -94,7 +98,7 @@ export type ChatGptToolOperations = {
   mutateBlock: (context: CreatorMcpContext, input: any) => Promise<any>;
   reorderPages: (context: CreatorMcpContext, pageIds: string[]) => Promise<{ ok: true }>;
   listSocialAccounts: (userId: string, provider?: string) => Promise<any>;
-  listSocialPosts: (userId: string, status: string | undefined, limit: number) => Promise<any>;
+  listSocialPosts: typeof listSchedulerPosts;
   saveSocialPostForUser: (userId: string, input: any) => Promise<any>;
   getSchedulerWorkspace: (userId: string) => Promise<any>;
   manageScheduler: (userId: string, input: any) => Promise<any>;
@@ -489,15 +493,19 @@ export function registerChatGptTools(
   register(
     "list_social_posts",
     "List social posts",
-    "List recent drafts, scheduled posts, and publishing results stored in Bento.",
+    "List stored Scheduler posts with full captions and destination settings. Follow pagination.nextCursor using cursor. status is parent state; targetStatus is platform state; date bounds default to destination published_at. No provider refresh.",
     READ,
     z.object({
       status: socialPostStatusSchema.optional(),
+      ...schedulerReadFiltersShape,
       limit: z.number().int().min(1).max(100).default(30),
     }),
-    async ({ status, limit }) => {
-      const posts = await operations.listSocialPosts(userId, status, limit);
-      return textResult(`Found ${posts.length} social post(s).`, { posts });
+    async ({ status, limit, ...filters }) => {
+      const result = await operations.listSocialPosts(userId, status, limit, filters);
+      return textResult(
+        `Found ${result.posts.length} social post(s) on this page.`,
+        sanitizeMcpReadData(result),
+      );
     },
   );
 

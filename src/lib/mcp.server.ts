@@ -7,6 +7,7 @@ import {
   registerChatGptTools,
   type ChatGptToolOperations,
 } from "./mcp.chatgpt.server";
+import { normalizeDashes, normalizeOptionalCopy } from "./text/dashes";
 import { autoDmDelaySchema } from "./auto-dm-delay";
 import { readAutoDmDelay, writeAutoDmDelay } from "./auto-dm-delay-settings.server";
 import { searchStockPhotos, importStockPhoto, type StockProvider } from "./scheduler-stock.server";
@@ -104,6 +105,13 @@ import {
 } from "./mcp.content-ops.server";
 
 import { readWorkspaceData } from "./mcp-workspace-data.server";
+import { sanitizeMcpReadData } from "./mcp-read-results";
+import { getSchedulerPost, listSchedulerPosts } from "./mcp-scheduler-read.server";
+import {
+  getSocialPostInputSchema,
+  schedulerReadFiltersShape,
+  type SchedulerReadFilters,
+} from "./mcp-scheduler-read";
 import { readWorkspaceDataSchema, WORKSPACE_DATA_DESCRIPTION } from "./mcp-workspace-data";
 
 const MCP_PATH = "/mcp";
@@ -297,24 +305,13 @@ async function listSocialAccounts(userId: string, provider?: string) {
   });
 }
 
-async function listSocialPosts(userId: string, status: string | undefined, limit: number) {
-  await requirePlanEntitlement(
-    userId,
-    "mcpSocialAutomation",
-    "MCP posting and Auto DMs require Creator or Creator Plus.",
-  );
-  let query = db()
-    .from("social_posts")
-    .select(
-      "id,body,title,media,scheduled_at,timezone,status,created_at,targets:social_post_targets(id,connection_id,provider,status,remote_post_url,last_error_message,published_at,provider_settings)",
-    )
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false })
-    .limit(limit);
-  if (status) query = query.eq("status", status);
-  const { data, error } = await query;
-  if (error) throw new Error("Social posts could not be loaded.");
-  return data || [];
+async function listSocialPosts(
+  userId: string,
+  status: string | undefined,
+  limit: number,
+  filters: SchedulerReadFilters = {},
+) {
+  return listSchedulerPosts(userId, status, limit, filters);
 }
 
 async function saveSocialPostForUser(userId: string, input: unknown) {
@@ -455,7 +452,7 @@ async function saveAutoDmAutomation(userId: string, platform: AutoDmPlatform, in
     keywords: data.keywords,
     excluded_keywords: data.excludedKeywords,
     match_type: data.matchType,
-    reply_message: data.replyMessage,
+    reply_message: normalizeDashes(data.replyMessage),
     enabled: data.enabled,
   };
   const row =
@@ -466,22 +463,22 @@ async function saveAutoDmAutomation(userId: string, platform: AutoDmPlatform, in
           media_scope: data.mediaScope,
           media_ids: data.mediaIds,
           public_reply_enabled: data.publicReplyEnabled,
-          public_reply_message: data.publicReplyMessages[0] || null,
-          public_reply_messages: data.publicReplyMessages,
-          opening_message: data.openingMessage,
-          confirmation_button_label: data.confirmationButtonLabel,
+          public_reply_message: normalizeOptionalCopy(data.publicReplyMessages?.[0]),
+          public_reply_messages: (data.publicReplyMessages || []).map(normalizeDashes),
+          opening_message: normalizeOptionalCopy(data.openingMessage),
+          confirmation_button_label: normalizeOptionalCopy(data.confirmationButtonLabel),
           email_capture_enabled: data.emailCaptureEnabled,
-          email_prompt_message: data.emailPromptMessage,
+          email_prompt_message: normalizeOptionalCopy(data.emailPromptMessage),
           email_marketing_consent_enabled: data.emailMarketingConsentEnabled,
           ...(platform === "instagram"
             ? {
                 follow_gate_enabled: data.followGateEnabled,
-                follow_prompt_message: data.followPromptMessage,
+                follow_prompt_message: normalizeOptionalCopy(data.followPromptMessage),
                 follow_max_rechecks: data.followMaxRechecks,
                 follow_fail_action: data.followFailAction,
               }
             : {}),
-          reply_button_label: data.replyButtonLabel,
+          reply_button_label: normalizeOptionalCopy(data.replyButtonLabel),
           reply_button_url: data.replyButtonUrl,
         };
   const query = data.id
@@ -766,7 +763,10 @@ async function getPriorityDmConversations(
 
 async function sendPriorityDmMessage(userId: string, input: { requestId: string; body: string }) {
   await enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "mcp-priority-dm-send", userId);
-  return sendCreatorPriorityDmMessageForUser(db(), userId, input);
+  return sendCreatorPriorityDmMessageForUser(db(), userId, {
+    ...input,
+    body: normalizeDashes(input.body),
+  });
 }
 
 async function setPriorityDmClosed(userId: string, input: { requestId: string; closed: boolean }) {
@@ -785,7 +785,13 @@ async function getSchedulerWorkspace(userId: string) {
       .maybeSingle(),
   ]);
   if (schedule.error) throw new Error("Posting times could not be loaded.");
-  return { accounts, posts, postingSchedule: schedule.data };
+  return {
+    accounts,
+    posts: posts.posts,
+    pagination: posts.pagination,
+    provenance: posts.provenance,
+    postingSchedule: schedule.data,
+  };
 }
 
 const schedulerMutationSchema = z.discriminatedUnion("action", [
@@ -918,6 +924,7 @@ export const defaultBentoMcpOperations = {
   getBentoOverview,
   listSocialAccounts,
   listSocialPosts,
+  getSocialPost: getSchedulerPost,
   saveSocialPostForUser,
   listAutoDmAutomations,
   saveAutoDmAutomation,
@@ -1691,10 +1698,11 @@ function registerBentoTools(
 ) {
   const userId = userIdFrom(authInfo);
   const readResult = (message: string, data: Record<string, unknown>) => {
-    const result = textResult(message, data);
+    const safeData = sanitizeMcpReadData(data);
+    const result = textResult(message, safeData);
     // Older MCP clients only pass text blocks to the model. Internal Agent reads
     // already consume structuredContent, so avoid duplicating its token usage.
-    if (includeReadableData) result.content.push({ type: "text", text: JSON.stringify(data) });
+    if (includeReadableData) result.content.push({ type: "text", text: JSON.stringify(safeData) });
     return result;
   };
   server.registerTool(
@@ -1825,7 +1833,7 @@ function registerBentoTools(
       annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     },
     async ({ threadId }) =>
-      textResult("Loaded Content Agent.", {
+      readResult("Loaded Content Agent.", {
         agent: await operations.getMcpContentAgent(userId, threadId),
       }),
   );
@@ -1890,7 +1898,7 @@ function registerBentoTools(
     },
     async ({ provider }) => {
       const accounts = await operations.listSocialAccounts(userId, provider);
-      return textResult(`Found ${accounts.length} connected social account(s).`, { accounts });
+      return readResult(`Found ${accounts.length} connected social account(s).`, { accounts });
     },
   );
 
@@ -1937,17 +1945,35 @@ function registerBentoTools(
     "list_social_posts",
     {
       title: "List social posts",
-      description: "List recent Bento drafts, scheduled posts, and publishing results.",
+      description:
+        "Read stored Scheduler posts with full captions/media and stable pagination. status filters the parent post; targetStatus filters a platform destination. provider + dateFrom/dateTo default to destination published_at (inclusive/exclusive); use dateField for created/scheduled dates. Follow pagination.nextCursor until hasMore is false. Use get_social_post for all destinations, stored metrics and attempt history.",
       inputSchema: z.object({
         status: socialPostStatusSchema.optional(),
+        ...schedulerReadFiltersShape,
         limit: z.number().int().min(1).max(100).default(30),
       }),
       annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     },
-    async ({ status, limit }) => {
-      const posts = await operations.listSocialPosts(userId, status, limit);
-      return textResult(`Found ${posts.length} social post(s).`, { posts });
+    async ({ status, limit, ...filters }) => {
+      const result = await operations.listSocialPosts(userId, status, limit, filters);
+      return readResult(`Found ${result.posts.length} social post(s) on this page.`, result);
     },
+  );
+
+  server.registerTool(
+    "get_social_post",
+    {
+      title: "Get social post details",
+      description:
+        "Read one owned Scheduler post by exact ID: full caption/media, every destination and override, publish timestamps, remote IDs/URLs, errors/retry progress, exact matching stored metrics with fetched_at, and recent publish attempts. Follow attemptsPagination.nextCursor using attemptsCursor for older attempts. Stored data only; does not refresh providers.",
+      inputSchema: getSocialPostInputSchema,
+      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+    },
+    async (input) =>
+      readResult(
+        "Loaded stored social post details.",
+        await operations.getSocialPost(userId, input),
+      ),
   );
 
   server.registerTool(
@@ -1960,7 +1986,7 @@ function registerBentoTools(
       annotations: { readOnlyHint: true, openWorldHint: true, destructiveHint: false },
     },
     async ({ query }) =>
-      textResult("Found stock photo options.", {
+      readResult("Found stock photo options.", {
         photos: await operations.findPostStockPhotos(userId, query),
       }),
   );
@@ -1974,7 +2000,7 @@ function registerBentoTools(
       annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     },
     async ({ ids }) =>
-      textResult("Verified owned post media.", {
+      readResult("Verified owned post media.", {
         media: await operations.resolvePostMedia(userId, ids),
       }),
   );
@@ -2044,7 +2070,7 @@ function registerBentoTools(
     },
     async ({ platform }) => {
       const automations = await operations.listAutoDmAutomations(userId, platform);
-      return textResult("Loaded Bento Auto-DM automations.", { automations });
+      return readResult("Loaded Bento Auto-DM automations.", { automations });
     },
   );
 
@@ -2139,7 +2165,7 @@ function registerBentoTools(
       inputSchema: z.object({}),
       annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     },
-    async () => textResult("Loaded Bento pages and blocks.", await operations.listPages(userId)),
+    async () => readResult("Loaded Bento pages and blocks.", await operations.listPages(userId)),
   );
 
   server.registerTool(
@@ -2153,7 +2179,7 @@ function registerBentoTools(
     },
     async ({ limit }) => {
       const products = await operations.listProducts(userId, limit);
-      return textResult(`Found ${products.length} product(s).`, { products });
+      return readResult(`Found ${products.length} product(s).`, { products });
     },
   );
 
@@ -2167,7 +2193,7 @@ function registerBentoTools(
     },
     async ({ limit }) => {
       const bookings = await operations.listBookings(userId, limit);
-      return textResult(`Found ${bookings.length} booking(s).`, { bookings });
+      return readResult(`Found ${bookings.length} booking(s).`, { bookings });
     },
   );
 
@@ -2185,7 +2211,7 @@ function registerBentoTools(
     },
     async ({ filter, limit }) => {
       const conversations = await operations.getPriorityDmConversations(userId, filter, limit);
-      return textResult(`Loaded ${conversations.length} Priority DM conversation(s).`, {
+      return readResult(`Loaded ${conversations.length} Priority DM conversation(s).`, {
         conversations,
       });
     },
@@ -2247,7 +2273,7 @@ function registerBentoTools(
     },
     async () => {
       const scheduler = await operations.getSchedulerWorkspace(userId);
-      return textResult("Loaded social scheduler workspace.", { scheduler });
+      return readResult("Loaded social scheduler workspace.", { scheduler });
     },
   );
 
@@ -2307,7 +2333,7 @@ function registerBentoTools(
     },
     async ({ publicationId }) => {
       const store = await operations.getStoreWorkspace(creatorContext(), publicationId);
-      return textResult("Loaded the Bento Store workspace.", { store });
+      return readResult("Loaded the Bento Store workspace.", { store });
     },
   );
 
@@ -2384,7 +2410,7 @@ function registerBentoTools(
     },
     async () => {
       const calendar = await operations.getCalendarWorkspace(creatorContext());
-      return textResult("Loaded the Bento Calendar workspace.", { calendar });
+      return readResult("Loaded the Bento Calendar workspace.", { calendar });
     },
   );
 
@@ -2413,7 +2439,7 @@ function registerBentoTools(
     },
     async ({ productId }) => {
       const community = await operations.getCommunityWorkspace(creatorContext(), productId);
-      return textResult("Loaded the Bento Community workspace.", { community });
+      return readResult("Loaded the Bento Community workspace.", { community });
     },
   );
 
@@ -2443,7 +2469,7 @@ function registerBentoTools(
     },
     async () => {
       const profile = await operations.getProfileWorkspace(creatorContext());
-      return textResult("Loaded the Bento profile workspace.", { profile });
+      return readResult("Loaded the Bento profile workspace.", { profile });
     },
   );
 
@@ -2490,7 +2516,7 @@ function registerBentoTools(
     },
     async () => {
       const integrations = await operations.getIntegrationWorkspace(creatorContext());
-      return textResult("Loaded Bento integrations.", { integrations });
+      return readResult("Loaded Bento integrations.", { integrations });
     },
   );
 
@@ -2505,7 +2531,7 @@ function registerBentoTools(
     },
     async () => {
       const earn = await operations.getEarnWorkspace(creatorContext());
-      return textResult("Loaded the Bento Earn workspace.", { earn });
+      return readResult("Loaded the Bento Earn workspace.", { earn });
     },
   );
 
@@ -2548,7 +2574,7 @@ export function createBentoMcpServer(
     { name: "bento", version: "1.0.0" },
     {
       instructions:
-        "Use stable IDs returned by list tools. Before content planning or writing, read get_content_brain, get_content_routines, get_analytics_workspace and get_content_discover as relevant. These expose the creator voice, publishing cadence, performance and current stored signals. For full documents, imported source text, older runs, bookmarks and social history use read_workspace_data, follow nextCursor, and read truncated text by id. Empty or stale stored data is not permission to start paid refreshes. List accounts before posting or creating Auto-DMs. For one piece of content on several networks create ONE social post with all connectionIds, shared media uploaded once, and connectionOverrides[connectionId].bodyOverride for each caption. YouTube titleOverride/description/youtubePrivacy go in providerSettings.youtube. Edit by passing the existing post id; do not split or duplicate drafts for different captions. For local videos over 8 MB use begin_media_upload and its binary chunk instructions, not large base64 JSON or compression. Read skill://bento/bento/references/tools.md for complete examples. Publish now or delete only when the user explicitly requested that external action.",
+        "Use stable IDs returned by list tools. Summary counts are not evidence for individual posts. For Scheduler posts, paginate list_social_posts, filter provider/targetStatus and destination published_at date bounds, then use get_social_post for exact stored details and metric freshness. read_workspace_data social_posts contains imported analytics; scheduler_posts contains Scheduler records. Preserve source and fetched_at/published_at timestamps; do not infer five platform posts from five multi-platform Scheduler rows. Before content planning or writing, read get_content_brain, get_content_routines, get_analytics_workspace and get_content_discover as relevant. These expose the creator voice, publishing cadence, performance and current stored signals. For full documents, imported source text, older runs, bookmarks and social history use read_workspace_data, follow nextCursor, and read truncated text by id. Empty or stale stored data is not permission to start paid refreshes. List accounts before posting or creating Auto-DMs. For one piece of content on several networks create ONE social post with all connectionIds, shared media uploaded once, and connectionOverrides[connectionId].bodyOverride for each caption. YouTube titleOverride/description/youtubePrivacy go in providerSettings.youtube. Edit by passing the existing post id; do not split or duplicate drafts for different captions. For local videos over 8 MB use begin_media_upload and its binary chunk instructions, not large base64 JSON or compression. Read skill://bento/bento/references/tools.md for complete examples. Publish now or delete only when the user explicitly requested that external action.",
       capabilities: { extensions: { "io.modelcontextprotocol/skills": {} } },
     },
   );

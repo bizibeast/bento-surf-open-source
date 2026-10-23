@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Telegram rows are validated at boundaries. */
+import { normalizeDashes } from "./text/dashes";
 import { z } from "zod";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { withProviderBudgetWorkspace } from "./provider-budget.server";
@@ -145,7 +146,7 @@ export async function sendTelegramText(
   text: string,
   actions: Array<{ id: string; label: string }> = [],
 ) {
-  const formatted = formatTelegramText(text);
+  const formatted = formatTelegramText(normalizeDashes(text));
   await telegramApi("sendMessage", {
     chat_id: chatId,
     text: formatted.text,
@@ -194,7 +195,7 @@ export async function sendTelegramDraftsReady(input: {
 async function answerTelegramCallback(callbackId: string, text: string, alert = false) {
   await telegramApi("answerCallbackQuery", {
     callback_query_id: callbackId,
-    text: text.slice(0, 200),
+    text: normalizeDashes(text).slice(0, 200),
     show_alert: alert,
   });
 }

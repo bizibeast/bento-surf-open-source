@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { ArrowRight, Check, ExternalLink, LockKeyhole, Unplug } from "lucide-react";
 import { SiRazorpay, SiStripe } from "react-icons/si";
 import type {
@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { IntegrationPanel } from "@/components/settings/IntegrationsOverview";
+import { CONNECT_PAYMENTS_BANNER_BODY, CONNECT_PAYMENTS_BANNER_TITLE } from "@/lib/plans";
 import { micro } from "@/lib/micro-app-ui";
 
 type PaymentConnection = {
@@ -48,17 +49,17 @@ export type CreatorPaymentPickerSettings = {
 export function PaymentGatewayPicker({
   settings,
   loading,
-  upgrade,
   pendingProvider,
   onConnect,
+  onLockedCheckout,
   onRefresh,
   onDisconnect,
 }: {
   settings?: CreatorPaymentPickerSettings;
   loading: boolean;
-  upgrade: ReactNode;
   pendingProvider?: CreatorPaymentProvider | null;
   onConnect: (provider: CreatorPaymentProvider) => void;
+  onLockedCheckout?: () => void;
   onRefresh: (provider: CreatorPaymentProvider) => void;
   onDisconnect: (provider: CreatorPaymentProvider) => void;
 }) {
@@ -109,14 +110,19 @@ export function PaymentGatewayPicker({
             </span>
             <div>
               <div className="text-sm font-semibold text-[#17213a]">
-                Connected checkout is a Store feature
+                {CONNECT_PAYMENTS_BANNER_TITLE}
               </div>
-              <p className={`mt-1 ${micro.mutedXs}`}>
-                Existing credentials remain safe. Upgrade to connect a payment gateway.
-              </p>
+              <p className={`mt-1 ${micro.mutedXs}`}>{CONNECT_PAYMENTS_BANNER_BODY}</p>
             </div>
           </div>
-          {upgrade}
+          <button
+            type="button"
+            disabled={loading || !onLockedCheckout}
+            onClick={() => onLockedCheckout?.()}
+            className={`${micro.btnPrimary} shrink-0`}
+          >
+            Continue to checkout
+          </button>
         </div>
       )}
 
@@ -131,8 +137,12 @@ export function PaymentGatewayPicker({
             <button
               key={provider.id}
               type="button"
-              disabled={settings?.locked || !provider.configured || loading}
+              disabled={!provider.configured || loading || (settings?.locked && !onLockedCheckout)}
               onClick={() => {
+                if (settings?.locked) {
+                  onLockedCheckout?.();
+                  return;
+                }
                 setSelectedProviderChoice(provider.id);
                 setOpenProvider(provider.id);
               }}
@@ -277,9 +287,7 @@ export function PaymentGatewayPicker({
                         <button
                           type="button"
                           disabled={
-                            settings?.locked ||
-                            !chosenProvider.configured ||
-                            pendingProvider === chosenProvider.id
+                            !chosenProvider.configured || pendingProvider === chosenProvider.id
                           }
                           onClick={() => startConnection(chosenProvider.id)}
                           className={`${micro.btnPrimary} h-11 disabled:opacity-45`}

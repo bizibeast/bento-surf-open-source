@@ -2,6 +2,7 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { getInstagramConnectionReadiness } from "./instagram-auto-dm";
 import { scheduledInstagramAutoDmSchema } from "./social-scheduler";
+import { normalizeDashes, normalizeOptionalCopy } from "./text/dashes";
 
 export async function activateScheduledInstagramAutoDm(target: any) {
   if (target.provider !== "instagram" || target.status !== "published" || !target.remote_post_id)
@@ -43,19 +44,19 @@ export async function activateScheduledInstagramAutoDm(target: any) {
     match_type: config.data.matchType,
     media_scope: "specific",
     media_ids: [String(target.remote_post_id)],
-    reply_message: config.data.replyMessage,
-    opening_message: config.data.openingMessage,
-    confirmation_button_label: config.data.confirmationButtonLabel,
+    reply_message: normalizeDashes(config.data.replyMessage),
+    opening_message: normalizeDashes(config.data.openingMessage),
+    confirmation_button_label: normalizeDashes(config.data.confirmationButtonLabel),
     public_reply_enabled: config.data.publicReplyEnabled,
-    public_reply_messages: config.data.publicReplyMessages,
+    public_reply_messages: config.data.publicReplyMessages.map(normalizeDashes),
     email_capture_enabled: config.data.emailCaptureEnabled,
-    email_prompt_message: config.data.emailPromptMessage,
+    email_prompt_message: normalizeOptionalCopy(config.data.emailPromptMessage),
     email_marketing_consent_enabled: config.data.emailCaptureEnabled,
     follow_gate_enabled: config.data.followGateEnabled,
-    follow_prompt_message: config.data.followPromptMessage,
+    follow_prompt_message: normalizeDashes(config.data.followPromptMessage),
     follow_max_rechecks: config.data.followMaxRechecks,
     follow_fail_action: config.data.followFailAction,
-    reply_button_label: config.data.replyButtonLabel,
+    reply_button_label: normalizeOptionalCopy(config.data.replyButtonLabel),
     reply_button_url: config.data.replyButtonUrl,
     enabled: true,
   });

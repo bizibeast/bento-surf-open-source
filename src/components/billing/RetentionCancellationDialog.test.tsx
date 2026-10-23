@@ -140,12 +140,11 @@ describe("cancellation dialog", () => {
   });
 });
 
-it("explains immediate trial cancellation and does not offer to restart the ended trial", async () => {
+it("keeps trial access until the trial end and promises no charge", async () => {
   vi.mocked(cancelMyRenewal).mockResolvedValue({
     ...billing,
-    plan: "free",
-    status: "canceled",
-    cancelAtPeriodEnd: false,
+    status: "trialing",
+    cancelAtPeriodEnd: true,
   });
   render(
     <RetentionCancellationDialog
@@ -155,12 +154,11 @@ it("explains immediate trial cancellation and does not offer to restart the ende
       billing={{ ...billing, status: "trialing" }}
     />,
   );
-  expect(
-    screen.getByText(/Confirming cancellation ends your trial access immediately/),
-  ).toBeVisible();
+  expect(screen.getByText(/Your trial access continues until .*won't be charged/)).toBeVisible();
+  expect(screen.queryByText(/immediately/)).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Skip and continue cancelling" }));
-  expect(await screen.findByText(/Your trial ends immediately when you confirm/)).toBeVisible();
+  expect(await screen.findByText(/You won't be charged. You keep your trial until/)).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Confirm cancellation" }));
-  expect(await screen.findByText("Your trial has ended")).toBeVisible();
+  expect(await screen.findByText("Your trial is cancelled")).toBeVisible();
   expect(screen.queryByRole("button", { name: "Keep my plan" })).not.toBeInTheDocument();
 });

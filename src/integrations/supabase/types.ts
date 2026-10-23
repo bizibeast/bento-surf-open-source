@@ -2743,6 +2743,21 @@ export type Database = {
         Args: { p_environment: string; p_limit: number; p_month: string };
         Returns: boolean;
       };
+      reopen_seo_cloud_run: {
+        Args: {
+          p_article_id?: string | null;
+          p_checkpoints: Json;
+          p_environment: string;
+          p_idempotency_key: string;
+          p_next_retry_at: string;
+          p_now?: string;
+          p_publication_date: string;
+          p_publication_slot: string;
+          p_source_run_id: string;
+          p_topic_id: string;
+        };
+        Returns: Database["public"]["Tables"]["seo_runs"]["Row"];
+      };
       claim_due_content_routines: {
         Args: { p_limit?: number; p_now?: string };
         Returns: Database["public"]["Tables"]["content_routine_runs"]["Row"][];

@@ -280,7 +280,7 @@ describe("scheduler post moves and deletion", () => {
     media: [],
   });
 
-  it.each(["failed", "partially_failed"] as const)(
+  it.each(["failed", "partially_failed", "publishing"] as const)(
     "retries failed destinations from a %s post",
     async (status) => {
       const post = {

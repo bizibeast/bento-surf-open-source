@@ -1,13 +1,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Analytics and content tables precede generated types. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { getPlan } from "./plan.server";
-import { analyticsDays } from "./plans";
 import { sourcePresentation, type ContentSourcePresentation } from "./content-source-media";
-import { zonedDateTimeToUtc } from "./booking";
-import { historyStart, rangeStart } from "./analytics.functions";
 import { requireContentWorkspace } from "./content-access.server";
 import { enforceRequestRateLimit } from "./request-security.server";
 import { readWorkspaceDataSchema, type ReadWorkspaceDataInput } from "./mcp-workspace-data";
+import { getSchedulerPost, listSchedulerPosts } from "./mcp-scheduler-read.server";
+import { sanitizeMcpReadData } from "./mcp-read-results";
+import { mcpAnalyticsWindow } from "./mcp-analytics-window.server";
+export { mcpAnalyticsWindow } from "./mcp-analytics-window.server";
 import type { CreatorMcpContext } from "./mcp.creator-ops.server";
 
 export const SOCIAL_ACCOUNT_FIELDS =
@@ -75,36 +75,47 @@ const collections = {
   { table: string; fields: string; key: string; text?: string; search?: string; date?: string }
 >;
 
-export async function mcpAnalyticsWindow(
+export async function readWorkspaceData(
   context: CreatorMcpContext,
-  range: "today" | "3d" | "7d" | "30d" | "90d" | "all",
-) {
-  const { data, error } = await context.supabase
-    .from("profiles")
-    .select("account_timezone,analytics_timezone")
-    .eq("id", context.userId)
-    .single();
-  if (error || !data) throw new Error("Analytics timezone could not be loaded.");
-  const timeZone = data.account_timezone || data.analytics_timezone || "UTC";
-  let start = rangeStart(range, timeZone);
-  const historyDays = analyticsDays(await getPlan(context.userId));
-  if (historyDays !== null) {
-    const floor = historyStart(historyDays, timeZone);
-    if (!start || start < floor) start = floor;
-  }
-  const startTimestamp = start
-    ? zonedDateTimeToUtc(start, "00:00", timeZone)?.toISOString() || start
-    : null;
-  return { timeZone, start, startTimestamp, historyDays };
-}
-
-export async function readWorkspaceData(context: CreatorMcpContext, input: ReadWorkspaceDataInput) {
+  input: ReadWorkspaceDataInput,
+): Promise<{
+  collection: ReadWorkspaceDataInput["collection"];
+  items: Record<string, unknown>[];
+  hasMore: boolean;
+  nextCursor: string | null;
+  readFrom: "stored";
+  [key: string]: unknown;
+}> {
   const data = readWorkspaceDataSchema.parse(input);
   await enforceRequestRateLimit("PUBLIC_API_RATE_LIMITER", "mcp-workspace-read", context.userId);
   if (["brain_items", "brain_sources", "routines", "routine_runs"].includes(data.collection))
     await requireContentWorkspace(context.userId);
   if (data.collection === "discover_items")
     await requireContentWorkspace(context.userId, "discover");
+  if (data.collection === "scheduler_posts") {
+    if (data.id) {
+      const detail = await getSchedulerPost(context.userId, { id: data.id });
+      return {
+        collection: data.collection,
+        items: [detail.post],
+        hasMore: false,
+        nextCursor: null,
+        readFrom: "stored" as const,
+        provenance: detail.provenance,
+        attempts: detail.attempts,
+        attemptsPagination: detail.attemptsPagination,
+      };
+    }
+    const result = await listSchedulerPosts(context.userId, data.status, data.limit, data);
+    return {
+      collection: data.collection,
+      items: result.posts,
+      hasMore: result.pagination.hasMore,
+      nextCursor: result.pagination.nextCursor,
+      readFrom: "stored" as const,
+      provenance: result.provenance,
+    };
+  }
   const config: {
     table: string;
     fields: string;
@@ -125,6 +136,11 @@ export async function readWorkspaceData(context: CreatorMcpContext, input: ReadW
   if (data.cursor) query = query.gt(config.key, data.cursor);
   if (data.query && config.search)
     query = query.ilike(config.search, `%${data.query.replace(/[\\%_]/g, "\\$&")}%`);
+  if (data.provider) query = query.eq("provider", data.provider);
+  if (data.connectionId) query = query.eq("connection_id", data.connectionId);
+  if (data.contentType) query = query.eq("content_type", data.contentType);
+  if (data.dateFrom && config.date) query = query.gte(config.date, data.dateFrom);
+  if (data.dateTo && config.date) query = query.lt(config.date, data.dateTo);
   if (data.savedOnly) query = query.or("feedback.eq.saved,metadata->>saved.eq.true");
   if (window?.startTimestamp && config.date) query = query.gte(config.date, window.startTimestamp);
   const limit = data.id ? 1 : data.limit;
@@ -188,7 +204,7 @@ export async function readWorkspaceData(context: CreatorMcpContext, input: ReadW
       item.contentTruncated = !data.id && text.length > 500;
       if (item.contentTruncated) item[config.text] = text.slice(0, 500);
     }
-    return item;
+    return sanitizeMcpReadData(item);
   });
   return {
     collection: data.collection,
@@ -196,6 +212,11 @@ export async function readWorkspaceData(context: CreatorMcpContext, input: ReadW
     hasMore,
     nextCursor: hasMore ? String(items.at(-1)?.[config.key]) : null,
     readFrom: "stored" as const,
+    dateBounds: {
+      fromInclusive: data.dateFrom || null,
+      toExclusive: data.dateTo || null,
+      field: config.date || null,
+    },
     ...(window
       ? {
           range: data.range,

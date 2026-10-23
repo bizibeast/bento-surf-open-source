@@ -1,3 +1,4 @@
+import { getDeploymentEnvironment } from "./deployment-environment.server";
 import { reserveProviderUsage } from "./provider-budget.server";
 import { PostHog } from "posthog-node/edge";
 
@@ -23,8 +24,12 @@ function cleanProperties(properties: ServerEventProperties) {
 }
 
 function environmentProperties(env?: unknown): ServerEventProperties {
+  const runtime = globalThis.__env__;
   return {
-    deployment_environment: readEnv(env, "APP_ENV") === "staging" ? "staging" : "production",
+    deployment_environment: getDeploymentEnvironment({
+      ...(runtime && typeof runtime === "object" ? runtime : {}),
+      ...(env && typeof env === "object" ? env : {}),
+    }),
   };
 }
 

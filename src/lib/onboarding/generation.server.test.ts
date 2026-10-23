@@ -1,5 +1,9 @@
 import { expect, it, vi } from "vitest";
-import { citedInstagramPhoto, generateOnboardingDrafts } from "./generation.server";
+import {
+  citedInstagramPhoto,
+  generateOnboardingDrafts,
+  groundedOnboardingDraft,
+} from "./generation.server";
 import { onboardingBriefSchema, buildManualCandidates, onboardingCandidatesSchema } from "./brief";
 
 it("only attaches a cited Instagram image with stable caption-filtered source IDs", () => {
@@ -157,30 +161,94 @@ it("generates one checked starter draft and preserves source dates", async () =>
   expect(generate.mock.calls[0][0].sources).toEqual(
     expect.arrayContaining([expect.objectContaining({ occurredAt: "2024-01-01" })]),
   );
-  expect(generate.mock.calls[0][1].timeoutMs).toBeLessThanOrEqual(45000);
+  expect(generate.mock.calls[0][1].timeoutMs).toBeLessThanOrEqual(80_000);
+  expect(generate.mock.calls[0][1].timeoutMs).toBeGreaterThan(45_000);
 });
-it("distinguishes transient failures from missing evidence without additional paid attempts", async () => {
-  const brief = onboardingBriefSchema.parse({ platform: "instagram" });
-  for (const status of ["retry", "needs_input"] as const) {
-    const generate = vi.fn().mockResolvedValue({
-      status,
-      message: status === "retry" ? "Provider unavailable; retry." : "Add an original example.",
-      issues: [],
-      card: { type: "idea" },
-    });
-    const result = await generateOnboardingDrafts(
-      brief,
-      buildManualCandidates(brief),
-      [],
-      generate,
-    );
-    expect(result.drafts).toHaveLength(0);
-    expect(result).toHaveProperty("retry", status === "retry");
-    expect(generate).toHaveBeenCalledOnce();
-  }
+it("retries a transient failure once, then keeps an answer-only starter", async () => {
+  const brief = onboardingBriefSchema.parse({
+    platform: "linkedin",
+    expertise: "Coral restoration",
+    audience: "Divers",
+  });
+  const generate = vi.fn().mockResolvedValue({
+    status: "retry",
+    reason: "timeout",
+    message: "Provider unavailable; retry.",
+    issues: [],
+    card: { type: "idea" },
+  });
+  const result = await generateOnboardingDrafts(
+    brief,
+    buildManualCandidates(brief),
+    [],
+    generate,
+    Date.now() + 90_000,
+    true,
+    null,
+    0,
+  );
+  expect(generate).toHaveBeenCalledTimes(2);
+  expect(result.retry).toBe(false);
+  expect(result.drafts).toHaveLength(1);
+  expect(result.drafts[0].body).toContain("Coral restoration");
+  expect(result.drafts[0].body).toContain("Divers");
+  expect(result.warning).toMatch(/answers you already gave/);
+  expect(JSON.stringify(result.drafts)).not.toMatch(/\u2014|\d+%|\$\d|million/);
 });
-it("does no generation after the shared deadline", async () => {
-  const brief = onboardingBriefSchema.parse({});
+it("does not spend a second model call when evidence is missing", async () => {
+  const brief = onboardingBriefSchema.parse({
+    platform: "linkedin",
+    expertise: "Coral restoration",
+    audience: "Divers",
+  });
+  const generate = vi.fn().mockResolvedValue({
+    status: "needs_input",
+    reason: "evidence",
+    message: "Add an original example.",
+    issues: [],
+    card: { type: "idea" },
+  });
+  const result = await generateOnboardingDrafts(brief, buildManualCandidates(brief), [], generate);
+  expect(generate).toHaveBeenCalledOnce();
+  expect(result.drafts[0].body).toContain("Coral restoration");
+  expect(result.warning).toMatch(/without adding facts/);
+});
+it("builds an answer-only starter inside provider limits", () => {
+  const twitter = groundedOnboardingDraft(
+    onboardingBriefSchema.parse({
+      platform: "twitter",
+      expertise: "x".repeat(400),
+      audience: "y".repeat(400),
+      offer: "A workshop I already teach",
+    }),
+  );
+  expect(twitter.platform).toBe("twitter");
+  expect(twitter.format).toBe("post");
+  expect(twitter.body.length).toBeLessThanOrEqual(280);
+  expect(twitter.body).toContain("xxxx");
+  const withOffer = groundedOnboardingDraft(
+    onboardingBriefSchema.parse({
+      platform: "twitter",
+      expertise: "Reef care",
+      audience: "Divers",
+      offer: "A workshop I already teach",
+    }),
+  );
+  expect(withOffer.body).toContain("workshop");
+  expect(withOffer.body.length).toBeLessThanOrEqual(280);
+  const instagram = groundedOnboardingDraft(
+    onboardingBriefSchema.parse({
+      platform: "instagram",
+      expertise: "Reef care",
+      audience: "New divers",
+    }),
+  );
+  expect(instagram.format).toBe("carousel");
+  expect(instagram.slides?.length).toBeGreaterThanOrEqual(2);
+  expect(JSON.stringify(instagram)).not.toMatch(/\u2014/);
+});
+it("does no generation after the shared deadline and still leaves a starter", async () => {
+  const brief = onboardingBriefSchema.parse({ expertise: "Reef care", audience: "Divers" });
   const generate = vi.fn();
   const result = await generateOnboardingDrafts(
     brief,
@@ -190,7 +258,8 @@ it("does no generation after the shared deadline", async () => {
     Date.now() - 1,
   );
   expect(generate).not.toHaveBeenCalled();
-  expect(result.warning).toMatch(/timed out/);
+  expect(result.warning).toMatch(/ran out of time/);
+  expect(result.drafts[0].body).toContain("Reef care");
 });
 
 it("retains a creator-edited draft on retry without generating another starter", async () => {

@@ -26,7 +26,7 @@ const story = {
 };
 
 describe("shared niche briefs", () => {
-  it("does not buy searches when free sources already provide enough fresh relevant stories", async () => {
+  it("does not skip supported social platforms when free sources already provide enough stories", async () => {
     const search = vi.fn();
     const reserveSearch = vi.fn();
     const free = Array.from({ length: 12 }, (_, index) => ({
@@ -43,7 +43,7 @@ describe("shared niche briefs", () => {
       reddit: vi.fn().mockResolvedValue([]),
       hackerNews: vi.fn().mockResolvedValue([]),
     });
-    expect(search).not.toHaveBeenCalled();
+    expect(search).toHaveBeenCalledTimes(4);
     expect(reserveSearch).not.toHaveBeenCalled();
   });
   it("treats a platform as recovered when another adapter delivers relevant posts", async () => {
@@ -118,7 +118,7 @@ describe("shared niche briefs", () => {
     expect(normalizeNicheKey([" Creator Economy ", "AI Agents"])).toBe(
       normalizeNicheKey(["ai agents", "creator economy"]),
     );
-    expect(normalizeNicheKey(["creator AI"])).toMatch(/^social-v15:/);
+    expect(normalizeNicheKey(["creator AI"])).toMatch(/^social-v16:/);
   });
 
   it("reuses one fresh brief for the same niche, language, region, and day", async () => {
@@ -255,7 +255,7 @@ it("matches genre synonyms and keeps compound subjects specific", () => {
   ).toBe(false);
 });
 
-it("rotates two social platforms and widens sparse results within four paid requests", async () => {
+it("covers every social platform in four bounded searches without widening retries", async () => {
   const search = vi.fn(async (query, options) => {
     expect(await options.reserve()).toBe(true);
     return query.windowDays === 7 ? [] : [{ ...story, platform: "Instagram" }];
@@ -275,12 +275,12 @@ it("rotates two social platforms and widens sparse results within four paid requ
   );
   expect(search).toHaveBeenCalledTimes(4);
   expect(reserveSearch).toHaveBeenCalledTimes(4);
-  expect(search.mock.calls.filter(([query]) => query.windowDays === 7)).toHaveLength(2);
-  expect(search.mock.calls.filter(([query]) => query.windowDays === 30)).toHaveLength(2);
+  expect(search.mock.calls.filter(([query]) => query.windowDays === 7)).toHaveLength(0);
+  expect(search.mock.calls.filter(([query]) => query.windowDays === 30)).toHaveLength(4);
   expect(new Set(search.mock.calls.slice(0, 2).map(([query]) => query.group)).size).toBe(2);
-  expect(search.mock.calls[0][0]).toMatchObject({ limit: 20, query: '"comedy" OR "Trevor Noah"' });
+  expect(search.mock.calls[0][0]).toMatchObject({ limit: 40, query: '"comedy" OR "Trevor Noah"' });
   expect(hackerNews).not.toHaveBeenCalled();
-  expect(results).toHaveLength(5);
+  expect(results).toHaveLength(7);
 });
 
 it("counts transient retries against the same per-brief provider allowance", async () => {
@@ -301,7 +301,7 @@ it("counts transient retries against the same per-brief provider allowance", asy
   });
   expect(reserveSearch).toHaveBeenCalledTimes(4);
   expect(accepted.filter(Boolean)).toHaveLength(4);
-  expect(search).toHaveBeenCalledTimes(2);
+  expect(search).toHaveBeenCalledTimes(4);
 });
 
 it("rejects old posts before and after metadata enrichment and keeps undated posts honest", async () => {
@@ -427,4 +427,263 @@ it("bounds long brief keys without collapsing differences beyond their readable 
     normalizeNicheKey([...sharedTopics, "z final topic one"].reverse(), creators.slice().reverse()),
   ).toBe(first);
   expect(normalizeNicheKey(["🎭".repeat(600)])).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/u);
+});
+
+it("starts every social platform group even when free providers are slow or plentiful", async () => {
+  let finishYouTube!: (items: ContentSourceItem[]) => void;
+  const search = vi.fn(async (_query, options) => {
+    await options.reserve();
+    return [];
+  });
+  const work = fetchTrendSources(input, {
+    search,
+    reserveSearch: vi.fn().mockResolvedValue(true),
+    news: vi.fn().mockResolvedValue(
+      Array.from({ length: 12 }, (_, i) => ({
+        ...story,
+        canonicalUrl: `https://example.com/${i}`,
+        publishedAt: new Date().toISOString(),
+      })),
+    ),
+    youtube: vi.fn(
+      () =>
+        new Promise<ContentSourceItem[]>((resolve) => {
+          finishYouTube = resolve;
+        }),
+    ),
+    reddit: vi.fn().mockResolvedValue([]),
+    hackerNews: vi.fn().mockResolvedValue([]),
+  });
+  await Promise.resolve();
+  expect(search).toHaveBeenCalled();
+  const groups = search.mock.calls.map(([query]) => query.group).join(" ");
+  for (const host of [
+    "instagram.com",
+    "tiktok.com",
+    "linkedin.com",
+    "x.com",
+    "threads.com",
+    "facebook.com",
+  ])
+    expect(groups).toContain(host);
+  finishYouTube([]);
+  await work;
+});
+
+it("persists verified sources progressively before slow providers finish", async () => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const qualified = { ...story, platform: "YouTube", stats: { followers: 2000, views: 20000 } };
+  const progress = vi.fn();
+  const work = getOrBuildTrendBrief(
+    input,
+    {
+      readBrief: vi.fn().mockResolvedValue(null),
+      fetchSources: vi.fn(async (_input, onBatch) => {
+        onBatch?.([qualified]);
+        await pending;
+        return [{ status: "fulfilled" as const, value: [qualified] }];
+      }),
+      saveBrief: vi.fn(async (value) => ({ id: "brief", ...value })),
+    },
+    progress,
+  );
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+  expect(progress).toHaveBeenCalledWith(
+    expect.objectContaining({ id: "brief", items: [qualified] }),
+  );
+  release();
+  expect((await work).items).toEqual([qualified]);
+});
+
+it("does not let progressive refreshes overwrite a complete brief shared with another workspace", async () => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const qualified = { ...story, platform: "YouTube", stats: { followers: 2000, views: 20000 } };
+  const existing = {
+    id: "shared",
+    ...input,
+    nicheKey: normalizeNicheKey(input.nicheKeywords),
+    items: [qualified],
+    warnings: [],
+  };
+  const saveBrief = vi.fn(async (value) => ({ id: "shared", ...value }));
+  const progress = vi.fn();
+  const work = getOrBuildTrendBrief(
+    { ...input, forceRefresh: true },
+    {
+      readBrief: vi.fn().mockResolvedValue(existing),
+      fetchSources: vi.fn(async (_input, onBatch) => {
+        onBatch?.([qualified]);
+        await pending;
+        return [{ status: "fulfilled" as const, value: [qualified] }];
+      }),
+      saveBrief,
+    },
+    progress,
+  );
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+  expect(progress).toHaveBeenCalledWith(
+    expect.objectContaining({ id: "shared", items: [qualified] }),
+  );
+  expect(saveBrief).not.toHaveBeenCalled();
+  release();
+  await work;
+  expect(saveBrief).toHaveBeenCalledTimes(1);
+  expect(saveBrief.mock.calls[0][0].warnings).toEqual([]);
+});
+
+it("rejects fictional CEO twist stories as startup evidence even when the synopsis contains founder and funding words", () => {
+  expect(
+    sourceMatchesDiscoverNiche(
+      {
+        title:
+          "A Rich CEO Humiliated a Courier… Then Learned Who Really Owned the Company! #shorts",
+        summary:
+          "A ruthless tech founder arrives at Nexus Capital expecting a $20 million investment. But when he humiliates a soaked elderly courier...",
+      },
+      ["startup journey", "AI", "writing style"],
+    ),
+  ).toBe(false);
+  expect(
+    sourceMatchesDiscoverNiche(
+      {
+        title: "An Arrogant Billionaire Boss Mocked a Janitor Until He Discovered Her Secret",
+        summary:
+          "A fictional founder learns an unforgettable lesson in this moral story about his company.",
+      },
+      ["startup journey"],
+    ),
+  ).toBe(false);
+  expect(
+    sourceMatchesDiscoverNiche(
+      {
+        title: "Startup founder explains the mistakes behind her first funding round",
+        summary:
+          "The founder shares customer interviews, product changes and fundraising decisions.",
+      },
+      ["startup journey"],
+    ),
+  ).toBe(true);
+});
+
+it("does not admit unrelated posts whose only business evidence is promotional hashtags", () => {
+  expect(
+    sourceMatchesDiscoverNiche(
+      {
+        title: "Hawa se chalne wali gaadi.. 🔥 #startup #entrepreneur",
+        summary: "Hawa se chalne wali gaadi.. #startup #entrepreneur.",
+      },
+      ["startup journey"],
+    ),
+  ).toBe(false);
+  expect(
+    sourceMatchesDiscoverNiche(
+      {
+        title: "My founder journey: why our customers stopped using the product #startup",
+        summary: "What we changed after interviewing five customers.",
+      },
+      ["startup journey"],
+    ),
+  ).toBe(true);
+});
+
+it("does not treat correction metadata as standalone subject evidence or change cache identity", () => {
+  const keywords = ["startup journey", "factual-correction", "ownership", "profile"];
+  expect(
+    sourceMatchesDiscoverNiche(
+      { title: "Profile ownership rights", summary: "How to claim ownership of a social profile." },
+      keywords,
+    ),
+  ).toBe(false);
+  expect(discoverSearchQuery(keywords)).not.toContain('"ownership"');
+  expect(normalizeNicheKey(keywords)).toContain("ownership");
+});
+
+it("keeps educational AI demos that use fictional examples and genuine fiction niches", () => {
+  expect(
+    sourceMatchesDiscoverNiche(
+      {
+        title: "How to build an AI writing app",
+        summary: "The demo generates a fictional story to show how the tool works.",
+      },
+      ["AI"],
+    ),
+  ).toBe(true);
+  expect(
+    sourceMatchesDiscoverNiche(
+      {
+        title: "A Rich CEO Humiliated a Courier… Then Learned Who Really Owned the Company!",
+        summary: "A fictional moral story with dramatic storytelling.",
+      },
+      ["storytelling", "fiction"],
+    ),
+  ).toBe(true);
+});
+
+it("rechecks cached brief relevance for routines without fetching or deleting stored history", async () => {
+  const good = {
+    ...story,
+    title: "Startup founder shares customer research lessons",
+    summary: "How the business changed its product after interviewing customers.",
+  };
+  const fictional = {
+    ...story,
+    canonicalUrl: "https://example.com/fiction",
+    title: "A Rich CEO Humiliated a Courier… Then Learned Who Really Owned the Company!",
+    summary: "A ruthless tech founder arrives expecting a $20 million investment.",
+  };
+  const existing = {
+    id: "cached",
+    ...input,
+    nicheKeywords: ["startup journey"],
+    nicheKey: normalizeNicheKey(["startup journey"]),
+    items: [fictional, good],
+    warnings: [],
+  };
+  const deps = {
+    readBrief: vi.fn().mockResolvedValue(existing),
+    fetchSources: vi.fn(),
+    saveBrief: vi.fn(),
+  };
+  expect(
+    (await getOrBuildTrendBrief({ ...input, nicheKeywords: ["startup journey"] }, deps)).items,
+  ).toEqual([good]);
+  expect(existing.items).toHaveLength(2);
+  expect(deps.fetchSources).not.toHaveBeenCalled();
+  expect(deps.saveBrief).not.toHaveBeenCalled();
+});
+
+it("matches exact singular forms of ordinary plural topic words without broadening compound subjects", () => {
+  expect(
+    sourceMatchesDiscoverNiche(
+      {
+        title: "Creator platform launches a new publishing tool",
+        summary: "A practical publishing workflow.",
+      },
+      ["creator tools"],
+    ),
+  ).toBe(true);
+  expect(
+    sourceMatchesDiscoverNiche(
+      { title: "A creator builds an AI agent", summary: "An automation demo." },
+      ["AI agents"],
+    ),
+  ).toBe(true);
+  expect(
+    sourceMatchesDiscoverNiche(
+      { title: "A new gardening tool", summary: "A useful tool for garden maintenance." },
+      ["creator tools"],
+    ),
+  ).toBe(false);
+  expect(
+    sourceMatchesDiscoverNiche(
+      { title: "A creator's toolbox", summary: "The empty box used in a studio." },
+      ["creator tools"],
+    ),
+  ).toBe(false);
 });

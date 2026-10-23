@@ -4,6 +4,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { currentCustomerSession } from "./customer-library-auth.server";
+import { normalizeDashes } from "./text/dashes";
 import {
   enqueuePriorityDmMessageToBuyerEmail,
   enqueuePriorityDmMessageToCreatorEmail,
@@ -28,10 +29,11 @@ export async function appendPriorityDmMessageAndNotify(
   },
   enqueue: (input: { requestId: string; messageId: string }) => Promise<unknown>,
 ) {
+  const copy = input.sender === "creator" ? normalizeDashes(input.body) : input.body;
   const { data: message, error } = await (supabaseAdmin as any).rpc("append_priority_dm_message", {
     p_request_id: input.requestId,
     p_sender: input.sender,
-    p_body: input.body,
+    p_body: copy,
     p_order_id: input.orderId,
   });
   if (error || !message?.id) throw new Error(error?.message || "Priority message was not saved.");

@@ -445,6 +445,102 @@
   padding: 10px 24px;
   color: var(--muted-foreground);
   flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+.agent-message-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.agent-speaker {
+  display: block;
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+.agent-message-assistant {
+  max-width: 100%;
+  min-width: 0;
+  padding: 4px 0 12px;
+}
+.agent-message-user {
+  margin-left: auto;
+  max-width: 85%;
+  min-width: 0;
+}
+.agent-message-user > .agent-speaker {
+  text-align: right;
+  margin: 0 6px 6px;
+}
+.agent-user-bubble {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border-radius: 20px 20px 5px 20px;
+  padding: 12px 18px;
+  background: var(--muted);
+  color: var(--foreground);
+  font-size: 15px;
+  line-height: 1.7;
+}
+.agent-draft-artifact {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--card);
+}
+.agent-draft-artifact .content-action {
+  min-height: 36px;
+  gap: 6px;
+}
+.agent-draft-notes {
+  margin-top: 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted-foreground);
+}
+.agent-draft-notes > summary {
+  width: fit-content;
+  cursor: pointer;
+  padding: 4px 0;
+  font-weight: 500;
+}
+.agent-draft-notes > summary:focus-visible,
+.agent-rejected-draft > summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 4px;
+  border-radius: 3px;
+}
+.agent-rejected-draft {
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+.agent-rejected-draft > summary {
+  cursor: pointer;
+}
+.agent-reject-action {
+  color: var(--muted-foreground);
+}
+.agent-reject-action:hover {
+  color: var(--destructive);
+}
+@media (max-width: 640px) {
+  .agent-draft-artifact {
+    padding: 12px;
+    border-radius: 14px;
+  }
+  .agent-message-user {
+    max-width: 92%;
+  }
+  .agent-draft-artifact .content-action {
+    min-height: 40px;
+  }
 }
 .agent-mobile-trigger {
   display: none;

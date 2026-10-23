@@ -34,6 +34,11 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { getMyProfile, updateProfile } from "@/lib/profile.functions";
 import { getMyNewsletter, saveNewsletterPublication } from "@/lib/newsletter.functions";
 import { captureProductEvent } from "@/lib/posthog";
+import {
+  checkoutFailureMessage,
+  readCheckoutReturn,
+  withoutCheckoutReturnParams,
+} from "@/lib/checkout-return";
 import { uploadFile } from "@/lib/upload";
 import {
   getMyBlocks,
@@ -430,15 +435,35 @@ function DashboardPage() {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     if (!params.has("upgraded")) return;
-    toast.success("Payment received - activating your paid plan…");
+    const returned = readCheckoutReturn(params);
+    window.history.replaceState({}, "", withoutCheckoutReturnParams(window.location.href));
+    if (returned.outcome === "failed") {
+      captureProductEvent("plan_checkout_failed", {
+        status: returned.status,
+        trial: returned.trial,
+      });
+      toast.error(checkoutFailureMessage(returned.status, returned.trial), {
+        duration: 15_000,
+        action: {
+          label: "Try again",
+          onClick: () => void navigate({ to: "/settings", search: { section: "plan" } }),
+        },
+      });
+      return;
+    }
+    toast.success(
+      returned.outcome === "succeeded"
+        ? "Checkout complete. Activating your plan…"
+        : "Checking your checkout. Your plan will update in a moment…",
+    );
     let tries = 0;
     const timer = setInterval(() => {
       tries += 1;
       qc.invalidateQueries({ queryKey: ["my-profile"] });
       if (tries >= 5) clearInterval(timer);
     }, 3000);
-    window.history.replaceState({}, "", window.location.pathname);
     return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qc]);
 
   const slugifyClient = (name: string) =>

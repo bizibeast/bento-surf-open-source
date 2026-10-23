@@ -20,6 +20,7 @@ import { refreshTwitterAutoDmHealth, twitterWebhookAppConfigured } from "./twitt
 import { isServerSecretEncryptionKeyValid } from "./secret-crypto.server";
 import { getPlan, requirePlanEntitlement } from "./plan.server";
 import { planHasEntitlement, usesAdvancedAutoDm, type PlanId } from "./plans";
+import { normalizeDashes } from "./text/dashes";
 
 const requireAutoDm = (userId: string) =>
   requirePlanEntitlement(userId, "twitterAutoDM", "X Auto DMs are included with every Bento plan.");
@@ -227,7 +228,7 @@ export const saveTwitterAutoDmAutomation = createServerFn({ method: "POST" })
       keywords: data.keywords,
       excluded_keywords: data.excludedKeywords,
       match_type: data.matchType,
-      reply_message: data.replyMessage,
+      reply_message: normalizeDashes(data.replyMessage),
       enabled: data.enabled,
     };
     const query = data.id

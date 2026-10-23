@@ -6,6 +6,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { requirePlanEntitlement } from "./plan.server";
 import { enforceRequestRateLimit } from "./request-security.server";
 import { runAiJson } from "./ai-json.server";
+import { normalizeDashes } from "./text/dashes";
 import {
   SOCIAL_PROVIDER_DEFINITIONS,
   isPublicSocialProvider,
@@ -95,11 +96,12 @@ export const rewriteSchedulerText = createServerFn({ method: "POST" })
         schema: z.object({ body: z.string().trim().min(1).max(limits[provider]) }),
         temperature: 0.5,
         maxTokens: 3000,
+        modelTier: "balanced",
         timeoutMs: 45000,
       },
       globalThis.__env__ || {},
     );
-    return { body: result.value.body.replace(/\u2014/g, ". ") };
+    return { body: normalizeDashes(result.value.body) };
   });
 
 export const getSchedulerPhotoLibrary = createServerFn({ method: "GET" })

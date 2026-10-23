@@ -78,7 +78,9 @@ import {
   saveCommerceOrderBump,
 } from "@/lib/commerce-growth.functions";
 import { deleteCommerceProduct } from "@/lib/commerce-delete.functions";
+import { followCurrentConnectPayments } from "@/lib/connect-payments";
 import { TRIAL_DAYS } from "@/lib/plans";
+import { settingsIntegrationsPath } from "@/lib/settings-integrations";
 import { createStoreWebMcpTools } from "@/lib/store-webmcp";
 import { useWebMcpTools } from "@/lib/webmcp";
 import {
@@ -240,6 +242,13 @@ function ProductsPage() {
     (edit && editing?.kind !== "newsletter") ||
     (create && create !== "newsletter" && !paymentBlockedCreate),
   );
+  const connectPayments = () => {
+    void followCurrentConnectPayments(() => {
+      window.location.assign(settingsIntegrationsPath("payments"));
+    }).catch((error) => {
+      toast.error(error instanceof Error ? error.message : "Could not start checkout.");
+    });
+  };
   const openProductCreator = () => {
     if (data?.locked) {
       toast.error("Creating and publishing products requires the Store plan.");
@@ -451,12 +460,13 @@ function ProductsPage() {
                 Store blocks pause until a payment gateway is ready.
               </p>
             </div>
-            <a
-              href="/settings?section=integrations&integration=payments"
+            <button
+              type="button"
+              onClick={connectPayments}
               className="inline-flex shrink-0 items-center justify-center rounded-2xl bg-[#17213a] px-4 py-2.5 text-xs font-semibold text-white"
             >
               {data?.storeSetup?.selectedProvider ? "Finish payment setup" : "Connect payments"}
-            </a>
+            </button>
           </div>
         )}
         <section className="relative overflow-hidden rounded-[34px] bg-[#17213a] p-6 text-white shadow-[0_30px_80px_-45px_rgba(23,33,58,0.8)] sm:p-8">
@@ -514,6 +524,7 @@ function ProductsPage() {
             offers.length === 0 && !data?.locked ? (
               <StoreOnboarding
                 paymentSetup={data?.storeSetup}
+                onConnectPayments={connectPayments}
                 onChooseTemplate={(kind) => {
                   if (kind === "coaching_call") {
                     window.location.assign("/calendar");
@@ -703,9 +714,11 @@ const STORE_STARTER_TEMPLATES: Array<{
 function StoreOnboarding({
   paymentSetup,
   onChooseTemplate,
+  onConnectPayments,
 }: {
   paymentSetup?: CommerceDashboardData["storeSetup"];
   onChooseTemplate: (kind: CommerceProductKind) => void;
+  onConnectPayments: () => void;
 }) {
   const paymentReady = Boolean(paymentSetup?.ready);
   const selectedProvider = paymentSetup?.selectedProvider
@@ -774,13 +787,14 @@ function StoreOnboarding({
               )}
             </div>
           </div>
-          <a
-            href="/settings?section=integrations&integration=payments"
+          <button
+            type="button"
+            onClick={onConnectPayments}
             className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-[#17213a] px-5 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-[#263252]"
           >
             {selectedProvider ? `Finish ${selectedProvider.name} setup` : "Connect payments"}
             <ChevronRight className="size-4" />
-          </a>
+          </button>
         </div>
       ) : (
         <div className="px-5 py-7 sm:px-8 sm:py-9">

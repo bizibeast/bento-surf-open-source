@@ -47,6 +47,52 @@ const schedule: Card = {
 };
 
 describe("ContentAgentCard", () => {
+  it("makes rejection a direct action without a feedback form", async () => {
+    const reject = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ContentAgentCard
+        messageId="message"
+        card={draft}
+        allCards={[draft]}
+        onApproveBrain={vi.fn()}
+        onRejectDraft={reject}
+        onRegenerateDraft={vi.fn()}
+        onApproveSchedule={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText("Improve this draft")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Draft feedback")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reject draft" }));
+    await waitFor(() => expect(reject).toHaveBeenCalledWith("draft-1", "Not a fit for me"));
+    expect(screen.getByText("Draft rejected")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Open in scheduler" })).not.toBeInTheDocument();
+  });
+  it("makes saved editorial feedback available on a Needs review draft", () => {
+    const card: Card = {
+      ...draft,
+      editorial: {
+        sourceIds: ["source-1"],
+        angle: "A useful angle",
+        whyNow: "A timely lesson",
+        validationState: "needs_review",
+        reviewIssues: [{ code: "reader_value", message: "Add a practical takeaway." }],
+      },
+    };
+    render(
+      <ContentAgentCard
+        messageId="message"
+        card={card}
+        allCards={[card]}
+        onApproveBrain={vi.fn()}
+        onRejectDraft={vi.fn()}
+        onRegenerateDraft={vi.fn()}
+        onApproveSchedule={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByText("Needs review"));
+    expect(screen.getByText("Add a practical takeaway.")).toBeVisible();
+    expect(screen.getByText("Review this feedback before scheduling.")).toBeVisible();
+  });
   it("shows original safe sources on a proactive one-draft payload through copy editing and regeneration", async () => {
     const { storedContentAgentResultSchema } = await import("@/lib/content-agent-proactive");
     const source = "https://publisher.example/original?ref=article";
@@ -89,6 +135,7 @@ describe("ContentAgentCard", () => {
       onRegenerateDraft,
     };
     const { rerender } = render(<ContentAgentCard {...props} />);
+    fireEvent.click(screen.getByText("Sources & notes"));
     expect(screen.getByRole("list", { name: "Draft sources" })).toBeVisible();
     const link = screen.getByRole("link", { name: source });
     expect(link).toHaveAttribute("href", source);
@@ -104,14 +151,6 @@ describe("ContentAgentCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(onSaveDraft).toHaveBeenCalled());
     expect(screen.getByRole("link", { name: source })).toBeVisible();
-    fireEvent.click(screen.getByText("Improve this draft"));
-    fireEvent.change(screen.getByLabelText("Draft feedback"), {
-      target: { value: "Tighten the ending" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Regenerate draft" }));
-    await waitFor(() =>
-      expect(onRegenerateDraft).toHaveBeenCalledWith("draft-1", "Tighten the ending"),
-    );
     rerender(
       <ContentAgentCard
         {...props}
@@ -163,9 +202,8 @@ describe("ContentAgentCard", () => {
     expect(onApproveSchedule).toHaveBeenCalledWith("draft-1", "schedule-1");
   });
 
-  it("records a bounded reason before rejecting or regenerating a draft", async () => {
-    const onRejectDraft = vi.fn();
-    const onRegenerateDraft = vi.fn();
+  it("keeps failed rejection actionable and reports the error", async () => {
+    const onRejectDraft = vi.fn().mockRejectedValue(new Error("Please retry"));
     render(
       <ContentAgentCard
         messageId="message"
@@ -173,19 +211,14 @@ describe("ContentAgentCard", () => {
         allCards={[draft]}
         onApproveBrain={vi.fn()}
         onRejectDraft={onRejectDraft}
-        onRegenerateDraft={onRegenerateDraft}
+        onRegenerateDraft={vi.fn()}
         onApproveSchedule={vi.fn()}
       />,
     );
-    fireEvent.click(screen.getByText("Improve this draft"));
-    fireEvent.change(screen.getByLabelText("Draft feedback"), { target: { value: "Too generic" } });
-    fireEvent.click(screen.getByRole("button", { name: "Regenerate draft" }));
-    expect(onRegenerateDraft).toHaveBeenCalledWith("draft-1", "Too generic");
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Reject draft" })).not.toBeDisabled(),
-    );
     fireEvent.click(screen.getByRole("button", { name: "Reject draft" }));
-    expect(onRejectDraft).toHaveBeenCalledWith("draft-1", "Too generic");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Please retry");
+    expect(screen.getByRole("button", { name: "Reject draft" })).not.toBeDisabled();
+    expect(screen.getByText(draft.body)).toBeVisible();
   });
 });
 

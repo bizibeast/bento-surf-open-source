@@ -1,4 +1,5 @@
 import { AutoDmDelaySettings } from "@/components/AutoDmDelaySettings";
+import { DraftReviewNotice } from "@/components/content/DraftReviewNotice";
 import { SchedulerActionButton } from "@/components/scheduler/SchedulerActionButton";
 import { SchedulerPostAutoDm } from "@/components/scheduler/SchedulerPostAutoDm";
 import {
@@ -2928,6 +2929,12 @@ function SchedulerPage() {
                       <DialogTitle className="font-ui-display text-2xl sm:text-3xl">
                         {composeWasOpenedForEdit ? "Edit post" : "Create a post"}
                       </DialogTitle>
+                      <DraftReviewNotice
+                        notes={
+                          data?.posts.find((post: SchedulerPost) => post.id === editingPostId)
+                            ?.reviewNotes || []
+                        }
+                      />
                     </div>
 
                     <div className="shrink-0 px-4 pt-3 sm:px-5">
@@ -5114,7 +5121,7 @@ function CalendarPost({
   const deletable = post.status === "scheduled" || post.status === "failed";
   const retryable =
     canReschedule &&
-    (post.status === "failed" || post.status === "partially_failed") &&
+    ["failed", "partially_failed", "publishing"].includes(post.status) &&
     post.targets.some((target) => target.status === "failed");
   const statusColor: Record<SchedulerPost["status"], string> = {
     draft: "bg-zinc-400",
@@ -5647,7 +5654,7 @@ function PostRow({
   const deletable = ["draft", "cancelled", "failed"].includes(post.status);
   const retryable =
     canEdit &&
-    (post.status === "failed" || post.status === "partially_failed") &&
+    ["failed", "partially_failed", "publishing"].includes(post.status) &&
     post.targets.some((target) => target.status === "failed");
   const media = post.media[0];
   const liveTargets = post.targets.filter((target) => target.remotePostUrl);
@@ -5732,6 +5739,7 @@ function PostRow({
           {post.status === "draft" && post.automationNote && (
             <p className="mt-2 text-xs leading-5 text-amber-700">{post.automationNote}</p>
           )}
+          {post.status === "draft" && <DraftReviewNotice notes={post.reviewNotes || []} />}
           <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
             <span className="inline-flex items-center gap-1.5 capitalize">
               <span
@@ -5851,16 +5859,20 @@ function PostRow({
           )}
         </div>
       </div>
-      {post.targets.some((target) => target.status === "failed" && target.errorMessage) && (
+      {post.targets.some((target) => ["failed", "outcome_unknown"].includes(target.status)) && (
         <div className="mt-3 space-y-2">
           {post.targets
-            .filter((target) => target.status === "failed" && target.errorMessage)
+            .filter((target) => ["failed", "outcome_unknown"].includes(target.status))
             .map((target) => (
               <p
                 key={`${target.id}-error`}
                 className="rounded-2xl bg-rose-500/10 px-3 py-2 text-xs leading-5 text-rose-700 dark:text-rose-300"
               >
-                {SOCIAL_PROVIDER_DEFINITIONS[target.provider].name}: {target.errorMessage}
+                {SOCIAL_PROVIDER_DEFINITIONS[target.provider].name}:{" "}
+                {target.errorMessage ||
+                  (target.status === "outcome_unknown"
+                    ? "Publication is unconfirmed. Check your profile before creating another post to avoid duplicates."
+                    : "This destination could not publish. Retry it below.")}
               </p>
             ))}
         </div>

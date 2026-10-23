@@ -219,7 +219,11 @@ export async function saveRoutineOutputs(
   if (error) throw new Error("Prepared routine batch could not be saved.");
   if (db === supabaseAdmin) {
     const { prepareAgentPost } = await import("./content-agent-preparation.server");
-    for (const draft of prepared.drafts) await prepareAgentPost(input.userId, draft.socialPostId);
+    for (const draft of prepared.drafts) {
+      // Keep unfinished copy editable without spending on automatic media preparation.
+      if (draft.card.editorial?.validationState !== "needs_review")
+        await prepareAgentPost(input.userId, draft.socialPostId);
+    }
   }
   return prepared.drafts.length;
 }

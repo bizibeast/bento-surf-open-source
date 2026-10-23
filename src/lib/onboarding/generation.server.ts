@@ -9,6 +9,7 @@ import {
   buildManualCandidates,
   onboardingBriefSchema,
   onboardingCandidatesSchema,
+  ONBOARDING_GOALS,
   ONBOARDING_OUTPUT_PLATFORMS,
   hasUnsupportedOnboardingDrafts,
   type OnboardingBrief,
@@ -34,6 +35,93 @@ export function citedInstagramPhoto(
         draft.editorial?.sourceIds.includes(`source-${index}`),
     )?.id;
 }
+const clip = (value: string, max: number) => {
+  const text = value.replace(/\s+/g, " ").trim();
+  return text.length <= max ? text : text.slice(0, max).trimEnd();
+};
+
+/** Answers the creator already typed. No metrics, stories, or sources they did not supply. */
+export function groundedOnboardingDraft(
+  brief: OnboardingBrief,
+): OnboardingCandidates["drafts"][number] {
+  const expertise = clip(brief.expertise, 180) || "the work you do";
+  const audience = clip(brief.audience, 180) || "the people you want to help";
+  const goal =
+    ONBOARDING_GOALS.find((item) => item.id === brief.goal)?.label || "Build my online presence";
+  const offer = clip(brief.offer, 180);
+  const rationale = "Starter from your onboarding answers. No added facts, metrics, or stories.";
+  if (brief.platform === "instagram") {
+    return {
+      title: clip(expertise, 80) || "Starter note",
+      body: clip(`A starting note for ${audience} about ${expertise}.`, 500),
+      platform: "instagram",
+      format: "carousel",
+      slides: [
+        { heading: "Who it is for", body: clip(audience, 360) },
+        { heading: "What I share", body: clip(expertise, 360) },
+        ...(offer ? [{ heading: "Offer I described", body: offer }] : []),
+        { heading: "First goal", body: clip(goal, 360) },
+      ],
+      rationale,
+    };
+  }
+  const lines = [
+    `A starting note for ${audience}.`,
+    `What I want to share: ${expertise}.`,
+    offer ? `Offer I already described: ${offer}.` : "",
+    `First goal I chose: ${goal}.`,
+    "This uses only those answers. It does not add results or stories.",
+  ].filter(Boolean);
+  let body = lines.join("\n\n");
+  if (brief.platform === "twitter" && body.length > 280)
+    body =
+      `I want to share ${clip(expertise, 80)} with ${clip(audience, 80)}. Goal: ${clip(goal, 40)}.`.slice(
+        0,
+        280,
+      );
+  return {
+    title: clip(expertise, 80) || "Starter note",
+    body,
+    platform: brief.platform,
+    format: "post",
+    rationale,
+  };
+}
+
+const starterWarnings = {
+  timeout:
+    "Draft checking ran out of time. This starter uses only the answers you already gave. Edit it, try again, or continue and publish your page.",
+  provider:
+    "I couldn't finish generating and checking this draft. This starter uses only the answers you already gave. You can edit it, try again, or continue and publish your page.",
+  evidence:
+    "I couldn't verify a model draft without adding facts. This starter uses only the answers you already gave. Edit it, try again, or continue and publish your page.",
+  quality:
+    "I couldn't settle a checked model draft. This starter uses only the answers you already gave. Edit it, try again, or continue and publish your page.",
+} as const;
+
+function withGroundedStarter(
+  candidates: OnboardingCandidates,
+  brief: OnboardingBrief,
+  warning: string,
+  reason: string,
+) {
+  console.warn("[onboarding] draft fallback", { reason });
+  return {
+    ...candidates,
+    drafts: [groundedOnboardingDraft(brief)],
+    warning,
+    retry: false as const,
+  };
+}
+
+function starterWarning(reason: string | undefined, message: string) {
+  if (/credits|connection needs attention/.test(message))
+    return { warning: message, reason: "provider" };
+  if (reason === "timeout" || reason === "evidence" || reason === "quality")
+    return { warning: starterWarnings[reason], reason };
+  return { warning: starterWarnings.provider, reason: "provider" };
+}
+
 /** Before trial activation, use only the approved preparation and owned imported samples. */
 export async function generateOnboardingDrafts(
   brief: OnboardingBrief,
@@ -43,12 +131,14 @@ export async function generateOnboardingDrafts(
   deadline = Date.now() + 90_000,
   preserveExisting = true,
   photoPostId?: string | null,
+  retryDelayMs = 1_500,
 ) {
   if (!(ONBOARDING_OUTPUT_PLATFORMS as readonly string[]).includes(brief.platform))
     return {
       ...candidates,
       warning:
         "Choose X text, LinkedIn text, or Instagram carousel for your starter drafts. Your imported source account and history stay connected.",
+      retry: false,
     };
   if (preserveExisting && hasUnsupportedOnboardingDrafts(candidates))
     return {
@@ -105,22 +195,30 @@ export async function generateOnboardingDrafts(
     })),
   };
   const drafts: OnboardingCandidates["drafts"] = preserveExisting ? [...candidates.drafts] : [];
-  let warning: string | null = null;
-  let retry = false;
   for (let index = drafts.length; index < 1; index++) {
     const remaining = deadline - Date.now();
-    if (remaining <= 0) {
-      warning = "Draft checking timed out. Your Brain is saved; retry to prepare your first draft.";
-      retry = true;
-      break;
-    }
-    const result = await generate(buildEditorialBrief(context), {
-      timeoutMs: Math.min(45_000, remaining),
+    if (remaining <= 0)
+      return withGroundedStarter(candidates, brief, starterWarnings.timeout, "timeout");
+    let result = await generate(buildEditorialBrief(context), {
+      timeoutMs: Math.min(80_000, remaining),
     });
+    // One paid retry after a short pause. A finished failure does not requeue itself.
+    if (result.status === "retry" && deadline - Date.now() > 15_000) {
+      const pause = Math.min(retryDelayMs, Math.max(0, deadline - Date.now() - 15_000));
+      if (pause > 0) await new Promise((resolve) => setTimeout(resolve, pause));
+      if (deadline - Date.now() > 5_000)
+        result = await generate(buildEditorialBrief(context), {
+          timeoutMs: Math.min(80_000, deadline - Date.now()),
+        });
+    }
     if (result.status !== "ready" || result.card.type !== "draft") {
-      warning = result.message;
-      retry = result.status === "retry";
-      break;
+      const fallback = starterWarning(result.reason, result.message);
+      return withGroundedStarter(
+        { ...candidates, drafts },
+        brief,
+        fallback.warning,
+        fallback.reason,
+      );
     }
     const { card } = result;
     drafts.push(
@@ -138,7 +236,7 @@ export async function generateOnboardingDrafts(
       createdAt: new Date().toISOString(),
     });
   }
-  return { ...candidates, drafts, warning, retry };
+  return { ...candidates, drafts, warning: null, retry: false };
 }
 
 async function processOnboardingGenerationScoped(workspaceId: string) {
@@ -149,8 +247,9 @@ async function processOnboardingGenerationScoped(workspaceId: string) {
   const session = data?.[0];
   if (!session) return;
   try {
+    // Brain can use up to 110s. The draft then gets the rest inside the 3 minute lease.
     const deadline = Math.min(
-      Date.now() + 90_000,
+      Date.now() + 150_000,
       Date.parse(session.job_lease_until || "") - 10_000 || Infinity,
     );
     const brief = onboardingBriefSchema.parse(session.brief);

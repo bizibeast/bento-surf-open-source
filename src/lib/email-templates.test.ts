@@ -20,6 +20,25 @@ afterEach(() => {
 });
 
 describe("Bento email templates", () => {
+  it("identifies the failed post and explains safe destination-only retry", () => {
+    const rendered = renderBentoEmail({
+      eventType: "social_publish_failed",
+      category: "transactional",
+      appUrl: "https://app.bento.surf",
+      payload: {
+        provider: "Instagram",
+        postTitle: "A useful post",
+        reason: "Processing timed out.",
+        schedulerUrl: "/post-scheduler",
+      },
+    });
+    expect(rendered.subject).toContain("Instagram");
+    expect(rendered.text).toContain("A useful post");
+    expect(rendered.text).toContain("retry failed destinations");
+    expect(rendered.text).toContain("already published will not be sent again");
+    expect(rendered.html).toContain("https://app.bento.surf/post-scheduler");
+  });
+
   it("explains the workspace-specific deletion deadline and links directly to Billing", () => {
     const rendered = renderBentoEmail({
       eventType: "workspace_deletion_warning",
@@ -333,6 +352,31 @@ describe("Bento email templates", () => {
     expect(email.subject).toContain("120 visits");
     expect(email.html).toContain("Unsubscribe");
     expect(email.text).toContain("unsubscribe?token=signed");
+  });
+
+  it("lists every page that had visits in one weekly digest", () => {
+    const email = renderBentoEmail({
+      eventType: "weekly_digest",
+      category: "marketing",
+      payload: {
+        views: 11,
+        clicks: 4,
+        sales: 1,
+        pages: [
+          { username: "home", views: 9 },
+          { username: "<shop>", views: 2 },
+          { username: "quiet", views: 0 },
+        ],
+      },
+      appUrl: "https://bento.surf",
+      unsubscribeUrl: "https://bento.surf/api/email/unsubscribe?token=signed",
+    });
+
+    expect(email.subject).toBe("Your Bento week: 11 visits");
+    expect(email.text).toContain("home (9 visits), <shop> (2 visits).");
+    expect(email.html).toContain("home (9 visits), &lt;shop&gt; (2 visits).");
+    expect(email.html).not.toContain("<shop>");
+    expect(email.text).not.toContain("quiet");
   });
 
   it("renders creator campaigns safely with the creator page as the only CTA", () => {

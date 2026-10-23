@@ -263,6 +263,24 @@ async function applyPlan(
   // a later upgrade without making the creator repeat DNS setup.
 }
 
+class IgnoredSubscriptionEvent extends Error {
+  constructor() {
+    super("ignored: no workspace for dodo subscription");
+    this.name = "IgnoredSubscriptionEvent";
+  }
+}
+
+async function findSubscriptionUser(subscriptionId: string | null): Promise<string | null> {
+  if (!subscriptionId) return null;
+  const { data, error } = await supabaseAdmin
+    .from("subscriptions")
+    .select("user_id")
+    .eq("dodo_subscription_id", subscriptionId)
+    .maybeSingle();
+  if (error) throw new Error(`subscription lookup failed: ${error.message}`);
+  return data?.user_id ?? null;
+}
+
 async function findPaymentUser(paymentId: string | null): Promise<string | null> {
   if (!paymentId) return null;
   const { data, error } = await supabaseAdmin
@@ -358,6 +376,7 @@ async function syncSubscriptionUnderLease(
   userId: string,
   requireExactSubscription: boolean,
   syncLease: string,
+  trustedLocalOwner = false,
 ) {
   let data = event.data;
   const subscriptionId = asString(data.subscription_id);
@@ -386,10 +405,14 @@ async function syncSubscriptionUnderLease(
     if (!subscriptionId) throw new Error("Missing subscription identity.");
     const remote = await dodo.subscriptions.retrieve(subscriptionId);
     data = remote as unknown as JsonRecord;
-    if (resolveUserId(data) !== userId || asString(data.subscription_id) !== subscriptionId)
+    const remoteOwner = resolveUserId(data);
+    const ownerMatches = remoteOwner === userId || (trustedLocalOwner && !remoteOwner);
+    if (asString(data.subscription_id) !== subscriptionId || !ownerMatches)
       throw new Error("Subscription owner does not match.");
+    const metadataWorkspaceId = asString(asRecord(data.metadata).workspace_id);
     if (
-      (isCurrentCatalog || asRecord(data.metadata).workspace_id) &&
+      (isCurrentCatalog || metadataWorkspaceId) &&
+      !(trustedLocalOwner && !metadataWorkspaceId) &&
       !(await validateWorkspaceMetadata(data, userId))
     )
       throw new Error("Subscription workspace ownership could not be verified.");
@@ -497,13 +520,15 @@ async function syncSubscriptionUnderLease(
         const paidAt = Date.parse(String(data.previous_billing_date ?? ""));
         const nextChargeAt = Date.parse(String(data.next_billing_date ?? ""));
         const now = Date.now();
+        const trialEndMs = startedAt + trialTerms.days * 86_400_000;
         // Dodo defines previous_billing_date as the last payment timestamp.
         // A genuine renewal has a paid period starting after the original trial.
+        if (Number.isFinite(startedAt) && Number.isFinite(paidAt) && paidAt < trialEndMs - 60_000)
+          throw new Error("renewal before trial end");
         if (
           !Number.isFinite(startedAt) ||
           !Number.isFinite(paidAt) ||
           !Number.isFinite(nextChargeAt) ||
-          paidAt < startedAt + trialTerms.days * 86_400_000 - 60_000 ||
           paidAt > now ||
           nextChargeAt <= now ||
           nextChargeAt <= paidAt
@@ -594,11 +619,18 @@ async function syncSubscription(
   userId: string,
   requireExactSubscription = false,
   existingLease?: string,
+  trustedLocalOwner = false,
 ) {
   if (existingLease)
-    return syncSubscriptionUnderLease(event, userId, requireExactSubscription, existingLease);
+    return syncSubscriptionUnderLease(
+      event,
+      userId,
+      requireExactSubscription,
+      existingLease,
+      trustedLocalOwner,
+    );
   return withWorkspaceBillingSync(userId, (lease) =>
-    syncSubscriptionUnderLease(event, userId, requireExactSubscription, lease),
+    syncSubscriptionUnderLease(event, userId, requireExactSubscription, lease, trustedLocalOwner),
   );
 }
 
@@ -663,9 +695,15 @@ async function processEvent(event: DodoEvent): Promise<string | null> {
   }
 
   if (event.type.startsWith("subscription.")) {
-    if (!userId) throw new Error(`${event.type} has no metadata.user_id`);
-    await syncSubscription(event, userId, explicitWorkspace);
-    return userId;
+    let resolvedUserId = userId;
+    let trustedLocalOwner = false;
+    if (!resolvedUserId) {
+      resolvedUserId = await findSubscriptionUser(asString(event.data.subscription_id));
+      if (!resolvedUserId) throw new IgnoredSubscriptionEvent();
+      trustedLocalOwner = true;
+    }
+    await syncSubscription(event, resolvedUserId, explicitWorkspace, undefined, trustedLocalOwner);
+    return resolvedUserId;
   }
 
   return userId;
@@ -802,6 +840,18 @@ export async function processVerifiedDodoEvent(event: DodoEvent, webhookId: stri
       console.error("[email] billing notification was deferred", emailError);
     }
   } catch (error) {
+    if (error instanceof IgnoredSubscriptionEvent) {
+      console.warn("[dodo] ignoring subscription event with no matching workspace", {
+        eventType: event.type,
+        subscriptionId: asString(event.data.subscription_id),
+        webhookId,
+      });
+      // Note: billing_events.status has no "ignored" (check is pending/processing/processed/failed).
+      // processed is terminal, so claim_billing_event will not reclaim it and Dodo stops retrying.
+      // Upgrade: add status ignored and exclude it in claim_billing_event.
+      await markEvent(webhookId, "processed", null, error.message);
+      return { duplicate: false, ignored: true };
+    }
     const message = error instanceof Error ? error.message : "unknown handler error";
     console.error(`[dodo] failed to process ${event.type}`, error);
     try {

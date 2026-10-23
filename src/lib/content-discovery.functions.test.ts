@@ -357,7 +357,8 @@ describe("personalized Discover", () => {
       sourceUrl: source.canonicalUrl,
       sourceRetrievedAt: retrievedAt,
     });
-    expect(result.warnings).toEqual([]);
+    expect(result.warnings).toContain("X: upstream unavailable (429).");
+    expect(result.warnings.some((warning) => warning.startsWith("LinkedIn:"))).toBe(false);
     expect(result.ideas).toHaveLength(1);
   });
   it("keeps an interrupted transport response from crashing the feed merge", () => {
@@ -614,7 +615,7 @@ describe("personalized Discover", () => {
       storedDiscoverData(
         [recommendation],
         {
-          nicheKey: "social-v15:creator ai",
+          nicheKey: "social-v16:creator ai",
           warnings: [],
           fetchedAt: "2026-09-20T09:00:00.000Z",
           expiresAt: "2026-09-21T09:00:00.000Z",
@@ -786,7 +787,7 @@ it("keeps oversized provider text inside the database limits without discarding 
   );
   const source = {
     canonicalUrl: "https://linkedin.com/posts/creator_ai-tools-activity-123456789",
-    title: "Title ".repeat(100),
+    title: "Creator AI " + "Title ".repeat(100),
     summary: "Caption ".repeat(1000),
     sourceName: "LinkedIn",
     platform: "LinkedIn",
@@ -900,6 +901,7 @@ it("uses researched Brain subjects for searches and ranking, and honors exclusio
       nicheKeywords: ["comedy"],
       creatorNames: expect.arrayContaining(["Trevor Noah"]),
     }),
+    expect.any(Function),
   );
   expect(result.trends.map((item) => item.title)).toEqual(["Observational stand-up comedy"]);
   expect(result.suggestedCreators?.map((item) => item.name)).not.toContain("Alex Hormozi");
@@ -950,4 +952,89 @@ it("uses a new refresh direction when only locale changes", () => {
     profile: { ...profile, language: "hi", region: "IN" },
   });
   expect(changed.directionKey).not.toBe(current.directionKey);
+});
+
+it("keeps explicit subjects first and filters generic research topics before any provider search", () => {
+  const topics = inferDiscoverNiche({
+    profile: {
+      ...profile,
+      nicheKeywords: ["startup journey", "writing style", "hustle", "strategy"],
+    },
+    brainItems: [],
+    insights: [],
+    feedbackSeeds: [],
+    research: {
+      topics: ["public challenges", "creativity", "AI startup"],
+      excludedTopics: [],
+      creators: [],
+    },
+  });
+  expect(topics[0]).toBe("startup journey");
+  expect(topics).toContain("AI startup");
+  expect(topics).not.toEqual(
+    expect.arrayContaining(["public challenges", "creativity", "hustle", "strategy"]),
+  );
+});
+
+it("rechecks cached post relevance even when its cached direction matches", () => {
+  const context = { profile, brainItems: [], insights: [], feedbackSeeds: [] };
+  const result = storedDiscoverData(
+    [
+      cachedPost("family", {
+        title: "Backward Jump Family Challenge",
+        summary: "Who jumps the farthest?",
+      }),
+      cachedPost("relevant"),
+      cachedPost("saved-family", {
+        title: "Food Challenge",
+        summary: "Cooking battle",
+        saved: true,
+      }),
+    ],
+    null,
+    discoveryNow,
+    context,
+  );
+  expect(result.trends.map((item) => item.id)).not.toContain("family");
+  expect(result.trends.find((item) => item.id === "saved-family")?.savedOnly).toBe(true);
+  expect(result.trends.map((item) => item.id)).toContain("relevant");
+});
+
+it("removes cached fictional business drama on read without invalidating the usable feed or deleting saved history", () => {
+  const context = {
+    profile: { ...profile, nicheKeywords: ["startup journey"] },
+    brainItems: [],
+    insights: [],
+    feedbackSeeds: [],
+  };
+  const fake = {
+    title: "A Rich CEO Humiliated a Courier… Then Learned Who Really Owned the Company! #shorts",
+    summary: "A ruthless tech founder arrives expecting a $20 million investment.",
+  };
+  const initial = storedDiscoverData([], null, discoveryNow, context);
+  const nicheKey = initial.directionKey!.split(":locale:")[0];
+  const data = storedDiscoverData(
+    [
+      cachedPost("fiction", fake),
+      cachedPost("saved-fiction", { ...fake, saved: true }),
+      cachedPost("real", {
+        title: "A startup founder explains what their customers taught them",
+        summary: "Product decisions from customer interviews.",
+      }),
+    ],
+    {
+      nicheKey,
+      warnings: [],
+      fetchedAt: discoveryNow.toISOString(),
+      expiresAt: "2026-10-10T22:00:00Z",
+      language: "en",
+      region: "global",
+    },
+    discoveryNow,
+    context,
+  );
+  expect(data.status).toBe("fresh");
+  expect(data.trends.map((item) => item.id)).not.toContain("fiction");
+  expect(data.trends.find((item) => item.id === "saved-fiction")?.savedOnly).toBe(true);
+  expect(data.trends.map((item) => item.id)).toContain("real");
 });

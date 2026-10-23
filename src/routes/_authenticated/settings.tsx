@@ -49,6 +49,14 @@ import {
   IntegrationsOverview,
 } from "@/components/settings/IntegrationsOverview";
 import { PaymentGatewayPicker } from "@/components/settings/PaymentGatewayPicker";
+import { followConnectPayments } from "@/lib/connect-payments";
+import { captureProductEvent } from "@/lib/posthog";
+import { billingSummary } from "@/lib/billing-summary";
+import {
+  checkoutFailureMessage,
+  readCheckoutReturn,
+  withoutCheckoutReturnParams,
+} from "@/lib/checkout-return";
 import { StorageManager } from "@/components/settings/StorageManager";
 import { supabase } from "@/integrations/supabase/client";
 import { safeNavigationHref, trustedApplicationOrigin } from "@/lib/safe-url";
@@ -64,6 +72,8 @@ import {
   PLAN_PRICING,
   planLimits,
   planHasEntitlement,
+  CONNECT_PAYMENTS_BANNER_BODY,
+  CONNECT_PAYMENTS_BANNER_TITLE,
   planName,
   storageAddonPrice,
   type PaidPlanId,
@@ -269,7 +279,8 @@ function SettingsPage() {
   const plan = normalizePlan(profile?.plan_id, profile?.is_pro);
   const isPro = isPaidPlan(plan);
   const planLabel = planName(plan);
-  const planDefinition = PLAN_CONFIG[plan];
+  // Subscribed plan (from the Dodo product) for Billing. Trials grant exactly this plan.
+  const summary = billingSummary(billing, plan);
   const username = profile?.username ?? "username";
   const profileUrl = publicProfileUrl(username, null, import.meta.env.VITE_PUBLIC_URL);
   const publicHost = new URL(profileUrl).host;
@@ -613,9 +624,62 @@ function SettingsPage() {
     void navigate({ to: "/settings", search: { section } });
   };
 
+  const [paymentCheckoutPending, setPaymentCheckoutPending] = useState(false);
+  const openPaymentProvider = (provider: CreatorPaymentProvider) => {
+    if (provider === "stripe") setStripeConnectionOpen(true);
+    else if (provider === "paypal") setPayPalConnectionOpen(true);
+    else if (provider === "razorpay") setRazorpayConnectionOpen(true);
+    else if (provider === "dodo") setDodoConnectionOpen(true);
+    else if (provider === "creem") setCreemConnectionOpen(true);
+    else connectPolar.mutate();
+  };
+  const beginPaymentConnect = (provider?: CreatorPaymentProvider) => {
+    const locked = Boolean(paymentSettings?.locked);
+    setPaymentCheckoutPending(true);
+    void followConnectPayments({
+      plan: billing?.plan ?? plan,
+      locked,
+      connect: () => {
+        if (provider) openPaymentProvider(provider);
+      },
+    })
+      .catch((error) => {
+        toast.error(error instanceof Error ? error.message : "Could not start checkout.");
+      })
+      .finally(() => setPaymentCheckoutPending(false));
+  };
+
   useEffect(() => {
     sectionTitleRef.current?.focus({ preventScroll: true });
   }, [active]);
+
+  const beginPaymentConnectRef = useRef(beginPaymentConnect);
+  beginPaymentConnectRef.current = beginPaymentConnect;
+  // Returning from the Connect payments trial or plan checkout.
+  useEffect(() => {
+    const returned = readCheckoutReturn(window.location.search);
+    if (returned.outcome === "none") return;
+    window.history.replaceState(
+      window.history.state,
+      "",
+      withoutCheckoutReturnParams(window.location.href),
+    );
+    if (returned.outcome === "failed") {
+      captureProductEvent("payments_checkout_failed", {
+        status: returned.status,
+        trial: returned.trial,
+      });
+      toast.error(checkoutFailureMessage(returned.status, returned.trial), {
+        duration: 15_000,
+        action: { label: "Try another card", onClick: () => beginPaymentConnectRef.current() },
+      });
+      return;
+    }
+    void queryClient.invalidateQueries({ queryKey: ["creator-payment-settings"] });
+    void queryClient.invalidateQueries({ queryKey: ["my-billing"] });
+    // Run once for the provider redirect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (polarResult === "connected") toast.success("Polar connected");
@@ -767,31 +831,35 @@ function SettingsPage() {
                   <div className="grid gap-8 md:grid-cols-[1fr_auto] md:items-center">
                     <div>
                       <div className="inline-flex rounded-lg border border-black/[0.08] bg-[#f2f5fb] px-3 py-1 text-xs font-semibold text-[#17213a]">
-                        {billing?.status === "paused"
-                          ? "Subscription paused"
-                          : isPro
-                            ? `${planLabel} is active`
-                            : "Choose your Bento plan"}
+                        {summary.badge}
                       </div>
-                      <h3 className="mt-4 font-ui-display text-3xl">
-                        {planDefinition.description}
-                      </h3>
+                      <h3 className="mt-4 font-ui-display text-3xl">{summary.description}</h3>
+                      {summary.note && (
+                        <p className="mt-2 text-sm text-[#17213a]/65">{summary.note}</p>
+                      )}
                       <div className="mt-4 flex flex-wrap gap-2 text-sm text-[#17213a]/52">
                         <span className="rounded-lg bg-[#f2f5fb] px-3 py-1.5">
                           {billing?.billingPeriod
                             ? `${billing.billingPeriod === "yearly" ? "Yearly" : "Monthly"} billing`
                             : "No paid billing"}
                         </span>
-                        {billing?.currentPeriodEnd && (
+                        {summary.date && (
                           <span className="rounded-lg bg-[#f2f5fb] px-3 py-1.5 font-medium text-[#17213a]">
-                            {billing.cancelAtPeriodEnd
-                              ? `Access ends ${formatBillingDate(billing.currentPeriodEnd)}`
-                              : billing.status === "trialing"
-                                ? `Trial ends ${formatBillingDate(billing.currentPeriodEnd)}`
-                                : `Renews ${formatBillingDate(billing.currentPeriodEnd)}`}
+                            {
+                              {
+                                renews: "Renews",
+                                trial_ends: "Trial ends",
+                                access_ends: "Access until",
+                                access_ended: "Access ended",
+                              }[summary.date.kind]
+                            }{" "}
+                            {formatBillingDate(summary.date.at)}
+                            {summary.date.kind === "access_ends" && billing?.status === "trialing"
+                              ? ". No charge"
+                              : ""}
                           </span>
                         )}
-                        {!billing?.currentPeriodEnd && billing?.complimentaryAccessExpiresAt && (
+                        {!summary.date && billing?.complimentaryAccessExpiresAt && (
                           <span className="rounded-lg bg-[#f2f5fb] px-3 py-1.5 font-medium text-[#17213a]">
                             Complimentary access ends{" "}
                             {formatBillingDate(billing.complimentaryAccessExpiresAt)}
@@ -818,7 +886,7 @@ function SettingsPage() {
                     <PlanOptionCard
                       key={targetPlan}
                       plan={targetPlan}
-                      currentPlan={plan}
+                      currentPlan={summary.plan}
                       billing={billing}
                       busy={changePlan.isPending || billing?.status === "paused"}
                       onChangePlan={(nextPlan) => setPlanChangeTarget(nextPlan)}
@@ -860,7 +928,7 @@ function SettingsPage() {
                     billingPeriod={billing.billingPeriod ?? "monthly"}
                     billingStatus={billing.status}
                     contactTier={billing.contactTierContacts}
-                    plan={plan}
+                    plan={isPaidPlan(summary.plan) ? summary.plan : plan}
                     storageUnits={billing.storageAddonUnits}
                     updating={updateBillingAddons.isPending}
                     onUpdate={(input) => updateBillingAddons.mutateAsync(input)}
@@ -882,7 +950,9 @@ function SettingsPage() {
                         </div>
                         <p className="mt-2 max-w-2xl text-sm leading-6 text-[#17213a]/52">
                           {billing.cancelAtPeriodEnd
-                            ? `Your ${planLabel} access stays active until ${formatBillingDate(billing.currentPeriodEnd)}, then hosted access pauses.`
+                            ? billing.status === "trialing"
+                              ? `Your trial access stays active until ${formatBillingDate(billing.currentPeriodEnd)}. You won't be charged, and hosted access pauses after that.`
+                              : `Your ${planName(summary.plan)} access stays active until ${formatBillingDate(billing.currentPeriodEnd)}, then hosted access pauses.`
                             : `Your current trial or billing period runs through ${formatBillingDate(billing.currentPeriodEnd)}. Cancelling stops the next charge without removing access early.`}
                         </p>
                       </div>
@@ -938,8 +1008,7 @@ function SettingsPage() {
                 <div className="mt-5">
                   <PaymentGatewayPicker
                     settings={paymentSettings}
-                    loading={paymentConnectionLoading}
-                    upgrade={<UpgradeDialog feature="oneTapCheckout" />}
+                    loading={paymentConnectionLoading || paymentCheckoutPending}
                     pendingProvider={
                       connectPolar.isPending || refreshPolar.isPending || disconnectPolar.isPending
                         ? "polar"
@@ -955,14 +1024,8 @@ function SettingsPage() {
                                   ? "creem"
                                   : null
                     }
-                    onConnect={(provider) => {
-                      if (provider === "stripe") setStripeConnectionOpen(true);
-                      else if (provider === "paypal") setPayPalConnectionOpen(true);
-                      else if (provider === "razorpay") setRazorpayConnectionOpen(true);
-                      else if (provider === "dodo") setDodoConnectionOpen(true);
-                      else if (provider === "creem") setCreemConnectionOpen(true);
-                      else connectPolar.mutate();
-                    }}
+                    onLockedCheckout={() => beginPaymentConnect()}
+                    onConnect={(provider) => beginPaymentConnect(provider)}
                     onRefresh={(provider) => {
                       if (provider === "stripe") refreshStripe.mutate();
                       else if (provider === "paypal") refreshPayPal.mutate();
@@ -1009,14 +1072,19 @@ function SettingsPage() {
                           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                             <div>
                               <div className="text-sm font-semibold">
-                                Connected checkout is a Store feature
+                                {CONNECT_PAYMENTS_BANNER_TITLE}
                               </div>
                               <p className="mt-1 text-xs leading-5 text-[#17213a]/52">
-                                Existing connections remain safe. Upgrade to Store to connect or
-                                select a payment provider.
+                                {CONNECT_PAYMENTS_BANNER_BODY}
                               </p>
                             </div>
-                            <UpgradeDialog feature="oneTapCheckout" />
+                            <button
+                              type="button"
+                              onClick={() => beginPaymentConnect()}
+                              className={micro.btnPrimary}
+                            >
+                              Continue to checkout
+                            </button>
                           </div>
                         </div>
                       )}
@@ -1122,31 +1190,22 @@ function SettingsPage() {
                                 </a>
                               </details>
                               <div className="mt-auto flex flex-wrap gap-2 pt-4">
-                                {!paymentSettings?.locked &&
-                                  !connection &&
-                                  provider.directConnect &&
-                                  provider.configured && (
-                                    <button
-                                      type="button"
-                                      disabled={connectPending || paymentConnectionLoading}
-                                      onClick={() =>
-                                        provider.id === "stripe"
-                                          ? setStripeConnectionOpen(true)
-                                          : provider.id === "paypal"
-                                            ? setPayPalConnectionOpen(true)
-                                            : provider.id === "razorpay"
-                                              ? setRazorpayConnectionOpen(true)
-                                              : provider.id === "dodo"
-                                                ? setDodoConnectionOpen(true)
-                                                : provider.id === "creem"
-                                                  ? setCreemConnectionOpen(true)
-                                                  : connectPolar.mutate()
-                                      }
-                                      className={micro.btnPrimary}
-                                    >
-                                      {connectPending ? "Opening…" : `Connect ${provider.name}`}
-                                    </button>
-                                  )}
+                                {!connection && provider.directConnect && provider.configured && (
+                                  <button
+                                    type="button"
+                                    disabled={
+                                      connectPending ||
+                                      paymentConnectionLoading ||
+                                      paymentCheckoutPending
+                                    }
+                                    onClick={() => beginPaymentConnect(provider.id)}
+                                    className={micro.btnPrimary}
+                                  >
+                                    {connectPending || paymentCheckoutPending
+                                      ? "Opening…"
+                                      : `Connect ${provider.name}`}
+                                  </button>
+                                )}
                                 {!connection && provider.directConnect && !provider.configured && (
                                   <span className="rounded-2xl bg-[#f2f5fb] px-4 py-2.5 text-xs font-semibold text-[#17213a]/52">
                                     Bento must finish provider setup

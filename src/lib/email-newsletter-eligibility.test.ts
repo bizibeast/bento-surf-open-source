@@ -29,6 +29,7 @@ function query(data: unknown) {
     select: vi.fn(() => builder),
     update: vi.fn(() => builder),
     eq: vi.fn(() => builder),
+    in: vi.fn(() => builder),
     maybeSingle: vi.fn().mockResolvedValue(result),
     then: (resolve: (value: unknown) => void) => resolve(result),
   };
@@ -99,6 +100,12 @@ describe("newsletter send-time eligibility", () => {
     const order: string[] = [];
     const tables: string[] = [];
     mocks.from.mockImplementation((table: string) => {
+      if (table === "provider_budget_policies") {
+        return query([
+          { resource: "marketing_emails", daily_limit: 70 },
+          { resource: "transactional_emails", daily_limit: 100 },
+        ]);
+      }
       tables.push(table);
       if (table === "email_outbox") return query(null);
       throw new Error(`Unexpected table ${table}`);
@@ -155,6 +162,7 @@ describe("newsletter send-time eligibility", () => {
 
   it("does not POST when final campaign authorization finds global suppression", async () => {
     mocks.from.mockImplementation((table: string) => {
+      if (table === "provider_budget_policies") throw new Error("cap sync deferred");
       throw new Error(`Unexpected early table read ${table}`);
     });
     mocks.rpc.mockImplementation((name: string) => {
@@ -167,6 +175,6 @@ describe("newsletter send-time eligibility", () => {
 
     await expect(processEmailOutbox(1)).resolves.toEqual({ claimed: 1, sent: 0, configured: true });
     expect(mocks.fetch).not.toHaveBeenCalled();
-    expect(mocks.from).not.toHaveBeenCalled();
+    expect(mocks.from).not.toHaveBeenCalledWith("email_outbox");
   });
 });

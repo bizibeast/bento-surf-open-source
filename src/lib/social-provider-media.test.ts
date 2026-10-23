@@ -252,3 +252,61 @@ describe("size-aware image optimization", () => {
     ).rejects.toMatchObject({ code: "too_large", retryable: false });
   });
 });
+
+describe("resumable media byte ranges", () => {
+  it("uses the acknowledged byte range and verifies the original total size", async () => {
+    const fetcher = vi.fn(
+      async () =>
+        new Response(new Uint8Array([3, 4, 5]), {
+          status: 206,
+          headers: {
+            "content-type": "video/mp4",
+            "content-length": "3",
+            "content-range": "bytes 3-5/6",
+          },
+        }),
+    );
+    const media = await openProviderMedia("https://cdn.example/video", {
+      maxBytes: 6,
+      allowedMimeTypes: ["video/mp4"],
+      startByte: 3,
+      fetcher,
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      "https://cdn.example/video",
+      expect.objectContaining({ headers: { Range: "bytes=3-" } }),
+    );
+    expect(media.totalBytes).toBe(6);
+    const chunks: number[] = [];
+    for await (const chunk of providerMediaChunks(
+      media.body,
+      media.totalBytes,
+      2,
+      3,
+      media.bodyStartByte,
+    ))
+      chunks.push(...chunk);
+    expect(chunks).toEqual([3, 4, 5]);
+  });
+  it.each(["bytes 0-2/6", "bytes 3-5/999", "invalid"])(
+    "rejects mismatched Content-Range %s",
+    async (range) => {
+      await expect(
+        openProviderMedia("https://cdn.example/video", {
+          maxBytes: 6,
+          allowedMimeTypes: ["video/mp4"],
+          startByte: 3,
+          fetcher: async () =>
+            new Response(new Uint8Array([3, 4, 5]), {
+              status: 206,
+              headers: {
+                "content-type": "video/mp4",
+                "content-length": "3",
+                "content-range": range,
+              },
+            }),
+        }),
+      ).rejects.toBeInstanceOf(ProviderMediaDownloadError);
+    },
+  );
+});

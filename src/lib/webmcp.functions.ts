@@ -1,5 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { sanitizeMcpReadData } from "./mcp-read-results";
+import { getSocialPostInputSchema, schedulerReadFiltersShape } from "./mcp-scheduler-read";
 import { readWorkspaceDataSchema } from "./mcp-workspace-data";
 import { webMcpUploadInputSchema } from "./webmcp-media";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
@@ -11,6 +13,7 @@ export const BENTO_WEBMCP_READ_OPERATIONS = [
   "get_bento_overview",
   "list_social_accounts",
   "list_social_posts",
+  "get_social_post",
   "list_auto_dm_automations",
   "list_pages",
   "list_products",
@@ -68,8 +71,10 @@ const webMcpReadSchemas = {
         .optional(),
     })
     .strict(),
+  get_social_post: getSocialPostInputSchema.strict(),
   list_social_posts: z
     .object({
+      ...schedulerReadFiltersShape,
       status: z
         .enum([
           "draft",
@@ -340,6 +345,7 @@ export function sanitizeBentoWebMcpReadResult(
   operation: BentoWebMcpReadOperation,
   result: unknown,
 ): unknown {
+  result = sanitizeMcpReadData(result);
   const data = asRecord(result);
   switch (operation) {
     case "get_bento_overview":
@@ -377,29 +383,8 @@ export function sanitizeBentoWebMcpReadResult(
     case "list_social_accounts":
       return projectList(result, socialAccountFields);
     case "list_social_posts":
-      return Array.isArray(result)
-        ? result.map((post) => {
-            const safe = project(post, [
-              "id",
-              "body",
-              "title",
-              "scheduled_at",
-              "timezone",
-              "status",
-              "created_at",
-            ]);
-            safe.targets = projectList(asRecord(post).targets, [
-              "id",
-              "connection_id",
-              "provider",
-              "status",
-              "remote_post_url",
-              "last_error_message",
-              "published_at",
-            ]);
-            return safe;
-          })
-        : [];
+    case "get_social_post":
+      return sanitizeMcpReadData(result);
     case "list_auto_dm_automations":
       return Array.isArray(result)
         ? result.map((group) => ({
@@ -1041,7 +1026,10 @@ export const runBentoWebMcpRead = createServerFn({ method: "POST" })
             context.userId,
             typeof input.status === "string" ? input.status : undefined,
             typeof input.limit === "number" ? input.limit : 30,
+            input as never,
           );
+        case "get_social_post":
+          return defaultBentoMcpOperations.getSocialPost(context.userId, input as never);
         case "list_auto_dm_automations":
           return defaultBentoMcpOperations.listAutoDmAutomations(
             context.userId,

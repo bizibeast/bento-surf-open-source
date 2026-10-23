@@ -12,7 +12,7 @@ vi.mock("@/lib/content-agent.functions", () => ({
 function props(): ComponentProps<typeof ContentAgent> {
   return {
     threads: [],
-    agentName: "Bento",
+    agentName: "Benny",
     agentThreadId: "named-agent",
     onPinThread: vi.fn(),
     onRenameThread: vi.fn().mockResolvedValue(undefined),
@@ -36,6 +36,131 @@ function props(): ComponentProps<typeof ContentAgent> {
 }
 
 describe("ContentAgent", () => {
+  it("labels speakers and keeps rejected drafts collapsed after reloading", () => {
+    const values = props();
+    values.messages = [
+      { id: "user", role: "user", content: "Write a post" },
+      {
+        id: "reply",
+        role: "assistant",
+        content: "A long explanation that repeats the entire draft",
+        payload: {
+          action: "draft",
+          message: "Ready",
+          memories: [],
+          rejectedDraftIds: ["draft-1"],
+          cards: [
+            {
+              type: "draft",
+              cardId: "draft-1",
+              platform: "twitter",
+              format: "post",
+              title: "Rejected idea",
+              body: "A rejected post",
+              visualBrief: null,
+              sourceUrls: [],
+              rationale: "An angle",
+            },
+          ],
+        },
+      },
+    ];
+    render(<ContentAgent {...values} />);
+    expect(screen.getByLabelText("Message from You")).toBeVisible();
+    expect(screen.getByLabelText("Message from Benny")).toBeVisible();
+    expect(screen.getByText("Draft rejected")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Open in scheduler" })).not.toBeInTheDocument();
+    expect(screen.queryByText(values.messages[1].content)).not.toBeInTheDocument();
+  });
+
+  it("collapses long manual text without changing its sender, complete content, or attachments", async () => {
+    const values = props();
+    const fullText =
+      "My manually written request.\n" +
+      "Keep these exact details and line breaks.\n".repeat(40) +
+      "Final detail: preserve this verbatim.";
+    values.messages = [
+      {
+        id: "manual-long",
+        role: "user",
+        content: fullText,
+        payload: {
+          attachments: [
+            {
+              id: "00000000-0000-4000-8000-000000000001",
+              name: "brief.txt",
+              key: "private/users/me/agent/brief.txt",
+              mimeType: "text/plain",
+              size: 5,
+              url: null,
+              mediaId: null,
+            },
+          ],
+        },
+      },
+    ];
+    render(<ContentAgent {...values} />);
+    const message = screen.getByLabelText("Message from You");
+    expect(within(message).getByText("You")).toBeVisible();
+    expect(within(message).getByText("brief.txt")).toBeVisible();
+    const expand = within(message).getByRole("button", { name: "Show full message" });
+    expect(expand).toHaveAttribute("aria-expanded", "false");
+    const content = document.getElementById(expand.getAttribute("aria-controls")!);
+    expect(content?.textContent).not.toBe(fullText);
+    expect(content?.textContent).toContain("My manually written request.");
+    await userEvent.click(expand);
+    expect(content?.textContent).toBe(fullText);
+    expect(within(message).getByRole("button", { name: "Show less" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(within(message).getByText("brief.txt")).toBeVisible();
+    await userEvent.click(within(message).getByRole("button", { name: "Show less" }));
+    expect(content?.textContent).not.toBe(fullText);
+    expect(within(message).getByText("brief.txt")).toBeVisible();
+    expect(screen.queryByText("Routine request")).not.toBeInTheDocument();
+  });
+
+  it("keeps short manual messages intact without guessing routine origin", () => {
+    const values = props();
+    const text = "Prepare exactly 7 platform-native drafts; this is my manual request.";
+    values.messages = [{ id: "manual-short", role: "user", content: text }];
+    render(<ContentAgent {...values} />);
+    expect(screen.getByText(text)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Show full message" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Routine request")).not.toBeInTheDocument();
+  });
+
+  it("collapses a legacy routine-shaped message with no trusted origin metadata", async () => {
+    const values = props();
+    const slots = Array.from({ length: 7 }, (_, day) => ({
+      day,
+      time: "18:30",
+      scheduledAt: `2026-11-${String(day + 1).padStart(2, "0")}T13:00:00.000Z`,
+    }));
+    const fullText =
+      "Prepare exactly 7 platform-native drafts for youtube, threads, instagram, tiktok, facebook, linkedin, twitter. " +
+      `Target these reviewed schedule slots: ${JSON.stringify(slots)}. ` +
+      "Use the reviewed Brain profile and source links. Keep each draft specific to its platform. " +
+      "Return draft cards only, without schedule_proposal cards; do not publish. " +
+      "The routine saves drafts and handles any opted-in scheduling separately.";
+    expect(fullText.length).toBeGreaterThanOrEqual(800);
+    expect(fullText.length).toBeLessThanOrEqual(900);
+    values.messages = [{ id: "legacy-request", role: "user", content: fullText, payload: {} }];
+    render(<ContentAgent {...values} />);
+    const message = screen.getByLabelText("Message from You");
+    const expand = within(message).getByRole("button", { name: "Show full message" });
+    const content = document.getElementById(expand.getAttribute("aria-controls")!);
+    expect(content?.textContent).toBe(`${Array.from(fullText).slice(0, 320).join("").trimEnd()}…`);
+    expect(expand).toHaveAttribute("aria-expanded", "false");
+    expect(within(message).getByText("You")).toBeVisible();
+    expect(screen.queryByText("Routine request")).not.toBeInTheDocument();
+    await userEvent.click(expand);
+    expect(content?.textContent).toBe(fullText);
+    await userEvent.click(within(message).getByRole("button", { name: "Show less" }));
+    expect(content?.textContent).not.toBe(fullText);
+  });
+
   it("uploads a private reference, retains it after failed send, and clears it on chat switch", async () => {
     const values = props();
     values.onSend = vi.fn().mockRejectedValue(new Error("Temporary failure"));
@@ -96,8 +221,8 @@ describe("ContentAgent", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     view.rerender(<ContentAgent {...values} sending />);
-    expect(screen.getByRole("status")).toHaveTextContent("Bento is preparing your response");
-    expect(screen.queryByRole("heading", { name: "Ask Bento" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Benny is preparing your response");
+    expect(screen.queryByRole("heading", { name: "Ask Benny" })).not.toBeInTheDocument();
     finish();
     await waitFor(() =>
       expect(screen.getByRole("textbox", { name: "Message Agent" })).toHaveValue(""),
@@ -136,6 +261,7 @@ describe("ContentAgent", () => {
       "Pinned idea",
       "Recent idea",
     ]);
+    expect(rows[1].querySelector("img")).toHaveAttribute("src", "/mascot/benny-avatar.webp");
     expect(screen.getByLabelText("3 unread messages")).toBeVisible();
     expect(screen.queryByText("Bento Agent")).not.toBeInTheDocument();
     expect(
@@ -156,7 +282,7 @@ describe("ContentAgent", () => {
     const first = screen.getByRole("button", { name: "New chat" });
     first.focus();
     fireEvent.keyDown(first, { key: "ArrowDown" });
-    expect(screen.getByRole("button", { name: "Bento" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Benny" })).toHaveFocus();
     fireEvent.keyDown(document.activeElement!, { key: "End" });
     expect(screen.getByRole("button", { name: "My plan" })).toHaveFocus();
     fireEvent.keyDown(document.activeElement!, { key: "Home" });
@@ -164,7 +290,7 @@ describe("ContentAgent", () => {
     fireEvent.change(screen.getByLabelText("Search conversations"), {
       target: { value: "absent" },
     });
-    expect(screen.getByRole("button", { name: "Bento" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Benny" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "My plan" })).not.toBeInTheDocument();
   });
 
@@ -192,7 +318,7 @@ describe("ContentAgent", () => {
     fireEvent.click(screen.getByRole("button", { name: "Delete chat" }));
     await waitFor(() => expect(values.onDeleteThread).toHaveBeenCalledWith("chat"));
     expect(
-      screen.queryByRole("button", { name: "More options for Bento" }),
+      screen.queryByRole("button", { name: "More options for Benny" }),
     ).not.toBeInTheDocument();
   });
 
@@ -201,7 +327,7 @@ describe("ContentAgent", () => {
     render(<ContentAgent {...values} />);
     fireEvent.click(screen.getByRole("button", { name: "Open conversations" }));
     const drawer = screen.getByRole("dialog", { name: "Conversations" });
-    fireEvent.click(within(drawer).getByRole("button", { name: "Bento" }));
+    fireEvent.click(within(drawer).getByRole("button", { name: "Benny" }));
     expect(values.onSelectThread).toHaveBeenCalledWith("named-agent");
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(screen.getByRole("button", { name: "Open conversations" })).toHaveFocus();
@@ -259,7 +385,7 @@ describe("ContentAgent", () => {
       />,
     );
     expect(values.onMarkRead).toHaveBeenCalledTimes(1);
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Bento" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Benny" }));
     expect(values.onMarkRead).toHaveBeenLastCalledWith("named-agent", "covered");
   });
 
@@ -311,7 +437,7 @@ describe("ContentAgent", () => {
     values.onSend = vi.fn().mockRejectedValue(new Error("Offline"));
     render(<ContentAgent {...values} />);
     expect(screen.getAllByLabelText("Message Agent")).toHaveLength(1);
-    expect(screen.getByPlaceholderText("What are we building today?")).toBeVisible();
+    expect(screen.getByPlaceholderText("Message Benny, or tell me what to change…")).toBeVisible();
     fireEvent.change(screen.getByLabelText("Message Agent"), {
       target: { value: "My next request" },
     });
@@ -323,7 +449,7 @@ describe("ContentAgent", () => {
     const values = props();
     render(<ContentAgent {...values} />);
 
-    expect(screen.getByRole("heading", { name: "Ask Bento" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Ask Benny" })).toBeVisible();
     expect(screen.getByRole("button", { name: "New chat" })).toBeVisible();
     expect(screen.getByLabelText("Search conversations")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Analyze my recent posts" }));

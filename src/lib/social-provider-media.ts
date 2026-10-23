@@ -28,6 +28,8 @@ type ProviderMediaDownloadOptions = {
   allowedMimeTypes: readonly string[];
   timeoutMs?: number;
   fetcher?: typeof fetch;
+  /** Resume a provider upload without downloading bytes already acknowledged. */
+  startByte?: number;
   /** Opt in only for still images. GIFs must retain all animation frames. */
   optimizeImage?: {
     images?: ImagesBinding;
@@ -278,11 +280,18 @@ export async function openProviderMedia(
     allowedMimeTypes,
     timeoutMs = 180_000,
     fetcher = fetch,
+    startByte = 0,
   }: ProviderMediaDownloadOptions,
 ) {
+  if (!Number.isSafeInteger(startByte) || startByte < 0) {
+    throw new ProviderMediaDownloadError("The upload offset is invalid.", "unavailable", false);
+  }
   let response: Response;
   try {
-    response = await fetcher(url, { signal: AbortSignal.timeout(timeoutMs) });
+    response = await fetcher(url, {
+      signal: AbortSignal.timeout(timeoutMs),
+      ...(startByte ? { headers: { Range: `bytes=${startByte}-` } } : {}),
+    });
   } catch {
     throw new ProviderMediaDownloadError(
       "The scheduled media could not be downloaded.",
@@ -299,7 +308,24 @@ export async function openProviderMedia(
       response.status === 429 || response.status >= 500,
     );
   }
-  const totalBytes = Number(response.headers.get("content-length"));
+  const length = Number(response.headers.get("content-length"));
+  const range = response.headers.get("content-range")?.match(/^bytes (\d+)-(\d+)\/(\d+)$/);
+  const bodyStartByte = response.status === 206 && range ? Number(range[1]) : 0;
+  const totalBytes = response.status === 206 && range ? Number(range[3]) : length;
+  if (
+    response.status === 206 &&
+    (!range ||
+      bodyStartByte !== startByte ||
+      Number(range[2]) !== totalBytes - 1 ||
+      length !== totalBytes - bodyStartByte)
+  ) {
+    await cancel();
+    throw new ProviderMediaDownloadError(
+      "The media returned an invalid byte range.",
+      "unavailable",
+      false,
+    );
+  }
   if (totalBytes > maxBytes) {
     await cancel();
     throw new ProviderMediaDownloadError(
@@ -325,7 +351,7 @@ export async function openProviderMedia(
       false,
     );
   }
-  return { totalBytes, mimeType, body: response.body, cancel };
+  return { totalBytes, bodyStartByte, mimeType, body: response.body, cancel };
 }
 
 export async function* providerMediaChunks(
@@ -333,7 +359,10 @@ export async function* providerMediaChunks(
   totalBytes: number,
   chunkBytes: number | readonly number[],
   startByte = 0,
+  bodyStartByte = 0,
 ) {
+  if (!Number.isSafeInteger(bodyStartByte) || bodyStartByte < 0 || bodyStartByte > startByte)
+    throw new ProviderMediaDownloadError("The media range is invalid.", "unavailable", false);
   if (!Number.isSafeInteger(startByte) || startByte < 0 || startByte >= totalBytes)
     throw new ProviderMediaDownloadError("The upload offset is invalid.", "unavailable", false);
   const sizes = typeof chunkBytes === "number" ? null : chunkBytes;
@@ -343,7 +372,7 @@ export async function* providerMediaChunks(
   if (!Number.isSafeInteger(firstSize) || firstSize <= 0)
     throw new ProviderMediaDownloadError("The upload chunk size is invalid.", "unavailable", false);
   const reader = body.getReader();
-  let received = 0;
+  let received = bodyStartByte;
   let used = 0;
   let chunk = new Uint8Array(Math.min(firstSize, totalBytes - startByte));
   let finalChunk: Uint8Array<ArrayBuffer> | undefined;

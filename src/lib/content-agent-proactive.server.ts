@@ -7,11 +7,19 @@ import { requireContentWorkspace } from "./content-access.server";
 import { getContentAgentPreferencesForWorkspace } from "./content-agent-identity.server";
 import { contentAgentCardSchema, contentAgentResultSchema } from "./content-agent";
 import { loadContentEditorialContext } from "./content-agent.server";
-import { buildEditorialBrief, isAutomaticEditorialFormat } from "./content-editorial";
+import {
+  buildEditorialBrief,
+  isAutomaticEditorialFormat,
+  isEditorialDraftReviewable,
+} from "./content-editorial";
 import { generateEditorialDraft } from "./content-editorial.server";
 import { discoverPostKey } from "./content-discover-identity";
-import { normalizeNicheKey } from "./content-briefs.server";
-import { selectFreshEditorialSignals, type ContentSourceItem } from "./content-sources.server";
+import {
+  loadFreshBriefSources,
+  loadStoredDiscoverProfile,
+  filterAgentDiscoverSources,
+} from "./content-agent-discover.server";
+export { loadFreshBriefSources } from "./content-agent-discover.server";
 import {
   contentTopicKeys,
   topicIsSuppressed,
@@ -99,50 +107,13 @@ async function recommendationPage(userId: string) {
         sourceKey: postKey(row),
       })),
     });
-  return (await rpc("claim_content_agent_recommendations", { p_user_id: userId })) as any[];
+  const [rows, profile] = await Promise.all([
+    rpc("claim_content_agent_recommendations", { p_user_id: userId }) as Promise<any[]>,
+    loadStoredDiscoverProfile(userId),
+  ]);
+  return filterAgentDiscoverSources(rows, profile.nicheKeywords);
 }
 
-/** Read only the shared daily brief; scanning never starts a paid provider refresh. */
-export async function loadFreshBriefSources(userId: string) {
-  const { data: profile, error: profileError } = await (supabaseAdmin as any)
-    .from("creator_content_profiles")
-    .select("niche_keywords,language,region")
-    .eq("user_id", userId)
-    .maybeSingle();
-  if (profileError) throw new Error("Agent research preferences could not load.");
-  const nicheKey = normalizeNicheKey(profile?.niche_keywords || []);
-  if (!nicheKey) return [];
-  const { data: brief, error: briefError } = await (supabaseAdmin as any)
-    .from("content_trend_briefs")
-    .select("items")
-    .eq("niche_key", nicheKey)
-    .eq("language", profile.language || "en")
-    .eq("region", profile.region || "global")
-    .gte("brief_date", new Date(Date.now() - 86400000).toISOString().slice(0, 10))
-    .order("brief_date", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (briefError) throw new Error("Current Agent research could not load.");
-  const items: ContentSourceItem[] = Array.isArray(brief?.items)
-    ? brief.items.filter(
-        (item: any) =>
-          typeof item?.canonicalUrl === "string" &&
-          typeof item?.title === "string" &&
-          typeof item?.summary === "string" &&
-          typeof item?.publishedAt === "string" &&
-          typeof item?.kind === "string",
-      )
-    : [];
-  return selectFreshEditorialSignals(items).map((item) => ({
-    title: item.title,
-    summary: item.summary,
-    source_name: item.sourceName,
-    source_url: item.canonicalUrl,
-    source_published_at: item.publishedAt,
-    reason: `Current ${item.sourceName || "source"} report related to this creator's niche.`,
-    feedback: "pending",
-  }));
-}
 async function suppressedTopics(userId: string, keys: string[]): Promise<string[]> {
   if (!keys.length) return [];
   return rpc("content_agent_suppressed_topics", {
@@ -268,7 +239,7 @@ export async function enqueuePreparedRoutineSignals(userId: string) {
       .filter((run: any) => {
         const batch = run.prepared_output as PreparedRoutineOutput;
         return (
-          batch.drafts?.some((binding) => binding.card.editorial?.validationState === "passed") ||
+          batch.drafts?.some((binding) => isEditorialDraftReviewable(binding.card.editorial)) ||
           (batch.result?.action === "answer" && batch.adviceEvidence?.sourceIds.length)
         );
       })
@@ -447,8 +418,8 @@ export async function prepareContentAgentSignal(
       const original = contentAgentCardSchema.parse(binding.card);
       if (
         original.type !== "draft" ||
-        original.editorial?.validationState !== "passed" ||
-        !original.editorial.sourceIds.some((id) => id !== "request") ||
+        !isEditorialDraftReviewable(original.editorial) ||
+        !original.editorial?.sourceIds.some((id) => id !== "request") ||
         !prefs.platforms.includes(original.platform as any) ||
         !isAutomaticEditorialFormat(original.platform, original.format)
       )
@@ -479,7 +450,13 @@ export async function prepareContentAgentSignal(
         ...checkedCard,
         body: post.body,
         title: post.title || "",
-        editorial: { ...original.editorial, validationState: edited ? "needs_review" : "passed" },
+        editorial: {
+          ...original.editorial!,
+          validationState:
+            edited || original.editorial?.validationState === "needs_review"
+              ? "needs_review"
+              : "passed",
+        },
       });
       if (post.settings?.agentDraftState && post.updated_at) {
         draftStates[original.cardId] = {
@@ -503,6 +480,7 @@ export async function prepareContentAgentSignal(
         runId: batch.runId,
         body: post.body,
         title: post.title || "",
+        ...(post.updated_at ? { postUpdatedAt: post.updated_at } : {}),
       });
     }
     if (cards.length) {

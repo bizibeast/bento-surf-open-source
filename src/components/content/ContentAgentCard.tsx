@@ -1,14 +1,16 @@
 import { ContentDraftPreview } from "./ContentDraftPreview";
+import { DraftReviewNotice } from "./DraftReviewNotice";
+import { getEditorialReviewNotes } from "@/lib/content-editorial";
 import type { SchedulerConnection } from "@/lib/social-scheduler";
 import { useState } from "react";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Copy, Pencil, X } from "lucide-react";
 import type { ContentMediaAsset } from "@/lib/content-media";
 import type { ContentAgentCard as Card } from "@/lib/content-agent";
 import { ContentMarkdown } from "./ContentDocument";
 import { ContentDraftImages } from "./ContentDraftImages";
 import { ContentCarouselDraft } from "./ContentCarouselDraft";
 import { carouselReady, type AgentDraftState, type AgentDraftEdit } from "@/lib/content-carousel";
-import { prepareContentAgentDraft, handoffAgentDraft } from "@/lib/content-agent.functions";
+import { handoffAgentDraft } from "@/lib/content-agent.functions";
 import { micro } from "@/lib/micro-app-ui";
 
 function isSafeSourceUrl(value: string): boolean {
@@ -28,7 +30,6 @@ export function ContentAgentCard({
   previewAccounts = [],
   onApproveBrain,
   onRejectDraft,
-  onRegenerateDraft,
   onApproveSchedule,
   onSaveDraft,
   draftState,
@@ -97,7 +98,6 @@ export function ContentAgentCard({
         mediaAssets={mediaAssets}
         onSave={onSaveDraft ? (edit) => onSaveDraft(card.cardId, edit) : undefined}
         onReject={(reason) => onRejectDraft(card.cardId, reason)}
-        onRegenerate={(reason) => onRegenerateDraft(card.cardId, reason)}
       />
     );
   }
@@ -207,7 +207,6 @@ function DraftCard({
   draftState,
   onDraftChanged,
   onReject,
-  onRegenerate,
   onSave,
   mediaAssets,
 }: {
@@ -218,7 +217,6 @@ function DraftCard({
   draftState?: AgentDraftState;
   onDraftChanged?: () => void | Promise<unknown>;
   onReject: (reason: string) => void | Promise<void>;
-  onRegenerate: (reason: string) => void | Promise<void>;
   onSave?: (edit: AgentDraftEdit) => void | Promise<void>;
   mediaAssets: ContentMediaAsset[];
 }) {
@@ -229,7 +227,7 @@ function DraftCard({
   const [editing, setEditing] = useState(false);
   const [pending, setPending] = useState("");
   const [error, setError] = useState("");
-  const [feedback, setFeedback] = useState("");
+  const [rejected, setRejected] = useState(false);
   const [copied, setCopied] = useState(false);
   const revision = draftState?.revision || 0;
   const carousel = card.platform === "instagram" && card.format === "carousel";
@@ -253,12 +251,19 @@ function DraftCard({
       setPending("");
     }
   }
+  if (rejected)
+    return (
+      <div className="agent-rejected-draft" role="status">
+        Draft rejected
+      </div>
+    );
   return (
-    <article className="min-w-0 py-4">
+    <article className="agent-draft-artifact" aria-label={`${card.platform} draft`}>
       <p className={micro.eyebrowMuted}>
         {card.platform} · {card.format}
       </p>
-      {card.title && <h4 className="mt-1 font-semibold text-[#17213a]">{card.title}</h4>}
+
+      <DraftReviewNotice notes={getEditorialReviewNotes(card.editorial)} />
       {(carousel || photoRequired) && (
         <p className="mt-2 text-xs font-medium" role="status">
           {ready
@@ -310,6 +315,7 @@ function DraftCard({
           draftRef={{ messageId, cardId: card.cardId, revision }}
           slideCount={carousel ? card.slides?.length || 0 : 0}
           showPreview={false}
+          compact
           onChanged={onDraftChanged}
           onAssets={setBackgrounds}
         />
@@ -357,11 +363,13 @@ function DraftCard({
                 setError("");
               }}
             >
-              Edit draft
+              <Pencil className="size-3.5" aria-hidden="true" /> Edit draft
             </button>
             <button
               type="button"
               className="content-action"
+              aria-label={copied ? "Copied" : "Copy draft"}
+              title={copied ? "Copied" : "Copy draft"}
               disabled={Boolean(pending)}
               onClick={() =>
                 void run("copy", async () => {
@@ -370,23 +378,8 @@ function DraftCard({
                 })
               }
             >
-              {copied ? "Copied" : "Copy"}
+              <Copy className="size-3.5" aria-hidden="true" />
             </button>
-            {!ready && imageControlsSupported && (
-              <button
-                type="button"
-                className="content-action"
-                disabled={Boolean(pending)}
-                onClick={() =>
-                  void run("prepare", async () => {
-                    await prepareContentAgentDraft({ data: { messageId, cardId: card.cardId } });
-                    await onDraftChanged?.();
-                  })
-                }
-              >
-                {pending === "prepare" ? "Preparing visuals…" : "Prepare visuals"}
-              </button>
-            )}
             {onSchedule && (
               <button
                 type="button"
@@ -424,10 +417,24 @@ function DraftCard({
                 {pending === "handoff"
                   ? "Opening…"
                   : photoRequired && !hasPhoto
-                    ? "Add photo in scheduler"
+                    ? "Open in scheduler"
                     : "Open in scheduler"}
               </button>
             )}
+            <button
+              type="button"
+              className="content-action agent-reject-action"
+              disabled={Boolean(pending)}
+              onClick={() =>
+                void run("reject", async () => {
+                  await onReject("Not a fit for me");
+                  setRejected(true);
+                })
+              }
+            >
+              <X className="size-3.5" aria-hidden="true" />{" "}
+              {pending === "reject" ? "Rejecting…" : "Reject draft"}
+            </button>
           </>
         )}
       </div>
@@ -467,53 +474,26 @@ function DraftCard({
             </figure>
           ) : null;
         })}
-      <p className={`mt-2 ${micro.mutedXs}`}>{card.rationale}</p>
-      {card.sourceUrls.some(isSafeSourceUrl) && (
-        <ul aria-label="Draft sources" className={`mt-2 space-y-1 ${micro.mutedXs}`}>
-          {card.sourceUrls.filter(isSafeSourceUrl).map((url) => (
-            <li key={url}>
-              <a
-                href={url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="break-all underline"
-              >
-                {url}
-              </a>
-            </li>
-          ))}
-        </ul>
-      )}
-      {card.visualBrief && <p className={`mt-2 ${micro.mutedXs}`}>Visual: {card.visualBrief}</p>}
-      <details className="mt-4">
-        <summary className="cursor-pointer text-xs font-medium">Improve this draft</summary>
-        <label className="mt-3 grid gap-1 text-xs font-medium">
-          Draft feedback
-          <input
-            value={feedback}
-            onChange={(e) => setFeedback(e.target.value.slice(0, 1000))}
-            className="content-field"
-            placeholder="What should change?"
-          />
-        </label>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <button
-            type="button"
-            className="content-action"
-            disabled={!feedback.trim() || Boolean(pending) || editing}
-            onClick={() => void run("regenerate", () => onRegenerate(feedback.trim()))}
-          >
-            {pending === "regenerate" ? "Regenerating…" : "Regenerate draft"}
-          </button>
-          <button
-            type="button"
-            className="content-action"
-            disabled={!feedback.trim() || Boolean(pending) || editing}
-            onClick={() => void run("reject", () => onReject(feedback.trim()))}
-          >
-            {pending === "reject" ? "Rejecting…" : "Reject draft"}
-          </button>
-        </div>
+      <details className="agent-draft-notes">
+        <summary>Sources & notes</summary>
+        {card.rationale && <p className="mt-2">{card.rationale}</p>}
+        {card.sourceUrls.some(isSafeSourceUrl) && (
+          <ul aria-label="Draft sources" className="mt-2 space-y-1">
+            {card.sourceUrls.filter(isSafeSourceUrl).map((url) => (
+              <li key={url}>
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="break-all underline"
+                >
+                  {url}
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+        {card.visualBrief && <p className="mt-2">Visual: {card.visualBrief}</p>}
       </details>
     </article>
   );

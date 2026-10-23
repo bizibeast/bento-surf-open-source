@@ -115,30 +115,33 @@ it("clears the scheduled stop only after renewal is verified under the same leas
   expect(m.update).toHaveBeenCalledWith("sub", { cancel_at_next_billing_date: false });
   expect(m.refresh).toHaveBeenCalledWith("workspace", "sub", "lease");
 });
-it("ends a verified trial immediately and reconciles access before returning", async () => {
+it("cancels a trial at its end date so access lasts and no charge happens", async () => {
+  const trialEnd = "2026-10-25T20:51:30.186Z";
   m.subscription.status = "trialing";
+  m.subscription.plan_id = "store";
+  m.subscription.current_period_end = trialEnd;
   m.refresh.mockImplementation(async () => {
-    if (m.update.mock.calls.length) {
-      m.subscription.status = "canceled";
-      m.subscription.plan_id = "free";
-      m.subscription.cancel_at_period_end = false;
-    }
+    if (m.update.mock.calls.length) m.subscription.cancel_at_period_end = true;
   });
   expect(await cancelMyRenewal({ data: {} })).toMatchObject({
-    status: "canceled",
-    plan: "free",
-    cancelAtPeriodEnd: false,
+    status: "trialing",
+    plan: "store",
+    cancelAtPeriodEnd: true,
+    currentPeriodEnd: trialEnd,
   });
   expect(m.update).toHaveBeenCalledWith(
     "sub",
-    expect.objectContaining({ status: "cancelled", cancel_at_next_billing_date: false }),
+    expect.objectContaining({ cancel_at_next_billing_date: true }),
   );
+  // Never end the trial (and its access) immediately.
+  expect(m.update.mock.calls[0][1]).not.toHaveProperty("status");
   expect(m.refresh).toHaveBeenCalledTimes(2);
 });
 it("preserves the paid period if a stale trial has already converted", async () => {
   m.subscription.status = "trialing";
   m.refresh.mockImplementation(async () => {
     m.subscription.status = "active";
+    if (m.update.mock.calls.length) m.subscription.cancel_at_period_end = true;
   });
   await cancelMyRenewal({ data: {} });
   expect(m.update).toHaveBeenCalledWith(
@@ -147,7 +150,7 @@ it("preserves the paid period if a stale trial has already converted", async () 
   );
   expect(m.update.mock.calls[0][1]).not.toHaveProperty("status");
 });
-it("does not claim a trial ended if provider reconciliation is still active", async () => {
+it("does not confirm a cancellation Dodo has not recorded yet", async () => {
   m.subscription.status = "trialing";
   await expect(cancelMyRenewal({ data: {} })).rejects.toThrow("being verified");
 });

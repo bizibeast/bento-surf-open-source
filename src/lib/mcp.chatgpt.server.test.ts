@@ -219,7 +219,34 @@ function fakeOperations() {
     mutateBlock: record("mutateBlock", { id: BLOCK }),
     reorderPages: record("reorderPages", { ok: true }),
     listSocialAccounts: record("listSocialAccounts", []),
-    listSocialPosts: record("listSocialPosts", []),
+    listSocialPosts: record("listSocialPosts", {
+      posts: [
+        {
+          id: POST,
+          body: "Exact platform post",
+          created_at: "2026-10-19T00:00:00Z",
+          targets: [
+            {
+              provider: "instagram",
+              id: AUTO,
+              connection_id: CONN,
+              remote_post_id: null,
+              remote_post_url: null,
+              provider_settings: { bodyOverride: "Reel caption", trialReel: true },
+            },
+          ],
+        },
+      ],
+      pagination: { limit: 30, hasMore: true, nextCursor: "next-page" },
+      filters: { status: null, dateField: "published_at" as const, cursor: undefined },
+      provenance: {
+        source: "stored_scheduler",
+        observedAt: "2026-10-22T00:00:00Z",
+        dateSemantics: "Destination published_at",
+        targets: "matching",
+        metrics: "stored",
+      },
+    }),
     saveSocialPostForUser: record("saveSocialPostForUser", { id: POST }),
     getSchedulerWorkspace: record("getSchedulerWorkspace", {
       postingSchedule: { timezone: "UTC", slots: [] },
@@ -427,6 +454,41 @@ describe("ChatGPT MCP catalog", () => {
       (call) => call.name === "saveAutoDmAutomation" && !(call.args[2] as { id?: string }).id,
     );
     expect(create?.args[2]).toMatchObject({ enabled: false });
+  });
+
+  it("keeps the shared paginated post shape readable and forwards publication filters", async () => {
+    const { operations, calls } = fakeOperations();
+    const handler = chatGptHandler(operations);
+    const response = await handler.fetch(
+      rpc("https://mcp.bento.surf/chatgpt/mcp", 3, "tools/call", {
+        name: "list_social_posts",
+        arguments: {
+          provider: "instagram",
+          targetStatus: "published",
+          dateFrom: "2026-10-18T18:30:00Z",
+          dateTo: "2026-10-19T18:30:00Z",
+          cursor: "previous-page",
+        },
+      }),
+      { authInfo },
+    );
+    const result = (await payload(response)).result;
+    expect(result.content[0].text).toContain("Found 1 social post(s)");
+    expect(result.structuredContent.posts).toEqual([
+      expect.objectContaining({ id: POST, body: "Exact platform post" }),
+    ]);
+    expect(result.structuredContent.pagination).toMatchObject({
+      hasMore: true,
+      nextCursor: "next-page",
+    });
+    expect(JSON.parse(result.content[1].text)).toEqual(result.structuredContent);
+    expect(result.content[1].text).toContain("Reel caption");
+    expect(calls.find((call) => call.name === "listSocialPosts")?.args[3]).toMatchObject({
+      provider: "instagram",
+      targetStatus: "published",
+      cursor: "previous-page",
+      dateField: "published_at",
+    });
   });
 
   it("hides commerce records from reads and refuses commerce block edits", async () => {

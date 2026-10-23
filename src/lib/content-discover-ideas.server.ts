@@ -1,3 +1,4 @@
+import { normalizeCustomerCopy } from "./text/dashes";
 import { AUTOMATIC_EDITORIAL_FORMATS } from "./content-editorial";
 import { z } from "zod";
 import { runAiJson, type AiProviderEnv } from "./ai-json.server";
@@ -222,7 +223,7 @@ export function fallbackDiscoverIdeas(
         ? `For your ${focus} audience, ${step[0].toLowerCase()}${step.slice(1)}`
         : step,
     );
-    return {
+    return normalizeCustomerCopy({
       sourceUrl: source.canonicalUrl,
       title: cleanText(plan.title, 300),
       summary: plan.summary,
@@ -233,7 +234,7 @@ export function fallbackDiscoverIdeas(
         outline,
         whyNow: sourceTiming(source, context, now),
       },
-    };
+    });
   });
 }
 
@@ -313,7 +314,7 @@ Ground the brief in an actual point from its source. Do not invent events, quote
           cleanText(source.summary, 1_200).toLowerCase()
       )
         return original;
-      return {
+      return normalizeCustomerCopy({
         sourceUrl: source.canonicalUrl,
         title: idea.title,
         summary: idea.summary,
@@ -324,7 +325,7 @@ Ground the brief in an actual point from its source. Do not invent events, quote
           outline: idea.outline,
           whyNow: original.inspiration.whyNow,
         },
-      };
+      });
     });
   } catch {
     return fallback;

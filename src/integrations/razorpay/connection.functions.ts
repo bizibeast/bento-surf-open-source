@@ -3,7 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { requirePlanEntitlement } from "@/lib/plan.server";
+import { requireCreatorPaymentConnect } from "@/lib/plan.server";
 import { requireExclusiveCreatorPaymentProvider } from "@/lib/payment-connection-policy.server";
 import { encryptServerSecret } from "@/lib/secret-crypto.server";
 import {
@@ -57,11 +57,7 @@ export const connectRazorpayApiKeys = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) => z.object({ keyId: keyIdSchema, keySecret: keySecretSchema }).parse(input))
   .handler(async ({ context, data }) => {
-    await requirePlanEntitlement(
-      context.userId,
-      "oneTapCheckout",
-      "Connected payments are included with the Store plan.",
-    );
+    await requireCreatorPaymentConnect(context.userId);
     await requireExclusiveCreatorPaymentProvider(context.userId, RAZORPAY_PROVIDER);
     const credentials = { keyId: data.keyId.trim(), keySecret: data.keySecret.trim() };
     const environment = assertRazorpayEnvironment(credentials.keyId);
@@ -116,11 +112,7 @@ export const configureRazorpayWebhook = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) => z.object({ webhookSecret: webhookSecretSchema }).parse(input))
   .handler(async ({ context, data }) => {
-    await requirePlanEntitlement(
-      context.userId,
-      "oneTapCheckout",
-      "Connected payments are included with the Store plan.",
-    );
+    await requireCreatorPaymentConnect(context.userId);
     const current = await getRazorpayPaymentAccount(context.userId);
     if (!current) throw new Error("Connect your Razorpay API keys first.");
     await verifyRazorpayCredentials(await razorpayCredentialsForAccount(current));

@@ -1,3 +1,4 @@
+import { normalizeCustomerCopy, normalizeDashes } from "./text/dashes";
 import { withProviderBudgetWorkspace } from "./provider-budget.server";
 import { z } from "zod";
 import { runAiJson } from "./ai-json.server";
@@ -208,14 +209,16 @@ export async function prepareRoutineDrafts(
       if (result.cards.some((card) => card.type === "draft")) break;
       throw new Error(checked.message);
     }
-    const card = { ...checked.card, cardId: `routine-${index + 1}` };
+    const card = normalizeCustomerCopy({ ...checked.card, cardId: `routine-${index + 1}` });
     if (card.type !== "draft")
-      result.message = checked.issues?.length
-        ? `No draft passed review. ${checked.issues
-            .slice(0, 2)
-            .map((issue) => issue.message)
-            .join(" ")}`.slice(0, 1000)
-        : checked.message;
+      result.message = normalizeDashes(
+        checked.issues?.length
+          ? `No draft passed review. ${checked.issues
+              .slice(0, 2)
+              .map((issue) => issue.message)
+              .join(" ")}`.slice(0, 1000)
+          : checked.message,
+      );
     if (
       useTrend &&
       (card.type !== "draft" ||
@@ -284,7 +287,7 @@ export async function prepareRoutineReview(
       userId: input.userId,
       runId: input.run.id,
       routineId: input.run.routineId,
-      result: { action: "answer", message: review.value.message, cards: [] },
+      result: { action: "answer", message: normalizeDashes(review.value.message), cards: [] },
       adviceEvidence: {
         sourceIds: [
           ...context.sources
