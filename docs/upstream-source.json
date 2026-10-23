@@ -57,8 +57,6 @@
     "src/lib/email-templates.ts",
     "src/lib/email.server.ts",
     "src/lib/facebook-auto-dm.functions.ts",
-    "src/lib/founder-ai-model-check.server.test.ts",
-    "src/lib/founder-ai-provider.server.test.ts",
     "src/lib/founder-period.test.ts",
     "src/lib/instagram-auto-dm.functions.ts",
     "src/lib/mcp-read-results.test.ts",
