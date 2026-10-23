@@ -598,6 +598,7 @@ export function deriveSocialPostStatus(
 export type SchedulerPost = {
   agentDraft?: boolean;
   automationNote?: string;
+  reviewNotes?: string[];
   id: string;
   body: string;
   title: string | null;

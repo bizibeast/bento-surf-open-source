@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- Database builders deliberately accept varied fixture payloads. */
 import { beforeEach, expect, it, vi } from "vitest";
 import { DEFAULT_AGENT_BRANDING } from "./content-agent-branding";
 const owner = "10000000-0000-4000-8000-000000000001";
@@ -169,4 +170,19 @@ it("rotates equally relevant photos and rejects unrelated indexed images", () =>
       [],
     ),
   ).toEqual([]);
+});
+
+it("does not render or reserve preparation for a rejected draft", async () => {
+  mocks.payload.rejectedDraftIds = ["draft"];
+  await expect(prepareAgentMessage(owner, messageId, "draft")).rejects.toThrow("rejected");
+  expect(mocks.rpc).not.toHaveBeenCalled();
+  expect(mocks.render).not.toHaveBeenCalled();
+  expect(mocks.store).not.toHaveBeenCalled();
+});
+
+it("skips rejected cards when preparing an entire retained message", async () => {
+  mocks.payload.rejectedDraftIds = ["draft"];
+  await prepareAgentMessage(owner, messageId);
+  expect(mocks.rpc).not.toHaveBeenCalled();
+  expect(mocks.render).not.toHaveBeenCalled();
 });

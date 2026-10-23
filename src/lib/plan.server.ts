@@ -5,6 +5,8 @@ import {
   highestPlan,
   isPaidPlan,
   MAX_STORAGE_ADDON_UNITS,
+  CONNECTED_PAYMENTS_REQUIRED_MESSAGE,
+  creatorPaymentsUnlocked,
   normalizePlan,
   planHasEntitlement,
   planLimits,
@@ -45,6 +47,21 @@ export async function hasPlanEntitlement(
   if (profile.error) throw new Error(profile.error.message);
   const catalog = profile.data?.billing_catalog === "legacy" ? "legacy" : "2026-10";
   if (plan === "free" && !billingAllows(profile.data?.billing_lifecycle, "tools")) return false;
+  if (entitlement === "oneTapCheckout") {
+    if (creatorPaymentsUnlocked({ plan, catalog })) return true;
+    const { data, error } = await supabaseAdmin
+      .from("subscriptions")
+      .select("plan_id, status")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return creatorPaymentsUnlocked({
+      plan,
+      catalog,
+      subscriptionStatus: data?.status ?? null,
+      subscriptionPlan: data?.plan_id ?? null,
+    });
+  }
   if (catalog !== "legacy" && plan === "free") return false;
   return planHasEntitlement(plan, entitlement, catalog);
 }
@@ -125,13 +142,14 @@ export function profilePlanForBillingSurface(
   now = Date.now(),
 ): PlanId {
   if (!billingAllows(profile?.billing_lifecycle, surface, now)) return "free";
+  // A trial grants exactly the subscribed plan (from the Dodo product), never
+  // a higher tier. Features above that plan show the normal upgrade prompt.
   const lifecycle = readBillingLifecycle(profile?.billing_lifecycle);
-  if (lifecycle)
-    return profile?.trial_ends_at && Date.parse(profile.trial_ends_at) > now
-      ? highestPlan(lifecycle.plan, "creator_plus")
-      : lifecycle.plan;
+  if (lifecycle) return lifecycle.plan;
   if (profile?.trial_ends_at)
-    return Date.parse(profile.trial_ends_at) > now ? "creator_plus" : "free";
+    return Date.parse(profile.trial_ends_at) > now
+      ? normalizePlan(profile?.plan_id, Boolean(profile?.is_pro))
+      : "free";
   return normalizePlan(profile?.plan_id, Boolean(profile?.is_pro));
 }
 
@@ -174,4 +192,9 @@ export async function requirePlanEntitlement(
   const plan = await getPlan(userId);
   if (!(await hasPlanEntitlement(userId, entitlement))) throw new Error(message);
   return plan;
+}
+
+export async function requireCreatorPaymentConnect(userId: string): Promise<void> {
+  if (await hasPlanEntitlement(userId, "oneTapCheckout")) return;
+  throw new Error(CONNECTED_PAYMENTS_REQUIRED_MESSAGE);
 }

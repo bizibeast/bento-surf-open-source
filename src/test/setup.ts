@@ -6,6 +6,8 @@ import { vi } from "vitest";
 vi.mock("@/lib/provider-budget.server", async (original) => ({
   ...(await original<typeof import("@/lib/provider-budget.server")>()),
   reserveProviderUsage: vi.fn().mockResolvedValue(undefined),
+  reserveAiProviderUsage: vi.fn().mockResolvedValue(undefined),
+  settleProviderUsage: vi.fn().mockResolvedValue(true),
   reserveXRead: vi.fn().mockResolvedValue(undefined),
   xBackgroundReadsEnabled: vi.fn().mockReturnValue(true),
 }));

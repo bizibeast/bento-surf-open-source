@@ -6,19 +6,108 @@ import {
   runAiProviderRequest,
   selectAiProvider,
 } from "./ai-json.server";
-import { reserveProviderUsage, ProviderBudgetError } from "./provider-budget.server";
+import {
+  reserveAiProviderUsage,
+  settleProviderUsage,
+  ProviderBudgetError,
+} from "./provider-budget.server";
 
 const schema = z.object({ answer: z.string().min(1).max(100) }).strict();
 
 describe("validated AI JSON transport", () => {
+  it("settles a completed Workers response before validating its generated content", async () => {
+    const receipt = { id: "10000000-0000-4000-8000-000000000001", units: 1000 };
+    vi.mocked(reserveAiProviderUsage).mockResolvedValueOnce(receipt);
+    const ai = {
+      run: vi.fn().mockResolvedValue({
+        response: "invalid schema",
+        usage: { input_tokens: 100, output_tokens: 10 },
+      }),
+    };
+    const validateResponse = vi.fn(() => {
+      throw new Error("invalid schema");
+    });
+    await expect(
+      runAiProviderRequest(
+        {
+          messages: [{ role: "user", content: "Hello" }],
+          temperature: 0,
+          maxTokens: 100,
+          validateResponse,
+        },
+        { AI: ai },
+      ),
+    ).rejects.toThrow("invalid schema");
+    expect(settleProviderUsage).toHaveBeenCalledWith(receipt, 23);
+    expect(vi.mocked(settleProviderUsage).mock.invocationCallOrder.at(-1)).toBeLessThan(
+      validateResponse.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("returns only the unused amount from explicit OpenRouter billing", async () => {
+    const receipt = { id: "10000000-0000-4000-8000-000000000002", units: 100000 };
+    vi.mocked(reserveAiProviderUsage).mockResolvedValueOnce(receipt);
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        Response.json({ usage: { cost: 0.0012 }, choices: [{ message: { content: "hello" } }] }),
+      );
+    await runAiProviderRequest(
+      { messages: [{ role: "user", content: "Hello" }], temperature: 0, maxTokens: 100 },
+      { OPENROUTER_API_KEY: "key" },
+      fetcher,
+    );
+    expect(settleProviderUsage).toHaveBeenCalledWith(receipt, 1200);
+  });
+
+  it("retains a reservation on a transport failure instead of pretending it was free", async () => {
+    vi.mocked(settleProviderUsage).mockClear();
+    vi.mocked(reserveAiProviderUsage).mockResolvedValueOnce({
+      id: "10000000-0000-4000-8000-000000000003",
+      units: 1000,
+    });
+    const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new Error("connection reset"));
+    await expect(
+      runAiProviderRequest(
+        { messages: [{ role: "user", content: "Hello" }], temperature: 0, maxTokens: 100 },
+        { OPENROUTER_API_KEY: "key" },
+        fetcher,
+      ),
+    ).rejects.toThrow("connection reset");
+    expect(settleProviderUsage).not.toHaveBeenCalled();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases a reservation when cancellation is known to precede provider execution", async () => {
+    const controller = new AbortController();
+    const receipt = { id: "10000000-0000-4000-8000-000000000004", units: 1000 };
+    vi.mocked(reserveAiProviderUsage).mockImplementationOnce(async () => {
+      controller.abort(new DOMException("Cancelled", "AbortError"));
+      return receipt;
+    });
+    const ai = { run: vi.fn() };
+    await expect(
+      runAiProviderRequest(
+        {
+          messages: [{ role: "user", content: "Hello" }],
+          temperature: 0,
+          maxTokens: 100,
+          signal: controller.signal,
+        },
+        { AI: ai },
+      ),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(ai.run).not.toHaveBeenCalled();
+    expect(settleProviderUsage).toHaveBeenCalledWith(receipt, 0);
+  });
   it("makes no provider call when the atomic budget reservation is denied", async () => {
-    vi.mocked(reserveProviderUsage).mockRejectedValueOnce(new ProviderBudgetError("ai_microusd"));
+    vi.mocked(reserveAiProviderUsage).mockRejectedValueOnce(new ProviderBudgetError("ai_microusd"));
     const ai = { run: vi.fn() };
     const fetcher = vi.fn<typeof fetch>();
     await expect(
       runAiJson(
         { system: "Answer", input: {}, schema, maxTokens: 100, temperature: 0 },
-        { AI: ai, OPENROUTER_API_KEY: "key", GROQ_API_KEY: "key" },
+        { AI_TEXT_PROVIDER: "workers-ai", AI: ai, OPENROUTER_API_KEY: "key", GROQ_API_KEY: "key" },
         fetcher,
       ),
     ).rejects.toBeInstanceOf(ProviderBudgetError);
@@ -37,7 +126,12 @@ describe("validated AI JSON transport", () => {
     const fetcher = vi.fn<typeof fetch>().mockRejectedValue(new Error("OpenRouter down"));
     const pending = runAiJson(
       { system: "Answer.", input: {}, schema, maxTokens: 1_000, temperature: 0, timeoutMs: 100 },
-      { OPENROUTER_API_KEY: "key", AI: ai, GROQ_API_KEY: "fallback" },
+      {
+        AI_TEXT_PROVIDER: "workers-ai",
+        OPENROUTER_API_KEY: "key",
+        AI: ai,
+        GROQ_API_KEY: "fallback",
+      },
       fetcher,
     );
     const rejection = expect(pending).rejects.toMatchObject({ name: "TimeoutError" });
@@ -64,7 +158,7 @@ describe("validated AI JSON transport", () => {
         temperature: 0,
         signal: controller.signal,
       },
-      { OPENROUTER_API_KEY: "key", AI: ai },
+      { AI_TEXT_PROVIDER: "workers-ai", OPENROUTER_API_KEY: "key", AI: ai },
       fetcher,
     );
     controller.abort(new DOMException("Cancelled", "AbortError"));
@@ -198,7 +292,7 @@ describe("validated AI JSON transport", () => {
       "https://openrouter.ai/api/v1/chat/completions",
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer key" }),
-        body: expect.stringContaining('"model":"deepseek/deepseek-v4-flash-0731"'),
+        body: expect.stringContaining('"model":"z-ai/glm-5.3-flash"'),
       }),
     );
     const request = JSON.parse(
@@ -207,9 +301,11 @@ describe("validated AI JSON transport", () => {
     expect(request.provider).toEqual({
       zdr: true,
       data_collection: "deny",
-      max_price: { prompt: 3, completion: 15 },
+      allow_fallbacks: false,
+      require_parameters: true,
+      max_price: { prompt: 0.15, completion: 0.5 },
     });
-    expect(request.reasoning).toEqual({ effort: "none" });
+    expect(request.reasoning).toEqual({ effort: "low" });
   });
 
   it("uses a server-selected editorial model while preserving private provider routing", async () => {
@@ -225,21 +321,23 @@ describe("validated AI JSON transport", () => {
         schema,
         maxTokens: 100,
         temperature: 0.1,
-        openRouterModel: "anthropic/claude-sonnet-4.5",
+        modelTier: "balanced",
       },
       { OPENROUTER_API_KEY: "key" },
       fetcher,
     );
     const body = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body));
-    expect(body.model).toBe("anthropic/claude-sonnet-4.5");
+    expect(body.model).toBe("z-ai/glm-5.3-flash");
     expect(body.provider).toEqual({
       zdr: true,
       data_collection: "deny",
-      max_price: { prompt: 3, completion: 15 },
+      allow_fallbacks: false,
+      require_parameters: true,
+      max_price: { prompt: 0.15, completion: 0.5 },
     });
   });
 
-  it("prefers Workers AI before spending on OpenRouter", async () => {
+  it("honors an explicit Workers route without spending on OpenRouter", async () => {
     const ai = {
       run: vi.fn().mockResolvedValue({
         choices: [{ message: { content: JSON.stringify({ answer: "Fallback" }) } }],
@@ -249,7 +347,7 @@ describe("validated AI JSON transport", () => {
     await expect(
       runAiJson(
         { system: "Answer.", input: {}, schema, maxTokens: 100, temperature: 0 },
-        { OPENROUTER_API_KEY: "key", AI: ai },
+        { AI_TEXT_PROVIDER: "workers-ai", OPENROUTER_API_KEY: "key", AI: ai },
         vi.fn<typeof fetch>().mockRejectedValue(new Error("down")),
       ),
     ).resolves.toMatchObject({

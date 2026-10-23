@@ -210,3 +210,20 @@ it("does not interpret travel agents as an AI interest", () => {
     "Andrej Karpathy",
   );
 });
+
+it("does not turn generic Brain tags into standalone discovery topics", () => {
+  const input = context(
+    ["startup journey", "writing style", "hustle", "strategy"],
+    [
+      {
+        ...brain,
+        tags: ["challenge", "creativity", "AI", "public challenges"],
+        content: "I make videos about AI tools and document building my startup.",
+      },
+    ],
+  );
+  expect(discoverBrainTopics(input)).not.toEqual(
+    expect.arrayContaining(["challenge", "creativity", "public challenges"]),
+  );
+  expect(discoverBrainTopics(input)).toContain("ai");
+});

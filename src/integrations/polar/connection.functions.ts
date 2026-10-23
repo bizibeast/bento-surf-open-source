@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Private payment tables are added by a pending migration. */
 import { createServerFn } from "@tanstack/react-start";
-import { requirePlanEntitlement } from "@/lib/plan.server";
+import { requireCreatorPaymentConnect } from "@/lib/plan.server";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
@@ -80,11 +80,7 @@ export const getMyPaymentConnections = createServerFn({ method: "GET" })
 export const beginPolarConnection = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    await requirePlanEntitlement(
-      context.userId,
-      "oneTapCheckout",
-      "Connected payments are included with the Store plan.",
-    );
+    await requireCreatorPaymentConnect(context.userId);
     await requireExclusiveCreatorPaymentProvider(context.userId, POLAR_PROVIDER);
     const state = await createPaymentOauthState(context.userId, POLAR_PROVIDER);
     return { url: polarAuthorizeUrl(state) };
@@ -105,11 +101,7 @@ export const completePolarConnection = createServerFn({ method: "POST" })
     if (oauthState.creator_id !== context.userId) {
       throw new Error("This Polar connection link belongs to a different account.");
     }
-    await requirePlanEntitlement(
-      context.userId,
-      "oneTapCheckout",
-      "Connected payments are included with the Store plan.",
-    );
+    await requireCreatorPaymentConnect(context.userId);
     await requireExclusiveCreatorPaymentProvider(oauthState.creator_id, POLAR_PROVIDER);
 
     const tokens = await exchangePolarCode(data.code);

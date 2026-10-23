@@ -47,7 +47,31 @@ describe("authenticated WebMCP route coverage", () => {
     const registered = new Set(createAuthenticatedWebMcpTools(vi.fn()).map((tool) => tool.name));
     for (const toolNames of Object.values(WEBMCP_TOOLS_BY_ROUTE)) {
       for (const toolName of toolNames) expect(registered.has(toolName), toolName).toBe(true);
+      if (toolNames.includes("list_social_posts")) expect(toolNames).toContain("get_social_post");
     }
+  });
+
+  it.each([
+    "/home",
+    "/dashboard",
+    "/content",
+    "/post-scheduler",
+    "/scheduler",
+    "/social-insights",
+    "/analytics",
+  ])("exposes owned post detail alongside post lists on %s", (pathname) => {
+    const allowed = authenticatedWebMcpToolNames(pathname);
+    const exposed = createAuthenticatedWebMcpTools(vi.fn()).filter((tool) =>
+      allowed.has(tool.name),
+    );
+    expect(exposed.some((tool) => tool.name === "list_social_posts")).toBe(true);
+    const detail = exposed.find((tool) => tool.name === "get_social_post");
+    expect(detail?.annotations?.readOnlyHint).toBe(true);
+    expect(detail?.inputSchema).toMatchObject({ required: ["id"], additionalProperties: false });
+    const properties = (detail?.inputSchema as { properties: Record<string, unknown> }).properties;
+    expect(properties.id).toMatchObject({ type: "string", format: "uuid" });
+    expect(properties).not.toHaveProperty("userId");
+    expect(properties).toHaveProperty("attemptsCursor");
   });
 
   it("keeps shared mutations scoped to the current workspace", () => {

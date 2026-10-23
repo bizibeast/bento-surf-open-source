@@ -19,7 +19,7 @@ async function adminRpc(name: string, args: Record<string, unknown>, knownErrors
 export const getFounderAffiliates = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    await assertAdmin(context.userId);
+    await assertAdmin(context.authUserId);
     const [accounts, clicks, attributions, commissions, payouts, reach, settings] =
       await Promise.all([
         db()
@@ -139,9 +139,9 @@ export const setReferralAccountStatus = createServerFn({ method: "POST" })
     z.object({ accountId: uuid, status: z.enum(["active", "suspended"]) }).parse(input),
   )
   .handler(async ({ context, data }) => {
-    await assertAdmin(context.userId);
+    await assertAdmin(context.authUserId);
     return adminRpc("admin_set_referral_account_status", {
-      p_admin_user_id: context.userId,
+      p_admin_user_id: context.authUserId,
       p_account_id: data.accountId,
       p_status: data.status,
     });
@@ -155,9 +155,9 @@ export const setReferralAccountRate = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ context, data }) => {
-    await assertAdmin(context.userId);
+    await assertAdmin(context.authUserId);
     return adminRpc("admin_set_referral_account_rate", {
-      p_admin_user_id: context.userId,
+      p_admin_user_id: context.authUserId,
       p_account_id: data.accountId,
       p_commission_rate_bps: data.commissionRateBps,
     });
@@ -175,11 +175,11 @@ export const transitionReferralPayout = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ context, data }) => {
-    await assertAdmin(context.userId);
+    await assertAdmin(context.authUserId);
     return adminRpc(
       "admin_transition_referral_payout",
       {
-        p_admin_user_id: context.userId,
+        p_admin_user_id: context.authUserId,
         p_payout_id: data.payoutId,
         p_status: data.status,
         p_reference: data.reference ?? null,
@@ -200,11 +200,11 @@ export const reviewReachSubmission = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ context, data }) => {
-    await assertAdmin(context.userId);
+    await assertAdmin(context.authUserId);
     return adminRpc(
       "admin_review_referral_reach",
       {
-        p_admin_user_id: context.userId,
+        p_admin_user_id: context.authUserId,
         p_submission_id: data.submissionId,
         p_decision: data.decision,
         p_reason: data.reason ?? null,
@@ -238,7 +238,7 @@ export const updateReferralSettings = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ context, data }) => {
-    await assertAdmin(context.userId);
+    await assertAdmin(context.authUserId);
     const { data: before, error: readError } = await db()
       .from("referral_program_settings")
       .select("*")
@@ -246,7 +246,7 @@ export const updateReferralSettings = createServerFn({ method: "POST" })
       .single();
     if (readError) throw new Error(ADMIN_DATA_ERROR);
     return adminRpc("admin_update_referral_settings", {
-      p_admin_user_id: context.userId,
+      p_admin_user_id: context.authUserId,
       p_enabled: data.enabled,
       p_commission_rate_bps: data.commissionRateBps,
       p_attribution_window_days: data.attributionWindowDays,

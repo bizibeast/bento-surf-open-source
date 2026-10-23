@@ -30,6 +30,7 @@ import {
   saveTrialCheckout,
 } from "./billing-checkout.server";
 import { readOnboardingSession } from "./onboarding/session.server";
+import { settingsIntegrationsPath } from "./settings-integrations";
 import { resolveBillingProduct } from "./billing-catalog";
 import { desiredDodoAddonCart } from "./billing-addons";
 import { enforceRequestRateLimit } from "./request-security.server";
@@ -51,7 +52,8 @@ import {
 
 const paidPlanSchema = z.enum(["store", "creator", "creator_plus"]);
 const checkoutPeriodSchema = z.enum(["monthly", "yearly"]);
-const returnToSchema = z.enum(["dashboard", "onboarding"]).default("dashboard");
+const returnToSchema = z.enum(["dashboard", "onboarding", "payments"]).default("dashboard");
+export type CheckoutReturnTo = z.infer<typeof returnToSchema>;
 const checkoutAddonsSchema = z.object({
   contactTier: z
     .union([
@@ -109,6 +111,15 @@ function dodoErrorStatus(error: unknown): number | null {
   return Number.isFinite(status) ? status : null;
 }
 
+// Dodo appends `status` plus `subscription_id` or `payment_id`. The marker only
+// says "returned from checkout"; the page reads Dodo's status for the outcome.
+function checkoutReturnUrl(appUrl: string, returnTo: CheckoutReturnTo, trial = false) {
+  const marker = `checkout=return&trial=${trial ? 1 : 0}`;
+  if (returnTo === "onboarding") return `${appUrl}/onboarding?${marker}`;
+  if (returnTo === "payments") return `${appUrl}${settingsIntegrationsPath("payments")}&${marker}`;
+  return `${appUrl}/link?upgraded=1&${marker}`;
+}
+
 async function createHostedCheckoutSession(input: {
   userId: string;
   authUserId?: string;
@@ -116,7 +127,7 @@ async function createHostedCheckoutSession(input: {
   email?: string;
   plan: PaidPlanId;
   period: BillingPeriod;
-  returnTo: "dashboard" | "onboarding";
+  returnTo: CheckoutReturnTo;
   addons?: CheckoutAddonSelection;
   trial?: boolean;
 }) {
@@ -180,10 +191,7 @@ async function createHostedCheckoutSession(input: {
         ...(reservation?.checkoutKey ? { trial_checkout_key: reservation.checkoutKey } : {}),
         period: input.period,
       },
-      return_url:
-        input.returnTo === "onboarding"
-          ? `${appUrl}/onboarding?checkout=success`
-          : `${appUrl}/link?upgraded=1`,
+      return_url: checkoutReturnUrl(appUrl, input.returnTo, Boolean(input.trial)),
     });
   } catch (error) {
     console.error("Dodo checkout session creation failed.", {
@@ -460,11 +468,11 @@ async function setRenewal(
       !["active", "trialing"].includes(subscription.status)
     )
       throw new Error("No active Bento subscription was found.");
-    const endTrialNow = cancelAtPeriodEnd && subscription.status === "trialing";
+    // Trials and paid periods both cancel at the next billing date: a trial keeps
+    // access until it ends and is never charged. Never set status "cancelled"
+    // here, which would end access immediately.
     await dodo.subscriptions.update(subscription.dodo_subscription_id, {
-      ...(endTrialNow
-        ? { status: "cancelled" as const, cancel_at_next_billing_date: false }
-        : { cancel_at_next_billing_date: cancelAtPeriodEnd }),
+      cancel_at_next_billing_date: cancelAtPeriodEnd,
       ...(cancelAtPeriodEnd && cancellation
         ? {
             cancel_reason: "cancelled_by_customer" as const,
@@ -488,9 +496,9 @@ async function setRenewal(
       supabaseAdmin.from("profiles").select("billing_lifecycle").eq("id", userId).maybeSingle(),
     ]);
     if (error) throw new Error("Your updated billing status could not be loaded.");
-    if (endTrialNow && verifiedSubscription?.status !== "canceled")
+    if (cancelAtPeriodEnd && !verifiedSubscription?.cancel_at_period_end)
       throw new Error("Your cancellation is being verified. Refresh Billing before trying again.");
-    if (cancelAtPeriodEnd && !endTrialNow && verifiedSubscription?.current_period_end) {
+    if (cancelAtPeriodEnd && verifiedSubscription?.current_period_end) {
       const endDate =
         new Intl.DateTimeFormat("en", {
           dateStyle: "long",
@@ -516,7 +524,7 @@ async function setRenewal(
   });
 }
 
-/** End a verified trial immediately; paid subscriptions keep their paid period. */
+/** Stop the next charge. Trials and paid periods keep access until they end. */
 export const cancelMyRenewal = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) => cancellationInputSchema.parse(input))

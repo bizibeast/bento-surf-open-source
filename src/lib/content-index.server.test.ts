@@ -7,6 +7,7 @@ import {
   type ContentIndexDependencies,
 } from "./content-index.server";
 import type { BrainItem, BrainSuggestion } from "./content-brain";
+import { ProviderBudgetError } from "./provider-budget.server";
 const post = {
   connection_id: "connection",
   provider: "instagram",
@@ -39,6 +40,24 @@ function dependencies(): ContentIndexDependencies {
   };
 }
 describe("automatic connected-source indexing", () => {
+  it("defers an exhausted allowance until its reset without treating it as a model failure", async () => {
+    const deps = dependencies();
+    vi.mocked(deps.generate).mockRejectedValueOnce(
+      new ProviderBudgetError("ai_microusd", {
+        reason: "workspace_month",
+        retryAt: "2026-11-01T00:00:00Z",
+      }),
+    );
+    expect(await processDueContentIndexes(deps)).toEqual({ claimed: 1, succeeded: 0, failed: 1 });
+    expect(deps.save).not.toHaveBeenCalled();
+    expect(deps.finish).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        budgetRetryAt: "2026-11-01T00:00:00.000Z",
+        error: expect.stringContaining("2026-11-01"),
+      }),
+    );
+  });
   it("builds a Brain from posts already indexed by the ingestion trigger", async () => {
     const deps = dependencies();
     expect(await processDueContentIndexes(deps)).toEqual({ claimed: 1, succeeded: 1, failed: 0 });
@@ -55,7 +74,7 @@ describe("automatic connected-source indexing", () => {
 
     await processDueContentIndexes(deps);
 
-    expect(deps.generate).toHaveBeenCalledWith(expect.any(Array), undefined);
+    expect(deps.generate).toHaveBeenCalledWith(expect.any(Array), undefined, []);
     expect(deps.finish).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({ sourceCount: 4000 }),
@@ -139,4 +158,48 @@ describe("automatic connected-source indexing", () => {
       expect.objectContaining({ error: "Provider temporarily unavailable" }),
     );
   });
+});
+
+it("preserves known-good Brain when independent verification rejects new claims", async () => {
+  const deps = dependencies();
+  const existing = [
+    {
+      ...suggestion,
+      id: "saved",
+      content: "I reviewed an app.",
+      status: "confirmed",
+      locked: true,
+      provenance: "creator",
+      sourceUrl: null,
+      createdAt: "",
+      updatedAt: "",
+    },
+  ] as BrainItem[];
+  vi.mocked(deps.load).mockResolvedValue({ posts: [post], existing });
+  vi.mocked(deps.generate).mockRejectedValue(
+    new Error(
+      "Some Brain claims could not be verified against their original sources. Your saved Brain is unchanged.",
+    ),
+  );
+  expect(await processDueContentIndexes(deps)).toEqual({ claimed: 1, succeeded: 0, failed: 1 });
+  expect(deps.generate).toHaveBeenCalledWith(expect.any(Array), undefined, existing);
+  expect(deps.save).not.toHaveBeenCalled();
+  expect(deps.finish).toHaveBeenCalledWith(
+    expect.any(Object),
+    expect.objectContaining({ error: expect.stringContaining("could not be verified") }),
+  );
+});
+
+it("rejects empty or unrelated evidence even if the strings occur in valid posts", () => {
+  for (const evidence of [
+    [{ sourceRef: "instagram:post-1", quote: "" }],
+    [{ sourceRef: "instagram:other", quote: "I built a creator tool" }],
+  ]) {
+    expect(
+      sourceBackedBrainItems(
+        [post, { ...post, remote_post_id: "other" }],
+        [{ ...suggestion, evidence }],
+      ),
+    ).toEqual([]);
+  }
 });

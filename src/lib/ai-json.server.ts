@@ -1,10 +1,21 @@
-import { aiReservationMicrousd, reserveProviderUsage } from "./provider-budget.server";
+import {
+  aiReservationMicrousd,
+  reserveAiProviderUsage,
+  settleProviderUsage,
+} from "./provider-budget.server";
+import { aiResponseMicrousd, approvedAiPricePolicy } from "./ai-pricing";
 import { z } from "zod";
 import { readResponseText } from "./request-security.server";
 
 export const WORKERS_AI_MODEL = "@cf/openai/gpt-oss-20b";
 export const GROQ_MODEL = "openai/gpt-oss-20b";
-export const OPENROUTER_MODEL = "deepseek/deepseek-v4-flash-0731";
+export const OPENROUTER_MODEL = "z-ai/glm-5.3-flash";
+export const BALANCED_AI_MODELS = {
+  "workers-ai": "@cf/openai/gpt-oss-120b",
+  openrouter: OPENROUTER_MODEL,
+  groq: "openai/gpt-oss-120b",
+} as const;
+export type AiModelTier = "fast" | "balanced";
 const MAX_PROVIDER_RESPONSE_BYTES = 128 * 1024;
 
 export type AiProvider = "openrouter" | "workers-ai" | "groq";
@@ -26,6 +37,7 @@ export type WorkersAiBinding = {
   ): Promise<unknown>;
 };
 export type AiProviderEnv = {
+  AI_TEXT_PROVIDER?: AiProvider;
   AI?: WorkersAiBinding;
   OPENROUTER_API_KEY?: string;
   GROQ_API_KEY?: string;
@@ -38,9 +50,10 @@ export type AiProviderRequest = {
   temperature: number;
   maxTokens: number;
   responseFormat?: unknown;
+  modelTier?: AiModelTier;
   workersAiModel?: string;
   openRouterModel?: string;
-  /** gpt-oss only. Other models ignore this and must not receive it. */
+  /** Bound reasoning for supported provider/model combinations. */
   reasoningEffort?: "low";
   validateResponse?: (response: unknown) => void;
   /** Optional end-to-end budget shared by every fallback provider. */
@@ -50,11 +63,13 @@ export type AiProviderRequest = {
 
 function awaitAiRequest<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return promise;
-  signal.throwIfAborted();
   return new Promise((resolve, reject) => {
     const onAbort = () => reject(signal.reason);
-    signal.addEventListener("abort", onAbort, { once: true });
     promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+    // Attach a rejection handler before checking cancellation: the in-flight
+    // reservation may have caused an abort before this wrapper was entered.
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
   });
 }
 
@@ -67,18 +82,28 @@ function openRouterApiKey(env: AiProviderEnv) {
 }
 
 export function selectAiProvider(env: AiProviderEnv): AiProvider {
-  if (env.AI) return "workers-ai";
+  const preferred = env.AI_TEXT_PROVIDER || process.env.AI_TEXT_PROVIDER;
+  if (preferred) {
+    if (preferred === "openrouter" && openRouterApiKey(env)) return preferred;
+    if (preferred === "workers-ai" && env.AI) return preferred;
+    if (preferred === "groq" && groqApiKey(env)) return preferred;
+    throw new Error(
+      "The configured text AI provider is unavailable. Check its connection settings.",
+    );
+  }
   if (openRouterApiKey(env)) return "openrouter";
+  if (env.AI) return "workers-ai";
   if (groqApiKey(env)) return "groq";
   throw new Error("AI generation is unavailable.");
 }
 
 export function selectedAiModel(
   env: AiProviderEnv,
-  request: { workersAiModel?: string; openRouterModel?: string } = {},
+  request: { workersAiModel?: string; openRouterModel?: string; modelTier?: AiModelTier } = {},
 ): { provider: AiProvider; model: string } {
   const provider =
     request.openRouterModel && openRouterApiKey(env) ? "openrouter" : selectAiProvider(env);
+  if (request.modelTier === "balanced") return { provider, model: BALANCED_AI_MODELS[provider] };
   if (provider === "workers-ai") {
     return { provider, model: request.workersAiModel || WORKERS_AI_MODEL };
   }
@@ -118,24 +143,34 @@ async function executeAiProviderRequest(
   fetcher: typeof fetch,
   signal?: AbortSignal,
 ): Promise<{ response: unknown; provider: AiProvider }> {
-  const cost = aiReservationMicrousd(
-    { messages: request.messages, responseFormat: request.responseFormat },
-    request.maxTokens,
-  );
   if (
     request.workersAiModel &&
-    ![WORKERS_AI_MODEL, "@cf/meta/llama-3.3-70b-instruct-fp8-fast"].includes(request.workersAiModel)
+    ![WORKERS_AI_MODEL, BALANCED_AI_MODELS["workers-ai"]].includes(request.workersAiModel)
   )
     throw new Error("This AI model has no approved cost policy.");
   if (
     request.openRouterModel &&
-    ![OPENROUTER_MODEL, "anthropic/claude-sonnet-4.5"].includes(request.openRouterModel)
+    ![OPENROUTER_MODEL, BALANCED_AI_MODELS.openrouter].includes(request.openRouterModel)
   )
     throw new Error("This AI model has no approved cost policy.");
   const { provider, model } = selectedAiModel(env, request);
-  if (request.publicTool) await reserveProviderUsage("public_ai_microusd", cost);
-  await reserveProviderUsage("ai_microusd", cost);
+  const price = approvedAiPricePolicy(provider, model);
+  const cost = aiReservationMicrousd(
+    { messages: request.messages, responseFormat: request.responseFormat },
+    request.maxTokens,
+    price,
+  );
   signal?.throwIfAborted();
+  const reservation = await reserveAiProviderUsage(cost, {
+    provider,
+    model,
+    publicTool: request.publicTool,
+  });
+  if (signal?.aborted) {
+    // The reservation succeeded, but no provider request was sent.
+    await settleProviderUsage(reservation, 0);
+    signal.throwIfAborted();
+  }
   const timeoutMs = Math.min(150_000, Math.max(20_000, request.maxTokens * 40));
   const providerSignal = signal
     ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
@@ -156,7 +191,7 @@ async function executeAiProviderRequest(
           ...payload,
           // The Workers binding for gpt-oss accepts the Responses API, whose reasoning
           // control is `reasoning.effort` (low, medium, or high).
-          ...(request.reasoningEffort ? { reasoning: { effort: request.reasoningEffort } } : {}),
+          reasoning: { effort: request.reasoningEffort || "low" },
         },
         gatewayId ? { gateway: { id: gatewayId, collectLog: false, skipCache: false } } : undefined,
       ),
@@ -183,14 +218,16 @@ async function executeAiProviderRequest(
           ...payload,
           ...(isOpenRouter
             ? {
-                reasoning: { effort: "none" },
+                reasoning: { effort: request.reasoningEffort || "low" },
                 provider: {
                   zdr: true,
                   data_collection: "deny",
-                  max_price: { prompt: 3, completion: 15 },
+                  allow_fallbacks: false,
+                  require_parameters: true,
+                  max_price: { prompt: price.input, completion: price.output },
                 },
               }
-            : {}),
+            : { reasoning_effort: request.reasoningEffort || "low" }),
         }),
         signal: providerSignal,
       },
@@ -198,6 +235,9 @@ async function executeAiProviderRequest(
     if (!providerResponse.ok) throw new AiProviderRequestError(providerResponse.status, provider);
     response = JSON.parse(await readResponseText(providerResponse, MAX_PROVIDER_RESPONSE_BYTES));
   }
+  // Successful generation is billable even if the output fails schema validation.
+  // Errors and timeouts without a response retain their complete reservation.
+  await settleProviderUsage(reservation, aiResponseMicrousd(response, provider, price));
   signal?.throwIfAborted();
   request.validateResponse?.(response);
   return { response, provider };
@@ -337,6 +377,7 @@ export async function runAiJson<TSchema extends z.ZodTypeAny>(
     maxTokens: number;
     temperature: number;
     responseFormat?: unknown;
+    modelTier?: AiModelTier;
     workersAiModel?: string;
     openRouterModel?: string;
     reasoningEffort?: "low";
@@ -362,6 +403,7 @@ export async function runAiJson<TSchema extends z.ZodTypeAny>(
       temperature: input.temperature,
       maxTokens: input.maxTokens,
       responseFormat: input.responseFormat,
+      modelTier: input.modelTier,
       workersAiModel: input.workersAiModel,
       openRouterModel: input.openRouterModel,
       reasoningEffort: input.reasoningEffort,

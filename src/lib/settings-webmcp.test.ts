@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   updateProfile: vi.fn(),
   getMyBillingOverview: vi.fn(),
   createCheckout: vi.fn(),
+  getCheckoutOffer: vi.fn(),
   changeMyPlan: vi.fn(),
   cancelMyPlanChange: vi.fn(),
   cancelMyRenewal: vi.fn(),
@@ -70,9 +71,11 @@ vi.mock("@/lib/profile.functions", () => ({
   setAccountTimeZone: mocks.setAccountTimeZone,
   updateProfile: mocks.updateProfile,
 }));
+vi.mock("@/lib/posthog", () => ({ captureProductEvent: vi.fn() }));
 vi.mock("@/lib/billing.functions", () => ({
   getMyBillingOverview: mocks.getMyBillingOverview,
   createCheckout: mocks.createCheckout,
+  getCheckoutOffer: mocks.getCheckoutOffer,
   changeMyPlan: mocks.changeMyPlan,
   cancelMyPlanChange: mocks.cancelMyPlanChange,
   cancelMyRenewal: mocks.cancelMyRenewal,
@@ -268,6 +271,7 @@ beforeEach(() => {
   mocks.beginFathomConnection.mockResolvedValue({ url: "https://fathom.video/oauth" });
   mocks.beginPolarConnection.mockResolvedValue({ url: "https://polar.sh/oauth" });
   mocks.createCheckout.mockResolvedValue({ url: "https://checkout.dodopayments.com/session" });
+  mocks.getCheckoutOffer.mockResolvedValue({ trialEligible: true, active: false });
   mocks.changeMyPlan.mockResolvedValue({ mode: "scheduled", billing: {} });
   mocks.createMyBillingPortal.mockResolvedValue({
     url: "https://billing.dodopayments.com/session",
@@ -574,6 +578,45 @@ describe("Settings WebMCP tools", () => {
       "https://checkout.dodopayments.com/session",
     ]);
     expect(refresh).toHaveBeenCalledTimes(6);
+  });
+
+  it("sends a free payment connect action into Store checkout", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    mocks.getCreatorPaymentSettings.mockResolvedValue({
+      locked: true,
+      connections: [],
+      providers: [],
+    });
+    mocks.getMyBillingOverview.mockResolvedValue({
+      plan: "free",
+      status: null,
+      hasSubscription: false,
+    });
+    const navigate = vi.fn();
+    const openPaymentSetup = vi.fn();
+    const execute = (input: Record<string, unknown>) =>
+      tool("manage_settings_payment_connection", vi.fn(), navigate, openPaymentSetup).found.execute(
+        input,
+        { signal: signal() },
+      );
+
+    await execute({ action: "open_setup", provider: "razorpay" });
+    expect(openPaymentSetup).not.toHaveBeenCalled();
+    expect(mocks.createCheckout).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        plan: "store",
+        period: "monthly",
+        returnTo: "payments",
+        storageUnits: 0,
+        contactTier: 500,
+      }),
+    });
+    expect(navigate).toHaveBeenCalledWith("https://checkout.dodopayments.com/session", "assign");
+
+    mocks.getCheckoutOffer.mockResolvedValueOnce({ trialEligible: false, active: false });
+    await execute({ action: "connect_polar" });
+    expect(mocks.beginPolarConnection).not.toHaveBeenCalled();
+    expect(mocks.createCheckout).toHaveBeenCalledTimes(2);
   });
 
   it("uses the existing recent-auth deletion flow and replaces the signed-out page", async () => {

@@ -11,6 +11,8 @@ import {
   NEW_BILLING_PERIODS,
   minimumPlanForEntitlement,
   normalizePlan,
+  CONNECTED_PAYMENTS_REQUIRED_MESSAGE,
+  creatorPaymentsUnlocked,
   planHasEntitlement,
   planLimits,
   storageAddonPrice,
@@ -47,6 +49,39 @@ describe("creator plans", () => {
     expect(planHasEntitlement("free", "instagramAutoDM")).toBe(true);
     expect(planHasEntitlement("free", "advancedAutoDM")).toBe(false);
     expect(planHasEntitlement("free", "storeCards")).toBe(false);
+    expect(planHasEntitlement("free", "oneTapCheckout")).toBe(false);
+    expect(creatorPaymentsUnlocked({ plan: "free" })).toBe(false);
+    expect(
+      creatorPaymentsUnlocked({
+        plan: "free",
+        subscriptionStatus: "trialing",
+        subscriptionPlan: "store",
+      }),
+    ).toBe(true);
+    expect(
+      creatorPaymentsUnlocked({
+        plan: "free",
+        subscriptionStatus: "trialing",
+        subscriptionPlan: "creator_plus",
+      }),
+    ).toBe(true);
+    expect(
+      creatorPaymentsUnlocked({
+        plan: "free",
+        subscriptionStatus: "active",
+        subscriptionPlan: "store",
+      }),
+    ).toBe(false);
+    expect(
+      creatorPaymentsUnlocked({
+        plan: "free",
+        subscriptionStatus: "trialing",
+        subscriptionPlan: "free",
+      }),
+    ).toBe(false);
+    expect(creatorPaymentsUnlocked({ plan: "store" })).toBe(true);
+    expect(CONNECTED_PAYMENTS_REQUIRED_MESSAGE).toContain("3-day");
+    expect(CONNECTED_PAYMENTS_REQUIRED_MESSAGE).not.toMatch(/7-day|7 day|\u2014|\u2013/);
     expect(planHasEntitlement("free", "customDomain")).toBe(false);
     expect(planHasEntitlement("free", "liveSocialPreviews")).toBe(false);
   });

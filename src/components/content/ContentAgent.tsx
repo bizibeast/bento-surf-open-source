@@ -12,14 +12,13 @@ import { SchedulerMediaPicker } from "@/components/scheduler/SchedulerMediaPicke
 import type { SchedulerConnection } from "@/lib/social-scheduler";
 import type { AgentDraftEdit } from "@/lib/content-carousel";
 import { storedContentAgentResultSchema } from "@/lib/content-agent-proactive";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Paperclip,
   FileText,
   Images,
   X,
   LoaderCircle,
-  Bot,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
@@ -47,7 +46,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { BentoIcon } from "@/components/BentoBrand";
 import { ContentAgentCard } from "./ContentAgentCard";
 import { ContentMarkdown } from "./ContentDocument";
 import { micro } from "@/lib/micro-app-ui";
@@ -87,7 +85,7 @@ const starters = [
 export function ContentAgent({
   threads,
   previewAccounts = [],
-  agentName = "Bento",
+  agentName = "Benny",
   agentThreadId,
   onPinThread,
   onRenameThread,
@@ -371,7 +369,11 @@ export function ContentAgent({
         onClick={() => agentThreadId && selectThread(agentThreadId)}
       >
         <span className="agent-avatar">
-          <BentoIcon className="size-5" />
+          <img
+            src="/mascot/benny-avatar.webp"
+            alt=""
+            className="size-6 rounded-full object-cover"
+          />
         </span>
         {!collapsed && <span className="min-w-0 flex-1 truncate">{agentName}</span>}
         {unread > 0 && (
@@ -652,7 +654,7 @@ export function ContentAgent({
           }}
           rows={1}
           className="max-h-40 min-h-11 min-w-0 flex-1 resize-none bg-transparent py-2.5 text-base leading-6 text-foreground outline-none placeholder:text-muted-foreground"
-          placeholder="What are we building today?"
+          placeholder={`Message ${agentName}, or tell me what to change…`}
         />
         <button
           type="submit"
@@ -732,7 +734,17 @@ export function ContentAgent({
               {navigation(false)}
             </DialogContent>
           </Dialog>
-          <span className="min-w-0 flex-1 truncate text-sm font-medium">{currentTitle}</span>
+          <img
+            src="/mascot/benny-avatar.webp"
+            alt=""
+            className="size-9 rounded-full object-cover"
+          />
+          <div className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-semibold text-foreground">
+              {currentTitle}
+            </span>
+            <span className="block text-xs text-muted-foreground">Your AI head of content</span>
+          </div>
           {identityUnavailable && (
             <>
               <span
@@ -801,7 +813,7 @@ export function ContentAgent({
             <div className="mx-auto w-full max-w-3xl flex-1 space-y-6 py-3">
               {pendingText && (
                 <div className="ml-auto max-w-[85%] break-words whitespace-pre-wrap rounded-3xl bg-muted px-5 py-3 text-[15px] leading-7 text-foreground">
-                  {pendingText}
+                  <UserMessageContent content={pendingText} />
                 </div>
               )}
               <p role="status" className="text-sm text-muted-foreground">
@@ -811,7 +823,11 @@ export function ContentAgent({
           ) : !messages.length ? (
             <div className="m-auto flex w-full max-w-3xl flex-col items-center px-2 py-8 text-center">
               <span className="flex size-12 items-center justify-center">
-                <BentoIcon className="size-10" />
+                <img
+                  src="/mascot/benny-avatar.webp"
+                  alt=""
+                  className="size-12 rounded-full object-cover"
+                />
               </span>
               <p className={`${micro.eyebrow} mt-6`}>Your head of content & monetization</p>
               <h2 className="mt-2 text-3xl font-semibold tracking-tight">Ask {agentName}</h2>
@@ -840,9 +856,13 @@ export function ContentAgent({
                   return (
                     <div
                       key={message.id}
-                      className="ml-auto max-w-[85%] break-words whitespace-pre-wrap rounded-3xl bg-muted px-5 py-3 text-[15px] leading-7 text-foreground"
+                      aria-label="Message from You"
+                      className="agent-message-user"
                     >
-                      {message.content}
+                      <span className="agent-speaker">You</span>
+                      <div className="agent-user-bubble">
+                        <UserMessageContent content={message.content} />
+                      </div>
                       <MessageAttachments payload={message.payload} />
                     </div>
                   );
@@ -855,51 +875,89 @@ export function ContentAgent({
                   );
                 }
                 const parsed = storedContentAgentResultSchema.safeParse(message.payload);
+                const hasDraft =
+                  parsed.success && parsed.data.cards.some((card) => card.type === "draft");
+                const rejectedIds = new Set(
+                  parsed.success ? parsed.data.rejectedDraftIds || [] : [],
+                );
+                if (parsed.success && parsed.data.proactive?.feedback === "not_relevant")
+                  parsed.data.cards.forEach((card) => {
+                    if (card.type === "draft") rejectedIds.add(card.cardId);
+                  });
+                for (const event of messages) {
+                  const feedback = (
+                    event.payload as
+                      | { feedback?: { type?: string; messageId?: string; cardId?: string } }
+                      | undefined
+                  )?.feedback;
+                  if (
+                    event.role === "system_event" &&
+                    feedback?.type === "rejected" &&
+                    feedback.messageId === message.id &&
+                    feedback.cardId
+                  )
+                    rejectedIds.add(feedback.cardId);
+                }
                 return (
-                  <div key={message.id} className="max-w-3xl space-y-3">
-                    <div className="flex items-start gap-3">
-                      <span className={`${micro.iconWell} mt-0.5 size-8 shrink-0`}>
-                        <Bot className="size-4" />
-                      </span>
-                      <ContentMarkdown text={message.content} />
+                  <div
+                    key={message.id}
+                    className="agent-message-assistant"
+                    aria-label={`Message from ${agentName}`}
+                  >
+                    <div className="agent-message-heading">
+                      <img
+                        src="/mascot/benny-avatar.webp"
+                        alt=""
+                        className="size-7 rounded-full object-cover"
+                      />
+                      <span className="agent-speaker">{agentName}</span>
                     </div>
+                    {!hasDraft && <ContentMarkdown text={message.content} />}
                     {parsed.success &&
-                      parsed.data.cards.map((card) => (
-                        <ContentAgentCard
-                          key={card.cardId}
-                          messageId={message.id}
-                          card={card}
-                          previewAccounts={previewAccounts}
-                          draftState={
-                            parsed.data.draftStates?.[
-                              card.type === "schedule_proposal" ? card.draftCardId : card.cardId
-                            ]
-                          }
-                          onDraftChanged={onDraftChanged}
-                          allCards={parsed.data.cards}
-                          mediaAssets={parsed.data.mediaAssets}
-                          onSaveDraft={
-                            onSaveDraft
-                              ? (cardId, body) => onSaveDraft(message.id, cardId, body)
-                              : undefined
-                          }
-                          onApproveBrain={(cardId) => onApproveBrain(message.id, cardId)}
-                          onRejectDraft={(cardId, reason) =>
-                            onRejectDraft(message.id, cardId, reason)
-                          }
-                          onRegenerateDraft={(cardId, reason) =>
-                            onRegenerateDraft(message.id, cardId, reason)
-                          }
-                          onApproveSchedule={(draftCardId, scheduleCardId) =>
-                            onApproveSchedule(
-                              message.id,
-                              draftCardId,
-                              scheduleCardId,
-                              parsed.data.draftStates?.[draftCardId]?.revision || 0,
-                            )
-                          }
-                        />
-                      ))}
+                      parsed.data.cards.map((card) =>
+                        card.type === "draft" && rejectedIds.has(card.cardId) ? (
+                          <details key={card.cardId} className="agent-rejected-draft">
+                            <summary>Draft rejected</summary>
+                            <p className="mt-3 whitespace-pre-wrap">{card.body}</p>
+                          </details>
+                        ) : card.type === "schedule_proposal" &&
+                          rejectedIds.has(card.draftCardId) ? null : (
+                          <ContentAgentCard
+                            key={card.cardId}
+                            messageId={message.id}
+                            card={card}
+                            previewAccounts={previewAccounts}
+                            draftState={
+                              parsed.data.draftStates?.[
+                                card.type === "schedule_proposal" ? card.draftCardId : card.cardId
+                              ]
+                            }
+                            onDraftChanged={onDraftChanged}
+                            allCards={parsed.data.cards}
+                            mediaAssets={parsed.data.mediaAssets}
+                            onSaveDraft={
+                              onSaveDraft
+                                ? (cardId, body) => onSaveDraft(message.id, cardId, body)
+                                : undefined
+                            }
+                            onApproveBrain={(cardId) => onApproveBrain(message.id, cardId)}
+                            onRejectDraft={(cardId, reason) =>
+                              onRejectDraft(message.id, cardId, reason)
+                            }
+                            onRegenerateDraft={(cardId, reason) =>
+                              onRegenerateDraft(message.id, cardId, reason)
+                            }
+                            onApproveSchedule={(draftCardId, scheduleCardId) =>
+                              onApproveSchedule(
+                                message.id,
+                                draftCardId,
+                                scheduleCardId,
+                                parsed.data.draftStates?.[draftCardId]?.revision || 0,
+                              )
+                            }
+                          />
+                        ),
+                      )}
                     {parsed.success && !!parsed.data.appActions?.length && (
                       <ContentAgentAppActions
                         messageId={message.id}
@@ -907,13 +965,19 @@ export function ContentAgent({
                         accounts={previewAccounts}
                       />
                     )}
-                    {renderMessageFooter?.(message)}
+                    {hasDraft && message.content.length > 180 && (
+                      <details className="agent-draft-notes">
+                        <summary>Benny’s notes</summary>
+                        <ContentMarkdown text={message.content} />
+                      </details>
+                    )}
+                    {!hasDraft && renderMessageFooter?.(message)}
                   </div>
                 );
               })}
               {sending && (
                 <p role="status" className={micro.mutedXs}>
-                  Agent is preparing your result…
+                  {agentName} is preparing your result…
                 </p>
               )}
             </div>
@@ -1036,6 +1100,30 @@ export function ContentAgent({
 
 function threadTitle(thread: ContentAgentThread) {
   return thread.title?.trim() || "New conversation";
+}
+
+/** Length-only presentation: never infer that a user's words came from a routine. */
+function UserMessageContent({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const contentId = useId();
+  if (content.length <= 600) return content;
+  const preview = Array.from(content).slice(0, 320).join("").trimEnd();
+  return (
+    <>
+      <div id={contentId} className="whitespace-pre-wrap break-words">
+        {expanded ? content : `${preview}…`}
+      </div>
+      <button
+        type="button"
+        aria-expanded={expanded}
+        aria-controls={contentId}
+        onClick={() => setExpanded((value) => !value)}
+        className="mt-3 min-h-9 rounded-md text-xs font-medium underline underline-offset-4 hover:opacity-75 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary"
+      >
+        {expanded ? "Show less" : "Show full message"}
+      </button>
+    </>
+  );
 }
 
 function MessageAttachments({ payload }: { payload: unknown }) {

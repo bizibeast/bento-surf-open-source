@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Meta payloads and newly migrated service tables are normalized at the boundary. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { normalizeDashes } from "./text/dashes";
 import { decryptServerSecret, encryptServerSecret } from "./secret-crypto.server";
 import {
   extractInstagramEmailAddress,
@@ -1197,6 +1198,13 @@ async function sendPrivateReply(
   } = {},
 ) {
   const final = options.final === true;
+  const replyMessage = normalizeDashes(automation.reply_message);
+  const openingMessage = automation.opening_message
+    ? normalizeDashes(automation.opening_message)
+    : "";
+  const confirmationLabel = automation.confirmation_button_label
+    ? normalizeDashes(automation.confirmation_button_label)
+    : "";
   if (shouldMockInstagramAutoDmProvider()) {
     return { message_id: `staging-dm-${event.sourceId}`, recipient_id: "staging-recipient" };
   }
@@ -1206,8 +1214,7 @@ async function sendPrivateReply(
     event.eventType === "comment" && !final
       ? { comment_id: event.sourceId }
       : { id: event.senderId };
-  const usesOpeningStep =
-    !final && automation.opening_message && automation.confirmation_button_label;
+  const usesOpeningStep = !final && openingMessage && confirmationLabel;
   let message: Record<string, unknown>;
   if (usesOpeningStep) {
     if (!options.confirmationPayload) {
@@ -1218,11 +1225,11 @@ async function sendPrivateReply(
       );
     }
     message = {
-      text: `${automation.opening_message}\n\nTap ${automation.confirmation_button_label} below, or reply ${automation.confirmation_button_label}.`,
+      text: `${openingMessage}\n\nTap ${confirmationLabel} below, or reply ${confirmationLabel}.`,
       quick_replies: [
         {
           content_type: "text",
-          title: automation.confirmation_button_label,
+          title: confirmationLabel,
           payload: options.confirmationPayload,
         },
       ],
@@ -1237,12 +1244,12 @@ async function sendPrivateReply(
         type: "template",
         payload: {
           template_type: "button",
-          text: automation.reply_message,
+          text: replyMessage,
           buttons: [
             {
               type: "web_url",
               url: automation.reply_button_url,
-              title: automation.reply_button_label,
+              title: normalizeDashes(automation.reply_button_label),
             },
           ],
         },
@@ -1252,8 +1259,8 @@ async function sendPrivateReply(
     message = {
       text:
         automation.reply_button_url && event.eventType === "comment"
-          ? `${automation.reply_message}\n\n${automation.reply_button_url}`
-          : automation.reply_message,
+          ? `${replyMessage}\n\n${automation.reply_button_url}`
+          : replyMessage,
     };
   }
   return metaRequest(url, token, {
@@ -1283,7 +1290,7 @@ async function sendInstagramTextMessage(
   return metaRequest(url, token, {
     recipient: { id: senderId },
     messaging_type: "RESPONSE",
-    message: { text },
+    message: { text: normalizeDashes(text) },
   });
 }
 
@@ -1310,8 +1317,8 @@ async function sendInstagramQuickReplyMessage(
     recipient: { id: senderId },
     messaging_type: "RESPONSE",
     message: {
-      text,
-      quick_replies: [{ content_type: "text", title, payload }],
+      text: normalizeDashes(text),
+      quick_replies: [{ content_type: "text", title: normalizeDashes(title), payload }],
     },
   });
 }
@@ -1323,7 +1330,9 @@ function emailCapturePrompt(
   },
   connectionHandle: string,
 ) {
-  const prompt = automation.email_prompt_message?.trim() || "Reply with your email address.";
+  const prompt = normalizeDashes(
+    automation.email_prompt_message?.trim() || "Reply with your email address.",
+  );
   const disclosure = automation.email_marketing_consent_enabled
     ? `By replying, you agree to receive this resource and future emails from @${connectionHandle}. You can unsubscribe anytime.`
     : `Your email will be shared with @${connectionHandle} only to deliver this request, not for marketing.`;
@@ -1356,7 +1365,7 @@ async function sendPublicCommentReply(
   }
   const token = await decryptInstagramConnectionAccessToken(connection.access_token);
   const url = `https://graph.instagram.com/${graphVersion()}/${encodeURIComponent(commentId)}/replies`;
-  return metaRequest(url, token, { message });
+  return metaRequest(url, token, { message: normalizeDashes(message) });
 }
 
 async function updateEvent(id: string, update: Record<string, unknown>) {
@@ -1813,7 +1822,9 @@ export async function processInstagramDmQueueMessage(
       if (runError || !run) throw new Error("Unable to load Instagram follower workflow state.");
       runFollowSettings = {
         enabled: Boolean(run.follow_gate_enabled),
-        prompt: String(run.follow_prompt_message || "Follow this account, then tap I’ve followed."),
+        prompt: normalizeDashes(
+          String(run.follow_prompt_message || "Follow this account, then tap I’ve followed."),
+        ),
         maxRechecks: Math.min(3, Math.max(1, Number(run.follow_max_rechecks || 3))),
         failAction: run.follow_fail_action === "withhold" ? "withhold" : "send_anyway",
       };

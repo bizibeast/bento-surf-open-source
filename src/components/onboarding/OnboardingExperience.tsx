@@ -50,6 +50,11 @@ import { clearOnboardedCache } from "@/lib/auth-entry";
 import { safeNavigationHref } from "@/lib/safe-url";
 import { publicProfileUrl } from "@/lib/application-urls";
 import { captureProductEvent } from "@/lib/posthog";
+import {
+  checkoutFailureMessage,
+  readCheckoutReturn,
+  withoutCheckoutReturnParams,
+} from "@/lib/checkout-return";
 import { consumeReferralAttribution } from "@/lib/referral.functions";
 import {
   clearPendingUsername,
@@ -105,6 +110,10 @@ export function OnboardingExperience() {
   const [reveal, setReveal] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Dodo sends people back with ?status=failed after a declined card. That is
+  // never a success: show why and offer a fresh checkout.
+  const [checkoutFailure, setCheckoutFailure] = useState<string | null>(null);
+  const checkoutReturnRef = useRef<ReturnType<typeof readCheckoutReturn> | null>(null);
   const [savedLabel, setSavedLabel] = useState("Saved");
   const [plan, setPlan] = useState<PaidPlanId>("creator_plus");
   const [period, setPeriod] = useState<BillingPeriod>("monthly");
@@ -148,6 +157,28 @@ export function OnboardingExperience() {
   }
   useEffect(() => {
     void consumeReferralAttribution().catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    const returned = readCheckoutReturn(window.location.search);
+    checkoutReturnRef.current = returned;
+    if (returned.outcome === "none") return;
+    if (returned.outcome === "failed") {
+      setCheckoutFailure(checkoutFailureMessage(returned.status, returned.trial));
+      captureProductEvent("onboarding_checkout_failed", {
+        status: returned.status,
+        trial: returned.trial,
+      });
+    } else {
+      captureProductEvent("onboarding_checkout_returned", {
+        status: returned.status,
+        outcome: returned.outcome,
+      });
+    }
+    window.history.replaceState(
+      window.history.state,
+      "",
+      withoutCheckoutReturnParams(window.location.href),
+    );
   }, []);
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "instant" });
@@ -197,6 +228,7 @@ export function OnboardingExperience() {
         window.sessionStorage.getItem("bentoOnboardingSocialReturn") ? 1 : normalizedStep(next),
       );
       window.sessionStorage.removeItem("bentoOnboardingSocialReturn");
+      if (next.status === "prepared" && checkoutReturnRef.current?.outcome === "failed") setStep(5);
       setContextField(missingContext(initial) || "audience");
       try {
         const choice = JSON.parse(window.sessionStorage.getItem("bentoPricingSelection") || "null");
@@ -719,18 +751,38 @@ export function OnboardingExperience() {
                       ))}
                     </div>
                     {session.jobError && <p className="ob-center-note">{session.jobError}</p>}
-                    {!candidates.drafts.length && (
-                      <div className="ob-center-note">
-                        Your Brain is saved. A starter draft is optional.{" "}
-                        {session.generationCount < 2 && (
+                    {((session.generationCount < 2 &&
+                      (session.jobError || candidates.warning || !candidates.drafts.length)) ||
+                      candidates.warning) && (
+                      <div className="ob-ready-actions">
+                        {session.generationCount < 2 &&
+                          (session.jobError || candidates.warning || !candidates.drafts.length) && (
+                            <button
+                              className="ob-secondary"
+                              type="button"
+                              disabled={building}
+                              onClick={() => void action(() => prepare())}
+                            >
+                              Try the draft again
+                            </button>
+                          )}
+                        {candidates.warning && (
                           <button
-                            className="ob-text-link"
-                            onClick={() => void action(() => prepare())}
+                            className="ob-secondary"
+                            type="button"
+                            disabled={building}
+                            onClick={() => void action(() => prepare(briefRef.current, true))}
                           >
-                            Try preparing a draft
+                            Continue without this draft
                           </button>
                         )}
                       </div>
+                    )}
+                    {!candidates.drafts.length && (
+                      <p className="ob-center-note">
+                        Your Brain is saved. A starter draft is optional, and your page can still be
+                        published.
+                      </p>
                     )}
                   </>
                 ) : (
@@ -797,9 +849,38 @@ export function OnboardingExperience() {
                       <span>{trialEligible ? "today" : price.cadence}</span>
                     </div>
                   </div>
-                  <button className="ob-primary" disabled={busy} onClick={() => void checkout()}>
+                  {(session.jobError || !candidates?.drafts.length) &&
+                    session.generationCount < 2 && (
+                      <button
+                        className="ob-secondary"
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void action(() => prepare())}
+                      >
+                        Try the draft again
+                      </button>
+                    )}
+                  {session.jobError && <p className="ob-center-note">{session.jobError}</p>}
+                  {checkoutFailure && (
+                    <p className="ob-center-note ob-checkout-failed" role="alert">
+                      {checkoutFailure}
+                    </p>
+                  )}
+                  <button
+                    className="ob-primary"
+                    disabled={busy}
+                    onClick={() => {
+                      if (checkoutFailure)
+                        captureProductEvent("onboarding_checkout_retry", { plan });
+                      void checkout();
+                    }}
+                  >
                     {busy ? <Loader2 className="motion-safe:animate-spin" /> : <CreditCard />}
-                    {trialEligible ? `Start my ${TRIAL_DAYS}-day trial` : "Activate my plan"}
+                    {checkoutFailure
+                      ? "Try another card"
+                      : trialEligible
+                        ? `Start my ${TRIAL_DAYS}-day trial`
+                        : "Activate my plan"}
                     <ArrowRight />
                   </button>
                   <p className="ob-billing-copy">
@@ -817,7 +898,8 @@ export function OnboardingExperience() {
                         trial.
                       </>
                     )}{" "}
-                    Prices are in USD; any applicable tax is shown at checkout.
+                    Prices are in USD. Checkout may show the price in your local currency, plus any
+                    tax that applies where you are.
                   </p>
                 </div>
               ))}

@@ -244,34 +244,26 @@ export const rejectAgentDraft = createServerFn({ method: "POST" })
   .validator((input) => rejectDraftSchema.parse(input))
   .handler(async ({ context, data }) => {
     await requireContentWorkspace(context.userId);
-    const { threadId, result } = await loadAssistantResult(context.userId, data.messageId);
-    const draft = result.cards.find(
-      (candidate) => candidate.cardId === data.cardId && candidate.type === "draft",
-    );
-    if (!draft) throw new Error("This draft is unavailable.");
-    const { error } = await (supabaseAdmin as any).from("content_agent_messages").insert({
-      user_id: context.userId,
-      thread_id: threadId,
-      role: "system_event",
-      content: "Draft rejected.",
-      payload: {
-        feedback: {
-          type: "rejected",
-          messageId: data.messageId,
-          cardId: data.cardId,
-          reason: data.reason,
-        },
+    const { data: changed, error } = await (supabaseAdmin as any).rpc(
+      "reject_content_agent_draft",
+      {
+        p_user_id: context.userId,
+        p_message_id: data.messageId,
+        p_card_id: data.cardId,
+        p_reason: data.reason,
       },
-    });
-    if (error) throw new Error("Draft feedback could not be saved.");
-    void recordContentEvent(context.userId, "content_draft_rejected", {
-      platform: draft.type === "draft" ? draft.platform : undefined,
-      reasonLength: data.reason.length,
-    });
-    void recordContentEvent(context.userId, "content_agent_draft_review", {
-      status: "rejected",
-      count: 1,
-    });
+    );
+    if (error || ![0, 1].includes(changed))
+      throw new Error("This draft could not be rejected. Please retry.");
+    if (changed === 1) {
+      void recordContentEvent(context.userId, "content_draft_rejected", {
+        reasonLength: data.reason.length,
+      });
+      void recordContentEvent(context.userId, "content_agent_draft_review", {
+        status: "rejected",
+        count: 1,
+      });
+    }
     return { rejected: true };
   });
 

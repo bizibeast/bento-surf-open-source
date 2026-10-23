@@ -1,4 +1,4 @@
-import { withProviderBudgetWorkspace } from "./provider-budget.server";
+import { ProviderBudgetError, withProviderBudgetWorkspace } from "./provider-budget.server";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Indexing jobs and provider rows are server-owned. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { requireContentWorkspace } from "./content-access.server";
@@ -26,7 +26,9 @@ export async function contentSourceFingerprint(
   const digest = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(
-      material + (profile ? "\n" + JSON.stringify(contentProfileSchema.parse(profile)) : ""),
+      "brain-evidence-v2\n" +
+        material +
+        (profile ? "\n" + JSON.stringify(contentProfileSchema.parse(profile)) : ""),
     ),
   );
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -111,12 +113,13 @@ export type ContentIndexDependencies = {
   generate(
     posts: Array<Record<string, unknown>>,
     profile?: ContentProfile,
+    existing?: BrainItem[],
   ): Promise<BrainSuggestion[]>;
   selectMedia(userId: string): Promise<unknown>;
   save(userId: string, existing: BrainItem[], suggestions: BrainSuggestion[]): Promise<unknown>;
   finish(
     job: any,
-    value: { fingerprint?: string; sourceCount: number; error?: string },
+    value: { fingerprint?: string; sourceCount: number; error?: string; budgetRetryAt?: string },
   ): Promise<void>;
 };
 const defaults: ContentIndexDependencies = {
@@ -161,7 +164,8 @@ const defaults: ContentIndexDependencies = {
       profileSaved: Boolean(profile.data),
     };
   },
-  generate: generateConnectedBrainSuggestions,
+  generate: (posts, profile, existing) =>
+    generateConnectedBrainSuggestions(posts, profile, undefined, existing),
   async selectMedia(userId) {
     const { error } = await (supabaseAdmin as any).rpc("refresh_creator_auto_media", {
       p_user_id: userId,
@@ -196,7 +200,10 @@ const defaults: ContentIndexDependencies = {
       .from("creator_content_index_jobs")
       .update({
         status,
-        next_attempt_at: new Date(Date.now() + delay).toISOString(),
+        next_attempt_at: value.budgetRetryAt || new Date(Date.now() + delay).toISOString(),
+        // Budget pauses are not failed model attempts. Requeue after the actual
+        // reset instead of exhausting all three attempts while no call can run.
+        ...(value.budgetRetryAt ? { attempts: Math.max(0, (job.attempts || 1) - 1) } : {}),
         lease_id: null,
         lease_expires_at: null,
         source_count: value.sourceCount,
@@ -246,7 +253,7 @@ export async function processDueContentIndexes(dependencies: ContentIndexDepende
         fingerprint !== job.source_fingerprint
       ) {
         const generated = await withProviderBudgetWorkspace(job.user_id, () =>
-          dependencies.generate(sampleBrainSourcePosts(posts), profile),
+          dependencies.generate(sampleBrainSourcePosts(posts), profile, existing),
         );
         const candidates = sourceBackedBrainItems(posts, generated);
         if (!candidates.length)
@@ -308,6 +315,9 @@ export async function processDueContentIndexes(dependencies: ContentIndexDepende
       await dependencies.finish(job, {
         sourceCount,
         error: cause instanceof Error ? cause.message.slice(0, 1000) : "Source indexing failed.",
+        ...(cause instanceof ProviderBudgetError
+          ? { budgetRetryAt: cause.retryAt || new Date(Date.now() + 3_600_000).toISOString() }
+          : {}),
       });
       failed += 1;
     }

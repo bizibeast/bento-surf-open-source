@@ -355,6 +355,7 @@ const bentoMcpToolAnnotations = {
   upload_media: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
   begin_media_upload: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
   list_social_posts: readOnlyAnnotations,
+  get_social_post: readOnlyAnnotations,
   search_stock_photos: { readOnlyHint: true, openWorldHint: true, destructiveHint: false },
   resolve_post_media: readOnlyAnnotations,
   create_social_post: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
@@ -699,6 +700,7 @@ describe("Bento MCP tools", () => {
         idempotentHint: true,
       },
       get_scheduler_workspace: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      get_social_post: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
       manage_scheduler: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
       manage_page: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
       manage_block: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
@@ -984,11 +986,27 @@ describe("Bento MCP tools", () => {
       accounts: [],
       posts: [],
       postingSchedule: null,
+      pagination: { limit: 100, hasMore: false, nextCursor: null },
+      provenance: {
+        source: "stored_scheduler",
+        observedAt: "2026-10-22T00:00:00Z",
+        dateSemantics: "",
+        targets: "",
+        metrics: "",
+      },
     }));
     const manageScheduler = vi.fn(async () => ({
       accounts: [],
       posts: [],
       postingSchedule: null,
+      pagination: { limit: 100, hasMore: false, nextCursor: null },
+      provenance: {
+        source: "stored_scheduler",
+        observedAt: "2026-10-22T00:00:00Z",
+        dateSemantics: "",
+        targets: "",
+        metrics: "",
+      },
     }));
     const mcpOperations = {
       ...defaultBentoMcpOperations,
@@ -1215,5 +1233,120 @@ it("executes the documented video example as one draft with three platform targe
     providerSettings: {
       youtube: { titleOverride: "Building our first version", youtubePrivacy: "public" },
     },
+  });
+});
+
+describe("external post read compatibility", () => {
+  it("gives text-only clients the complete sanitized posts and preserves compact internal reads", async () => {
+    const posts = [
+      {
+        id: "post-1",
+        created_at: "2026-10-19T00:00:00Z",
+        body: "Exact caption",
+        media: [{ key: "owner/video.mp4" }],
+        targets: [
+          {
+            provider: "instagram",
+            provider_settings: { bodyOverride: "Platform caption", trialReel: true },
+          },
+        ],
+      },
+    ];
+    const listSocialPosts = vi.fn(async () => ({
+      posts,
+      pagination: { limit: 30, hasMore: true, nextCursor: "next-page" },
+      provenance: { source: "stored_scheduler" },
+    }));
+    const getSocialPost = vi.fn(async () => ({
+      post: posts[0],
+      attempts: [],
+      attemptsPagination: { hasMore: false, nextCursor: null },
+    }));
+    const operations = {
+      ...defaultBentoMcpOperations,
+      listSocialPosts,
+      getSocialPost,
+    } as unknown as typeof defaultBentoMcpOperations;
+    const handler = createMcpHandler(() =>
+      createBentoMcpServer(authInfo, "https://mcp.bento.surf", operations),
+    );
+    const args = { provider: "instagram", targetStatus: "published", limit: 30 };
+    const response = await handler.fetch(
+      request({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "list_social_posts", arguments: args },
+      }),
+      { authInfo },
+    );
+    const result = (await payload(response)).result;
+    expect(JSON.parse(result.content[1].text)).toEqual(result.structuredContent);
+    expect(result.structuredContent).toMatchObject({
+      posts,
+      pagination: { hasMore: true, nextCursor: "next-page" },
+    });
+    expect(listSocialPosts).toHaveBeenCalledWith(
+      authInfo.extra!.userId,
+      undefined,
+      30,
+      expect.objectContaining({ provider: "instagram", targetStatus: "published" }),
+    );
+    const tools = createBentoAppTools(
+      {
+        userId: String(authInfo.extra!.userId),
+        accessToken: authInfo.token,
+        supabase: {} as Parameters<typeof createBentoAppTools>[0]["supabase"],
+      },
+      "https://app.bento.surf",
+      operations,
+    );
+    const internal = await tools.get("list_social_posts")!.execute(args);
+    expect(internal.content).toHaveLength(1);
+    expect(internal.structuredContent.posts).toEqual(posts);
+    const detail = await handler.fetch(
+      request({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: {
+          name: "get_social_post",
+          arguments: { id: "10000000-0000-4000-8000-000000000001" },
+        },
+      }),
+      { authInfo },
+    );
+    const detailResult = (await payload(detail)).result;
+    expect(JSON.parse(detailResult.content[1].text)).toEqual(detailResult.structuredContent);
+  });
+  it("scrubs legacy reads equally in JSON text and structured data", async () => {
+    const getCommunityWorkspace = vi.fn(async () => ({
+      grants: [{ id: "grant-1", token_hash: "secret", expires_at: "2026-12-01" }],
+      settings: { access_token: "secret" },
+      media: [{ key: "owner/asset.png" }],
+    }));
+    const operations = {
+      ...defaultBentoMcpOperations,
+      getCommunityWorkspace,
+    } as unknown as typeof defaultBentoMcpOperations;
+    const handler = createMcpHandler(() =>
+      createBentoMcpServer(authInfo, "https://mcp.bento.surf", operations),
+    );
+    const response = await handler.fetch(
+      request({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "get_community_workspace", arguments: {} },
+      }),
+      { authInfo },
+    );
+    const result = (await payload(response)).result;
+    expect(JSON.parse(result.content[1].text)).toEqual(result.structuredContent);
+    expect(result.structuredContent.community).toEqual({
+      grants: [{ id: "grant-1", expires_at: "2026-12-01" }],
+      settings: {},
+      media: [{ key: "owner/asset.png" }],
+    });
   });
 });

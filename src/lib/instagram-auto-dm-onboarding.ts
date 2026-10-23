@@ -1,4 +1,5 @@
 import { INSTAGRAM_AUTO_DM_DEFAULTS as autoDmDefaults } from "./instagram-auto-dm-defaults";
+import { normalizeCustomerCopy } from "./text/dashes";
 import type {
   InstagramDmMatchType,
   InstagramDmMediaScope,
@@ -42,7 +43,7 @@ export type InstagramAutoDmStarterTemplate = {
   };
 };
 
-export const INSTAGRAM_AUTO_DM_STARTER_TEMPLATES: InstagramAutoDmStarterTemplate[] = [
+const instagramAutoDmStarterTemplateList: InstagramAutoDmStarterTemplate[] = [
   {
     id: "comment-link",
     eyebrow: "Most popular",
@@ -140,6 +141,10 @@ export const INSTAGRAM_AUTO_DM_STARTER_TEMPLATES: InstagramAutoDmStarterTemplate
     },
   },
 ];
+
+export const INSTAGRAM_AUTO_DM_STARTER_TEMPLATES = normalizeCustomerCopy(
+  instagramAutoDmStarterTemplateList,
+);
 
 export function getInstagramAutoDmOnboardingStep({
   hasReadyConnection,

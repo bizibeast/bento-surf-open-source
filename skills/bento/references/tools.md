@@ -10,7 +10,8 @@
 - `get_content_routines`, `manage_content_routine`: inspect routine schedules and recent activity; save template/custom routines or pause/resume them.
 - `get_content_agent`, `manage_content_agent`: inspect Agent conversations, send a message, edit/reject/regenerate a draft, or approve Brain/scheduling proposals.
 - `get_content_discover`, `manage_content_discover`: inspect recommendations and preferences or open a creator recommendation; refresh, load more, set feedback, save/unsave items, or track/untrack creators.
-- `list_social_posts`: recent drafts, scheduled posts, publishing outcomes, and stable IDs.
+- `list_social_posts`: stored Scheduler posts with full captions/media, platform/date/status filters, stable cursors and provenance.
+- `get_social_post`: full owned Scheduler post, all destination overrides, remote IDs/URLs, errors/retries, exact matching stored metrics and paginated publish attempts.
 - `create_social_post`: create or edit a draft, schedule, or publish to connected accounts. Use `providerSettings` for YouTube title, description, privacy, and thumbnail; Instagram Trial Reels and scheduled Auto DM; TikTok privacy and interactions; and X repost timing.
 - `get_scheduler_workspace`, `manage_scheduler`: inspect posting times and lifecycle state, then save posting times or reschedule, move to draft, duplicate, cancel, or delete owned posts.
 - `get_auto_dm_delay` / `set_auto_dm_delay`: read or set the workspace-wide delay before automated replies on Instagram, Facebook and X, including scheduled-post automations. Allowed seconds: 30, 60 (default), 120, 180. Related public replies and opening DMs use the same event delay; each incoming workflow response waits again.
@@ -129,27 +130,27 @@ maximum over remote MCP; browser WebMCP accepts only 128 KiB inline). Use
 quality merely to fit the inline transport. If the client lacks file/HTTP tools,
 use Bento's attachment picker, then reference the uploaded asset.
 
-
 ## Fetch complete stored context
 
 Use the overview tools for initial orientation, then call `read_workspace_data`.
 Responses include `items`, `hasMore`, `nextCursor` and `readFrom: "stored"`.
 
-| Collection | Available context | Text query |
-|---|---|---|
-| `brain_items` | Profile/voice/strategy/story/instruction documents, confirmation state, tags and provenance | Title |
-| `brain_sources` | Imported source text from connected knowledge sources, source URL and retrieval time; deleted sources excluded | Title |
-| `routines` | Schedule, timezone, instructions, platforms, enabled state, next/last run | Not supported |
-| `routine_runs` | Routine ID, status, scheduled time, output count and failure detail | Not supported |
-| `discover_items` | All stored recommendations and older bookmarks, source dates/URLs, feedback, metrics and inspiration | Title |
-| `social_accounts` | Latest cached account metrics with `fetched_at` | Not supported |
-| `social_posts` | Stored captions, content type, source URL and post performance | Caption |
-| `social_history` | Stored historical account metrics with `captured_at` | Not supported |
+| Collection        | Available context                                                                                              | Text query    |
+| ----------------- | -------------------------------------------------------------------------------------------------------------- | ------------- |
+| `brain_items`     | Profile/voice/strategy/story/instruction documents, confirmation state, tags and provenance                    | Title         |
+| `brain_sources`   | Imported source text from connected knowledge sources, source URL and retrieval time; deleted sources excluded | Title         |
+| `routines`        | Schedule, timezone, instructions, platforms, enabled state, next/last run                                      | Not supported |
+| `routine_runs`    | Routine ID, status, scheduled time, output count and failure detail                                            | Not supported |
+| `discover_items`  | All stored recommendations and older bookmarks, source dates/URLs, feedback, metrics and inspiration           | Title         |
+| `social_accounts` | Latest cached account metrics with `fetched_at`                                                                | Not supported |
+| `social_posts`    | Imported social analytics: captions, content type, source URL, performance and `fetched_at`                    | Caption       |
+| `scheduler_posts` | Scheduler drafts, publications, destination overrides, status and retry details                                | Caption       |
+| `social_history`  | Stored historical account metrics with `captured_at`                                                           | Not supported |
 
 For example, find a writing-voice document:
 
 ```json
-{"collection":"brain_items","query":"voice","limit":10}
+{ "collection": "brain_items", "query": "voice", "limit": 10 }
 ```
 
 Then call the same tool with `collection: "brain_items"` and the returned item's
@@ -160,7 +161,7 @@ Do not combine `id` and `cursor`.
 To inspect all saved Discover items:
 
 ```json
-{"collection":"discover_items","savedOnly":true,"limit":10}
+{ "collection": "discover_items", "savedOnly": true, "limit": 10 }
 ```
 
 If `hasMore` is true, pass the returned `nextCursor` as `cursor` in the next call
@@ -178,3 +179,46 @@ The site aggregate remains available from `get_analytics_workspace`.
 Empty results mean no matching stored records within those filters. No read tool
 starts paid research or scraping. Ask for fresh collection only if the user needs
 it, then use the relevant explicit refresh action with existing budgets.
+
+### Individual posts and platform publication dates
+
+A summary count is not evidence for individual posts. Scheduler `social_posts`
+and imported analytics `social_content_insights` are different datasets. A single
+Scheduler post can have several platform destinations; five Scheduler records do
+not prove five Instagram reels. Read every page, then inspect exact post IDs.
+
+`list_social_posts` retains `status` (parent state) and `limit` (default 30, max100).
+Use `targetStatus` for destination state. `provider`, `connectionId`, `query`,
+`dateFrom` and `dateTo` narrow records. Date bounds are inclusive/exclusive ISO
+datetimes with a timezone and default to **destination `published_at`**. Select
+`dateField: "scheduled_at"` or `"created_at"` only for those specific questions.
+Results are ordered by created_at and ID descending. Pass
+`pagination.nextCursor` back as `cursor` with unchanged filters. Filtering
+destinations returns matching targets; `get_social_post` returns every target.
+
+Example for Instagram publications on 19 October 2026 in India:
+
+```json
+{
+  "provider": "instagram",
+  "targetStatus": "published",
+  "dateFrom": "2026-10-18T18:30:00Z",
+  "dateTo": "2026-10-19T18:30:00Z",
+  "limit": 25
+}
+```
+
+Call `get_social_post` with the returned Scheduler `id`. It exposes body/title,
+media, provider_settings (including trial-reel and caption overrides), target
+publication timestamps, remote IDs, errors/retry progress and stored metrics.
+`resolvedRemotePostUrl` may come from an exactly matching owned insight;
+`remotePostUrlSource` identifies that fallback. Keep `fetched_at` when discussing
+metric freshness. Pass `attemptsPagination.nextCursor` as `attemptsCursor` for
+older publish attempts. This read never refreshes platforms.
+
+`read_workspace_data` supports `scheduler_posts` separately from imported
+`social_posts`. Imported analytics accepts `provider`, `connectionId`,
+`contentType` (for example `video`; case and surrounding whitespace are normalized),
+`dateFrom`, `dateTo`, and `range`; plan history limits still apply.
+Empty stored data means no matching stored data, not proof of no platform posts.
+Never claim a provider refresh happened unless its separate action ran.

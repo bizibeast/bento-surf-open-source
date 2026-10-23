@@ -1,4 +1,5 @@
 import type { TwitterDmMatchType, TwitterDmTriggerType } from "@/lib/twitter-auto-dm";
+import { normalizeCustomerCopy } from "./text/dashes";
 
 export type TwitterAutoDmOnboardingStep = "connect" | "template" | "customize";
 
@@ -23,7 +24,7 @@ export type TwitterAutoDmStarterTemplate = {
   };
 };
 
-export const TWITTER_AUTO_DM_STARTER_TEMPLATES: TwitterAutoDmStarterTemplate[] = [
+const twitterAutoDmStarterTemplateList: TwitterAutoDmStarterTemplate[] = [
   {
     id: "mention-link",
     eyebrow: "Most popular",
@@ -110,6 +111,10 @@ export const TWITTER_AUTO_DM_STARTER_TEMPLATES: TwitterAutoDmStarterTemplate[] =
     },
   },
 ];
+
+export const TWITTER_AUTO_DM_STARTER_TEMPLATES = normalizeCustomerCopy(
+  twitterAutoDmStarterTemplateList,
+);
 
 export function getTwitterAutoDmOnboardingStep({
   hasReadyConnection,

@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Payment tables are introduced by the pending migration. */
 import { createServerFn } from "@tanstack/react-start";
-import { requirePlanEntitlement } from "@/lib/plan.server";
+import { requireCreatorPaymentConnect } from "@/lib/plan.server";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
@@ -72,11 +72,7 @@ export const connectPayPalApiCredentials = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) => credentialsSchema.parse(input))
   .handler(async ({ context, data }) => {
-    await requirePlanEntitlement(
-      context.userId,
-      "oneTapCheckout",
-      "Connected payments are included with the Store plan.",
-    );
+    await requireCreatorPaymentConnect(context.userId);
     await requireExclusiveCreatorPaymentProvider(context.userId, PAYPAL_PROVIDER);
     const targetEnvironment = assertPayPalEnvironment(data.environment as PayPalEnvironment);
     const credentials = {
@@ -208,11 +204,7 @@ export const refreshPayPalConnection = createServerFn({ method: "POST" })
 export const beginPayPalConnection = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    await requirePlanEntitlement(
-      context.userId,
-      "oneTapCheckout",
-      "Connected payments are included with the Store plan.",
-    );
+    await requireCreatorPaymentConnect(context.userId);
     await requireExclusiveCreatorPaymentProvider(context.userId, PAYPAL_PROVIDER);
     const state = await createPaymentOauthState(context.userId, PAYPAL_PROVIDER);
     const returnUrl = new URL(`${appUrl()}/integrations/paypal/callback`);
@@ -269,11 +261,7 @@ export const completePayPalConnection = createServerFn({ method: "POST" })
     if (oauthState.creator_id !== context.userId) {
       throw new Error("This PayPal onboarding link belongs to a different account.");
     }
-    await requirePlanEntitlement(
-      context.userId,
-      "oneTapCheckout",
-      "Connected payments are included with the Store plan.",
-    );
+    await requireCreatorPaymentConnect(context.userId);
     await requireExclusiveCreatorPaymentProvider(oauthState.creator_id, PAYPAL_PROVIDER);
     const status = await paypalRequest<any>(
       `/v1/customer/partners/${encodeURIComponent(paypalPartnerMerchantId())}/merchant-integrations/${encodeURIComponent(data.merchantId)}`,

@@ -1,3 +1,4 @@
+import { normalizeCustomerCopy, normalizeDashes } from "./text/dashes";
 import {
   newsletterContentSchema,
   safeNewsletterUrl,
@@ -84,6 +85,17 @@ const asNumber = (value: unknown) => {
   return Number.isFinite(number) ? number : 0;
 };
 
+function digestPages(payload: Record<string, unknown> | undefined) {
+  if (!Array.isArray(payload?.pages)) return [];
+  return payload.pages.flatMap((page) => {
+    if (!page || typeof page !== "object") return [];
+    const record = page as Record<string, unknown>;
+    const username = asText(record.username);
+    const views = asNumber(record.views);
+    return username && views > 0 ? [{ username, views }] : [];
+  });
+}
+
 function escapeHtml(value: unknown) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -117,6 +129,7 @@ export function renderNewsletterEmailDocument(input: {
 }) {
   const parsed = newsletterContentSchema.safeParse(input.content);
   if (!parsed.success) throw new Error("Newsletter content is invalid.");
+  const blocks = normalizeCustomerCopy(parsed.data);
   const products = new Map(input.products.map((product) => [product.id, product]));
   const html: string[] = [];
   const text: string[] = [];
@@ -245,7 +258,7 @@ export function renderNewsletterEmailDocument(input: {
     }
   };
 
-  for (const block of parsed.data) {
+  for (const block of blocks) {
     const rendered = renderBlock(block);
     html.push(rendered.html);
     text.push(rendered.text);
@@ -375,15 +388,25 @@ function templateCopy(input: EmailTemplateInput) {
         cta: "See my plan",
         href: absoluteUrl(input.appUrl, "/settings?section=plan", "/settings?section=plan"),
       };
-    case "weekly_digest":
+    case "weekly_digest": {
+      const pages = digestPages(payload);
+      const pageSummary = pages.length
+        ? `${pages
+            .map(
+              (page) =>
+                `${page.username} (${page.views.toLocaleString()} ${page.views === 1 ? "visit" : "visits"})`,
+            )
+            .join(", ")}. `
+        : "";
       return {
         subject: `Your Bento week: ${asNumber(payload.views).toLocaleString()} visits`,
         eyebrow: "Your weekly Bento",
         title: `${asNumber(payload.views).toLocaleString()} visits · ${asNumber(payload.clicks).toLocaleString()} clicks`,
-        body: `You also made ${asNumber(payload.sales).toLocaleString()} sale${asNumber(payload.sales) === 1 ? "" : "s"}. See where people came from and what they clicked next.`,
+        body: `${pageSummary}You also made ${asNumber(payload.sales).toLocaleString()} sale${asNumber(payload.sales) === 1 ? "" : "s"}. See where people came from and what they clicked next.`,
         cta: "View analytics",
         href: absoluteUrl(input.appUrl, "/analytics", "/analytics"),
       };
+    }
     case "creator_campaign":
       return {
         subject: asText(payload.subject, "An update from a Bento creator"),
@@ -668,8 +691,8 @@ function templateCopy(input: EmailTemplateInput) {
       return {
         subject: `${asText(payload.provider, "A social network")} could not publish your post`,
         eyebrow: "Scheduler",
-        title: "Publishing failed for one destination.",
-        body: `${asText(payload.provider, "A connected account")} could not publish your post. ${asText(payload.reason, "Open the scheduler to review the error and retry or reconnect.")}`,
+        title: "Your post needs attention.",
+        body: `${asText(payload.provider, "A connected account")} could not publish “${asText(payload.postTitle, "your scheduled post")}”. ${asText(payload.reason, "Please review the destination in your scheduler.")} Open the scheduler to retry failed destinations or reconnect your account if needed. Posts that were already published will not be sent again.`,
         cta: "Open scheduler",
         href: absoluteUrl(input.appUrl, payload.schedulerUrl, "/post-scheduler"),
       };
@@ -716,7 +739,15 @@ function templateCopy(input: EmailTemplateInput) {
 }
 
 export function renderBentoEmail(input: EmailTemplateInput): RenderedEmail {
-  const copy = templateCopy(input);
+  const raw = templateCopy(input);
+  const copy = {
+    ...raw,
+    subject: normalizeDashes(raw.subject),
+    eyebrow: normalizeDashes(raw.eyebrow),
+    title: normalizeDashes(raw.title),
+    body: normalizeDashes(raw.body),
+    cta: normalizeDashes(raw.cta),
+  };
   const creatorCampaign = input.eventType === "creator_campaign";
   const instanceName = getInstancePublicConfig(import.meta.env).appName;
   const brandName = creatorCampaign ? asText(input.payload?.creatorName, "Creator") : instanceName;

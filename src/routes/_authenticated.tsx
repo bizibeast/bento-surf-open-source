@@ -50,9 +50,11 @@ const WEBMCP_WORKSPACES = {
 } as const;
 
 export const WEBMCP_TOOLS_BY_ROUTE: Record<string, readonly string[]> = {
-  home: ["list_social_posts", "list_products", "list_bookings"],
-  dashboard: ["list_social_posts", "list_products", "list_bookings"],
+  home: ["list_social_posts", "get_social_post", "list_products", "list_bookings"],
+  dashboard: ["list_social_posts", "get_social_post", "list_products", "list_bookings"],
   content: [
+    "list_social_posts",
+    "get_social_post",
     "get_content_brain",
     "get_content_media",
     "get_content_routines",
@@ -92,6 +94,7 @@ export const WEBMCP_TOOLS_BY_ROUTE: Record<string, readonly string[]> = {
   "post-scheduler": [
     "list_social_accounts",
     "list_social_posts",
+    "get_social_post",
     "upload_media",
     "begin_media_upload",
     "create_social_post",
@@ -99,12 +102,23 @@ export const WEBMCP_TOOLS_BY_ROUTE: Record<string, readonly string[]> = {
   scheduler: [
     "list_social_accounts",
     "list_social_posts",
+    "get_social_post",
     "upload_media",
     "begin_media_upload",
     "create_social_post",
   ],
-  "social-insights": ["list_social_accounts", "list_social_posts", "get_analytics_workspace"],
-  analytics: ["list_social_accounts", "list_social_posts", "get_analytics_workspace"],
+  "social-insights": [
+    "list_social_accounts",
+    "list_social_posts",
+    "get_social_post",
+    "get_analytics_workspace",
+  ],
+  analytics: [
+    "list_social_accounts",
+    "list_social_posts",
+    "get_social_post",
+    "get_analytics_workspace",
+  ],
   "auto-dms": [
     "list_social_accounts",
     "list_auto_dm_automations",

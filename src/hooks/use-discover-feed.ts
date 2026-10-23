@@ -114,6 +114,21 @@ export function useDiscoverFeed(enabled: boolean) {
     }
   }, [discover.data, enabled, refresh]);
 
+  // Refresh saves qualified batches as each source finishes. These GETs only read
+  // stored rows; they never trigger provider or AI work and stop with the refresh.
+  useEffect(() => {
+    if (!enabled || !research.isPending || research.isPaused) return;
+    const timer = window.setInterval(() => {
+      if (active.current && !active.current.controller.signal.aborted) {
+        void queryClient.refetchQueries(
+          { queryKey: ["content-discover"], exact: true },
+          { cancelRefetch: false },
+        );
+      }
+    }, 2_000);
+    return () => window.clearInterval(timer);
+  }, [enabled, research.isPending, research.isPaused, queryClient]);
+
   useEffect(() => {
     const reconnect = () => {
       if (enabled && !active.current && isTransientDiscoverError(research.error)) refresh();
@@ -139,7 +154,7 @@ export function useDiscoverFeed(enabled: boolean) {
         ? "Finishing the previous refresh. Checking again automatically…"
         : research.failureCount > 0
           ? "Connection interrupted. Retrying automatically…"
-          : "Finding recent posts for your Brain…"
+          : "Checking platforms. Verified posts appear as they arrive…"
     : null;
   const loadingStatus =
     discover.fetchStatus === "paused"

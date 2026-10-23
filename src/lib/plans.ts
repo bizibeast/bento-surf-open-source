@@ -477,6 +477,29 @@ export function planHasEntitlement(
   return PLAN_CONFIG[normalized].entitlements[entitlement] === true;
 }
 
+export const CONNECTED_PAYMENTS_REQUIRED_MESSAGE =
+  "Connected payments are included with the Store plan. Start a 3-day Store trial to connect a provider.";
+export const CONNECT_PAYMENTS_BANNER_TITLE = "Connect payments with a 3-day Store trial";
+export const CONNECT_PAYMENTS_BANNER_BODY =
+  "Connected payments stay on the Store plan. A card is required. If the 3-day trial is already used, checkout charges the Store plan today. You come back here to connect a provider.";
+
+/** Payments stay paid. A trialing subscription that includes one-tap checkout can connect. */
+export function creatorPaymentsUnlocked(input: {
+  plan: PlanId;
+  catalog?: BillingCatalog;
+  subscriptionStatus?: string | null;
+  subscriptionPlan?: string | null;
+}): boolean {
+  const catalog = input.catalog ?? CURRENT_BILLING_CATALOG;
+  if (input.plan !== "free" && planHasEntitlement(input.plan, "oneTapCheckout", catalog)) {
+    return true;
+  }
+  return (
+    input.subscriptionStatus === "trialing" &&
+    planHasEntitlement(normalizePlan(input.subscriptionPlan), "oneTapCheckout", catalog)
+  );
+}
+
 export function minimumPlanForEntitlement(entitlement: EntitlementKey): PaidPlanId {
   return PAID_PLAN_IDS.find((plan) => planHasEntitlement(plan, entitlement)) ?? "creator_plus";
 }

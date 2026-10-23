@@ -9,122 +9,83 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as TermsRouteImport } from './routes/terms'
-import { Route as SignupRouteImport } from './routes/signup'
-import { Route as SelfHostedSetupRouteImport } from './routes/self-hosted-setup'
-import { Route as ResetPasswordRouteImport } from './routes/reset-password'
-import { Route as PrivacyRouteImport } from './routes/privacy'
-import { Route as LoginRouteImport } from './routes/login'
-import { Route as ExploreRouteImport } from './routes/explore'
-import { Route as DataDeletionRouteImport } from './routes/data-deletion'
-import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
-import { Route as UsernameRouteImport } from './routes/$username'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as LibraryIndexRouteImport } from './routes/library.index'
-import { Route as ReviewTokenRouteImport } from './routes/review.$token'
-import { Route as PProductSlugRouteImport } from './routes/p.$productSlug'
-import { Route as OauthConsentRouteImport } from './routes/oauth.consent'
-import { Route as LibraryVerifyRouteImport } from './routes/library.verify'
-import { Route as AccessTokenRouteImport } from './routes/access.$token'
-import { Route as AuthenticatedStoreRouteImport } from './routes/_authenticated/store'
-import { Route as AuthenticatedSocialInsightsRouteImport } from './routes/_authenticated/social-insights'
-import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticated/settings'
-import { Route as AuthenticatedSchedulerRouteImport } from './routes/_authenticated/scheduler'
-import { Route as AuthenticatedProductsRouteImport } from './routes/_authenticated/products'
-import { Route as AuthenticatedPriorityDmRouteImport } from './routes/_authenticated/priority-dm'
-import { Route as AuthenticatedPostSchedulerRouteImport } from './routes/_authenticated/post-scheduler'
-import { Route as AuthenticatedOnboardingRouteImport } from './routes/_authenticated/onboarding'
-import { Route as AuthenticatedMcpRouteImport } from './routes/_authenticated/mcp'
-import { Route as AuthenticatedLinkRouteImport } from './routes/_authenticated/link'
-import { Route as AuthenticatedHomeRouteImport } from './routes/_authenticated/home'
-import { Route as AuthenticatedEmailMarketingRouteImport } from './routes/_authenticated/email-marketing'
-import { Route as AuthenticatedEarnRouteImport } from './routes/_authenticated/earn'
-import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
-import { Route as AuthenticatedContentRouteImport } from './routes/_authenticated/content'
-import { Route as AuthenticatedCommunityRouteImport } from './routes/_authenticated/community'
-import { Route as AuthenticatedCalendarRouteImport } from './routes/_authenticated/calendar'
-import { Route as AuthenticatedBookingsRouteImport } from './routes/_authenticated/bookings'
-import { Route as AuthenticatedAnalyticsRouteImport } from './routes/_authenticated/analytics'
-import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
-import { Route as UsernameStoreRouteImport } from './routes/$username_.store'
-import { Route as UsernameNewsletterRouteImport } from './routes/$username_.newsletter'
-import { Route as UsernameCalendarRouteImport } from './routes/$username_.calendar'
+import { Route as UsernameRouteImport } from './routes/$username'
+import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
+import { Route as DataDeletionRouteImport } from './routes/data-deletion'
+import { Route as ExploreRouteImport } from './routes/explore'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as PrivacyRouteImport } from './routes/privacy'
+import { Route as ResetPasswordRouteImport } from './routes/reset-password'
+import { Route as SelfHostedSetupRouteImport } from './routes/self-hosted-setup'
+import { Route as SignupRouteImport } from './routes/signup'
+import { Route as TermsRouteImport } from './routes/terms'
 import { Route as UsernamePageSlugRouteImport } from './routes/$username_.$pageSlug'
-import { Route as AuthenticatedAutomationsIndexRouteImport } from './routes/_authenticated/automations.index'
-import { Route as AuthenticatedAutoDmsIndexRouteImport } from './routes/_authenticated/auto-dms.index'
-import { Route as UsernameNewslettersIndexRouteImport } from './routes/$username_.newsletters.index'
-import { Route as PaymentsRazorpaySessionIdRouteImport } from './routes/payments.razorpay.$sessionId'
-import { Route as PaymentsPaypalReturnRouteImport } from './routes/payments.paypal.return'
-import { Route as PProductSlugSuccessRouteImport } from './routes/p.$productSlug_.success'
-import { Route as LibraryReceiptsOrderIdRouteImport } from './routes/library.receipts.$orderId'
-import { Route as LibraryPriorityDmRequestIdRouteImport } from './routes/library.priority-dm.$requestId'
-import { Route as IntegrationsStripeCallbackRouteImport } from './routes/integrations.stripe.callback'
-import { Route as IntegrationsSlackCallbackRouteImport } from './routes/integrations.slack.callback'
-import { Route as IntegrationsPolarCallbackRouteImport } from './routes/integrations.polar.callback'
-import { Route as IntegrationsPaypalCallbackRouteImport } from './routes/integrations.paypal.callback'
-import { Route as IntegrationsNotionCallbackRouteImport } from './routes/integrations.notion.callback'
-import { Route as IntegrationsInstagramDataDeletionRouteImport } from './routes/integrations.instagram.data-deletion'
-import { Route as IntegrationsInstagramCallbackRouteImport } from './routes/integrations.instagram.callback'
-import { Route as IntegrationsGranolaCallbackRouteImport } from './routes/integrations.granola.callback'
-import { Route as IntegrationsGithubCallbackRouteImport } from './routes/integrations.github.callback'
-import { Route as IntegrationsFathomCallbackRouteImport } from './routes/integrations.fathom.callback'
-import { Route as AuthenticatedMcpSetupRouteImport } from './routes/_authenticated/mcp.setup'
-import { Route as AuthenticatedAutomationsTwitterRouteImport } from './routes/_authenticated/automations.twitter'
-import { Route as AuthenticatedAutomationsInstagramRouteImport } from './routes/_authenticated/automations.instagram'
-import { Route as AuthenticatedAutomationsFacebookRouteImport } from './routes/_authenticated/automations.facebook'
-import { Route as AuthenticatedAutoDmsTwitterRouteImport } from './routes/_authenticated/auto-dms.twitter'
-import { Route as AuthenticatedAutoDmsInstagramRouteImport } from './routes/_authenticated/auto-dms.instagram'
-import { Route as AuthenticatedAutoDmsFacebookRouteImport } from './routes/_authenticated/auto-dms.facebook'
-import { Route as UsernameProductsProductSlugRouteImport } from './routes/$username_.products.$productSlug'
-import { Route as UsernameNewslettersPublicationSlugRouteImport } from './routes/$username_.newsletters.$publicationSlug'
+import { Route as UsernameCalendarRouteImport } from './routes/$username_.calendar'
+import { Route as UsernameNewsletterRouteImport } from './routes/$username_.newsletter'
+import { Route as UsernameStoreRouteImport } from './routes/$username_.store'
+import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
+import { Route as AuthenticatedAnalyticsRouteImport } from './routes/_authenticated/analytics'
+import { Route as AuthenticatedBookingsRouteImport } from './routes/_authenticated/bookings'
+import { Route as AuthenticatedCalendarRouteImport } from './routes/_authenticated/calendar'
+import { Route as AuthenticatedCommunityRouteImport } from './routes/_authenticated/community'
+import { Route as AuthenticatedContentRouteImport } from './routes/_authenticated/content'
+import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
+import { Route as AuthenticatedEarnRouteImport } from './routes/_authenticated/earn'
+import { Route as AuthenticatedEmailMarketingRouteImport } from './routes/_authenticated/email-marketing'
+import { Route as AuthenticatedHomeRouteImport } from './routes/_authenticated/home'
+import { Route as AuthenticatedLinkRouteImport } from './routes/_authenticated/link'
+import { Route as AuthenticatedMcpRouteImport } from './routes/_authenticated/mcp'
+import { Route as AuthenticatedOnboardingRouteImport } from './routes/_authenticated/onboarding'
+import { Route as AuthenticatedPostSchedulerRouteImport } from './routes/_authenticated/post-scheduler'
+import { Route as AuthenticatedPriorityDmRouteImport } from './routes/_authenticated/priority-dm'
+import { Route as AuthenticatedProductsRouteImport } from './routes/_authenticated/products'
+import { Route as AuthenticatedSchedulerRouteImport } from './routes/_authenticated/scheduler'
+import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticated/settings'
+import { Route as AuthenticatedSocialInsightsRouteImport } from './routes/_authenticated/social-insights'
+import { Route as AuthenticatedStoreRouteImport } from './routes/_authenticated/store'
+import { Route as AccessTokenRouteImport } from './routes/access.$token'
+import { Route as LibraryIndexRouteImport } from './routes/library.index'
+import { Route as LibraryVerifyRouteImport } from './routes/library.verify'
+import { Route as OauthConsentRouteImport } from './routes/oauth.consent'
+import { Route as PProductSlugRouteImport } from './routes/p.$productSlug'
+import { Route as ReviewTokenRouteImport } from './routes/review.$token'
 import { Route as UsernameNewsletterIssueSlugRouteImport } from './routes/$username_.newsletter_.$issueSlug'
-import { Route as IntegrationsSocialProviderCallbackRouteImport } from './routes/integrations.social.$provider.callback'
-import { Route as IntegrationsCalendarGoogleCallbackRouteImport } from './routes/integrations.calendar.google.callback'
-import { Route as UsernameProductsProductSlugSuccessRouteImport } from './routes/$username_.products.$productSlug_.success'
+import { Route as UsernameNewslettersIndexRouteImport } from './routes/$username_.newsletters.index'
+import { Route as UsernameNewslettersPublicationSlugRouteImport } from './routes/$username_.newsletters.$publicationSlug'
+import { Route as UsernameProductsProductSlugRouteImport } from './routes/$username_.products.$productSlug'
+import { Route as AuthenticatedAutoDmsIndexRouteImport } from './routes/_authenticated/auto-dms.index'
+import { Route as AuthenticatedAutoDmsFacebookRouteImport } from './routes/_authenticated/auto-dms.facebook'
+import { Route as AuthenticatedAutoDmsInstagramRouteImport } from './routes/_authenticated/auto-dms.instagram'
+import { Route as AuthenticatedAutoDmsTwitterRouteImport } from './routes/_authenticated/auto-dms.twitter'
+import { Route as AuthenticatedAutomationsIndexRouteImport } from './routes/_authenticated/automations.index'
+import { Route as AuthenticatedAutomationsFacebookRouteImport } from './routes/_authenticated/automations.facebook'
+import { Route as AuthenticatedAutomationsInstagramRouteImport } from './routes/_authenticated/automations.instagram'
+import { Route as AuthenticatedAutomationsTwitterRouteImport } from './routes/_authenticated/automations.twitter'
+import { Route as AuthenticatedMcpSetupRouteImport } from './routes/_authenticated/mcp.setup'
+import { Route as IntegrationsFathomCallbackRouteImport } from './routes/integrations.fathom.callback'
+import { Route as IntegrationsGithubCallbackRouteImport } from './routes/integrations.github.callback'
+import { Route as IntegrationsGranolaCallbackRouteImport } from './routes/integrations.granola.callback'
+import { Route as IntegrationsInstagramCallbackRouteImport } from './routes/integrations.instagram.callback'
+import { Route as IntegrationsInstagramDataDeletionRouteImport } from './routes/integrations.instagram.data-deletion'
+import { Route as IntegrationsNotionCallbackRouteImport } from './routes/integrations.notion.callback'
+import { Route as IntegrationsPaypalCallbackRouteImport } from './routes/integrations.paypal.callback'
+import { Route as IntegrationsPolarCallbackRouteImport } from './routes/integrations.polar.callback'
+import { Route as IntegrationsSlackCallbackRouteImport } from './routes/integrations.slack.callback'
+import { Route as IntegrationsStripeCallbackRouteImport } from './routes/integrations.stripe.callback'
+import { Route as LibraryPriorityDmRequestIdRouteImport } from './routes/library.priority-dm.$requestId'
+import { Route as LibraryReceiptsOrderIdRouteImport } from './routes/library.receipts.$orderId'
+import { Route as PProductSlugSuccessRouteImport } from './routes/p.$productSlug_.success'
+import { Route as PaymentsPaypalReturnRouteImport } from './routes/payments.paypal.return'
+import { Route as PaymentsRazorpaySessionIdRouteImport } from './routes/payments.razorpay.$sessionId'
 import { Route as UsernameNewslettersPublicationSlugPostSlugRouteImport } from './routes/$username_.newsletters.$publicationSlug_.$postSlug'
+import { Route as UsernameProductsProductSlugSuccessRouteImport } from './routes/$username_.products.$productSlug_.success'
+import { Route as IntegrationsCalendarGoogleCallbackRouteImport } from './routes/integrations.calendar.google.callback'
+import { Route as IntegrationsSocialProviderCallbackRouteImport } from './routes/integrations.social.$provider.callback'
 
-const TermsRoute = TermsRouteImport.update({
-  id: '/terms',
-  path: '/terms',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SignupRoute = SignupRouteImport.update({
-  id: '/signup',
-  path: '/signup',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SelfHostedSetupRoute = SelfHostedSetupRouteImport.update({
-  id: '/self-hosted-setup',
-  path: '/self-hosted-setup',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ResetPasswordRoute = ResetPasswordRouteImport.update({
-  id: '/reset-password',
-  path: '/reset-password',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PrivacyRoute = PrivacyRouteImport.update({
-  id: '/privacy',
-  path: '/privacy',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LoginRoute = LoginRouteImport.update({
-  id: '/login',
-  path: '/login',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ExploreRoute = ExploreRouteImport.update({
-  id: '/explore',
-  path: '/explore',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DataDeletionRoute = DataDeletionRouteImport.update({
-  id: '/data-deletion',
-  path: '/data-deletion',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AuthenticatedRoute = AuthenticatedRouteImport.update({
-  id: '/_authenticated',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const UsernameRoute = UsernameRouteImport.update({
@@ -132,96 +93,108 @@ const UsernameRoute = UsernameRouteImport.update({
   path: '/$username',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const AuthenticatedRoute = AuthenticatedRouteImport.update({
+  id: '/_authenticated',
   getParentRoute: () => rootRouteImport,
 } as any)
-const LibraryIndexRoute = LibraryIndexRouteImport.update({
-  id: '/library/',
-  path: '/library/',
+const DataDeletionRoute = DataDeletionRouteImport.update({
+  id: '/data-deletion',
+  path: '/data-deletion',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ReviewTokenRoute = ReviewTokenRouteImport.update({
-  id: '/review/$token',
-  path: '/review/$token',
+const ExploreRoute = ExploreRouteImport.update({
+  id: '/explore',
+  path: '/explore',
   getParentRoute: () => rootRouteImport,
 } as any)
-const PProductSlugRoute = PProductSlugRouteImport.update({
-  id: '/p/$productSlug',
-  path: '/p/$productSlug',
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
-const OauthConsentRoute = OauthConsentRouteImport.update({
-  id: '/oauth/consent',
-  path: '/oauth/consent',
+const PrivacyRoute = PrivacyRouteImport.update({
+  id: '/privacy',
+  path: '/privacy',
   getParentRoute: () => rootRouteImport,
 } as any)
-const LibraryVerifyRoute = LibraryVerifyRouteImport.update({
-  id: '/library/verify',
-  path: '/library/verify',
+const ResetPasswordRoute = ResetPasswordRouteImport.update({
+  id: '/reset-password',
+  path: '/reset-password',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AccessTokenRoute = AccessTokenRouteImport.update({
-  id: '/access/$token',
-  path: '/access/$token',
+const SelfHostedSetupRoute = SelfHostedSetupRouteImport.update({
+  id: '/self-hosted-setup',
+  path: '/self-hosted-setup',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthenticatedStoreRoute = AuthenticatedStoreRouteImport.update({
-  id: '/store',
-  path: '/store',
+const SignupRoute = SignupRouteImport.update({
+  id: '/signup',
+  path: '/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TermsRoute = TermsRouteImport.update({
+  id: '/terms',
+  path: '/terms',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const UsernamePageSlugRoute = UsernamePageSlugRouteImport.update({
+  id: '/$username_/$pageSlug',
+  path: '/$username/$pageSlug',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const UsernameCalendarRoute = UsernameCalendarRouteImport.update({
+  id: '/$username_/calendar',
+  path: '/$username/calendar',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const UsernameNewsletterRoute = UsernameNewsletterRouteImport.update({
+  id: '/$username_/newsletter',
+  path: '/$username/newsletter',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const UsernameStoreRoute = UsernameStoreRouteImport.update({
+  id: '/$username_/store',
+  path: '/$username/store',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthenticatedAdminRoute = AuthenticatedAdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
-const AuthenticatedSocialInsightsRoute =
-  AuthenticatedSocialInsightsRouteImport.update({
-    id: '/social-insights',
-    path: '/social-insights',
-    getParentRoute: () => AuthenticatedRoute,
-  } as any)
-const AuthenticatedSettingsRoute = AuthenticatedSettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
+const AuthenticatedAnalyticsRoute = AuthenticatedAnalyticsRouteImport.update({
+  id: '/analytics',
+  path: '/analytics',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
-const AuthenticatedSchedulerRoute = AuthenticatedSchedulerRouteImport.update({
-  id: '/scheduler',
-  path: '/scheduler',
+const AuthenticatedBookingsRoute = AuthenticatedBookingsRouteImport.update({
+  id: '/bookings',
+  path: '/bookings',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
-const AuthenticatedProductsRoute = AuthenticatedProductsRouteImport.update({
-  id: '/products',
-  path: '/products',
+const AuthenticatedCalendarRoute = AuthenticatedCalendarRouteImport.update({
+  id: '/calendar',
+  path: '/calendar',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
-const AuthenticatedPriorityDmRoute = AuthenticatedPriorityDmRouteImport.update({
-  id: '/priority-dm',
-  path: '/priority-dm',
+const AuthenticatedCommunityRoute = AuthenticatedCommunityRouteImport.update({
+  id: '/community',
+  path: '/community',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
-const AuthenticatedPostSchedulerRoute =
-  AuthenticatedPostSchedulerRouteImport.update({
-    id: '/post-scheduler',
-    path: '/post-scheduler',
-    getParentRoute: () => AuthenticatedRoute,
-  } as any)
-const AuthenticatedOnboardingRoute = AuthenticatedOnboardingRouteImport.update({
-  id: '/onboarding',
-  path: '/onboarding',
+const AuthenticatedContentRoute = AuthenticatedContentRouteImport.update({
+  id: '/content',
+  path: '/content',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
-const AuthenticatedMcpRoute = AuthenticatedMcpRouteImport.update({
-  id: '/mcp',
-  path: '/mcp',
+const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
-const AuthenticatedLinkRoute = AuthenticatedLinkRouteImport.update({
-  id: '/link',
-  path: '/link',
-  getParentRoute: () => AuthenticatedRoute,
-} as any)
-const AuthenticatedHomeRoute = AuthenticatedHomeRouteImport.update({
-  id: '/home',
-  path: '/home',
+const AuthenticatedEarnRoute = AuthenticatedEarnRouteImport.update({
+  id: '/earn',
+  path: '/earn',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
 const AuthenticatedEmailMarketingRoute =
@@ -230,216 +203,103 @@ const AuthenticatedEmailMarketingRoute =
     path: '/email-marketing',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
-const AuthenticatedEarnRoute = AuthenticatedEarnRouteImport.update({
-  id: '/earn',
-  path: '/earn',
+const AuthenticatedHomeRoute = AuthenticatedHomeRouteImport.update({
+  id: '/home',
+  path: '/home',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
-const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
-  id: '/dashboard',
-  path: '/dashboard',
+const AuthenticatedLinkRoute = AuthenticatedLinkRouteImport.update({
+  id: '/link',
+  path: '/link',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
-const AuthenticatedContentRoute = AuthenticatedContentRouteImport.update({
-  id: '/content',
-  path: '/content',
+const AuthenticatedMcpRoute = AuthenticatedMcpRouteImport.update({
+  id: '/mcp',
+  path: '/mcp',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
-const AuthenticatedCommunityRoute = AuthenticatedCommunityRouteImport.update({
-  id: '/community',
-  path: '/community',
+const AuthenticatedOnboardingRoute = AuthenticatedOnboardingRouteImport.update({
+  id: '/onboarding',
+  path: '/onboarding',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
-const AuthenticatedCalendarRoute = AuthenticatedCalendarRouteImport.update({
-  id: '/calendar',
-  path: '/calendar',
-  getParentRoute: () => AuthenticatedRoute,
-} as any)
-const AuthenticatedBookingsRoute = AuthenticatedBookingsRouteImport.update({
-  id: '/bookings',
-  path: '/bookings',
-  getParentRoute: () => AuthenticatedRoute,
-} as any)
-const AuthenticatedAnalyticsRoute = AuthenticatedAnalyticsRouteImport.update({
-  id: '/analytics',
-  path: '/analytics',
-  getParentRoute: () => AuthenticatedRoute,
-} as any)
-const AuthenticatedAdminRoute = AuthenticatedAdminRouteImport.update({
-  id: '/admin',
-  path: '/admin',
-  getParentRoute: () => AuthenticatedRoute,
-} as any)
-const UsernameStoreRoute = UsernameStoreRouteImport.update({
-  id: '/$username_/store',
-  path: '/$username/store',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const UsernameNewsletterRoute = UsernameNewsletterRouteImport.update({
-  id: '/$username_/newsletter',
-  path: '/$username/newsletter',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const UsernameCalendarRoute = UsernameCalendarRouteImport.update({
-  id: '/$username_/calendar',
-  path: '/$username/calendar',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const UsernamePageSlugRoute = UsernamePageSlugRouteImport.update({
-  id: '/$username_/$pageSlug',
-  path: '/$username/$pageSlug',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AuthenticatedAutomationsIndexRoute =
-  AuthenticatedAutomationsIndexRouteImport.update({
-    id: '/automations/',
-    path: '/automations/',
+const AuthenticatedPostSchedulerRoute =
+  AuthenticatedPostSchedulerRouteImport.update({
+    id: '/post-scheduler',
+    path: '/post-scheduler',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
-const AuthenticatedAutoDmsIndexRoute =
-  AuthenticatedAutoDmsIndexRouteImport.update({
-    id: '/auto-dms/',
-    path: '/auto-dms/',
+const AuthenticatedPriorityDmRoute = AuthenticatedPriorityDmRouteImport.update({
+  id: '/priority-dm',
+  path: '/priority-dm',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedProductsRoute = AuthenticatedProductsRouteImport.update({
+  id: '/products',
+  path: '/products',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedSchedulerRoute = AuthenticatedSchedulerRouteImport.update({
+  id: '/scheduler',
+  path: '/scheduler',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedSettingsRoute = AuthenticatedSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedSocialInsightsRoute =
+  AuthenticatedSocialInsightsRouteImport.update({
+    id: '/social-insights',
+    path: '/social-insights',
     getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedStoreRoute = AuthenticatedStoreRouteImport.update({
+  id: '/store',
+  path: '/store',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AccessTokenRoute = AccessTokenRouteImport.update({
+  id: '/access/$token',
+  path: '/access/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LibraryIndexRoute = LibraryIndexRouteImport.update({
+  id: '/library/',
+  path: '/library/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LibraryVerifyRoute = LibraryVerifyRouteImport.update({
+  id: '/library/verify',
+  path: '/library/verify',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OauthConsentRoute = OauthConsentRouteImport.update({
+  id: '/oauth/consent',
+  path: '/oauth/consent',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PProductSlugRoute = PProductSlugRouteImport.update({
+  id: '/p/$productSlug',
+  path: '/p/$productSlug',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReviewTokenRoute = ReviewTokenRouteImport.update({
+  id: '/review/$token',
+  path: '/review/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const UsernameNewsletterIssueSlugRoute =
+  UsernameNewsletterIssueSlugRouteImport.update({
+    id: '/$username_/newsletter_/$issueSlug',
+    path: '/$username/newsletter/$issueSlug',
+    getParentRoute: () => rootRouteImport,
   } as any)
 const UsernameNewslettersIndexRoute =
   UsernameNewslettersIndexRouteImport.update({
     id: '/$username_/newsletters/',
     path: '/$username/newsletters/',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const PaymentsRazorpaySessionIdRoute =
-  PaymentsRazorpaySessionIdRouteImport.update({
-    id: '/payments/razorpay/$sessionId',
-    path: '/payments/razorpay/$sessionId',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const PaymentsPaypalReturnRoute = PaymentsPaypalReturnRouteImport.update({
-  id: '/payments/paypal/return',
-  path: '/payments/paypal/return',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PProductSlugSuccessRoute = PProductSlugSuccessRouteImport.update({
-  id: '/p/$productSlug_/success',
-  path: '/p/$productSlug/success',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LibraryReceiptsOrderIdRoute = LibraryReceiptsOrderIdRouteImport.update({
-  id: '/library/receipts/$orderId',
-  path: '/library/receipts/$orderId',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LibraryPriorityDmRequestIdRoute =
-  LibraryPriorityDmRequestIdRouteImport.update({
-    id: '/library/priority-dm/$requestId',
-    path: '/library/priority-dm/$requestId',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const IntegrationsStripeCallbackRoute =
-  IntegrationsStripeCallbackRouteImport.update({
-    id: '/integrations/stripe/callback',
-    path: '/integrations/stripe/callback',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const IntegrationsSlackCallbackRoute =
-  IntegrationsSlackCallbackRouteImport.update({
-    id: '/integrations/slack/callback',
-    path: '/integrations/slack/callback',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const IntegrationsPolarCallbackRoute =
-  IntegrationsPolarCallbackRouteImport.update({
-    id: '/integrations/polar/callback',
-    path: '/integrations/polar/callback',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const IntegrationsPaypalCallbackRoute =
-  IntegrationsPaypalCallbackRouteImport.update({
-    id: '/integrations/paypal/callback',
-    path: '/integrations/paypal/callback',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const IntegrationsNotionCallbackRoute =
-  IntegrationsNotionCallbackRouteImport.update({
-    id: '/integrations/notion/callback',
-    path: '/integrations/notion/callback',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const IntegrationsInstagramDataDeletionRoute =
-  IntegrationsInstagramDataDeletionRouteImport.update({
-    id: '/integrations/instagram/data-deletion',
-    path: '/integrations/instagram/data-deletion',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const IntegrationsInstagramCallbackRoute =
-  IntegrationsInstagramCallbackRouteImport.update({
-    id: '/integrations/instagram/callback',
-    path: '/integrations/instagram/callback',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const IntegrationsGranolaCallbackRoute =
-  IntegrationsGranolaCallbackRouteImport.update({
-    id: '/integrations/granola/callback',
-    path: '/integrations/granola/callback',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const IntegrationsGithubCallbackRoute =
-  IntegrationsGithubCallbackRouteImport.update({
-    id: '/integrations/github/callback',
-    path: '/integrations/github/callback',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const IntegrationsFathomCallbackRoute =
-  IntegrationsFathomCallbackRouteImport.update({
-    id: '/integrations/fathom/callback',
-    path: '/integrations/fathom/callback',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const AuthenticatedMcpSetupRoute = AuthenticatedMcpSetupRouteImport.update({
-  id: '/setup',
-  path: '/setup',
-  getParentRoute: () => AuthenticatedMcpRoute,
-} as any)
-const AuthenticatedAutomationsTwitterRoute =
-  AuthenticatedAutomationsTwitterRouteImport.update({
-    id: '/automations/twitter',
-    path: '/automations/twitter',
-    getParentRoute: () => AuthenticatedRoute,
-  } as any)
-const AuthenticatedAutomationsInstagramRoute =
-  AuthenticatedAutomationsInstagramRouteImport.update({
-    id: '/automations/instagram',
-    path: '/automations/instagram',
-    getParentRoute: () => AuthenticatedRoute,
-  } as any)
-const AuthenticatedAutomationsFacebookRoute =
-  AuthenticatedAutomationsFacebookRouteImport.update({
-    id: '/automations/facebook',
-    path: '/automations/facebook',
-    getParentRoute: () => AuthenticatedRoute,
-  } as any)
-const AuthenticatedAutoDmsTwitterRoute =
-  AuthenticatedAutoDmsTwitterRouteImport.update({
-    id: '/auto-dms/twitter',
-    path: '/auto-dms/twitter',
-    getParentRoute: () => AuthenticatedRoute,
-  } as any)
-const AuthenticatedAutoDmsInstagramRoute =
-  AuthenticatedAutoDmsInstagramRouteImport.update({
-    id: '/auto-dms/instagram',
-    path: '/auto-dms/instagram',
-    getParentRoute: () => AuthenticatedRoute,
-  } as any)
-const AuthenticatedAutoDmsFacebookRoute =
-  AuthenticatedAutoDmsFacebookRouteImport.update({
-    id: '/auto-dms/facebook',
-    path: '/auto-dms/facebook',
-    getParentRoute: () => AuthenticatedRoute,
-  } as any)
-const UsernameProductsProductSlugRoute =
-  UsernameProductsProductSlugRouteImport.update({
-    id: '/$username_/products/$productSlug',
-    path: '/$username/products/$productSlug',
     getParentRoute: () => rootRouteImport,
   } as any)
 const UsernameNewslettersPublicationSlugRoute =
@@ -448,22 +308,156 @@ const UsernameNewslettersPublicationSlugRoute =
     path: '/$username/newsletters/$publicationSlug',
     getParentRoute: () => rootRouteImport,
   } as any)
-const UsernameNewsletterIssueSlugRoute =
-  UsernameNewsletterIssueSlugRouteImport.update({
-    id: '/$username_/newsletter_/$issueSlug',
-    path: '/$username/newsletter/$issueSlug',
+const UsernameProductsProductSlugRoute =
+  UsernameProductsProductSlugRouteImport.update({
+    id: '/$username_/products/$productSlug',
+    path: '/$username/products/$productSlug',
     getParentRoute: () => rootRouteImport,
   } as any)
-const IntegrationsSocialProviderCallbackRoute =
-  IntegrationsSocialProviderCallbackRouteImport.update({
-    id: '/integrations/social/$provider/callback',
-    path: '/integrations/social/$provider/callback',
+const AuthenticatedAutoDmsIndexRoute =
+  AuthenticatedAutoDmsIndexRouteImport.update({
+    id: '/auto-dms/',
+    path: '/auto-dms/',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedAutoDmsFacebookRoute =
+  AuthenticatedAutoDmsFacebookRouteImport.update({
+    id: '/auto-dms/facebook',
+    path: '/auto-dms/facebook',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedAutoDmsInstagramRoute =
+  AuthenticatedAutoDmsInstagramRouteImport.update({
+    id: '/auto-dms/instagram',
+    path: '/auto-dms/instagram',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedAutoDmsTwitterRoute =
+  AuthenticatedAutoDmsTwitterRouteImport.update({
+    id: '/auto-dms/twitter',
+    path: '/auto-dms/twitter',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedAutomationsIndexRoute =
+  AuthenticatedAutomationsIndexRouteImport.update({
+    id: '/automations/',
+    path: '/automations/',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedAutomationsFacebookRoute =
+  AuthenticatedAutomationsFacebookRouteImport.update({
+    id: '/automations/facebook',
+    path: '/automations/facebook',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedAutomationsInstagramRoute =
+  AuthenticatedAutomationsInstagramRouteImport.update({
+    id: '/automations/instagram',
+    path: '/automations/instagram',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedAutomationsTwitterRoute =
+  AuthenticatedAutomationsTwitterRouteImport.update({
+    id: '/automations/twitter',
+    path: '/automations/twitter',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedMcpSetupRoute = AuthenticatedMcpSetupRouteImport.update({
+  id: '/setup',
+  path: '/setup',
+  getParentRoute: () => AuthenticatedMcpRoute,
+} as any)
+const IntegrationsFathomCallbackRoute =
+  IntegrationsFathomCallbackRouteImport.update({
+    id: '/integrations/fathom/callback',
+    path: '/integrations/fathom/callback',
     getParentRoute: () => rootRouteImport,
   } as any)
-const IntegrationsCalendarGoogleCallbackRoute =
-  IntegrationsCalendarGoogleCallbackRouteImport.update({
-    id: '/integrations/calendar/google/callback',
-    path: '/integrations/calendar/google/callback',
+const IntegrationsGithubCallbackRoute =
+  IntegrationsGithubCallbackRouteImport.update({
+    id: '/integrations/github/callback',
+    path: '/integrations/github/callback',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const IntegrationsGranolaCallbackRoute =
+  IntegrationsGranolaCallbackRouteImport.update({
+    id: '/integrations/granola/callback',
+    path: '/integrations/granola/callback',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const IntegrationsInstagramCallbackRoute =
+  IntegrationsInstagramCallbackRouteImport.update({
+    id: '/integrations/instagram/callback',
+    path: '/integrations/instagram/callback',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const IntegrationsInstagramDataDeletionRoute =
+  IntegrationsInstagramDataDeletionRouteImport.update({
+    id: '/integrations/instagram/data-deletion',
+    path: '/integrations/instagram/data-deletion',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const IntegrationsNotionCallbackRoute =
+  IntegrationsNotionCallbackRouteImport.update({
+    id: '/integrations/notion/callback',
+    path: '/integrations/notion/callback',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const IntegrationsPaypalCallbackRoute =
+  IntegrationsPaypalCallbackRouteImport.update({
+    id: '/integrations/paypal/callback',
+    path: '/integrations/paypal/callback',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const IntegrationsPolarCallbackRoute =
+  IntegrationsPolarCallbackRouteImport.update({
+    id: '/integrations/polar/callback',
+    path: '/integrations/polar/callback',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const IntegrationsSlackCallbackRoute =
+  IntegrationsSlackCallbackRouteImport.update({
+    id: '/integrations/slack/callback',
+    path: '/integrations/slack/callback',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const IntegrationsStripeCallbackRoute =
+  IntegrationsStripeCallbackRouteImport.update({
+    id: '/integrations/stripe/callback',
+    path: '/integrations/stripe/callback',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const LibraryPriorityDmRequestIdRoute =
+  LibraryPriorityDmRequestIdRouteImport.update({
+    id: '/library/priority-dm/$requestId',
+    path: '/library/priority-dm/$requestId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const LibraryReceiptsOrderIdRoute = LibraryReceiptsOrderIdRouteImport.update({
+  id: '/library/receipts/$orderId',
+  path: '/library/receipts/$orderId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PProductSlugSuccessRoute = PProductSlugSuccessRouteImport.update({
+  id: '/p/$productSlug_/success',
+  path: '/p/$productSlug/success',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PaymentsPaypalReturnRoute = PaymentsPaypalReturnRouteImport.update({
+  id: '/payments/paypal/return',
+  path: '/payments/paypal/return',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PaymentsRazorpaySessionIdRoute =
+  PaymentsRazorpaySessionIdRouteImport.update({
+    id: '/payments/razorpay/$sessionId',
+    path: '/payments/razorpay/$sessionId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const UsernameNewslettersPublicationSlugPostSlugRoute =
+  UsernameNewslettersPublicationSlugPostSlugRouteImport.update({
+    id: '/$username_/newsletters/$publicationSlug_/$postSlug',
+    path: '/$username/newsletters/$publicationSlug/$postSlug',
     getParentRoute: () => rootRouteImport,
   } as any)
 const UsernameProductsProductSlugSuccessRoute =
@@ -472,10 +466,16 @@ const UsernameProductsProductSlugSuccessRoute =
     path: '/$username/products/$productSlug/success',
     getParentRoute: () => rootRouteImport,
   } as any)
-const UsernameNewslettersPublicationSlugPostSlugRoute =
-  UsernameNewslettersPublicationSlugPostSlugRouteImport.update({
-    id: '/$username_/newsletters/$publicationSlug_/$postSlug',
-    path: '/$username/newsletters/$publicationSlug/$postSlug',
+const IntegrationsCalendarGoogleCallbackRoute =
+  IntegrationsCalendarGoogleCallbackRouteImport.update({
+    id: '/integrations/calendar/google/callback',
+    path: '/integrations/calendar/google/callback',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const IntegrationsSocialProviderCallbackRoute =
+  IntegrationsSocialProviderCallbackRouteImport.update({
+    id: '/integrations/social/$provider/callback',
+    path: '/integrations/social/$provider/callback',
     getParentRoute: () => rootRouteImport,
   } as any)
 
@@ -978,67 +978,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/terms': {
-      id: '/terms'
-      path: '/terms'
-      fullPath: '/terms'
-      preLoaderRoute: typeof TermsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/signup': {
-      id: '/signup'
-      path: '/signup'
-      fullPath: '/signup'
-      preLoaderRoute: typeof SignupRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/self-hosted-setup': {
-      id: '/self-hosted-setup'
-      path: '/self-hosted-setup'
-      fullPath: '/self-hosted-setup'
-      preLoaderRoute: typeof SelfHostedSetupRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/reset-password': {
-      id: '/reset-password'
-      path: '/reset-password'
-      fullPath: '/reset-password'
-      preLoaderRoute: typeof ResetPasswordRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/privacy': {
-      id: '/privacy'
-      path: '/privacy'
-      fullPath: '/privacy'
-      preLoaderRoute: typeof PrivacyRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/login': {
-      id: '/login'
-      path: '/login'
-      fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/explore': {
-      id: '/explore'
-      path: '/explore'
-      fullPath: '/explore'
-      preLoaderRoute: typeof ExploreRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/data-deletion': {
-      id: '/data-deletion'
-      path: '/data-deletion'
-      fullPath: '/data-deletion'
-      preLoaderRoute: typeof DataDeletionRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/_authenticated': {
-      id: '/_authenticated'
-      path: ''
+    '/': {
+      id: '/'
+      path: '/'
       fullPath: '/'
-      preLoaderRoute: typeof AuthenticatedRouteImport
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/$username': {
@@ -1048,214 +992,67 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UsernameRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
+    '/_authenticated': {
+      id: '/_authenticated'
+      path: ''
       fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+      preLoaderRoute: typeof AuthenticatedRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/library/': {
-      id: '/library/'
-      path: '/library'
-      fullPath: '/library/'
-      preLoaderRoute: typeof LibraryIndexRouteImport
+    '/data-deletion': {
+      id: '/data-deletion'
+      path: '/data-deletion'
+      fullPath: '/data-deletion'
+      preLoaderRoute: typeof DataDeletionRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/review/$token': {
-      id: '/review/$token'
-      path: '/review/$token'
-      fullPath: '/review/$token'
-      preLoaderRoute: typeof ReviewTokenRouteImport
+    '/explore': {
+      id: '/explore'
+      path: '/explore'
+      fullPath: '/explore'
+      preLoaderRoute: typeof ExploreRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/p/$productSlug': {
-      id: '/p/$productSlug'
-      path: '/p/$productSlug'
-      fullPath: '/p/$productSlug'
-      preLoaderRoute: typeof PProductSlugRouteImport
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/oauth/consent': {
-      id: '/oauth/consent'
-      path: '/oauth/consent'
-      fullPath: '/oauth/consent'
-      preLoaderRoute: typeof OauthConsentRouteImport
+    '/privacy': {
+      id: '/privacy'
+      path: '/privacy'
+      fullPath: '/privacy'
+      preLoaderRoute: typeof PrivacyRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/library/verify': {
-      id: '/library/verify'
-      path: '/library/verify'
-      fullPath: '/library/verify'
-      preLoaderRoute: typeof LibraryVerifyRouteImport
+    '/reset-password': {
+      id: '/reset-password'
+      path: '/reset-password'
+      fullPath: '/reset-password'
+      preLoaderRoute: typeof ResetPasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/access/$token': {
-      id: '/access/$token'
-      path: '/access/$token'
-      fullPath: '/access/$token'
-      preLoaderRoute: typeof AccessTokenRouteImport
+    '/self-hosted-setup': {
+      id: '/self-hosted-setup'
+      path: '/self-hosted-setup'
+      fullPath: '/self-hosted-setup'
+      preLoaderRoute: typeof SelfHostedSetupRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_authenticated/store': {
-      id: '/_authenticated/store'
-      path: '/store'
-      fullPath: '/store'
-      preLoaderRoute: typeof AuthenticatedStoreRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/social-insights': {
-      id: '/_authenticated/social-insights'
-      path: '/social-insights'
-      fullPath: '/social-insights'
-      preLoaderRoute: typeof AuthenticatedSocialInsightsRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/settings': {
-      id: '/_authenticated/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof AuthenticatedSettingsRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/scheduler': {
-      id: '/_authenticated/scheduler'
-      path: '/scheduler'
-      fullPath: '/scheduler'
-      preLoaderRoute: typeof AuthenticatedSchedulerRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/products': {
-      id: '/_authenticated/products'
-      path: '/products'
-      fullPath: '/products'
-      preLoaderRoute: typeof AuthenticatedProductsRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/priority-dm': {
-      id: '/_authenticated/priority-dm'
-      path: '/priority-dm'
-      fullPath: '/priority-dm'
-      preLoaderRoute: typeof AuthenticatedPriorityDmRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/post-scheduler': {
-      id: '/_authenticated/post-scheduler'
-      path: '/post-scheduler'
-      fullPath: '/post-scheduler'
-      preLoaderRoute: typeof AuthenticatedPostSchedulerRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/onboarding': {
-      id: '/_authenticated/onboarding'
-      path: '/onboarding'
-      fullPath: '/onboarding'
-      preLoaderRoute: typeof AuthenticatedOnboardingRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/mcp': {
-      id: '/_authenticated/mcp'
-      path: '/mcp'
-      fullPath: '/mcp'
-      preLoaderRoute: typeof AuthenticatedMcpRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/link': {
-      id: '/_authenticated/link'
-      path: '/link'
-      fullPath: '/link'
-      preLoaderRoute: typeof AuthenticatedLinkRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/home': {
-      id: '/_authenticated/home'
-      path: '/home'
-      fullPath: '/home'
-      preLoaderRoute: typeof AuthenticatedHomeRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/email-marketing': {
-      id: '/_authenticated/email-marketing'
-      path: '/email-marketing'
-      fullPath: '/email-marketing'
-      preLoaderRoute: typeof AuthenticatedEmailMarketingRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/earn': {
-      id: '/_authenticated/earn'
-      path: '/earn'
-      fullPath: '/earn'
-      preLoaderRoute: typeof AuthenticatedEarnRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/dashboard': {
-      id: '/_authenticated/dashboard'
-      path: '/dashboard'
-      fullPath: '/dashboard'
-      preLoaderRoute: typeof AuthenticatedDashboardRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/content': {
-      id: '/_authenticated/content'
-      path: '/content'
-      fullPath: '/content'
-      preLoaderRoute: typeof AuthenticatedContentRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/community': {
-      id: '/_authenticated/community'
-      path: '/community'
-      fullPath: '/community'
-      preLoaderRoute: typeof AuthenticatedCommunityRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/calendar': {
-      id: '/_authenticated/calendar'
-      path: '/calendar'
-      fullPath: '/calendar'
-      preLoaderRoute: typeof AuthenticatedCalendarRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/bookings': {
-      id: '/_authenticated/bookings'
-      path: '/bookings'
-      fullPath: '/bookings'
-      preLoaderRoute: typeof AuthenticatedBookingsRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/analytics': {
-      id: '/_authenticated/analytics'
-      path: '/analytics'
-      fullPath: '/analytics'
-      preLoaderRoute: typeof AuthenticatedAnalyticsRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/_authenticated/admin': {
-      id: '/_authenticated/admin'
-      path: '/admin'
-      fullPath: '/admin'
-      preLoaderRoute: typeof AuthenticatedAdminRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
-    '/$username_/store': {
-      id: '/$username_/store'
-      path: '/$username/store'
-      fullPath: '/$username/store'
-      preLoaderRoute: typeof UsernameStoreRouteImport
+    '/signup': {
+      id: '/signup'
+      path: '/signup'
+      fullPath: '/signup'
+      preLoaderRoute: typeof SignupRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/$username_/newsletter': {
-      id: '/$username_/newsletter'
-      path: '/$username/newsletter'
-      fullPath: '/$username/newsletter'
-      preLoaderRoute: typeof UsernameNewsletterRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/$username_/calendar': {
-      id: '/$username_/calendar'
-      path: '/$username/calendar'
-      fullPath: '/$username/calendar'
-      preLoaderRoute: typeof UsernameCalendarRouteImport
+    '/terms': {
+      id: '/terms'
+      path: '/terms'
+      fullPath: '/terms'
+      preLoaderRoute: typeof TermsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/$username_/$pageSlug': {
@@ -1265,193 +1062,207 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UsernamePageSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_authenticated/automations/': {
-      id: '/_authenticated/automations/'
-      path: '/automations'
-      fullPath: '/automations/'
-      preLoaderRoute: typeof AuthenticatedAutomationsIndexRouteImport
+    '/$username_/calendar': {
+      id: '/$username_/calendar'
+      path: '/$username/calendar'
+      fullPath: '/$username/calendar'
+      preLoaderRoute: typeof UsernameCalendarRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/$username_/newsletter': {
+      id: '/$username_/newsletter'
+      path: '/$username/newsletter'
+      fullPath: '/$username/newsletter'
+      preLoaderRoute: typeof UsernameNewsletterRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/$username_/store': {
+      id: '/$username_/store'
+      path: '/$username/store'
+      fullPath: '/$username/store'
+      preLoaderRoute: typeof UsernameStoreRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_authenticated/admin': {
+      id: '/_authenticated/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AuthenticatedAdminRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/_authenticated/auto-dms/': {
-      id: '/_authenticated/auto-dms/'
-      path: '/auto-dms'
-      fullPath: '/auto-dms/'
-      preLoaderRoute: typeof AuthenticatedAutoDmsIndexRouteImport
+    '/_authenticated/analytics': {
+      id: '/_authenticated/analytics'
+      path: '/analytics'
+      fullPath: '/analytics'
+      preLoaderRoute: typeof AuthenticatedAnalyticsRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/$username_/newsletters/': {
-      id: '/$username_/newsletters/'
-      path: '/$username/newsletters'
-      fullPath: '/$username/newsletters/'
-      preLoaderRoute: typeof UsernameNewslettersIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/payments/razorpay/$sessionId': {
-      id: '/payments/razorpay/$sessionId'
-      path: '/payments/razorpay/$sessionId'
-      fullPath: '/payments/razorpay/$sessionId'
-      preLoaderRoute: typeof PaymentsRazorpaySessionIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/payments/paypal/return': {
-      id: '/payments/paypal/return'
-      path: '/payments/paypal/return'
-      fullPath: '/payments/paypal/return'
-      preLoaderRoute: typeof PaymentsPaypalReturnRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/p/$productSlug_/success': {
-      id: '/p/$productSlug_/success'
-      path: '/p/$productSlug/success'
-      fullPath: '/p/$productSlug/success'
-      preLoaderRoute: typeof PProductSlugSuccessRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/library/receipts/$orderId': {
-      id: '/library/receipts/$orderId'
-      path: '/library/receipts/$orderId'
-      fullPath: '/library/receipts/$orderId'
-      preLoaderRoute: typeof LibraryReceiptsOrderIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/library/priority-dm/$requestId': {
-      id: '/library/priority-dm/$requestId'
-      path: '/library/priority-dm/$requestId'
-      fullPath: '/library/priority-dm/$requestId'
-      preLoaderRoute: typeof LibraryPriorityDmRequestIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/integrations/stripe/callback': {
-      id: '/integrations/stripe/callback'
-      path: '/integrations/stripe/callback'
-      fullPath: '/integrations/stripe/callback'
-      preLoaderRoute: typeof IntegrationsStripeCallbackRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/integrations/slack/callback': {
-      id: '/integrations/slack/callback'
-      path: '/integrations/slack/callback'
-      fullPath: '/integrations/slack/callback'
-      preLoaderRoute: typeof IntegrationsSlackCallbackRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/integrations/polar/callback': {
-      id: '/integrations/polar/callback'
-      path: '/integrations/polar/callback'
-      fullPath: '/integrations/polar/callback'
-      preLoaderRoute: typeof IntegrationsPolarCallbackRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/integrations/paypal/callback': {
-      id: '/integrations/paypal/callback'
-      path: '/integrations/paypal/callback'
-      fullPath: '/integrations/paypal/callback'
-      preLoaderRoute: typeof IntegrationsPaypalCallbackRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/integrations/notion/callback': {
-      id: '/integrations/notion/callback'
-      path: '/integrations/notion/callback'
-      fullPath: '/integrations/notion/callback'
-      preLoaderRoute: typeof IntegrationsNotionCallbackRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/integrations/instagram/data-deletion': {
-      id: '/integrations/instagram/data-deletion'
-      path: '/integrations/instagram/data-deletion'
-      fullPath: '/integrations/instagram/data-deletion'
-      preLoaderRoute: typeof IntegrationsInstagramDataDeletionRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/integrations/instagram/callback': {
-      id: '/integrations/instagram/callback'
-      path: '/integrations/instagram/callback'
-      fullPath: '/integrations/instagram/callback'
-      preLoaderRoute: typeof IntegrationsInstagramCallbackRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/integrations/granola/callback': {
-      id: '/integrations/granola/callback'
-      path: '/integrations/granola/callback'
-      fullPath: '/integrations/granola/callback'
-      preLoaderRoute: typeof IntegrationsGranolaCallbackRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/integrations/github/callback': {
-      id: '/integrations/github/callback'
-      path: '/integrations/github/callback'
-      fullPath: '/integrations/github/callback'
-      preLoaderRoute: typeof IntegrationsGithubCallbackRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/integrations/fathom/callback': {
-      id: '/integrations/fathom/callback'
-      path: '/integrations/fathom/callback'
-      fullPath: '/integrations/fathom/callback'
-      preLoaderRoute: typeof IntegrationsFathomCallbackRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/_authenticated/mcp/setup': {
-      id: '/_authenticated/mcp/setup'
-      path: '/setup'
-      fullPath: '/mcp/setup'
-      preLoaderRoute: typeof AuthenticatedMcpSetupRouteImport
-      parentRoute: typeof AuthenticatedMcpRoute
-    }
-    '/_authenticated/automations/twitter': {
-      id: '/_authenticated/automations/twitter'
-      path: '/automations/twitter'
-      fullPath: '/automations/twitter'
-      preLoaderRoute: typeof AuthenticatedAutomationsTwitterRouteImport
+    '/_authenticated/bookings': {
+      id: '/_authenticated/bookings'
+      path: '/bookings'
+      fullPath: '/bookings'
+      preLoaderRoute: typeof AuthenticatedBookingsRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/_authenticated/automations/instagram': {
-      id: '/_authenticated/automations/instagram'
-      path: '/automations/instagram'
-      fullPath: '/automations/instagram'
-      preLoaderRoute: typeof AuthenticatedAutomationsInstagramRouteImport
+    '/_authenticated/calendar': {
+      id: '/_authenticated/calendar'
+      path: '/calendar'
+      fullPath: '/calendar'
+      preLoaderRoute: typeof AuthenticatedCalendarRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/_authenticated/automations/facebook': {
-      id: '/_authenticated/automations/facebook'
-      path: '/automations/facebook'
-      fullPath: '/automations/facebook'
-      preLoaderRoute: typeof AuthenticatedAutomationsFacebookRouteImport
+    '/_authenticated/community': {
+      id: '/_authenticated/community'
+      path: '/community'
+      fullPath: '/community'
+      preLoaderRoute: typeof AuthenticatedCommunityRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/_authenticated/auto-dms/twitter': {
-      id: '/_authenticated/auto-dms/twitter'
-      path: '/auto-dms/twitter'
-      fullPath: '/auto-dms/twitter'
-      preLoaderRoute: typeof AuthenticatedAutoDmsTwitterRouteImport
+    '/_authenticated/content': {
+      id: '/_authenticated/content'
+      path: '/content'
+      fullPath: '/content'
+      preLoaderRoute: typeof AuthenticatedContentRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/_authenticated/auto-dms/instagram': {
-      id: '/_authenticated/auto-dms/instagram'
-      path: '/auto-dms/instagram'
-      fullPath: '/auto-dms/instagram'
-      preLoaderRoute: typeof AuthenticatedAutoDmsInstagramRouteImport
+    '/_authenticated/dashboard': {
+      id: '/_authenticated/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof AuthenticatedDashboardRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/_authenticated/auto-dms/facebook': {
-      id: '/_authenticated/auto-dms/facebook'
-      path: '/auto-dms/facebook'
-      fullPath: '/auto-dms/facebook'
-      preLoaderRoute: typeof AuthenticatedAutoDmsFacebookRouteImport
+    '/_authenticated/earn': {
+      id: '/_authenticated/earn'
+      path: '/earn'
+      fullPath: '/earn'
+      preLoaderRoute: typeof AuthenticatedEarnRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/$username_/products/$productSlug': {
-      id: '/$username_/products/$productSlug'
-      path: '/$username/products/$productSlug'
-      fullPath: '/$username/products/$productSlug'
-      preLoaderRoute: typeof UsernameProductsProductSlugRouteImport
+    '/_authenticated/email-marketing': {
+      id: '/_authenticated/email-marketing'
+      path: '/email-marketing'
+      fullPath: '/email-marketing'
+      preLoaderRoute: typeof AuthenticatedEmailMarketingRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/home': {
+      id: '/_authenticated/home'
+      path: '/home'
+      fullPath: '/home'
+      preLoaderRoute: typeof AuthenticatedHomeRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/link': {
+      id: '/_authenticated/link'
+      path: '/link'
+      fullPath: '/link'
+      preLoaderRoute: typeof AuthenticatedLinkRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/mcp': {
+      id: '/_authenticated/mcp'
+      path: '/mcp'
+      fullPath: '/mcp'
+      preLoaderRoute: typeof AuthenticatedMcpRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/onboarding': {
+      id: '/_authenticated/onboarding'
+      path: '/onboarding'
+      fullPath: '/onboarding'
+      preLoaderRoute: typeof AuthenticatedOnboardingRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/post-scheduler': {
+      id: '/_authenticated/post-scheduler'
+      path: '/post-scheduler'
+      fullPath: '/post-scheduler'
+      preLoaderRoute: typeof AuthenticatedPostSchedulerRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/priority-dm': {
+      id: '/_authenticated/priority-dm'
+      path: '/priority-dm'
+      fullPath: '/priority-dm'
+      preLoaderRoute: typeof AuthenticatedPriorityDmRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/products': {
+      id: '/_authenticated/products'
+      path: '/products'
+      fullPath: '/products'
+      preLoaderRoute: typeof AuthenticatedProductsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/scheduler': {
+      id: '/_authenticated/scheduler'
+      path: '/scheduler'
+      fullPath: '/scheduler'
+      preLoaderRoute: typeof AuthenticatedSchedulerRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/settings': {
+      id: '/_authenticated/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof AuthenticatedSettingsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/social-insights': {
+      id: '/_authenticated/social-insights'
+      path: '/social-insights'
+      fullPath: '/social-insights'
+      preLoaderRoute: typeof AuthenticatedSocialInsightsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/store': {
+      id: '/_authenticated/store'
+      path: '/store'
+      fullPath: '/store'
+      preLoaderRoute: typeof AuthenticatedStoreRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/access/$token': {
+      id: '/access/$token'
+      path: '/access/$token'
+      fullPath: '/access/$token'
+      preLoaderRoute: typeof AccessTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/$username_/newsletters/$publicationSlug': {
-      id: '/$username_/newsletters/$publicationSlug'
-      path: '/$username/newsletters/$publicationSlug'
-      fullPath: '/$username/newsletters/$publicationSlug'
-      preLoaderRoute: typeof UsernameNewslettersPublicationSlugRouteImport
+    '/library/': {
+      id: '/library/'
+      path: '/library'
+      fullPath: '/library/'
+      preLoaderRoute: typeof LibraryIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/library/verify': {
+      id: '/library/verify'
+      path: '/library/verify'
+      fullPath: '/library/verify'
+      preLoaderRoute: typeof LibraryVerifyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/oauth/consent': {
+      id: '/oauth/consent'
+      path: '/oauth/consent'
+      fullPath: '/oauth/consent'
+      preLoaderRoute: typeof OauthConsentRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/p/$productSlug': {
+      id: '/p/$productSlug'
+      path: '/p/$productSlug'
+      fullPath: '/p/$productSlug'
+      preLoaderRoute: typeof PProductSlugRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/review/$token': {
+      id: '/review/$token'
+      path: '/review/$token'
+      fullPath: '/review/$token'
+      preLoaderRoute: typeof ReviewTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/$username_/newsletter_/$issueSlug': {
@@ -1461,18 +1272,200 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UsernameNewsletterIssueSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/integrations/social/$provider/callback': {
-      id: '/integrations/social/$provider/callback'
-      path: '/integrations/social/$provider/callback'
-      fullPath: '/integrations/social/$provider/callback'
-      preLoaderRoute: typeof IntegrationsSocialProviderCallbackRouteImport
+    '/$username_/newsletters/': {
+      id: '/$username_/newsletters/'
+      path: '/$username/newsletters'
+      fullPath: '/$username/newsletters/'
+      preLoaderRoute: typeof UsernameNewslettersIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/integrations/calendar/google/callback': {
-      id: '/integrations/calendar/google/callback'
-      path: '/integrations/calendar/google/callback'
-      fullPath: '/integrations/calendar/google/callback'
-      preLoaderRoute: typeof IntegrationsCalendarGoogleCallbackRouteImport
+    '/$username_/newsletters/$publicationSlug': {
+      id: '/$username_/newsletters/$publicationSlug'
+      path: '/$username/newsletters/$publicationSlug'
+      fullPath: '/$username/newsletters/$publicationSlug'
+      preLoaderRoute: typeof UsernameNewslettersPublicationSlugRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/$username_/products/$productSlug': {
+      id: '/$username_/products/$productSlug'
+      path: '/$username/products/$productSlug'
+      fullPath: '/$username/products/$productSlug'
+      preLoaderRoute: typeof UsernameProductsProductSlugRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_authenticated/auto-dms/': {
+      id: '/_authenticated/auto-dms/'
+      path: '/auto-dms'
+      fullPath: '/auto-dms/'
+      preLoaderRoute: typeof AuthenticatedAutoDmsIndexRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/auto-dms/facebook': {
+      id: '/_authenticated/auto-dms/facebook'
+      path: '/auto-dms/facebook'
+      fullPath: '/auto-dms/facebook'
+      preLoaderRoute: typeof AuthenticatedAutoDmsFacebookRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/auto-dms/instagram': {
+      id: '/_authenticated/auto-dms/instagram'
+      path: '/auto-dms/instagram'
+      fullPath: '/auto-dms/instagram'
+      preLoaderRoute: typeof AuthenticatedAutoDmsInstagramRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/auto-dms/twitter': {
+      id: '/_authenticated/auto-dms/twitter'
+      path: '/auto-dms/twitter'
+      fullPath: '/auto-dms/twitter'
+      preLoaderRoute: typeof AuthenticatedAutoDmsTwitterRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/automations/': {
+      id: '/_authenticated/automations/'
+      path: '/automations'
+      fullPath: '/automations/'
+      preLoaderRoute: typeof AuthenticatedAutomationsIndexRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/automations/facebook': {
+      id: '/_authenticated/automations/facebook'
+      path: '/automations/facebook'
+      fullPath: '/automations/facebook'
+      preLoaderRoute: typeof AuthenticatedAutomationsFacebookRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/automations/instagram': {
+      id: '/_authenticated/automations/instagram'
+      path: '/automations/instagram'
+      fullPath: '/automations/instagram'
+      preLoaderRoute: typeof AuthenticatedAutomationsInstagramRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/automations/twitter': {
+      id: '/_authenticated/automations/twitter'
+      path: '/automations/twitter'
+      fullPath: '/automations/twitter'
+      preLoaderRoute: typeof AuthenticatedAutomationsTwitterRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/mcp/setup': {
+      id: '/_authenticated/mcp/setup'
+      path: '/setup'
+      fullPath: '/mcp/setup'
+      preLoaderRoute: typeof AuthenticatedMcpSetupRouteImport
+      parentRoute: typeof AuthenticatedMcpRoute
+    }
+    '/integrations/fathom/callback': {
+      id: '/integrations/fathom/callback'
+      path: '/integrations/fathom/callback'
+      fullPath: '/integrations/fathom/callback'
+      preLoaderRoute: typeof IntegrationsFathomCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/integrations/github/callback': {
+      id: '/integrations/github/callback'
+      path: '/integrations/github/callback'
+      fullPath: '/integrations/github/callback'
+      preLoaderRoute: typeof IntegrationsGithubCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/integrations/granola/callback': {
+      id: '/integrations/granola/callback'
+      path: '/integrations/granola/callback'
+      fullPath: '/integrations/granola/callback'
+      preLoaderRoute: typeof IntegrationsGranolaCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/integrations/instagram/callback': {
+      id: '/integrations/instagram/callback'
+      path: '/integrations/instagram/callback'
+      fullPath: '/integrations/instagram/callback'
+      preLoaderRoute: typeof IntegrationsInstagramCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/integrations/instagram/data-deletion': {
+      id: '/integrations/instagram/data-deletion'
+      path: '/integrations/instagram/data-deletion'
+      fullPath: '/integrations/instagram/data-deletion'
+      preLoaderRoute: typeof IntegrationsInstagramDataDeletionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/integrations/notion/callback': {
+      id: '/integrations/notion/callback'
+      path: '/integrations/notion/callback'
+      fullPath: '/integrations/notion/callback'
+      preLoaderRoute: typeof IntegrationsNotionCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/integrations/paypal/callback': {
+      id: '/integrations/paypal/callback'
+      path: '/integrations/paypal/callback'
+      fullPath: '/integrations/paypal/callback'
+      preLoaderRoute: typeof IntegrationsPaypalCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/integrations/polar/callback': {
+      id: '/integrations/polar/callback'
+      path: '/integrations/polar/callback'
+      fullPath: '/integrations/polar/callback'
+      preLoaderRoute: typeof IntegrationsPolarCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/integrations/slack/callback': {
+      id: '/integrations/slack/callback'
+      path: '/integrations/slack/callback'
+      fullPath: '/integrations/slack/callback'
+      preLoaderRoute: typeof IntegrationsSlackCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/integrations/stripe/callback': {
+      id: '/integrations/stripe/callback'
+      path: '/integrations/stripe/callback'
+      fullPath: '/integrations/stripe/callback'
+      preLoaderRoute: typeof IntegrationsStripeCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/library/priority-dm/$requestId': {
+      id: '/library/priority-dm/$requestId'
+      path: '/library/priority-dm/$requestId'
+      fullPath: '/library/priority-dm/$requestId'
+      preLoaderRoute: typeof LibraryPriorityDmRequestIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/library/receipts/$orderId': {
+      id: '/library/receipts/$orderId'
+      path: '/library/receipts/$orderId'
+      fullPath: '/library/receipts/$orderId'
+      preLoaderRoute: typeof LibraryReceiptsOrderIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/p/$productSlug_/success': {
+      id: '/p/$productSlug_/success'
+      path: '/p/$productSlug/success'
+      fullPath: '/p/$productSlug/success'
+      preLoaderRoute: typeof PProductSlugSuccessRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/payments/paypal/return': {
+      id: '/payments/paypal/return'
+      path: '/payments/paypal/return'
+      fullPath: '/payments/paypal/return'
+      preLoaderRoute: typeof PaymentsPaypalReturnRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/payments/razorpay/$sessionId': {
+      id: '/payments/razorpay/$sessionId'
+      path: '/payments/razorpay/$sessionId'
+      fullPath: '/payments/razorpay/$sessionId'
+      preLoaderRoute: typeof PaymentsRazorpaySessionIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/$username_/newsletters/$publicationSlug_/$postSlug': {
+      id: '/$username_/newsletters/$publicationSlug_/$postSlug'
+      path: '/$username/newsletters/$publicationSlug/$postSlug'
+      fullPath: '/$username/newsletters/$publicationSlug/$postSlug'
+      preLoaderRoute: typeof UsernameNewslettersPublicationSlugPostSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/$username_/products/$productSlug_/success': {
@@ -1482,11 +1475,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UsernameProductsProductSlugSuccessRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/$username_/newsletters/$publicationSlug_/$postSlug': {
-      id: '/$username_/newsletters/$publicationSlug_/$postSlug'
-      path: '/$username/newsletters/$publicationSlug/$postSlug'
-      fullPath: '/$username/newsletters/$publicationSlug/$postSlug'
-      preLoaderRoute: typeof UsernameNewslettersPublicationSlugPostSlugRouteImport
+    '/integrations/calendar/google/callback': {
+      id: '/integrations/calendar/google/callback'
+      path: '/integrations/calendar/google/callback'
+      fullPath: '/integrations/calendar/google/callback'
+      preLoaderRoute: typeof IntegrationsCalendarGoogleCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/integrations/social/$provider/callback': {
+      id: '/integrations/social/$provider/callback'
+      path: '/integrations/social/$provider/callback'
+      fullPath: '/integrations/social/$provider/callback'
+      preLoaderRoute: typeof IntegrationsSocialProviderCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
   }

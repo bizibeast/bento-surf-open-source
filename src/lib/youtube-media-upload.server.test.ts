@@ -6,7 +6,7 @@ vi.mock("@/integrations/supabase/client.server", () => ({
     from: () => ({
       update: (values: Record<string, unknown>) => {
         checkpoints.push(values);
-        return { eq: async () => ({ error: null }) };
+        return { eq: () => ({ eq: async () => ({ error: null }) }) };
       },
     }),
   },
@@ -27,6 +27,71 @@ afterEach(() => {
 });
 
 describe("YouTube bounded resumable video upload", () => {
+  it("keeps a confirmed video ID when thumbnail work fails, so retry cannot upload it again", async () => {
+    const target: Record<string, unknown> = { id: "target", idempotency_key: "cycle" };
+    const thumbnail = {
+      key: "cover.jpg",
+      url: "https://bento.surf/cover.jpg",
+      name: "cover.jpg",
+      mimeType: "image/jpeg",
+      size: 3,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url === media.url)
+          return new Response(new Uint8Array([1, 2, 3]), {
+            headers: { "content-type": "video/mp4", "content-length": "3" },
+          });
+        if (url === thumbnail.url)
+          return new Response(new Uint8Array([1, 2, 3]), {
+            headers: { "content-type": "image/jpeg", "content-length": "3" },
+          });
+        if (url.includes("uploadType=resumable"))
+          return new Response(null, { headers: { location } });
+        if (url.includes("thumbnails/set")) return new Response(null, { status: 503 });
+        return Response.json({ id: "confirmed-video" });
+      }),
+    );
+    await expect(
+      publishYouTube("token", "Title", "Body", [media], { thumbnail }, target),
+    ).rejects.toMatchObject({ status: 503 });
+    expect(target.remote_post_id).toBe("confirmed-video");
+    expect(target.upload_session_url).toBeNull();
+    const callsBefore = vi.mocked(fetch).mock.calls.length;
+    await expect(
+      publishYouTube("token", "Title", "Body", [media], { thumbnail }, target),
+    ).rejects.toMatchObject({ status: 503 });
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.slice(callsBefore)
+        .some(([url]) => String(url).includes("uploadType=resumable")),
+    ).toBe(false);
+  });
+
+  it("does not start a new video when the previous upload session expires with an uncertain result", async () => {
+    const fetcher = vi.fn(async (url: string) =>
+      url === media.url
+        ? new Response(new Uint8Array([1, 2, 3]), {
+            headers: { "content-type": "video/mp4", "content-length": "3" },
+          })
+        : new Response(null, { status: 404 }),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    await expect(
+      publishYouTube(
+        "token",
+        "Title",
+        "Body",
+        [media],
+        {},
+        { id: "target", upload_session_url: location },
+      ),
+    ).rejects.toMatchObject({ code: "upload_session_expired", retryable: false });
+    expect(fetcher.mock.calls.some(([url]) => url.includes("uploadType=resumable"))).toBe(false);
+  });
+
   it("streams the reported 156 MB file without buffering it and uses actual stored size", async () => {
     const total = 156_581_249;
     let sourceBytes = 0,
@@ -34,6 +99,10 @@ describe("YouTube bounded resumable video upload", () => {
       inits = 0;
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
       if (url === media.url) {
+        const start = Number(
+          new Headers(init?.headers).get("range")?.match(/bytes=(\d+)-/)?.[1] || 0,
+        );
+        sourceBytes = start;
         const response = new Response(
           new ReadableStream<Uint8Array>({
             pull(controller) {
@@ -46,7 +115,14 @@ describe("YouTube bounded resumable video upload", () => {
               sourceBytes += count;
             },
           }),
-          { headers: { "content-type": "video/mp4", "content-length": String(total) } },
+          {
+            status: start ? 206 : 200,
+            headers: {
+              "content-type": "video/mp4",
+              "content-length": String(total - start),
+              ...(start ? { "content-range": `bytes ${start}-${total - 1}/${total}` } : {}),
+            },
+          },
         );
         response.arrayBuffer = vi.fn(() => {
           throw new Error("Must not buffer the video");
@@ -61,6 +137,9 @@ describe("YouTube bounded resumable video upload", () => {
         return new Response(null, { headers: { location } });
       }
       expect(url).toBe(location);
+      if ((init?.headers as Record<string, string>)["Content-Range"] === `bytes */${total}`) {
+        return new Response(null, { status: 308, headers: { range: `bytes=0-${received - 1}` } });
+      }
       const chunk = init!.body as Uint8Array;
       expect(chunk.byteLength).toBeLessThanOrEqual(2 * 1024 ** 2);
       expect((init?.headers as Record<string, string>)["Content-Range"]).toBe(
@@ -71,9 +150,18 @@ describe("YouTube bounded resumable video upload", () => {
         ? Response.json({ id: "video-1" })
         : new Response(null, { status: 308, headers: { range: `bytes=0-${received - 1}` } });
     });
-    await expect(
-      publishYouTube("token", "Title", "Body", [media], {}, { id: "target" }),
-    ).resolves.toMatchObject({ id: "video-1" });
+    const target: Record<string, unknown> = { id: "target", idempotency_key: "cycle" };
+    let result: { id: string; pending?: boolean };
+    let invocations = 0;
+    do {
+      const before = received;
+      result = await publishYouTube("token", "Title", "Body", [media], {}, target);
+      expect(received - before).toBeLessThanOrEqual(32 * 1024 ** 2);
+      for (const checkpoint of checkpoints) Object.assign(target, checkpoint);
+      invocations += 1;
+    } while (result.pending && invocations < 8);
+    expect(result).toMatchObject({ id: "video-1" });
+    expect(invocations).toBe(5);
     expect(inits).toBe(1);
     expect(received).toBe(total);
     expect(checkpoints.at(-1)).toMatchObject({

@@ -3,7 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { requirePlanEntitlement } from "@/lib/plan.server";
+import { requireCreatorPaymentConnect } from "@/lib/plan.server";
 import { requireExclusiveCreatorPaymentProvider } from "@/lib/payment-connection-policy.server";
 import { encryptServerSecret } from "@/lib/secret-crypto.server";
 import {
@@ -50,11 +50,7 @@ function publicConnection(account: CreemPaymentAccount | null) {
 }
 
 async function requireStore(creatorId: string) {
-  await requirePlanEntitlement(
-    creatorId,
-    "oneTapCheckout",
-    "Connected payments are included with the Store plan.",
-  );
+  await requireCreatorPaymentConnect(creatorId);
 }
 
 export const getMyCreemConnection = createServerFn({ method: "GET" })

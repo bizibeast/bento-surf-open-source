@@ -179,7 +179,7 @@ const draft = {
 function preparedRows() {
   productionMocks.prefs = { proactive_paused: false, platforms: ["linkedin"] };
   productionMocks.queries = [];
-  productionMocks.rows = {
+  const rows = {
     content_routine_runs: {
       id: runId,
       routine_id: "routine",
@@ -215,8 +215,37 @@ function preparedRows() {
       settings: { card: draft, routineRunId: runId },
     },
   };
+  productionMocks.rows = rows;
+  return rows;
 }
 const preparedSignal = { ...signal, kind: "prepared_routine" as const, source_ids: [runId] };
+it("delivers a bound quality-review draft with its feedback without generating another post", async () => {
+  const rows = preparedRows();
+  const reviewed = {
+    ...draft,
+    editorial: {
+      ...draft.editorial,
+      validationState: "needs_review",
+      reviewIssues: [{ code: "reader_value", message: "Add a practical takeaway." }],
+    },
+  };
+  rows.content_routine_runs.prepared_output.drafts[0].card = reviewed;
+  rows.content_routine_runs.prepared_output.result.cards = [reviewed];
+  productionMocks.rows.social_posts = {
+    id: postId,
+    title: reviewed.title,
+    body: reviewed.body,
+    status: "draft",
+    settings: { card: reviewed, routineRunId: runId },
+  };
+  productionMocks.generate.mockClear();
+  const payload = await prepareContentAgentSignal(preparedSignal);
+  expect(payload?.cards[0]).toMatchObject({
+    body: reviewed.body,
+    editorial: { validationState: "needs_review", reviewIssues: reviewed.editorial.reviewIssues },
+  });
+  expect(productionMocks.generate).not.toHaveBeenCalled();
+});
 it("delivers only useful bound drafts, reads owned canonical copy and invalidates edited validation", async () => {
   preparedRows();
   const result = await prepareContentAgentSignal(preparedSignal);
@@ -370,7 +399,13 @@ it("scans the shared current brief even when Discover recommendations have not r
 it("advances beyond already-seen Discover originals in a bounded scan", async () => {
   const { enqueueFreshSourceSignals } = await import("./content-agent-proactive.server");
   const date = new Date().toISOString();
+  productionMocks.rows.creator_content_profiles = {
+    niche_keywords: ["startup journey"],
+    language: "en",
+    region: "global",
+  };
   productionMocks.rows.creator_content_recommendations = [1, 2, 3, 4].map((id) => ({
+    title: `Startup founder lesson ${id}`,
     fingerprint: `source:${id}`,
     source_url: `https://x.com/creator/status/${id}`,
     source_published_at: date,
@@ -486,6 +521,7 @@ it("candidate selection consumes durable topic preferences before spending provi
     feedback: "pending",
   };
   productionMocks.rows = {
+    creator_content_profiles: { niche_keywords: ["creator"], language: "en", region: "global" },
     creator_content_recommendations: [
       row,
       {
@@ -644,4 +680,47 @@ it("rechecks production rollout after preparation and releases the lease without
     rollout.enabled = true;
     preparedRows();
   }
+});
+
+it("does not enqueue fictional cached business stories as fresh proactive research", async () => {
+  const { enqueueFreshSourceSignals } = await import("./content-agent-proactive.server");
+  const source = {
+    source_published_at: new Date().toISOString(),
+    feedback: "pending",
+    reason: "A potentially useful source for the creator's business audience.",
+    summary:
+      "A ruthless tech founder arrives expecting a $20 million investment. The story follows his unexpected lesson about treating a courier kindly.",
+  };
+  productionMocks.rows = {
+    creator_content_profiles: {
+      niche_keywords: ["startup journey"],
+      language: "en",
+      region: "global",
+    },
+    creator_content_recommendations: [
+      {
+        ...source,
+        id: "fiction",
+        fingerprint: "fiction",
+        source_url: "https://example.com/fiction",
+        title: "A Rich CEO Humiliated a Courier… Then Learned Who Really Owned the Company!",
+      },
+      {
+        ...source,
+        id: "real",
+        fingerprint: "real",
+        source_url: "https://example.com/relevant",
+        title: "A startup founder shares customer research",
+        summary:
+          "The founder describes how interviewing customers changed their product. It includes specific customer research methods and business decisions.",
+      },
+    ],
+    content_agent_signals: [],
+  };
+  productionMocks.rpc.mockClear();
+  expect(await enqueueFreshSourceSignals("owner")).toBe(1);
+  const enqueued = productionMocks.rpc.mock.calls.filter(
+    ([name]) => name === "enqueue_content_agent_signal",
+  );
+  expect(enqueued.map(([, args]) => args.p_source_ids)).toEqual([["example.com/relevant"]]);
 });

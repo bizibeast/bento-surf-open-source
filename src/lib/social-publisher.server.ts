@@ -10,6 +10,7 @@ import {
 /* eslint-disable @typescript-eslint/no-explicit-any -- Scheduler tables land with the paired migration. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { renderSocialMentions } from "./social-mentions";
+import { normalizeDashes } from "./text/dashes";
 import { decryptServerSecret, encryptServerSecret } from "./secret-crypto.server";
 import {
   deriveSocialPostStatus,
@@ -224,7 +225,16 @@ async function finishThreads(userId: string, containerId: string, token: string)
       false,
     );
   }
-  if (status && status !== "FINISHED" && status !== "PUBLISHED") {
+  if (status === "PUBLISHED") {
+    // The provider accepted a previous write, but its post ID was not saved.
+    // A container ID is not a post ID. Do not submit this container again.
+    throw new ProviderError(
+      "Threads confirms this post was published, but its link could not be recovered. Check your profile before taking further action.",
+      "outcome_unknown",
+      false,
+    );
+  }
+  if (status && status !== "FINISHED") {
     return { id: containerId, pending: true };
   }
   const published = await providerJson(
@@ -382,7 +392,16 @@ async function finishInstagram(userId: string, containerId: string, token: strin
       false,
     );
   }
-  if (status && status !== "FINISHED" && status !== "PUBLISHED") {
+  if (status === "PUBLISHED") {
+    // The provider accepted a previous write, but its post ID was not saved.
+    // A container ID is not a post ID. Do not submit this container again.
+    throw new ProviderError(
+      "Instagram confirms this post was published, but its link could not be recovered. Check your profile before taking further action.",
+      "outcome_unknown",
+      false,
+    );
+  }
+  if (status && status !== "FINISHED") {
     return { id: containerId, pending: true };
   }
   const published = await providerJson(
@@ -562,13 +581,19 @@ function schedulerMediaFetcher(item: SchedulerMedia): typeof fetch {
   if (!bucket || !key || !/^users\/[^/]+\//.test(key)) return fetch;
   // Read the immutable original directly. Avoid CDN cache tees and HTTP body
   // timeouts while slowly sending a video to the destination one segment at a time.
-  return async () => {
-    const object = await bucket.get(key);
+  return async (_input, init) => {
+    const requestedRange = new Headers(init?.headers).get("range")?.match(/^bytes=(\d+)-$/);
+    const offset = requestedRange ? Number(requestedRange[1]) : 0;
+    const object = await bucket.get(key, offset ? { range: { offset } } : undefined);
     return object
       ? new Response(object.body, {
+          status: offset ? 206 : 200,
           headers: {
             "content-type": object.httpMetadata?.contentType || item.mimeType,
-            "content-length": String(object.size),
+            "content-length": String(offset ? object.size - offset : object.size),
+            ...(offset
+              ? { "content-range": `bytes ${offset}-${object.size - 1}/${object.size}` }
+              : {}),
           },
         })
       : new Response(null, { status: 404 });
@@ -1369,7 +1394,7 @@ export async function publishYouTube(
   const description = youtubeDescriptionForUpload(body, settings);
   const db = supabaseAdmin as any;
   const chunkSize = 256 * 1024 * 8; // 2 MiB, multiple of 256 KiB
-  const downloaded = await openProviderMedia(video.url, {
+  let downloaded = await openProviderMedia(video.url, {
     maxBytes: socialMediaByteLimit("youtube", video.mimeType)!,
     allowedMimeTypes: SOCIAL_PROVIDER_DEFINITIONS.youtube.videoMimeTypes!,
     fetcher: schedulerMediaFetcher(video),
@@ -1382,13 +1407,22 @@ export async function publishYouTube(
   let location = String(target.upload_session_url || "");
   let offset = 0;
   const checkpoint = async (values: Record<string, unknown>) => {
-    const saved = await db.from("social_post_targets").update(values).eq("id", target.id);
+    const saved = await db
+      .from("social_post_targets")
+      .update({
+        ...values,
+        lease_expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+      })
+      .eq("id", target.id)
+      .eq("idempotency_key", target.idempotency_key);
     if (saved?.error)
       throw new ProviderError(
         "YouTube's upload progress could not be saved. Bento will retry.",
         "upload_checkpoint_failed",
         true,
       );
+    // Error handling must preserve a video ID saved before thumbnail work fails.
+    Object.assign(target, values);
   };
   const finish = async (response: Response) => {
     const result = (await response.json().catch(() => null)) as { id?: string } | null;
@@ -1459,8 +1493,13 @@ export async function publishYouTube(
       });
       if (status.ok) return await finish(status);
       if (status.status === 308) offset = acknowledgedOffset(status);
-      else if (status.status === 404 || status.status === 410) location = "";
-      else throw rejectUpload(status);
+      else if (status.status === 404 || status.status === 410) {
+        throw new ProviderError(
+          "YouTube can no longer confirm the previous upload. Check your channel before creating another post to avoid a duplicate.",
+          "upload_session_expired",
+          false,
+        );
+      } else throw rejectUpload(status);
     }
     if (!location) {
       const initialized = await fetch(
@@ -1501,7 +1540,25 @@ export async function publishYouTube(
         "upload_incomplete",
         true,
       );
-    for await (const chunk of providerMediaChunks(downloaded.body, total, chunkSize, offset)) {
+    if (offset) {
+      await downloaded.cancel();
+      downloaded = await openProviderMedia(video.url, {
+        maxBytes: socialMediaByteLimit("youtube", video.mimeType)!,
+        allowedMimeTypes: SOCIAL_PROVIDER_DEFINITIONS.youtube.videoMimeTypes!,
+        fetcher: schedulerMediaFetcher(video),
+        startByte: offset,
+      });
+      if (downloaded.totalBytes !== total)
+        throw new ProviderError("The media changed during upload.", "media_changed", false);
+    }
+    let chunksUploaded = 0;
+    for await (const chunk of providerMediaChunks(
+      downloaded.body,
+      total,
+      chunkSize,
+      offset,
+      downloaded.bodyStartByte,
+    )) {
       const end = offset + chunk.byteLength;
       const uploaded = await fetch(location, {
         method: "PUT",
@@ -1529,6 +1586,9 @@ export async function publishYouTube(
             true,
           );
         offset = acknowledged;
+        chunksUploaded += 1;
+        // Bound CPU and subrequests per Worker invocation, then resume the same upload.
+        if (chunksUploaded >= 16) return { id: "", pending: true };
         continue;
       }
       if (!uploaded.ok) throw rejectUpload(uploaded);
@@ -2049,13 +2109,17 @@ export function targetPostCopy(
   provider?: SocialProvider,
   media: SchedulerMedia[] = [],
 ) {
-  const source = typeof settings.bodyOverride === "string" ? settings.bodyOverride : post.body;
+  const source = normalizeDashes(
+    typeof settings.bodyOverride === "string" ? settings.bodyOverride : post.body,
+  );
+  const titleSource =
+    typeof settings.titleOverride === "string" ? settings.titleOverride : post.title;
   return {
     body:
       provider && !(provider === "facebook" && media.length)
         ? renderSocialMentions(source, provider, settings.mentions)
         : source,
-    title: typeof settings.titleOverride === "string" ? settings.titleOverride : post.title,
+    title: typeof titleSource === "string" ? normalizeDashes(titleSource) : titleSource,
   };
 }
 
@@ -2119,29 +2183,19 @@ export async function processSocialPublishMessage(message: SocialPublishMessage)
   const isStatusCheck =
     Boolean(target.remote_post_id) &&
     (["instagram", "threads", "tiktok"] as SocialProvider[]).includes(target.provider);
-  if (
-    isStatusCheck &&
-    Date.now() - new Date(target.retry_started_at || target.created_at).getTime() > 24 * 60 * 60_000
-  ) {
-    await db
-      .from("social_post_targets")
-      .update({
-        status: "failed",
-        lease_expires_at: null,
-        next_attempt_at: null,
-        last_error_code: "processing_timeout",
-        last_error_message:
-          "The social network did not finish processing this post within 24 hours.",
-      })
-      .eq("id", target.id);
-    await refreshSocialPostStatus(target.post_id);
-    return;
-  }
-  const attempt = Number(target.attempt_count || 0) + (isStatusCheck ? 0 : 1);
+  const isResumableUpload =
+    target.provider === "youtube" && Boolean(target.upload_session_url || target.remote_post_id);
+  const attempt = Number(target.attempt_count || 0) + 1;
   const started = Date.now();
+  if (isStatusCheck && !target.processing_started_at)
+    target.processing_started_at = new Date(started).toISOString();
   const { data: claimed, error: claimError } = await db
     .from("social_post_targets")
-    .update({ status: "publishing", attempt_count: attempt })
+    .update({
+      status: "publishing",
+      attempt_count: attempt,
+      ...(isStatusCheck ? { processing_started_at: target.processing_started_at } : {}),
+    })
     .eq("id", target.id)
     .eq("idempotency_key", message.idempotencyKey)
     .eq("status", "queued")
@@ -2153,6 +2207,18 @@ export async function processSocialPublishMessage(message: SocialPublishMessage)
     .from("social_publish_attempts")
     .insert({ target_id: target.id, attempt, outcome: "started" });
   try {
+    const processingStartedAt = Date.parse(target.processing_started_at || "");
+    if (
+      isStatusCheck &&
+      Number.isFinite(processingStartedAt) &&
+      started - processingStartedAt > 24 * 60 * 60_000
+    ) {
+      throw new ProviderError(
+        "The social network did not finish processing this post within 24 hours. You can retry this destination from the scheduler.",
+        "processing_timeout",
+        false,
+      );
+    }
     const result = isStatusCheck
       ? await finishPendingPublish(target.provider, target.connection, target)
       : await withProviderBudgetWorkspace(target.connection.user_id, () =>
@@ -2163,7 +2229,12 @@ export async function processSocialPublishMessage(message: SocialPublishMessage)
         .from("social_post_targets")
         .update({
           status: "processing",
-          remote_post_id: result.id,
+          attempt_count:
+            isStatusCheck || isResumableUpload ? Number(target.attempt_count || 0) : attempt,
+          remote_post_id: result.id || target.remote_post_id || null,
+          processing_started_at: isStatusCheck
+            ? target.processing_started_at
+            : new Date(started).toISOString(),
           next_attempt_at: new Date(Date.now() + 60_000).toISOString(),
           lease_expires_at: null,
           last_error_code: null,
@@ -2254,14 +2325,24 @@ export async function processSocialPublishMessage(message: SocialPublishMessage)
       }
     }
 
-    if (providerError.code === "outcome_unknown" || timedOut) {
+    if (
+      providerError.code === "outcome_unknown" ||
+      providerError.code === "upload_session_expired" ||
+      timedOut
+    ) {
       await db
         .from("social_post_targets")
         .update({
           status: "outcome_unknown",
-          next_attempt_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+          next_attempt_at:
+            providerError.code === "upload_session_expired"
+              ? null
+              : new Date(Date.now() + 5 * 60_000).toISOString(),
           lease_expires_at: null,
-          last_error_code: "outcome_unknown",
+          last_error_code:
+            providerError.code === "upload_session_expired"
+              ? "upload_session_expired"
+              : "outcome_unknown",
           last_error_message: providerError.message,
           last_reconcile_at: new Date().toISOString(),
         })
@@ -2281,6 +2362,7 @@ export async function processSocialPublishMessage(message: SocialPublishMessage)
         .from("social_post_targets")
         .update({
           status: canRetry ? "retrying" : "failed",
+          failure_notification_pending: !canRetry,
           remote_post_id: canRetry
             ? tiktokRetryRemotePostId(
                 target.provider,
@@ -2354,44 +2436,73 @@ async function refreshSocialPostStatus(postId: string) {
     .eq("id", postId);
 }
 
-async function creatorEmailForUser(userId: string) {
-  const { data, error } = await (supabaseAdmin as any).auth.admin.getUserById(userId);
-  if (error) return null;
-  return data?.user?.email || null;
+async function creatorIdentityForWorkspace(workspaceId: string) {
+  const db = supabaseAdmin as any;
+  const { data: membership, error: membershipError } = await db
+    .from("workspace_memberships")
+    .select("auth_user_id")
+    .eq("workspace_id", workspaceId)
+    .eq("role", "owner")
+    .eq("status", "active")
+    .maybeSingle();
+  if (membershipError) throw new Error(membershipError.message);
+  // Workspace IDs are not authentication IDs. Missing ownership must never
+  // fall back to an unrelated or former account with a matching identifier.
+  if (!membership?.auth_user_id) return null;
+  const { data, error } = await db.auth.admin.getUserById(membership.auth_user_id);
+  if (error) throw error;
+  if (!data?.user?.email) return null;
+  return { authUserId: membership.auth_user_id, email: data.user.email };
 }
 
 async function notifySocialPublishFailure(target: any, reason: string) {
-  const email = await creatorEmailForUser(String(target.post.user_id));
-  if (!email) return;
-  const providerName =
-    SOCIAL_PROVIDER_DEFINITIONS[target.provider as SocialProvider]?.name || target.provider;
-  await enqueueEmail({
-    eventKey: `social-publish-failed:${target.id}:${target.attempt_count || 0}`,
-    eventType: "social_publish_failed",
-    category: "transactional",
-    recipientEmail: email,
-    userId: target.post.user_id,
-    payload: {
-      provider: providerName,
-      reason,
-      schedulerUrl: "/post-scheduler",
-    },
-    immediate: true,
-  });
+  try {
+    const creator = await creatorIdentityForWorkspace(String(target.post.user_id));
+    if (!creator) return;
+    const providerName =
+      SOCIAL_PROVIDER_DEFINITIONS[target.provider as SocialProvider]?.name || target.provider;
+    const notification = await enqueueEmail({
+      eventKey: `social-publish-failed:${target.id}:${target.idempotency_key}`,
+      eventType: "social_publish_failed",
+      category: "transactional",
+      recipientEmail: creator.email,
+      userId: creator.authUserId,
+      payload: {
+        workspaceId: target.post.user_id,
+        provider: providerName,
+        postTitle: String(target.post?.title || "Your scheduled post").slice(0, 160),
+        reason,
+        schedulerUrl: "/post-scheduler",
+      },
+      immediate: true,
+    });
+    if (notification) {
+      const { error } = await (supabaseAdmin as any)
+        .from("social_post_targets")
+        .update({ failure_notification_pending: false })
+        .eq("id", target.id)
+        .eq("idempotency_key", target.idempotency_key);
+      if (error) throw error;
+    }
+  } catch (error) {
+    // The minute cron retries enqueueing; publishing must never repeat for an email failure.
+    console.error("[social] could not enqueue failure email", error);
+  }
 }
 
 async function notifySocialConnectionExpired(target: any) {
-  const email = await creatorEmailForUser(String(target.post.user_id));
-  if (!email) return;
+  const creator = await creatorIdentityForWorkspace(String(target.post.user_id));
+  if (!creator) return;
   const providerName =
     SOCIAL_PROVIDER_DEFINITIONS[target.provider as SocialProvider]?.name || target.provider;
   await enqueueEmail({
     eventKey: `social-connection-expired:${target.connection_id}:${new Date().toISOString().slice(0, 10)}`,
     eventType: "social_connection_expired",
     category: "transactional",
-    recipientEmail: email,
-    userId: target.post.user_id,
+    recipientEmail: creator.email,
+    userId: creator.authUserId,
     payload: {
+      workspaceId: target.post.user_id,
       provider: providerName,
       schedulerUrl: "/post-scheduler",
     },
@@ -2427,6 +2538,24 @@ function queueFromEnv(
   const bindings = (env || {}) as Record<string, Queue<SocialPublishMessage> | undefined>;
   const binding = socialPublishQueueBinding(provider);
   return bindings[binding] || bindings.SOCIAL_PUBLISH_QUEUE;
+}
+
+export async function reconcileSocialFailureNotifications() {
+  const { data, error } = await (supabaseAdmin as any)
+    .from("social_post_targets")
+    .select("id,idempotency_key,provider,last_error_message,post:social_posts(user_id,title)")
+    .eq("status", "failed")
+    .eq("failure_notification_pending", true)
+    .order("updated_at", { ascending: true })
+    .limit(25);
+  if (error) throw error;
+  for (const target of data || []) {
+    await notifySocialPublishFailure(
+      target,
+      target.last_error_message || "The destination could not publish this post.",
+    );
+  }
+  return (data || []).length;
 }
 
 export async function relaySocialOutbox(env?: unknown) {
@@ -2546,15 +2675,16 @@ export async function auditSocialConnections(now = new Date()) {
       });
       // A diagnostic retry must not send a second disconnect notification.
       if (connection.reauth_required) continue;
-      const email = await creatorEmailForUser(String(connection.user_id));
-      if (email)
+      const creator = await creatorIdentityForWorkspace(String(connection.user_id));
+      if (creator)
         await enqueueEmail({
           eventKey: `social-connection-expired:${connection.id}:${now.toISOString().slice(0, 10)}`,
           eventType: "social_connection_expired",
           category: "transactional",
-          recipientEmail: email,
-          userId: connection.user_id,
+          recipientEmail: creator.email,
+          userId: creator.authUserId,
           payload: {
+            workspaceId: connection.user_id,
             provider:
               SOCIAL_PROVIDER_DEFINITIONS[connection.provider as SocialProvider]?.name ||
               connection.provider,
@@ -2578,12 +2708,17 @@ export async function enqueueDueSocialPosts(queue?: Queue<SocialPublishMessage>,
   } catch (error) {
     console.error("[scheduled-post-auto-dm] reconciliation failed", error);
   }
+  await reconcileSocialFailureNotifications().catch((error) =>
+    console.error("[social] failure email reconciliation", error),
+  );
   const outbox = await relaySocialOutbox(runtimeEnv);
   const bindings = (runtimeEnv || {}) as Record<string, Queue<SocialPublishMessage> | undefined>;
   if (!queue && !bindings.SOCIAL_PUBLISH_QUEUE) {
     return { configured: false, queued: 0, outbox };
   }
   const db = supabaseAdmin as any;
+  const { error: recoveryError } = await db.rpc("recover_interrupted_social_targets");
+  if (recoveryError) throw recoveryError;
   const { data, error } = await db.rpc("claim_due_social_targets", {
     claim_limit: 50,
     lease_seconds: 300,

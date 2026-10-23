@@ -23,6 +23,7 @@ export const proactiveMetadataSchema = z.object({
         runId: z.string().uuid(),
         body: z.string(),
         title: z.string(),
+        postUpdatedAt: z.string().datetime({ offset: true }).optional(),
       }),
     )
     .default([]),
@@ -31,6 +32,7 @@ export const storedContentAgentResultSchema = contentAgentResultSchema.extend({
   appActions: z.array(agentAppActionSchema).max(3).optional(),
   proactive: proactiveMetadataSchema.optional(),
   draftStates: z.record(z.string(), agentDraftStateSchema).optional(),
+  rejectedDraftIds: z.array(z.string().max(120)).max(20).optional(),
 });
 export type ProactivePayload = z.infer<typeof storedContentAgentResultSchema>;
 

@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { PaymentGatewayPicker } from "@/components/settings/PaymentGatewayPicker";
 import { CREATOR_PAYMENT_PROVIDER_DEFINITIONS } from "@/lib/payment-providers";
+import { CONNECT_PAYMENTS_BANNER_BODY, CONNECT_PAYMENTS_BANNER_TITLE } from "@/lib/plans";
 
 describe("PaymentGatewayPicker", () => {
   it("moves the selected indicator to the gateway the user chooses", () => {
@@ -19,7 +20,6 @@ describe("PaymentGatewayPicker", () => {
           })),
         }}
         loading={false}
-        upgrade={null}
         onConnect={vi.fn()}
         onRefresh={vi.fn()}
         onDisconnect={vi.fn()}
@@ -61,7 +61,6 @@ describe("PaymentGatewayPicker", () => {
             })),
           }}
           loading={false}
-          upgrade={null}
           onConnect={vi.fn()}
           onRefresh={vi.fn()}
           onDisconnect={vi.fn()}
@@ -95,7 +94,6 @@ describe("PaymentGatewayPicker", () => {
             })),
           }}
           loading={false}
-          upgrade={null}
           onConnect={vi.fn()}
           onRefresh={vi.fn()}
           onDisconnect={vi.fn()}
@@ -111,4 +109,43 @@ describe("PaymentGatewayPicker", () => {
       expect(screen.queryByText("Recommended")).not.toBeInTheDocument();
     },
   );
+
+  it("starts checkout from a locked provider instead of opening its setup dialog", () => {
+    const onLockedCheckout = vi.fn();
+    render(
+      <PaymentGatewayPicker
+        settings={{
+          locked: true,
+          feeBps: 0,
+          selectedProvider: null,
+          recommendedProvider: "dodo",
+          connections: [],
+          providers: CREATOR_PAYMENT_PROVIDER_DEFINITIONS.map((provider) => ({
+            ...provider,
+            configured: true,
+          })),
+        }}
+        loading={false}
+        onConnect={vi.fn()}
+        onLockedCheckout={onLockedCheckout}
+        onRefresh={vi.fn()}
+        onDisconnect={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(CONNECT_PAYMENTS_BANNER_TITLE)).toBeVisible();
+    expect(screen.getByText(CONNECT_PAYMENTS_BANNER_BODY)).toBeVisible();
+    expect(CONNECT_PAYMENTS_BANNER_BODY).toContain("3-day");
+    expect(`${CONNECT_PAYMENTS_BANNER_TITLE} ${CONNECT_PAYMENTS_BANNER_BODY}`).not.toMatch(
+      /7-day|7 day|\u2014|\u2013/,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect Razorpay" }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect PayPal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect Creem" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue to checkout" }));
+
+    expect(onLockedCheckout).toHaveBeenCalledTimes(4);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
 });

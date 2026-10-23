@@ -13,6 +13,7 @@ type DraftImages = Awaited<ReturnType<typeof getAgentDraftImages>>;
 export function ContentDraftImages({
   draftRef,
   showPreview = true,
+  compact = false,
   slideCount,
   onChanged,
   onAssets,
@@ -20,6 +21,7 @@ export function ContentDraftImages({
 }: {
   draftRef: ImageDraftRef;
   showPreview?: boolean;
+  compact?: boolean;
   slideCount: number;
   onChanged?: () => void | Promise<unknown>;
   onAssets: (assets: Record<string, string>) => void;
@@ -107,6 +109,11 @@ export function ContentDraftImages({
           type="button"
           className="content-action"
           disabled={pending || !available}
+          title={
+            !available
+              ? "AI images are unavailable for this workspace"
+              : "Generate an image using your image allowance"
+          }
           onClick={() =>
             void act(async () => {
               requestKey.current ||= crypto.randomUUID();
@@ -175,7 +182,7 @@ export function ContentDraftImages({
             Remove all slide backgrounds
           </button>
         )}
-      {imageSettings && (
+      {imageSettings && !compact && (
         <p className="text-xs">
           {imageSettings.quota.successful} / 100 successful · {imageSettings.quota.pending} pending.
           Resets{" "}
@@ -183,7 +190,7 @@ export function ContentDraftImages({
           UTC. Each replacement uses one image credit.
         </p>
       )}
-      {!available && (
+      {!available && !compact && (
         <p className="text-xs text-muted-foreground">
           AI images are unavailable for this workspace. Existing photos can still be used.
         </p>

@@ -28,6 +28,7 @@ import {
 import { isServerSecretEncryptionKeyValid } from "./secret-crypto.server";
 import { getPlan, requirePlanEntitlement } from "./plan.server";
 import { planHasEntitlement, usesAdvancedAutoDm, type PlanId } from "./plans";
+import { normalizeDashes, normalizeOptionalCopy } from "./text/dashes";
 
 const requireAutoDm = (userId: string) =>
   requirePlanEntitlement(
@@ -288,16 +289,16 @@ export const saveFacebookAutoDmAutomation = createServerFn({ method: "POST" })
       match_type: data.matchType,
       media_scope: data.mediaScope,
       media_ids: data.mediaIds,
-      reply_message: data.replyMessage,
+      reply_message: normalizeDashes(data.replyMessage),
       public_reply_enabled: data.publicReplyEnabled,
-      public_reply_message: data.publicReplyMessages[0] || null,
-      public_reply_messages: data.publicReplyMessages,
-      opening_message: data.openingMessage,
-      confirmation_button_label: data.confirmationButtonLabel,
+      public_reply_message: normalizeOptionalCopy(data.publicReplyMessages[0]),
+      public_reply_messages: data.publicReplyMessages.map(normalizeDashes),
+      opening_message: normalizeOptionalCopy(data.openingMessage),
+      confirmation_button_label: normalizeOptionalCopy(data.confirmationButtonLabel),
       email_capture_enabled: data.emailCaptureEnabled,
-      email_prompt_message: data.emailPromptMessage,
+      email_prompt_message: normalizeOptionalCopy(data.emailPromptMessage),
       email_marketing_consent_enabled: data.emailMarketingConsentEnabled,
-      reply_button_label: data.replyButtonLabel,
+      reply_button_label: normalizeOptionalCopy(data.replyButtonLabel),
       reply_button_url: data.replyButtonUrl,
       enabled: data.enabled,
     };

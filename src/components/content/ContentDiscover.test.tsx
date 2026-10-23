@@ -265,7 +265,7 @@ describe("ContentDiscover", () => {
     const ideas = screen.getByRole("article", { name: idea.title });
     await user.click(within(ideas).getByRole("button", { name: "Explore angles" }));
     expect(onAskAgent).toHaveBeenCalledWith(expect.objectContaining(idea), "variations");
-    fireEvent.click(screen.getByText(/Feed source status/));
+    fireEvent.click(screen.getByText(/Platform coverage/));
     expect(screen.getByText(/One source was unavailable\./)).toBeVisible();
   });
 

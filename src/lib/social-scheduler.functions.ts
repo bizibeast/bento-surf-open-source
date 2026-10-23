@@ -1,3 +1,5 @@
+import { normalizeCustomerCopy, normalizeDashes } from "./text/dashes";
+import { getEditorialReviewNotes } from "./content-editorial";
 import {
   scheduledPostAutoDmBlockReason,
   validateScheduledPostAutoDms,
@@ -134,6 +136,7 @@ function metric(value: unknown) {
 
 function postFromRow(row: any, insights: Map<string, TargetInsight>): SchedulerPost {
   return {
+    reviewNotes: getEditorialReviewNotes(row.settings?.card?.editorial),
     ...(row.settings?.card ? { agentDraft: true } : {}),
     ...(row.settings?.agentDraftState?.preparationNote && !row.media?.length
       ? { automationNote: row.settings.agentDraftState.preparationNote }
@@ -321,7 +324,24 @@ export const prepareSocialAgentDraft = createServerFn({ method: "POST" })
       .eq("id", data.postId)
       .single();
     if (error || !post) throw new Error("This scheduler draft is unavailable.");
-    return { post: JSON.stringify(postFromRow(post, new Map())) };
+    return {
+      post: JSON.stringify(
+        postFromRow(
+          {
+            ...post,
+            body: typeof post.body === "string" ? normalizeDashes(post.body) : post.body,
+            title: typeof post.title === "string" ? normalizeDashes(post.title) : post.title,
+            targets: Array.isArray(post.targets)
+              ? post.targets.map((target: { provider_settings?: unknown }) => ({
+                  ...target,
+                  provider_settings: normalizeCustomerCopy(target.provider_settings || {}),
+                }))
+              : post.targets,
+          },
+          new Map(),
+        ),
+      ),
+    };
   });
 
 export const getSocialScheduler = createServerFn({ method: "GET" })
@@ -457,7 +477,7 @@ export async function saveSocialPostForUser(
   input: SocialPostInput,
   agentGuard?: { messageId: string; cardId: string; revision: number },
 ) {
-  const data = socialPostInputSchema.parse(input);
+  const data = normalizeCustomerCopy(socialPostInputSchema.parse(input));
   await requireScheduler(userId);
   await enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "social-post-save", userId);
   const db = supabaseAdmin as any;

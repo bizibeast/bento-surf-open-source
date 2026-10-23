@@ -1,6 +1,12 @@
 import { reserveProviderUsage, ProviderBudgetError } from "./provider-budget.server";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Email tables are introduced by the lifecycle migration. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import {
+  compareEmailDeliveryPriority,
+  resendMinIntervalMs,
+  syncEmailDailyCaps,
+} from "./email-daily-cap";
+import { enqueueWeeklyDigests } from "./weekly-digest.server";
 import { renderBentoEmail, type BentoEmailCategory, type BentoEmailEvent } from "./email-templates";
 import {
   publicNewsletterPath,
@@ -645,12 +651,22 @@ async function failDelivery(row: EmailOutboxRow, error: unknown) {
 
 export async function processEmailOutbox(limit = 25) {
   if (!resendReady()) return { claimed: 0, sent: 0, configured: false };
+  try {
+    await syncEmailDailyCaps(supabaseAdmin as any);
+  } catch (capError) {
+    console.error("[email] daily cap sync deferred", capError);
+  }
   const db = supabaseAdmin as any;
   const { data, error } = await db.rpc("claim_email_outbox", { p_limit: limit });
   if (error) throw new Error(error.message);
-  const rows = (data ?? []) as EmailOutboxRow[];
+  const rows = ((data ?? []) as EmailOutboxRow[]).sort(compareEmailDeliveryPriority);
   let sent = 0;
+  let nextAllowedAt = 0;
+  const interval = resendMinIntervalMs();
   for (const row of rows) {
+    const wait = nextAllowedAt - Date.now();
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    nextAllowedAt = Date.now() + interval;
     try {
       if (await sendWithResend(row)) sent += 1;
     } catch (deliveryError) {
@@ -685,10 +701,16 @@ export async function hasDeliverableEmailOutbox(now = new Date()) {
   return Boolean(data);
 }
 
-export async function enqueueLifecycleEmails() {
+export async function enqueueLifecycleEmails(now = new Date()) {
   const { data, error } = await (supabaseAdmin as any).rpc("enqueue_due_lifecycle_emails");
   if (error) throw new Error(error.message);
-  return Number(data || 0);
+  let digests = 0;
+  try {
+    digests = (await enqueueWeeklyDigests(now)).enqueued;
+  } catch (digestError) {
+    console.error("[email] weekly digest enqueue failed", digestError);
+  }
+  return Number(data || 0) + digests;
 }
 
 export type EnqueueEmailInput = {

@@ -264,3 +264,40 @@ describe("Discover automatic recovery", () => {
     await waitFor(() => expect(hook.result.current.discover.data?.directionKey).toBe("lifestyle"));
   });
 });
+
+it("shows persisted partial posts while refresh remains pending and stops polling on completion", async () => {
+  vi.useFakeTimers();
+  let finish!: (data: ContentDiscoverData) => void;
+  functions.refresh.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const hook = setup(base);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10);
+  });
+  const partial = {
+    ...base,
+    lastRefreshedAt: "2026-10-10T11:00:00Z",
+    warnings: ["Checking remaining sources."],
+  };
+  functions.read.mockResolvedValue(partial);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(2_000);
+  });
+  expect(hook.result.current.discover.data).toMatchObject(partial);
+  expect(hook.result.current.refreshing).toBe(true);
+  expect(functions.refresh).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    finish({ ...partial, status: "fresh", warnings: [] });
+    await vi.advanceTimersByTimeAsync(10);
+  });
+  const readCount = functions.read.mock.calls.length;
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(4_000);
+  });
+  expect(functions.read).toHaveBeenCalledTimes(readCount);
+  expect(hook.result.current.refreshing).toBe(false);
+});

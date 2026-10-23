@@ -90,14 +90,19 @@ vi.mock("@tanstack/react-start", () => ({
       return fn;
     };
     fn.handler =
-      (handler: (input: { context: { userId: string }; data: unknown }) => unknown) =>
+      (
+        handler: (input: {
+          context: { userId: string; supabase: { scope: string }; accessToken: string };
+          data: unknown;
+        }) => unknown,
+      ) =>
       (input?: { data?: unknown }) =>
         handler({
           context: {
             userId: "owner",
             supabase: { scope: "authenticated" },
             accessToken: "user-jwt",
-          } as any,
+          },
           data: validate(input?.data),
         });
     return fn;
@@ -188,19 +193,16 @@ describe("content Agent authenticated functions", () => {
   });
 
   it("stores rejection feedback without scheduling", async () => {
+    mocks.rpc.mockResolvedValueOnce({ data: 1, error: null });
     await rejectAgentDraft({
       data: { messageId: ids.message, cardId: "draft-1", reason: "Too generic" },
     });
-    expect(mocks.insert).toHaveBeenCalledWith(
-      "content_agent_messages",
-      expect.objectContaining({
-        user_id: "owner",
-        role: "system_event",
-        payload: expect.objectContaining({
-          feedback: expect.objectContaining({ type: "rejected" }),
-        }),
-      }),
-    );
+    expect(mocks.rpc).toHaveBeenCalledWith("reject_content_agent_draft", {
+      p_user_id: "owner",
+      p_message_id: ids.message,
+      p_card_id: "draft-1",
+      p_reason: "Too generic",
+    });
     expect(mocks.saveSocialPostForUser).not.toHaveBeenCalled();
   });
 

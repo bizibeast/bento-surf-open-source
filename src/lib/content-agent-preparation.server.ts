@@ -259,9 +259,12 @@ export async function prepareAgentMessage(userId: string, messageId: string, onl
     .single();
   if (error || !message) throw new Error("This draft is unavailable.");
   const result = storedContentAgentResultSchema.parse(message.payload);
+  const rejected = new Set(result.rejectedDraftIds || []);
+  if (onlyCardId && rejected.has(onlyCardId)) throw new Error("This draft was rejected.");
   for (const card of result.cards) {
     if (
       card.type !== "draft" ||
+      rejected.has(card.cardId) ||
       (onlyCardId && card.cardId !== onlyCardId) ||
       !["twitter", "linkedin", "instagram"].includes(card.platform)
     )

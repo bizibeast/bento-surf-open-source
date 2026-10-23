@@ -35,6 +35,8 @@ import { MobileTabSelect } from "@/components/MobileTabSelect";
 import { getBookingWorkspace } from "@/lib/booking.functions";
 import { calendarSetupReadiness } from "@/lib/booking";
 import { getStoreOnboardingStatus } from "@/lib/commerce.functions";
+import { followCurrentConnectPayments } from "@/lib/connect-payments";
+import { settingsIntegrationsPath } from "@/lib/settings-integrations";
 
 export type NewBlockPayload = {
   type: Database["public"]["Enums"]["block_type"];
@@ -139,6 +141,18 @@ export function AddBlockPicker({
     setSelected(null);
     setCategory(initialCategory ?? "custom");
   };
+  const connectPayments = () => {
+    void followCurrentConnectPayments(() => {
+      window.location.assign(settingsIntegrationsPath("payments"));
+    })
+      .then(() => {
+        onOpenChange(false);
+        reset();
+      })
+      .catch((error) => {
+        toast.error(error instanceof Error ? error.message : "Could not start checkout.");
+      });
+  };
 
   return (
     <Dialog
@@ -162,9 +176,7 @@ export function AddBlockPicker({
             onUpgradeLiveSocial={() => setLockedFeature("liveSocialPreviews")}
             onStartCommerce={(kind) => {
               if (!storeReady) {
-                onOpenChange(false);
-                reset();
-                window.location.assign("/store");
+                connectPayments();
                 return;
               }
               onOpenChange(false);
@@ -279,9 +291,7 @@ export function AddBlockPicker({
                             return;
                           }
                           if (storePaymentLocked) {
-                            onOpenChange(false);
-                            reset();
-                            window.location.assign("/store");
+                            connectPayments();
                             return;
                           }
                           if (calendarLocked) {

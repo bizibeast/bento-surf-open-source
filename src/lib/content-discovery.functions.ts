@@ -14,6 +14,7 @@ import {
 import {
   discoverSourceWarnings,
   DISCOVER_BRIEF_VERSION,
+  DISCOVER_PROGRESS_WARNING,
   getOrBuildTrendBrief,
   normalizeNicheKey,
   sourceMatchesDiscoverNiche,
@@ -37,6 +38,7 @@ import {
 } from "./content-discover-creators";
 import {
   discoverBrainTopics,
+  isDiscoverSubjectTopic,
   discoverExcludedTopics,
   discoverPersonalizationSignals,
   discoverTopicMatches,
@@ -119,14 +121,17 @@ export type CreatorDiscoverDependencies = {
     context: CreatorDiscoverContext,
     refresh: boolean,
   ): Promise<CreatorDiscoverContext>;
-  getTrendBrief(input: {
-    nicheKeywords: string[];
-    creatorNames?: string[];
-    language: string;
-    region: string;
-    date: string;
-    forceRefresh?: boolean;
-  }): Promise<TrendBrief>;
+  getTrendBrief(
+    input: {
+      nicheKeywords: string[];
+      creatorNames?: string[];
+      language: string;
+      region: string;
+      date: string;
+      forceRefresh?: boolean;
+    },
+    onProgress?: (brief: TrendBrief) => Promise<void>,
+  ): Promise<TrendBrief>;
   getCreatorSources?: typeof researchDiscoverFollows;
   readCreators?: typeof readDiscoverFollows;
   getCachedSources?(userId: string, briefId: string): Promise<ContentSourceItem[]>;
@@ -269,7 +274,11 @@ export function storedDiscoverData(
   // never present unrelated posts under the user's new topics or locale.
   const availableRecommendations = visibleDiscoverRecommendations(recommendations).flatMap(
     (item) => {
-      if (evaluateDiscoverQuality(item, now.getTime()).eligible) return [item];
+      const relevant =
+        !context ||
+        sourceMatchesDiscoverNiche(item, inferDiscoverNiche(context)) ||
+        context.creators?.some((creator) => creatorMatchesSource(creator, item));
+      if (relevant && evaluateDiscoverQuality(item, now.getTime()).eligible) return [item];
       return item.saved || item.feedback === "saved" ? [{ ...item, savedOnly: true }] : [];
     },
   );
@@ -298,10 +307,16 @@ export function storedDiscoverData(
         recommendations.filter((item) => item.feedback === "not_relevant").map(discoverPostKey),
       ),
     ],
-    warnings: discoverSourceWarnings(brief?.warnings || [], visible),
+    warnings: [
+      ...discoverSourceWarnings(brief?.warnings || [], visible),
+      ...(!brief || brief.warnings.includes(DISCOVER_PROGRESS_WARNING)
+        ? []
+        : qualityCoverageWarnings(visible, now.getTime())),
+    ],
     status: !brief
       ? "missing"
-      : !brief.nicheKey.startsWith(`${DISCOVER_BRIEF_VERSION}:`) ||
+      : brief.warnings.includes(DISCOVER_PROGRESS_WARNING) ||
+          !brief.nicheKey.startsWith(`${DISCOVER_BRIEF_VERSION}:`) ||
           Date.parse(brief.expiresAt) <= now.getTime() ||
           directionMismatch
         ? "stale"
@@ -514,7 +529,7 @@ const defaultDependencies: CreatorDiscoverDependencies = {
       })),
     };
   },
-  getTrendBrief: getOrBuildTrendBrief,
+  getTrendBrief: (input, onProgress) => getOrBuildTrendBrief(input, undefined, onProgress),
   async saveRecommendations(userId, rows, leaseKey) {
     if (!rows.length) return [];
     const db = supabaseAdmin as any;
@@ -698,16 +713,18 @@ const NICHE_STOP_WORDS = new Set([
 ]);
 
 export function inferDiscoverNiche(context: CreatorDiscoverContext) {
-  if (context.research?.topics.length) return context.research.topics;
   const excluded = discoverExcludedTopics(context);
   const explicit = context.profile.nicheKeywords
     .map((value) => value.trim())
     .filter(
-      (topic) => topic && !excluded.some((unwanted) => discoverTopicMatches(topic, unwanted)),
+      (topic) =>
+        topic &&
+        isDiscoverSubjectTopic(topic) &&
+        !excluded.some((unwanted) => discoverTopicMatches(topic, unwanted)),
     );
   const brainTopics = discoverBrainTopics(context);
   if (explicit.length || brainTopics.length)
-    return [...new Set([...brainTopics, ...explicit])].slice(0, 10);
+    return [...new Set([...explicit, ...brainTopics])].slice(0, 10);
   const rankedCaptions = rankCreatorPosts(context.insights, 3).flatMap((item, index) =>
     Array.from({ length: index === 0 ? 3 : 1 }, () => item.caption || ""),
   );
@@ -717,7 +734,7 @@ export function inferDiscoverNiche(context: CreatorDiscoverContext) {
   ].join(" ");
   const counts = new Map<string, number>();
   for (const token of text.toLowerCase().match(/[a-z][a-z0-9+#.-]{1,}/g) || []) {
-    if (NICHE_STOP_WORDS.has(token)) continue;
+    if (NICHE_STOP_WORDS.has(token) || !isDiscoverSubjectTopic(token)) continue;
     counts.set(token, (counts.get(token) || 0) + 1);
   }
   const inferred = [...counts]
@@ -832,17 +849,25 @@ function contextualSourceRecommendations(
   });
 }
 
-function qualityCoverageWarnings(items: ContentSourceItem[], now: number) {
-  const platforms = new Map<string, ContentSourceItem[]>();
+function qualityCoverageWarnings(
+  items: Array<ContentSourceItem | DiscoverRecommendation>,
+  now: number,
+) {
+  const platforms = new Map<string, Array<ContentSourceItem | DiscoverRecommendation>>(
+    DISCOVER_PAGE_PLATFORMS.filter((platform) => platform !== "Hacker News").map((platform) => [
+      platform,
+      [],
+    ]),
+  );
   for (const item of items) {
-    const platform = item.platform || item.sourceName;
+    const platform = item.platform || item.sourceName || "Unknown";
     platforms.set(platform, [...(platforms.get(platform) || []), item]);
   }
   return [...platforms].flatMap(([platform, candidates]) =>
     candidates.some((item) => evaluateDiscoverQuality(item, now).eligible)
       ? []
       : [
-          `${platform}: No recent posts in this batch met the verified audience and engagement minimums.`,
+          `${platform}: ${candidates.length ? "Recent matches were found, but publication, audience or engagement could not be verified at the feed minimums." : "No matching recent posts with verified engagement were available in this refresh."}`,
         ],
   );
 }
@@ -855,7 +880,7 @@ export async function buildCreatorDiscover(
 ): Promise<ContentDiscoverData> {
   const loaded = await dependencies.loadCreatorContext(userId);
   const context = dependencies.personalizeContext
-    ? await dependencies.personalizeContext(userId, loaded, true)
+    ? await dependencies.personalizeContext(userId, loaded, false)
     : loaded;
   const nicheKeywords = inferDiscoverNiche(context);
   const suggestedCreators = suggestDiscoverCreators(context);
@@ -865,14 +890,32 @@ export async function buildCreatorDiscover(
   const providerWarnings: string[] = [];
   const [brief, creatorSources] = await Promise.all([
     nicheKeywords.length
-      ? dependencies.getTrendBrief({
-          nicheKeywords,
-          creatorNames: suggestedCreators.slice(0, 4).map((creator) => creator.name),
-          language: context.profile.language,
-          region: context.profile.region,
-          date: now.toISOString().slice(0, 10),
-          forceRefresh,
-        })
+      ? dependencies.getTrendBrief(
+          {
+            nicheKeywords,
+            creatorNames: suggestedCreators.slice(0, 4).map((creator) => creator.name),
+            language: context.profile.language,
+            region: context.profile.region,
+            date: now.toISOString().slice(0, 10),
+            forceRefresh,
+          },
+          async (partial) => {
+            const excluded = discoverExcludedTopics(context);
+            const eligible = partial.items.filter(
+              (source) =>
+                evaluateDiscoverQuality(source, now.getTime()).eligible &&
+                sourceMatchesDiscoverNiche(source, nicheKeywords) &&
+                !excluded.some((topic) =>
+                  discoverTopicMatches(`${source.title} ${source.summary}`, topic),
+                ),
+            );
+            if (eligible.length)
+              await dependencies.saveRecommendations(
+                userId,
+                contextualSourceRecommendations(eligible, partial.id, context, nicheKeywords, now),
+              );
+          },
+        )
       : null,
     creators.length && dependencies.getCreatorSources
       ? dependencies
@@ -896,6 +939,8 @@ export async function buildCreatorDiscover(
     [...creatorSources, ...(brief?.items || []), ...cachedSources].filter(
       (source) =>
         evaluateDiscoverQuality(source, now.getTime()).eligible &&
+        (sourceMatchesDiscoverNiche(source, nicheKeywords) ||
+          creators.some((creator) => creatorMatchesSource(creator, source))) &&
         !excludedTopics.some((topic) =>
           discoverTopicMatches(`${source.title} ${source.summary}`, topic),
         ),
@@ -955,7 +1000,12 @@ export async function buildCreatorDiscover(
       ...(context.personalizationWarnings || []),
       ...providerWarnings,
       ...discoverSourceWarnings(brief?.warnings || [], sources),
-      ...qualityCoverageWarnings([...creatorSources, ...(brief?.items || [])], now.getTime()),
+      ...(brief
+        ? qualityCoverageWarnings(
+            [...creatorSources, ...brief.items, ...cachedSources],
+            now.getTime(),
+          )
+        : []),
     ],
     status: brief ? "fresh" : "needs_niche",
     dismissedPostKeys: [

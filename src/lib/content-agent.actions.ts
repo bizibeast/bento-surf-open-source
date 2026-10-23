@@ -30,9 +30,18 @@ export async function loadAssistantResult(userId: string, messageId: string) {
     .gt("expires_at", new Date().toISOString())
     .maybeSingle();
   if (error || !data) throw new Error("This Agent result is unavailable.");
+  const result = storedContentAgentResultSchema.parse(data.payload);
+  const rejected = new Set(result.rejectedDraftIds || []);
   return {
     threadId: String(data.thread_id),
-    result: storedContentAgentResultSchema.parse(data.payload),
+    result: {
+      ...result,
+      cards: result.cards.filter(
+        (card) =>
+          !rejected.has(card.cardId) &&
+          !(card.type === "schedule_proposal" && rejected.has(card.draftCardId)),
+      ),
+    },
   };
 }
 

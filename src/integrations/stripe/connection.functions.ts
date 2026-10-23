@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Payment tables are introduced by the pending migration. */
 import { createServerFn } from "@tanstack/react-start";
-import { requirePlanEntitlement } from "@/lib/plan.server";
+import { requireCreatorPaymentConnect } from "@/lib/plan.server";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
@@ -114,11 +114,7 @@ export const connectStripeRestrictedKey = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) => z.object({ restrictedKey: restrictedKeySchema }).parse(input))
   .handler(async ({ context, data }) => {
-    await requirePlanEntitlement(
-      context.userId,
-      "oneTapCheckout",
-      "Connected payments are included with the Store plan.",
-    );
+    await requireCreatorPaymentConnect(context.userId);
     await requireExclusiveCreatorPaymentProvider(context.userId, STRIPE_PROVIDER);
     const restrictedKey = data.restrictedKey.trim();
     const environment = assertStripeKeyMatchesEnvironment(restrictedKey);
@@ -246,11 +242,7 @@ export const configureStripeWebhook = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ context, data }) => {
-    await requirePlanEntitlement(
-      context.userId,
-      "oneTapCheckout",
-      "Connected payments are included with the Store plan.",
-    );
+    await requireCreatorPaymentConnect(context.userId);
     await requireExclusiveCreatorPaymentProvider(context.userId, STRIPE_PROVIDER);
     const current = await getStripePaymentAccount(context.userId);
     if (!current || current.credential_mode !== "restricted_key") {
@@ -302,11 +294,7 @@ export const configureStripeWebhook = createServerFn({ method: "POST" })
 export const beginStripeConnection = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    await requirePlanEntitlement(
-      context.userId,
-      "oneTapCheckout",
-      "Connected payments are included with the Store plan.",
-    );
+    await requireCreatorPaymentConnect(context.userId);
     await requireExclusiveCreatorPaymentProvider(context.userId, STRIPE_PROVIDER);
     const db = supabaseAdmin as any;
     const [{ data: profile }, { data: authUser }] = await Promise.all([
@@ -340,11 +328,7 @@ export const completeStripeConnection = createServerFn({ method: "POST" })
     if (oauthState.creator_id !== context.userId) {
       throw new Error("This Stripe connection link belongs to a different account.");
     }
-    await requirePlanEntitlement(
-      context.userId,
-      "oneTapCheckout",
-      "Connected payments are included with the Store plan.",
-    );
+    await requireCreatorPaymentConnect(context.userId);
     await requireExclusiveCreatorPaymentProvider(oauthState.creator_id, STRIPE_PROVIDER);
     const tokens = await exchangeStripeCode(data.code);
     const stripeAccount = await getStripeAccount(tokens.stripe_user_id);

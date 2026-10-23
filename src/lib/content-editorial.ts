@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { proseHasForbiddenDash } from "./text/dashes";
 import { carouselCopyIssues } from "./content-carousel";
 import { parsePublicHttpUrl } from "./safe-url";
 import { SOCIAL_PROVIDER_DEFINITIONS } from "./social-scheduler";
@@ -18,12 +19,21 @@ export const carouselSlideSchema = z
     mediaId: z.string().uuid().optional(),
   })
   .strict();
+export const editorialReviewIssueSchema = z
+  .object({
+    code: z.enum(["reader_value", "voice_drift", "formulaic", "internal_jargon"]),
+    message: z.string().trim().min(1).max(1000),
+  })
+  .strict();
 export const editorialMetadataSchema = z
   .object({
     sourceIds: z.array(z.string().max(500)).max(40),
     angle: z.string().max(2000),
     whyNow: z.string().max(2000),
     validationState: z.enum(["passed", "needs_review"]),
+    // Set when deterministic checks passed and the reviewer call did not finish.
+    reviewSkipped: z.boolean().optional(),
+    reviewIssues: z.array(editorialReviewIssueSchema).max(12).optional(),
     revisionOf: z
       .object({ messageId: z.string().min(1).max(100), cardId: z.string().min(1).max(100) })
       .strict()
@@ -118,6 +128,27 @@ export type EditorialBrief = {
   revisionTarget?: EditorialRevisionTarget;
 };
 export type EditorialIssue = { code: string; message: string };
+export function isQualityOnlyEditorialReview(issues: readonly EditorialIssue[]) {
+  return (
+    issues.length > 0 &&
+    issues.every((issue) => editorialReviewIssueSchema.safeParse(issue).success)
+  );
+}
+export function isEditorialDraftReviewable(metadata?: z.infer<typeof editorialMetadataSchema>) {
+  return (
+    metadata?.validationState === "passed" ||
+    (metadata?.validationState === "needs_review" &&
+      !metadata.reviewSkipped &&
+      isQualityOnlyEditorialReview(metadata.reviewIssues || []))
+  );
+}
+export function getEditorialReviewNotes(value: unknown): string[] {
+  const parsed = editorialMetadataSchema.safeParse(value);
+  if (!parsed.success || parsed.data.validationState !== "needs_review") return [];
+  return parsed.data.reviewIssues?.length
+    ? parsed.data.reviewIssues.map((issue) => issue.message)
+    : ["The automated review is incomplete. Check this draft before scheduling."];
+}
 function revisionOutputIds(target?: EditorialRevisionTarget): Set<string> {
   return new Set(
     target
@@ -316,7 +347,7 @@ export function validateEditorialDraft(
     draft.body,
     ...(draft.slides || []).map((slide) => `${slide.heading} ${slide.body}`),
   ].join("\n");
-  if (/[\u2014]/u.test(`${draft.title || ""}\n${text}`))
+  if (proseHasForbiddenDash(`${draft.title || ""}\n${text}`))
     add(
       "voice_drift",
       "Do not use em dashes in a post, title or carousel slide. Rewrite the sentence in the creator's voice.",
@@ -461,12 +492,14 @@ export function validateEditorialDraft(
     add("missing_source", "Include the original external source link.");
   if (urls.some((url) => !brief.sources.some((source) => source.url === url)))
     add("missing_source", "Use only supplied source links.");
+  // A curiosity hook or optional CTA is style, not a factual error. Only flag
+  // an otherwise empty engagement request; real value can use bold language.
   if (
-    /\b(?:agree|thoughts)\s*\?\s*$/i.test(text) ||
-    /\b(game[- ]changer|unlock your potential|in today's (?:fast-paced|digital)|delve|agree\?|comment (?:yes|below)|like and share|repost if|let that sink in)\b/i.test(
+    /^\s*(?:agree|thoughts)\s*\?\s*$/i.test(text) ||
+    /^\s*(?:(?:agree|thoughts)\s*\?\s*)?(?:(?:comment (?:yes(?: below)?|below)|like and share|repost if|let that sink in)[.!?\s]*)+$/i.test(
       text,
     )
   )
-    add("formulaic", "Replace stock phrasing and engagement bait with a specific useful point.");
+    add("formulaic", "Add a useful point or payoff beyond the engagement request.");
   return issues;
 }

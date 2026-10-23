@@ -99,6 +99,27 @@ it("defaults to durable drafts and never schedules without opt-in", async () => 
     status: "draft",
   });
 });
+it("persists quality feedback with the owned draft while leaving it unscheduled", async () => {
+  const deps = fixture();
+  const reviewIssues = [{ code: "reader_value" as const, message: "Add a practical takeaway." }];
+  const card = {
+    ...result.cards[0],
+    editorial: {
+      sourceIds: ["source-1"],
+      angle: "A useful angle",
+      whyNow: "A timely lesson",
+      validationState: "needs_review" as const,
+      reviewIssues,
+    },
+  };
+  expect(await saveRoutineOutputs({ ...base, result: { ...result, cards: [card] } }, deps)).toBe(1);
+  expect([...deps.rows.values()][0]).toMatchObject({
+    user_id: "owner",
+    status: "draft",
+    settings: { card: { editorial: { validationState: "needs_review", reviewIssues } } },
+  });
+  expect(deps.savePost).not.toHaveBeenCalled();
+});
 it("rejects automatic scheduling and unsupported formats before storing anything", async () => {
   const deps = fixture();
   await expect(saveRoutineOutputs({ ...base, outputMode: "schedule" }, deps)).rejects.toThrow(

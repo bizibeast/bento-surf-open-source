@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- New tables ship with the paired migration. */
 import { createServerFn } from "@tanstack/react-start";
+import { normalizeDashes } from "./text/dashes";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
@@ -319,9 +320,12 @@ export const saveContentProfile = createServerFn({ method: "POST" })
   .validator((input) => contentProfileSchema.parse(input))
   .handler(async ({ context, data }) => {
     await requireContentWorkspace(context.userId);
+    const profile = contentProfileToRow(data);
     const { error } = await (supabaseAdmin as any).from("creator_content_profiles").upsert({
       user_id: context.userId,
-      ...contentProfileToRow(data),
+      ...profile,
+      goal: normalizeDashes(profile.goal),
+      niche_keywords: profile.niche_keywords.map(normalizeDashes),
       updated_at: new Date().toISOString(),
     });
     if (error) throw new Error("The Content profile could not be saved.");
@@ -338,8 +342,8 @@ export const saveBrainItem = createServerFn({ method: "POST" })
     const row = {
       user_id: context.userId,
       kind: data.kind,
-      title: data.title,
-      content: data.content,
+      title: normalizeDashes(data.title),
+      content: normalizeDashes(data.content),
       provenance: data.provenance,
       source_url: data.sourceUrl || null,
       source_ref: data.sourceRef || null,
@@ -352,7 +356,7 @@ export const saveBrainItem = createServerFn({ method: "POST" })
     if (
       !itemId &&
       ["My Human", "Bento Memories", "Writing voice", "X Strategy", "LinkedIn Strategy"].includes(
-        data.title,
+        row.title,
       )
     ) {
       const { data: prior, error } = await db
@@ -360,7 +364,7 @@ export const saveBrainItem = createServerFn({ method: "POST" })
         .select("id")
         .eq("user_id", context.userId)
         .eq("kind", data.kind)
-        .eq("title", data.title)
+        .eq("title", row.title)
         .order("updated_at", { ascending: false })
         .limit(1)
         .maybeSingle();

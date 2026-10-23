@@ -215,13 +215,14 @@ export function RetentionCancellationDialog({
         },
       });
       await queryClient.invalidateQueries();
-      const trialEnded = next.status === "canceled";
+      // A cancelled trial keeps access until its end date and is never charged.
+      const trialEnded = next.status === "trialing" || next.status === "canceled";
       setOutcome(trialEnded ? "trial_cancelled" : "cancelled");
       setResultDate(next.currentPeriodEnd);
       setStep("complete");
       toast.success(
         trialEnded
-          ? "Trial cancelled. Your trial access has ended and no renewal is scheduled."
+          ? "Trial cancelled. You won't be charged, and your access continues until the date shown."
           : "Renewal cancelled. Your paid access continues until the date shown.",
       );
     } catch (cause) {
@@ -284,14 +285,14 @@ export function RetentionCancellationDialog({
               <DialogDescription className="leading-6">
                 What is the main reason? Choose one, or skip this question.{" "}
                 {billing.status === "trialing"
-                  ? "Confirming cancellation ends your trial access immediately."
+                  ? `Your trial access continues until ${date(billing.currentPeriodEnd)}, and you won't be charged.`
                   : `Your current access continues until ${date(billing.currentPeriodEnd)}.`}
               </DialogDescription>
             </DialogHeader>
             {billing.status === "trialing" && (
               <div className="rounded-2xl bg-[#dfeaff] p-4 text-sm leading-6">
-                Cancel before your first charge to avoid renewal. Your trial ends as soon as you
-                confirm cancellation. Your saved work remains available for export.
+                Cancelling now stops the first charge. You keep your trial until{" "}
+                {date(billing.currentPeriodEnd)}. Your saved work remains available for export.
               </div>
             )}
             <div role="radiogroup" aria-label="Main cancellation reason" className="grid gap-2">
@@ -537,7 +538,7 @@ export function RetentionCancellationDialog({
               </DialogTitle>
               <DialogDescription className="leading-6">
                 {billing.status === "trialing"
-                  ? "Your trial ends immediately when you confirm. This workspace’s hosted page, store, and creator tools pause now, and no renewal is scheduled."
+                  ? `You won't be charged. You keep your trial until ${date(billing.currentPeriodEnd)}. After that, this workspace’s hosted page, store, and creator tools pause.`
                   : `Your plan will not renew. You keep ${planLabel} until ${date(billing.currentPeriodEnd)}. After that, this workspace’s hosted page, store, and creator tools pause.`}{" "}
                 You can renew or export during the 90-day retention window.
               </DialogDescription>
@@ -583,7 +584,7 @@ export function RetentionCancellationDialog({
               </div>
               <DialogTitle className="font-ui-display text-2xl">
                 {outcome === "trial_cancelled"
-                  ? "Your trial has ended"
+                  ? "Your trial is cancelled"
                   : outcome === "cancelled"
                     ? intent?.displayName
                       ? `Thank you, ${intent.displayName}, for building with Bento`
@@ -600,7 +601,7 @@ export function RetentionCancellationDialog({
               </DialogTitle>
               <DialogDescription className="leading-6">
                 {outcome === "trial_cancelled"
-                  ? "Your trial is cancelled and access has ended. No renewal is scheduled. Your work is saved for 90 days; you can export it or choose a paid plan in Billing."
+                  ? `You won't be charged. Your trial access continues until ${date(resultDate)}. After that your work is saved for 90 days; you can export it or choose a paid plan in Billing.`
                   : outcome === "cancelled"
                     ? `Renewal is cancelled. Your ${planLabel} access continues until ${date(resultDate)}. You can change your mind before then.`
                     : outcome === "paused"

@@ -471,7 +471,22 @@ async function processImageJobScoped(userId: string, id: string) {
       )
         throw new Error("Image or photo consent changed; request cancelled.");
       if (!imageProviderAvailable(userId)) throw new Error("Image generation is unavailable.");
+      // Moderation and reference reads can outlive a creator's rejection. Stop
+      // before spending on a new image; accepted tasks still retain their output.
+      if (job.request_source !== "scheduler")
+        await currentDraft(userId, {
+          messageId: job.message_id,
+          cardId: job.card_id,
+          revision: job.draft_revision,
+        });
       await reserveProviderUsage("apimart_images", 1, { workspaceId: userId });
+      // Reservation is asynchronous too; a rejection during it cancels the transfer.
+      if (job.request_source !== "scheduler")
+        await currentDraft(userId, {
+          messageId: job.message_id,
+          cardId: job.card_id,
+          revision: job.draft_revision,
+        });
       mayHaveSubmitted = true;
       const taskId = await submitApiMartImage(process.env.APIMART_API_KEY!, job.prompt, references);
       acceptedTaskId = taskId;

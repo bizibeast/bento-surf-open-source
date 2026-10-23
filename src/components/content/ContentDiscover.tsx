@@ -788,7 +788,7 @@ export function ContentDiscover({
       )}
       {data.warnings.length > 0 && (
         <details className="discover-warning">
-          <summary>Feed source status · {data.warnings.length} need attention</summary>
+          <summary>Platform coverage · {data.warnings.length} updates</summary>
           {data.warnings.map((warning) => (
             <p key={warning}>{warning}</p>
           ))}
@@ -804,7 +804,7 @@ export function ContentDiscover({
           <RefreshCw className="size-3.5 animate-spin" />
           <span>
             {refreshStatus || "Refreshing recommendations…"}
-            <small>Your inspiration stays here while new posts arrive.</small>
+            <small>You can browse now while the remaining platforms finish.</small>
           </span>
           <span className="discover-progress-track" aria-hidden="true" />
         </div>

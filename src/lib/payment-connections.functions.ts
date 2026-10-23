@@ -5,8 +5,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { commercePlatformFeeBps } from "./commerce";
-import { getPlan, requirePlanEntitlement } from "./plan.server";
-import { planHasEntitlement } from "./plans";
+import { hasPlanEntitlement, requireCreatorPaymentConnect } from "./plan.server";
 import {
   CREATOR_PAYMENT_PROVIDER_DEFINITIONS,
   CREATOR_PAYMENT_PROVIDERS,
@@ -112,7 +111,7 @@ export const getCreatorPaymentSettings = createServerFn({ method: "GET" })
       ? configuredSelection
       : null;
     return {
-      locked: !planHasEntitlement(await getPlan(context.userId), "oneTapCheckout"),
+      locked: !(await hasPlanEntitlement(context.userId, "oneTapCheckout")),
       feeBps,
       selectedProvider,
       recommendedProvider: recommendedCreatorPaymentProvider(requestCountry()),
@@ -128,11 +127,7 @@ export const selectCreatorPaymentProvider = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) => z.object({ provider: z.enum(CREATOR_PAYMENT_PROVIDERS) }).parse(input))
   .handler(async ({ context, data }) => {
-    await requirePlanEntitlement(
-      context.userId,
-      "oneTapCheckout",
-      "Connected payments are included with the Store plan. Upgrade to continue.",
-    );
+    await requireCreatorPaymentConnect(context.userId);
     const adminDb = supabaseAdmin as any;
     const { data: account, error: accountError } = await adminDb
       .from("creator_payment_accounts")
