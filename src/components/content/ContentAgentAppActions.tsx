@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { usePageActivity } from "@/hooks/use-page-activity";
+import { pagePollInterval } from "@/lib/page-poll";
 import { Check, LoaderCircle } from "lucide-react";
 import {
   getContentAgentActionStates,
@@ -76,6 +78,7 @@ export function ContentAgentAppActions({
   accounts: SchedulerConnection[];
 }) {
   const client = useQueryClient();
+  const activity = usePageActivity();
   const key = ["content-agent-app-actions", messageId];
   const [pollStarted] = useState(Date.now);
   const status = useQuery({
@@ -84,8 +87,9 @@ export function ContentAgentAppActions({
     staleTime: 30000,
     refetchInterval: (query) =>
       Date.now() - pollStarted < 180000 && query.state.data?.some((row) => row.status === "running")
-        ? 10000
+        ? pagePollInterval(10_000, activity, { idleMs: 30_000 })
         : false,
+    refetchIntervalInBackground: false,
   });
   const review = useMutation({
     onError: () => {

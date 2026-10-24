@@ -38,6 +38,8 @@ import { ContentBrain, type ContentBrainSection } from "@/components/content/Con
 import { ContentDiscover } from "@/components/content/ContentDiscover";
 import { DiscoverLoading } from "@/components/content/DiscoverLoading";
 import { useDiscoverFeed } from "@/hooks/use-discover-feed";
+import { usePageActivity } from "@/hooks/use-page-activity";
+import { pagePollInterval } from "@/lib/page-poll";
 import { discoverAgentPrompt, type DiscoverBoostAction } from "@/components/content/discover-utils";
 import { ContentRoutines, type ContentRoutineView } from "@/components/content/ContentRoutines";
 import { MicroAppPanel } from "@/components/MicroAppPanel";
@@ -243,6 +245,7 @@ export function ContentPage({
   }, [initialNewChat, initialThread]);
   const [showRoutines, setShowRoutines] = useState(initialRoutines);
   const queryClient = useQueryClient();
+  const activity = usePageActivity();
 
   useEffect(() => {
     setTab(initialTab);
@@ -258,8 +261,9 @@ export function ContentPage({
     enabled: tab !== "discover",
     refetchInterval: (query) =>
       tab === "brain" && ["pending", "running"].includes(query.state.data?.indexing?.status || "")
-        ? 30000
+        ? pagePollInterval(30_000, activity)
         : false,
+    refetchIntervalInBackground: false,
   });
   const mediaOpen = tab === "brain" && brainSection === "photo";
   const media = useInfiniteQuery({
@@ -303,7 +307,9 @@ export function ContentPage({
     initialPageParam: null as ContentAgentThreadCursor | null,
     getNextPageParam: (page) => page.nextCursor ?? undefined,
     enabled: tab === "agent" && !showRoutines,
-    refetchInterval: 60_000,
+    refetchInterval: () => pagePollInterval(120_000, activity),
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   });
   // Undefined means the default named agent. Null is an intentional new ordinary chat.
   const resolvedThreadId =
@@ -324,7 +330,9 @@ export function ContentPage({
       return result.unchanged && previous ? { ...result, messages: previous.messages } : result;
     },
     enabled: tab === "agent" && !showRoutines && Boolean(resolvedThreadId),
-    refetchInterval: 60_000,
+    refetchInterval: () => pagePollInterval(60_000, activity),
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
     staleTime: 30_000,
   });
   const sidebarThreads = [

@@ -503,6 +503,56 @@ describe("verified Dodo add-on state", () => {
       );
   });
 
+  it("revokes plan access right away when a trial is cancelled immediately", async () => {
+    vi.stubEnv("DODO_STORE_19_MONTHLY_PRODUCT_ID", "current-store");
+    const trialEnd = new Date(Date.now() + 2 * 86_400_000).toISOString();
+    mocks.currentSubscription = {
+      user_id: "user_123",
+      dodo_subscription_id: "sub_123",
+      status: "trialing",
+      billing_catalog: "2026-10",
+      plan_id: "store",
+      current_period_end: trialEnd,
+    };
+    const remote = {
+      subscription_id: "sub_123",
+      status: "cancelled",
+      product_id: "current-store",
+      created_at: new Date(Date.now() - 86_400_000).toISOString(),
+      next_billing_date: trialEnd,
+      trial_period_days: 3,
+      has_payment_method: true,
+      trial_amount: null,
+      cancel_at_next_billing_date: false,
+      metadata: {
+        workspace_id: "user_123",
+        auth_user_id: "owner",
+        billing_catalog: "2026-10",
+        trial_checkout_key: "three-day-checkout",
+      },
+    };
+    mocks.retrieve.mockResolvedValue(remote);
+    const before = Date.now();
+    await processVerifiedDodoEvent(
+      { type: "subscription.cancelled", timestamp: new Date().toISOString(), data: remote },
+      "trial-cancel-now",
+    );
+    expect(mocks.subscriptionUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ plan_id: "free", status: "canceled", trial_ends_at: null }),
+      { onConflict: "user_id" },
+    );
+    const lifecycle = mocks.lifecycle.mock.calls.at(-1)?.[0] as {
+      stoppedAt: string;
+      reason: string;
+    };
+    expect(lifecycle.reason).toBe("canceled");
+    // Access stops now, not at the (never charged) trial end date.
+    expect(Date.parse(lifecycle.stoppedAt)).toBeLessThanOrEqual(Date.now());
+    expect(Date.parse(lifecycle.stoppedAt)).toBeGreaterThanOrEqual(before - 60_000);
+    expect(mocks.profileUpdates.at(-1)?.value).toMatchObject({ plan_id: "free" });
+    expect(mocks.rpc).not.toHaveBeenCalledWith("claim_bento_trial", expect.anything());
+  });
+
   it.each([
     { has_payment_method: false },
     { has_payment_method: undefined },

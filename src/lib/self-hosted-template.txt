@@ -181,12 +181,13 @@ RESEND_WEBHOOK_SECRET=
 RESEND_FROM_EMAIL=
 RESEND_REPLY_TO=
 RESEND_TEST_RECIPIENT=
-# Daily send caps. Keep marketing below your Resend plan's daily limit so auth
-# and transactional mail keep room. The worker writes these onto provider_budget_policies.
-EMAIL_MARKETING_DAILY_CAP=70
-EMAIL_TRANSACTIONAL_DAILY_CAP=100
-# Max weekly digests in one Monday run. Also bounded by the marketing daily cap.
-EMAIL_WEEKLY_DIGEST_SEND_CAP=20
+# Every send reserves from one shared Resend budget stored in the
+# email_send_budget_policy row (defaults: 100 a UTC day, 3,000 a month, marketing
+# stops at 60, transactional up to 90, 10 left for Auth SMTP). Edit that row to
+# match your Resend plan.
+# Max weekly digests queued per UTC day (Monday and Tuesday cohorts, overflow
+# rolls to the next day). Never above the marketing ceiling.
+EMAIL_WEEKLY_DIGEST_SEND_CAP=45
 # Minimum gap between Resend API calls. 100ms is 10 requests/second.
 RESEND_MIN_INTERVAL_MS=100
 EMAIL_SIGNING_SECRET=

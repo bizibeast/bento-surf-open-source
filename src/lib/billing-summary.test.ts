@@ -21,10 +21,39 @@ describe("Billing header", () => {
     expect(summary.note).toBeNull();
     expect(summary.date).toEqual({ kind: "trial_ends", at: trialEnd });
   });
-  it("shows access until the trial end after cancelling renewal", () => {
+  it("never shows Access until for a trial", () => {
     const summary = billingSummary({ ...base, cancelAtPeriodEnd: true }, "store", now);
     expect(summary.badge).toBe("Store trial, canceled");
+    expect(summary.date).toEqual({ kind: "trial_ends", at: trialEnd });
+  });
+  it("keeps Access until for a cancelled paid plan", () => {
+    const summary = billingSummary(
+      { ...base, status: "active", cancelAtPeriodEnd: true },
+      "store",
+      now,
+    );
+    expect(summary.badge).toBe("Store ends soon");
     expect(summary.date).toEqual({ kind: "access_ends", at: trialEnd });
+  });
+  it("shows Access ended right after a trial is cancelled", () => {
+    const summary = billingSummary(
+      {
+        ...base,
+        status: "canceled",
+        billingLifecycle: {
+          episodeId: "e",
+          subscriptionId: "sub",
+          reason: "canceled",
+          plan: "store",
+          stoppedAt: new Date(now).toISOString(),
+          ...lifecycleDeadlines("canceled", now),
+          deletingAt: null,
+        },
+      },
+      "free",
+      now,
+    );
+    expect(summary.date).toEqual({ kind: "access_ended", at: new Date(now).toISOString() });
   });
   it("never shows Legacy or Renews for an ended subscription", () => {
     const stopped = Date.parse("2026-10-22T20:52:51.163Z");

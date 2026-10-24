@@ -140,11 +140,12 @@ describe("cancellation dialog", () => {
   });
 });
 
-it("keeps trial access until the trial end and promises no charge", async () => {
+it("warns that a trial cancel ends access immediately with no charge, then ends the trial", async () => {
   vi.mocked(cancelMyRenewal).mockResolvedValue({
     ...billing,
-    status: "trialing",
-    cancelAtPeriodEnd: true,
+    plan: "free",
+    status: "canceled",
+    cancelAtPeriodEnd: false,
   });
   render(
     <RetentionCancellationDialog
@@ -154,11 +155,34 @@ it("keeps trial access until the trial end and promises no charge", async () => 
       billing={{ ...billing, status: "trialing" }}
     />,
   );
-  expect(screen.getByText(/Your trial access continues until .*won't be charged/)).toBeVisible();
-  expect(screen.queryByText(/immediately/)).not.toBeInTheDocument();
+  const warning =
+    "Cancelling now ends your trial immediately. You'll lose access to your plan's features right away and won't be charged.";
+  expect(screen.getByRole("alert")).toHaveTextContent(warning);
+  expect(screen.queryByText(/continues until|keep your trial until|Access until/)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Skip and continue cancelling" }));
-  expect(await screen.findByText(/You won't be charged. You keep your trial until/)).toBeVisible();
+  expect(await screen.findByText("Review your cancellation")).toBeVisible();
+  // The warning is shown again right before the creator confirms.
+  expect(screen.getByText(new RegExp(`^${warning.replace(/[.?]/g, "\\$&")}`))).toBeVisible();
+  expect(screen.queryByText(/keep your trial until|continues until/i)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Confirm cancellation" }));
-  expect(await screen.findByText("Your trial is cancelled")).toBeVisible();
+  expect(await screen.findByText("Your trial has ended")).toBeVisible();
+  expect(
+    screen.getByText(/Your trial is cancelled and access has ended. You won't be charged./),
+  ).toBeVisible();
   expect(screen.queryByRole("button", { name: "Keep my plan" })).not.toBeInTheDocument();
+});
+
+it("keeps paid cancellation at period end with the access date", async () => {
+  render(
+    <RetentionCancellationDialog open onOpenChange={vi.fn()} plan="creator" billing={billing} />,
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByText(/Your current access continues until/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Skip and continue cancelling" }));
+  expect(await screen.findByText(/Your plan will not renew. You keep Creator until/)).toBeVisible();
+  expect(screen.queryByText(/ends your trial immediately/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Confirm cancellation" }));
+  expect(
+    await screen.findByText(/Renewal is cancelled. Your Creator access continues until/),
+  ).toBeVisible();
 });

@@ -49,6 +49,17 @@ describe("effective plans during retention", () => {
     expect(planHasEntitlement(plan, "brain")).toBe(false);
     expect(minimumPlanForEntitlement("brain")).toBe("creator_plus");
   });
+  it("removes tools and the public page at once when a trial is cancelled now", () => {
+    const profile = {
+      plan_id: "free",
+      is_pro: false,
+      trial_ends_at: null,
+      billing_lifecycle: lifecycle("canceled", now),
+    };
+    expect(profilePlanForBillingSurface(profile, "tools", now)).toBe("free");
+    expect(profilePlanForBillingSurface(profile, "public", now)).toBe("free");
+    expect(profilePlanForBillingSurface(profile, "tools", now - 1)).toBe("store");
+  });
   it("retains the storefront's plan for seven days but removes tools after three", () => {
     const profile = {
       plan_id: "free",

@@ -468,11 +468,14 @@ async function setRenewal(
       !["active", "trialing"].includes(subscription.status)
     )
       throw new Error("No active Bento subscription was found.");
-    // Trials and paid periods both cancel at the next billing date: a trial keeps
-    // access until it ends and is never charged. Never set status "cancelled"
-    // here, which would end access immediately.
+    // Cancelling a trial ends it now: Dodo cancels the subscription immediately,
+    // so the trial's access stops and the first charge can never happen. Paid
+    // periods still cancel at the next billing date and keep their paid access.
+    const endTrialNow = cancelAtPeriodEnd && subscription.status === "trialing";
     await dodo.subscriptions.update(subscription.dodo_subscription_id, {
-      cancel_at_next_billing_date: cancelAtPeriodEnd,
+      ...(endTrialNow
+        ? { status: "cancelled" as const, cancel_at_next_billing_date: false }
+        : { cancel_at_next_billing_date: cancelAtPeriodEnd }),
       ...(cancelAtPeriodEnd && cancellation
         ? {
             cancel_reason: "cancelled_by_customer" as const,
@@ -496,9 +499,14 @@ async function setRenewal(
       supabaseAdmin.from("profiles").select("billing_lifecycle").eq("id", userId).maybeSingle(),
     ]);
     if (error) throw new Error("Your updated billing status could not be loaded.");
-    if (cancelAtPeriodEnd && !verifiedSubscription?.cancel_at_period_end)
+    if (
+      endTrialNow
+        ? verifiedSubscription?.status !== "canceled"
+        : cancelAtPeriodEnd && !verifiedSubscription?.cancel_at_period_end
+    )
       throw new Error("Your cancellation is being verified. Refresh Billing before trying again.");
-    if (cancelAtPeriodEnd && verifiedSubscription?.current_period_end) {
+    // Only a paid cancellation is "scheduled". An ended trial gets the access-ended notice.
+    if (cancelAtPeriodEnd && !endTrialNow && verifiedSubscription?.current_period_end) {
       const endDate =
         new Intl.DateTimeFormat("en", {
           dateStyle: "long",
@@ -524,7 +532,7 @@ async function setRenewal(
   });
 }
 
-/** Stop the next charge. Trials and paid periods keep access until they end. */
+/** End a trial immediately with no charge; paid subscriptions keep their paid period. */
 export const cancelMyRenewal = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) => cancellationInputSchema.parse(input))

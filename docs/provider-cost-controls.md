@@ -84,9 +84,15 @@ stops the provider call. No provider call is made under the database lock.
 
 System operations without a workspace still consume global caps. Authenticated server
 functions and Brain/routine/onboarding/image/proactive jobs carry trusted workspace
-context. Anonymous text tools have their additional small global cap. Marketing cannot
-consume the transactional email pool. Capped mail stays queued with a visible error and
-retries the next day instead of repeatedly hitting the provider.
+context. Anonymous text tools have their additional small global cap. Email does not
+use the two email rows above. Every Resend send reserves from one shared budget,
+`reserve_email_send` with the `email_send_budget_policy` row: by default 100 a UTC day
+and 3,000 a month in total, marketing stops at 60 of the shared day total,
+transactional can use up to 90, and 10 stay free for Auth SMTP. Edit that row to match
+your Resend plan. Resend's quota headers are recorded so mail sent outside the worker
+counts too. Transactional mail is delivered before marketing. Capped mail stays queued
+with a visible error and retries at the next UTC day instead of repeatedly hitting the
+provider.
 
 AI units are microdollars using a deliberately conservative byte upper bound on input
 tokens, envelope overhead, full maximum output, and $3/M input + $15/M output rate

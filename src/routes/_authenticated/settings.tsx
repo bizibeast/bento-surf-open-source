@@ -854,7 +854,7 @@ function SettingsPage() {
                               }[summary.date.kind]
                             }{" "}
                             {formatBillingDate(summary.date.at)}
-                            {summary.date.kind === "access_ends" && billing?.status === "trialing"
+                            {summary.date.kind === "trial_ends" && billing?.cancelAtPeriodEnd
                               ? ". No charge"
                               : ""}
                           </span>
@@ -949,11 +949,13 @@ function SettingsPage() {
                             : "Automatic renewal is on"}
                         </div>
                         <p className="mt-2 max-w-2xl text-sm leading-6 text-[#17213a]/52">
-                          {billing.cancelAtPeriodEnd
-                            ? billing.status === "trialing"
-                              ? `Your trial access stays active until ${formatBillingDate(billing.currentPeriodEnd)}. You won't be charged, and hosted access pauses after that.`
-                              : `Your ${planName(summary.plan)} access stays active until ${formatBillingDate(billing.currentPeriodEnd)}, then hosted access pauses.`
-                            : `Your current trial or billing period runs through ${formatBillingDate(billing.currentPeriodEnd)}. Cancelling stops the next charge without removing access early.`}
+                          {billing.status === "trialing"
+                            ? billing.cancelAtPeriodEnd
+                              ? `Your trial ends ${formatBillingDate(billing.currentPeriodEnd)} and you won't be charged.`
+                              : `Your trial runs through ${formatBillingDate(billing.currentPeriodEnd)}. Cancelling during the trial ends it and your access immediately, and you won't be charged.`
+                            : billing.cancelAtPeriodEnd
+                              ? `Your ${planName(summary.plan)} access stays active until ${formatBillingDate(billing.currentPeriodEnd)}, then hosted access pauses.`
+                              : `Your current billing period runs through ${formatBillingDate(billing.currentPeriodEnd)}. Cancelling stops the next charge without removing access early.`}
                         </p>
                       </div>
                       {billing.cancelAtPeriodEnd ? (
@@ -971,7 +973,7 @@ function SettingsPage() {
                           onClick={() => setCancelFlowOpen(true)}
                           className={`${micro.btnOutline} shrink-0`}
                         >
-                          Cancel renewal
+                          {billing.status === "trialing" ? "Cancel trial" : "Cancel renewal"}
                         </button>
                       )}
                     </div>
@@ -2112,7 +2114,8 @@ function PlanOptionCard({
     } else if (billing.cancelAtPeriodEnd) {
       action = (
         <button type="button" disabled className={`${buttonClass} bg-[#f2f5fb] text-[#17213a]/52`}>
-          Access ends {formatBillingDate(billing.currentPeriodEnd)}
+          {billing.status === "trialing" ? "Trial ends" : "Access ends"}{" "}
+          {formatBillingDate(billing.currentPeriodEnd)}
         </button>
       );
     } else {
@@ -2123,7 +2126,7 @@ function PlanOptionCard({
           onClick={onCancel}
           className={`${buttonClass} ${micro.btnOutline} hover:bg-[#f2f5fb]`}
         >
-          Cancel renewal
+          {billing.status === "trialing" ? "Cancel trial" : "Cancel renewal"}
         </button>
       );
     }
