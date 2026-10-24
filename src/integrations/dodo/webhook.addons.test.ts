@@ -69,7 +69,7 @@ vi.mock("@/lib/posthog.server", () => ({
 }));
 
 import { verifiedDodoAddonState } from "@/lib/billing-addons";
-import { processVerifiedDodoEvent, type DodoEvent } from "./webhook.server";
+import { cancellationTime, processVerifiedDodoEvent, type DodoEvent } from "./webhook.server";
 
 const env = {
   DODO_CONTACT_TIER_5000_MONTHLY_ADDON_ID: "contact-5000-monthly",
@@ -819,4 +819,36 @@ describe("verified Dodo add-on state", () => {
       );
     },
   );
+});
+
+describe("cancellation time", () => {
+  const now = new Date("2026-10-24T03:00:00.000Z");
+  const trialStart = "2026-10-23T19:41:03.000Z";
+  it("uses Dodo's cancelled_at, never the subscription start", () => {
+    expect(
+      cancellationTime(
+        { created_at: trialStart, cancelled_at: "2026-10-23T19:45:35.978821Z" },
+        null,
+        {},
+        now,
+      ),
+    ).toBe("2026-10-23T19:45:35.978821Z");
+  });
+  it("keeps a recorded cancel time on later refreshes, then falls back to the event or now", () => {
+    const recorded = { status: "canceled", canceled_at: "2026-10-23T19:45:36.000Z" };
+    expect(cancellationTime({ created_at: trialStart }, recorded, {}, now)).toBe(
+      recorded.canceled_at,
+    );
+    expect(
+      cancellationTime(
+        { created_at: trialStart },
+        null,
+        { timestamp: "2026-10-23T19:45:40Z" },
+        now,
+      ),
+    ).toBe("2026-10-23T19:45:40Z");
+    expect(cancellationTime({ created_at: trialStart }, { status: "trialing" }, {}, now)).toBe(
+      now.toISOString(),
+    );
+  });
 });

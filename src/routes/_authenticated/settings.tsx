@@ -1,6 +1,6 @@
 import { exportOnboardingContent } from "@/lib/onboarding/functions";
 import { BillingLifecycleNotice } from "@/components/billing-lifecycle-notice";
-import { RetentionCancellationDialog } from "@/components/billing/RetentionCancellationDialog";
+import { CancellationFlowHost } from "@/components/billing/CancellationFlowHost";
 import { resumeMyPausedSubscription } from "@/lib/cancellation.functions";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -825,6 +825,7 @@ function SettingsPage() {
                     onExport={() =>
                       void navigate({ to: "/settings", search: { section: "account" } })
                     }
+                    trialEnded={billing.trialEnded}
                   />
                 )}
                 <BentoCard className="overflow-hidden">
@@ -1798,14 +1799,12 @@ function SettingsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {billing && isPro && (
-        <CancellationFlowDialog
-          open={cancelFlowOpen}
-          onOpenChange={setCancelFlowOpen}
-          plan={plan}
-          billing={billing}
-        />
-      )}
+      <CancellationFlowHost
+        open={cancelFlowOpen}
+        onOpenChange={setCancelFlowOpen}
+        plan={plan}
+        billing={billing}
+      />
       <Dialog
         open={deleteAccountOpen}
         onOpenChange={(open) => {
@@ -2085,8 +2084,10 @@ function PlanOptionCard({
   onCancel: () => void;
 }) {
   const definition = PLAN_CONFIG[plan];
-  const current = plan === currentPlan;
   const ended = billing?.status === "canceled" || billing?.status === "incomplete";
+  // A cancelled or never-started subscription is not the current plan, even
+  // while the workspace keeps its last plan id for retention.
+  const current = plan === currentPlan && !ended;
   const legacyAnnual = billing?.billingPeriod === "yearly" && billing.billingCatalog !== "2026-10";
   const displayPrice =
     plan === "free" || (current && legacyAnnual)
@@ -2199,27 +2200,6 @@ function PlanOptionCard({
       </ul>
       {action}
     </div>
-  );
-}
-
-function CancellationFlowDialog({
-  open,
-  onOpenChange,
-  plan,
-  billing,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  plan: PaidPlanId;
-  billing: MyBillingOverview;
-}) {
-  return (
-    <RetentionCancellationDialog
-      open={open}
-      onOpenChange={onOpenChange}
-      plan={plan}
-      billing={billing}
-    />
   );
 }
 

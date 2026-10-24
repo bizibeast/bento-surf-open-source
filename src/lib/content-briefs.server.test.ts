@@ -118,7 +118,7 @@ describe("shared niche briefs", () => {
     expect(normalizeNicheKey([" Creator Economy ", "AI Agents"])).toBe(
       normalizeNicheKey(["ai agents", "creator economy"]),
     );
-    expect(normalizeNicheKey(["creator AI"])).toMatch(/^social-v16:/);
+    expect(normalizeNicheKey(["creator AI"])).toMatch(/^social-v17:/);
   });
 
   it("reuses one fresh brief for the same niche, language, region, and day", async () => {
@@ -686,4 +686,353 @@ it("matches exact singular forms of ordinary plural topic words without broadeni
       ["creator tools"],
     ),
   ).toBe(false);
+});
+
+it("uses all focused interests in free sources and dedicates paid searches to networks without native discovery", async () => {
+  const search = vi.fn().mockResolvedValue([]);
+  const news = vi.fn().mockResolvedValue([]);
+  const youtube = vi.fn().mockResolvedValue([]);
+  const reddit = vi.fn().mockResolvedValue([]);
+  await fetchTrendSources(input, {
+    search,
+    news,
+    youtube,
+    reddit,
+    youtubeConfigured: true,
+    hackerNews: vi.fn().mockResolvedValue([]),
+  });
+  for (const fetcher of [news, youtube, reddit]) {
+    expect(fetcher.mock.calls[0][0]).toContain("AI agents");
+    expect(fetcher.mock.calls[0][0]).toContain("creator economy");
+  }
+  expect(search).toHaveBeenCalledTimes(4);
+  const groups = search.mock.calls.map(([request]) => request.group).join(" ");
+  expect(groups).not.toMatch(/youtube|reddit/);
+  for (const host of [
+    "instagram.com",
+    "tiktok.com",
+    "linkedin.com",
+    "x.com",
+    "threads.com",
+    "facebook.com",
+  ])
+    expect(groups).toContain(host);
+});
+
+it("verifies and publishes a fast social batch before unrelated slow providers finish", async () => {
+  let release!: () => void;
+  const slow = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const candidate = {
+    ...story,
+    platform: "Instagram",
+    kind: "social_search" as const,
+    publishedAt: null,
+    stats: {},
+  };
+  const verified = {
+    ...candidate,
+    publishedAt: story.publishedAt,
+    stats: { followers: 2000, likes: 250 },
+  };
+  const enrichSources = vi.fn(async (items: ContentSourceItem[]) =>
+    items.map((item) => (item.canonicalUrl === candidate.canonicalUrl ? verified : item)),
+  );
+  const progress = vi.fn();
+  const work = getOrBuildTrendBrief(
+    input,
+    {
+      readBrief: vi.fn().mockResolvedValue(null),
+      fetchSources: vi.fn(async (_input, onBatch) => {
+        onBatch?.([candidate]);
+        await slow;
+        return [{ status: "fulfilled" as const, value: [candidate] }];
+      }),
+      enrichSources,
+      saveBrief: vi.fn(async (value) => ({ id: "brief", ...value })),
+    },
+    progress,
+  );
+  try {
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    expect(enrichSources).toHaveBeenCalledOnce();
+    expect(progress).toHaveBeenCalledWith(expect.objectContaining({ items: [verified] }));
+  } finally {
+    release();
+  }
+  const result = await work;
+  expect(result.items).toEqual([verified]);
+  expect(enrichSources).toHaveBeenCalledOnce();
+});
+
+it("bounds overlapping metadata work to two batches and sixty-four distinct candidates", async () => {
+  const candidates = Array.from({ length: 120 }, (_, index) => ({
+    ...story,
+    canonicalUrl: `https://example.com/post-${index}`,
+    title: `AI agents demo ${index}`,
+    platform: ["Instagram", "X", "YouTube", "TikTok", "Threads", "Facebook", "LinkedIn", "Reddit"][
+      index % 8
+    ],
+    kind: "social_search" as const,
+    stats: {},
+  }));
+  let concurrent = 0,
+    peak = 0;
+  const enrichSources = vi.fn(async (items: ContentSourceItem[]) => {
+    concurrent++;
+    peak = Math.max(peak, concurrent);
+    await Promise.resolve();
+    concurrent--;
+    return items.map((item) => ({ ...item, stats: { followers: 2000, likes: 250 } }));
+  });
+  await getOrBuildTrendBrief(
+    input,
+    {
+      readBrief: vi.fn().mockResolvedValue(null),
+      fetchSources: vi.fn(async (_input, onBatch) => {
+        for (let offset = 0; offset < candidates.length; offset += 30)
+          onBatch?.(candidates.slice(offset, offset + 30));
+        return [{ status: "fulfilled" as const, value: candidates }];
+      }),
+      enrichSources,
+      saveBrief: vi.fn(async (value) => ({ id: "brief", ...value })),
+    },
+    vi.fn(),
+  );
+  const visited = enrichSources.mock.calls.flatMap(([items]) =>
+    items.map((item) => item.canonicalUrl),
+  );
+  expect(visited).toHaveLength(64);
+  expect(new Set(visited).size).toBe(64);
+  expect(peak).toBeLessThanOrEqual(2);
+});
+
+it("retains a YouTube search path within four paid attempts when its official API is unavailable", async () => {
+  const search = vi.fn().mockResolvedValue([]);
+  await fetchTrendSources(input, {
+    search,
+    youtubeConfigured: false,
+    news: vi.fn().mockResolvedValue([]),
+    youtube: vi.fn().mockResolvedValue([]),
+    reddit: vi.fn().mockResolvedValue([]),
+    hackerNews: vi.fn().mockResolvedValue([]),
+  });
+  expect(search).toHaveBeenCalledTimes(4);
+  expect(search.mock.calls.map(([request]) => request.group).join(" ")).toContain("youtube.com");
+});
+
+it("reserves verification capacity for platforms arriving after a large fast batch", async () => {
+  const early = Array.from({ length: 40 }, (_, index) => ({
+    ...story,
+    canonicalUrl: `https://example.com/fast-${index}`,
+    platform: "Instagram",
+    kind: "social_search" as const,
+    stats: {},
+  }));
+  const late = {
+    ...story,
+    canonicalUrl: "https://example.com/late-x",
+    platform: "X",
+    kind: "social_search" as const,
+    stats: {},
+  };
+  const enrichSources = vi.fn(async (items: ContentSourceItem[]) => items);
+  await getOrBuildTrendBrief(
+    input,
+    {
+      readBrief: vi.fn().mockResolvedValue(null),
+      fetchSources: vi.fn(async (_input, onBatch) => {
+        onBatch?.(early);
+        await Promise.resolve();
+        onBatch?.([late]);
+        return [{ status: "fulfilled" as const, value: [...early, late] }];
+      }),
+      enrichSources,
+      saveBrief: vi.fn(async (value) => ({ id: "brief", ...value })),
+    },
+    vi.fn(),
+  );
+  const visited = enrichSources.mock.calls.flatMap(([items]) => items);
+  expect(visited.filter((item) => item.platform === "Instagram")).toHaveLength(8);
+  expect(visited).toContainEqual(late);
+});
+
+it.each(["unchanged", "failed"])(
+  "retains later native evidence in the final brief when early enrichment is %s",
+  async (outcome) => {
+    const sparse = {
+      ...story,
+      canonicalUrl: "https://www.youtube.com/watch?v=native-result",
+      kind: "social_search" as const,
+      sourceName: "Search",
+      platform: "YouTube",
+      publishedAt: null,
+      stats: {},
+    };
+    const native = {
+      ...sparse,
+      kind: "youtube" as const,
+      sourceName: "YouTube",
+      publishedAt: story.publishedAt,
+      stats: { followers: 5000, views: 25000 },
+    };
+    const enrichSources = vi.fn(async (items: ContentSourceItem[]) => {
+      if (outcome === "failed") throw new Error("Unavailable");
+      return items;
+    });
+    const progress = vi.fn();
+    const result = await getOrBuildTrendBrief(
+      input,
+      {
+        readBrief: vi.fn().mockResolvedValue(null),
+        fetchSources: vi.fn(async (_input, onBatch) => {
+          onBatch?.([sparse]);
+          await Promise.resolve();
+          onBatch?.([native]);
+          return [
+            { status: "fulfilled" as const, value: [native] },
+            { status: "fulfilled" as const, value: [sparse] },
+          ];
+        }),
+        enrichSources,
+        saveBrief: vi.fn(async (value) => ({ id: "brief", ...value })),
+      },
+      progress,
+    );
+    expect(progress).toHaveBeenCalledWith(expect.objectContaining({ items: [native] }));
+    expect(result.items).toEqual([native]);
+    expect(progress).toHaveBeenLastCalledWith(expect.objectContaining({ items: [native] }));
+  },
+);
+
+it("merges complementary public metadata while retaining explicit native zero observations", async () => {
+  const sparse = {
+    ...story,
+    canonicalUrl: "https://www.youtube.com/watch?v=native-zero",
+    kind: "social_search" as const,
+    platform: "YouTube",
+    publishedAt: null,
+    stats: {},
+  };
+  const native = {
+    ...sparse,
+    kind: "youtube" as const,
+    publishedAt: story.publishedAt,
+    stats: { followers: 5000, views: 0, likes: null },
+  };
+  const enriched = {
+    ...sparse,
+    publishedAt: story.publishedAt,
+    thumbnailUrl: "https://example.com/cover.jpg",
+    stats: { followers: 5000, views: 25000, likes: 50 },
+  };
+  const progress = vi.fn();
+  const result = await getOrBuildTrendBrief(
+    input,
+    {
+      readBrief: vi.fn().mockResolvedValue(null),
+      fetchSources: vi.fn(async (_input, onBatch) => {
+        onBatch?.([sparse]);
+        await Promise.resolve();
+        onBatch?.([native]);
+        return [{ status: "fulfilled" as const, value: [native, sparse] }];
+      }),
+      enrichSources: vi.fn().mockResolvedValue([enriched]),
+      saveBrief: vi.fn(async (value) => ({ id: "brief", ...value })),
+    },
+    progress,
+  );
+  expect(
+    progress.mock.calls
+      .flatMap(([brief]) => brief.items)
+      .some((item: ContentSourceItem) => item.stats?.views === 25000),
+  ).toBe(false);
+  expect(result.items[0]).toMatchObject({
+    kind: "youtube",
+    thumbnailUrl: enriched.thumbnailUrl,
+    stats: { followers: 5000, views: 0, likes: 50 },
+  });
+});
+
+it("keeps a storytelling method tag from admitting fictional CEO stories into a business or AI niche", () => {
+  const fiction = {
+    title: "Billionaire CEO humiliates a janitor until he learns who really owned the business",
+    summary:
+      "A fictional story about a founder, funding and a dramatic ownership reveal. Storytelling.",
+  };
+  expect(sourceMatchesDiscoverNiche(fiction, ["startup journey", "AI", "storytelling"])).toBe(
+    false,
+  );
+  expect(sourceMatchesDiscoverNiche(fiction, ["fiction", "storytelling"])).toBe(true);
+});
+
+describe("contextual fundraising discovery", () => {
+  const topics = ["startup journey", "fundraising", "AI", "strategy"];
+  it.each([
+    "Ilhan Omar Resurfaces With Fundraising Plea As Immigration Status Probe Intensifies",
+    "Talarico’s Record-Breaking Fundraising",
+    "Chained Together (+ Fundraising for my Friend)",
+    "MIDTERM MONEY: Democrats lead Senate fundraising, GOP holds more PAC cash",
+    "Our Daughter’s School Cancer Fundraising – Day 1",
+    "From Corporate Retail to Youth Non-Profit CEO: Making Fundraising Fun",
+  ])("excludes unrelated fundraising: %s", (title) => {
+    expect(
+      sourceMatchesDiscoverNiche({ title, summary: "Fundraising updates #AI #business" }, topics),
+    ).toBe(false);
+  });
+  it("retains startup capital-raising and unrelated AI sources", () => {
+    expect(
+      sourceMatchesDiscoverNiche(
+        {
+          title: "Fundraising lessons from our seed round",
+          summary: "How we found our first angel investors",
+        },
+        topics,
+      ),
+    ).toBe(true);
+    expect(
+      sourceMatchesDiscoverNiche(
+        {
+          title: "Top 5 AI Building Blocks Every Engineer Should Know",
+          summary: "System design with AI",
+        },
+        topics,
+      ),
+    ).toBe(true);
+  });
+  it("keeps charity and political fundraising available for their own niches", () => {
+    expect(
+      sourceMatchesDiscoverNiche(
+        { title: "School cancer fundraising", summary: "Charity donations" },
+        ["charity", "fundraising"],
+      ),
+    ).toBe(true);
+    expect(
+      sourceMatchesDiscoverNiche(
+        { title: "Senate election fundraising", summary: "Political campaign" },
+        ["politics", "fundraising"],
+      ),
+    ).toBe(true);
+  });
+  it("qualifies ambiguous fundraising before searching", async () => {
+    expect(discoverSearchQuery(topics)).toContain('"startup fundraising"');
+    expect(discoverSearchQuery(topics)).not.toContain(' OR "fundraising"');
+    const youtube = vi.fn(async () => []);
+    await fetchTrendSources(
+      { ...input, nicheKeywords: topics },
+      {
+        search: vi.fn(async () => []),
+        reserveSearch: vi.fn(async () => true),
+        youtube,
+        news: vi.fn(async () => []),
+        reddit: vi.fn(async () => []),
+        hackerNews: vi.fn(async () => []),
+      },
+    );
+    expect(youtube).toHaveBeenCalledWith(
+      expect.stringContaining('"startup fundraising"'),
+      expect.any(Object),
+    );
+  });
 });

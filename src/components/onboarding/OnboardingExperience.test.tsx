@@ -44,6 +44,7 @@ vi.mock("@/lib/social-connections.functions", () => ({ beginInstagramConnection:
 vi.mock("@/lib/social-oauth.functions", () => ({ beginSocialConnection: vi.fn() }));
 vi.mock("@/components/AuthShell", () => ({ AuthBrand: () => <a href="/">bento.surf</a> }));
 import { OnboardingExperience } from "./OnboardingExperience";
+import { captureProductEvent } from "@/lib/posthog";
 
 let state: OnboardingSession;
 let connections: OnboardingConnection[];
@@ -188,6 +189,12 @@ it("puts connected identity in platform buttons and continues after just one con
   fireEvent.click(screen.getByRole("button", { name: "Meet my Brain" }));
   expect(await screen.findByRole("heading", { name: "Meet your Brain, Ari." })).toBeVisible();
   expect(api.prepare).toHaveBeenCalledOnce();
+  // The request can return an already finished job; the outcome is still reported once.
+  const outcomes = vi
+    .mocked(captureProductEvent)
+    .mock.calls.filter(([event]) => String(event).startsWith("brain_draft_"));
+  expect(outcomes).toHaveLength(1);
+  expect(outcomes[0][1]).toMatchObject({ platform: expect.any(String), generation: 1 });
 });
 
 it("asks one missing question at a time when no account is connected", async () => {
@@ -218,6 +225,13 @@ it("shows personal proof before payment, then activates only after verified chec
   expect(await screen.findByText(prepared().drafts[0].body)).toBeVisible();
   expect(api.checkout).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "This feels like me" }));
+  // Free workspaces see the capability showcase right before the trial step.
+  expect(await screen.findByTestId("capability-showcase")).toBeVisible();
+  expect(captureProductEvent).toHaveBeenCalledWith(
+    "onboarding_showcase_viewed",
+    expect.objectContaining({ items: 5 }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: /Choose my plan/ }));
   expect(await screen.findByRole("button", { name: "Start my 3-day trial" })).toBeVisible();
   expect(screen.getByText(/Then \$49\/month after 3 days/)).toBeVisible();
   expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();

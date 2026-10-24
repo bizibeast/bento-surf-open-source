@@ -6,6 +6,7 @@ import { enforceRequestRateLimit } from "./request-security.server";
 import { readWorkspaceDataSchema, type ReadWorkspaceDataInput } from "./mcp-workspace-data";
 import { getSchedulerPost, listSchedulerPosts } from "./mcp-scheduler-read.server";
 import { sanitizeMcpReadData } from "./mcp-read-results";
+import { isTrustedBrainItem } from "./content-brain-evidence";
 import { mcpAnalyticsWindow } from "./mcp-analytics-window.server";
 export { mcpAnalyticsWindow } from "./mcp-analytics-window.server";
 import type { CreatorMcpContext } from "./mcp.creator-ops.server";
@@ -19,7 +20,7 @@ const collections = {
   brain_items: {
     table: "creator_brain_items",
     fields:
-      "id,kind,title,content,provenance,source_url,source_ref,status,locked,tags,created_at,updated_at",
+      "id,kind,title,content,provenance,source_url,source_ref,status,locked,tags,created_at,updated_at,evidence_verification",
     key: "id",
     text: "content",
     search: "title",
@@ -158,6 +159,15 @@ export async function readWorkspaceData(
     // PostgREST returns bigint history IDs as numbers; all tool IDs are strings.
     if (row[config.key] !== undefined && row[config.key] !== null)
       item[config.key] = String(row[config.key]);
+    if (
+      data.collection === "brain_items" &&
+      item.status === "confirmed" &&
+      !isTrustedBrainItem(item)
+    ) {
+      item.status = "suggested";
+      item.reviewReason =
+        "This generated document has not been verified against its source evidence.";
+    }
     if (data.collection === "discover_items") {
       const metadata = row.metadata as Record<string, unknown> | null;
       item.saved = row.feedback === "saved" || metadata?.saved === true;

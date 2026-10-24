@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildManualCandidates, onboardingBriefSchema } from "./brief";
+import { buildManualCandidates, onboardingBriefSchema, stampOnboardingBrain } from "./brief";
 import {
   onboardingBrainSources,
   onboardingSampleIds,
   type OnboardingResearch,
 } from "./research.server";
 import {
+  brainOutputIssues,
+  normalizeBrainDocumentKind,
   onboardingBrainSchema,
   personalizeOnboardingBrain,
   prepareOnboardingBrain,
@@ -152,6 +154,41 @@ describe("bounded personal Brain evidence", () => {
 });
 
 describe("personalization recovery and caps", () => {
+  it("archives stale ready prose and uses creator answers without a paid rerun", async () => {
+    const old = {
+      ...base,
+      brain: base.brain.map((item) =>
+        item.kind === "profile"
+          ? { ...item, content: "I founded a tool I merely reviewed." }
+          : item,
+      ),
+      personalization: {
+        generation: 1,
+        status: "ready" as const,
+        profileCount: 1,
+        postCount: 1,
+        note: "Old generated copy",
+      },
+    };
+    const checkpoint = vi.fn().mockResolvedValue(undefined);
+    const personalize = vi.fn();
+    const safe = await prepareOnboardingBrain(
+      brief,
+      old,
+      research,
+      1,
+      true,
+      Date.now() + 90000,
+      checkpoint,
+      personalize,
+    );
+    expect(safe.brain).toEqual(base.brain);
+    expect(safe.deferredBrain).toEqual(old.brain);
+    expect(safe.personalization?.status).toBe("unavailable");
+    expect(safe.brainEvidence?.method).toBe("creator_answers");
+    expect(personalize).not.toHaveBeenCalled();
+    expect(checkpoint).toHaveBeenCalledOnce();
+  });
   it("checkpoints before spending and retains successful or edited Brain on recovery", async () => {
     const checkpoint = vi.fn().mockResolvedValue(undefined);
     const personalize = vi.fn().mockImplementation(async () => {
@@ -168,10 +205,13 @@ describe("personalization recovery and caps", () => {
       checkpoint,
       personalize,
     );
-    const edited = {
-      ...ready,
-      brain: ready.brain.map((d) => ({ ...d, content: `${d.content}\nCreator edit.` })),
-    };
+    const edited = stampOnboardingBrain(
+      {
+        ...ready,
+        brain: ready.brain.map((d) => ({ ...d, content: `${d.content}\nCreator edit.` })),
+      },
+      "creator_review",
+    );
     expect(
       await prepareOnboardingBrain(
         brief,
@@ -420,5 +460,110 @@ describe("Brain failure reporting", () => {
     const { log } = await run(new DOMException("AI generation timed out.", "TimeoutError"));
     expect(log.mock.calls[0][1]).toEqual(expect.objectContaining({ errorClass: "TimeoutError" }));
     log.mockRestore();
+  });
+});
+
+describe("Brain evidence repair", () => {
+  const approve = async ({ input }: { input: { documents: { id: string }[] } }) => ({
+    value: {
+      reviews: input.documents.map((doc) => ({
+        id: doc.id,
+        approved: true,
+        sourceIds: ["answers"],
+        issues: [],
+      })),
+    },
+  });
+  const rejected = () => {
+    const schema = onboardingBrainSchema(onboardingBrainSources(brief, research));
+    const docs = documents();
+    docs[0].claims[0].quote = "A made-up fact about the creator";
+    const parsed = schema.safeParse({ documents: docs });
+    if (parsed.success) throw new Error("expected a rejected Brain");
+    return parsed.error;
+  };
+
+  it("re-asks once with the failed rule names, then keeps the independent review", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const generate = vi
+      .fn()
+      .mockRejectedValueOnce(rejected())
+      .mockResolvedValueOnce({ value: { documents: documents() } })
+      .mockImplementation(approve);
+    const result = await personalizeOnboardingBrain(
+      brief,
+      research,
+      Date.now() + 150_000,
+      generate,
+    );
+    expect(generate).toHaveBeenCalledTimes(3);
+    expect(generate.mock.calls[1][0].system).toContain(
+      "Use exact document claims and exact quotes from the supplied source.",
+    );
+    expect(generate.mock.calls[1][0].system).toContain("remove both the fact and its claim");
+    expect(generate.mock.calls[1][0].schema).toBe(generate.mock.calls[0][0].schema);
+    expect(result[0].content).toContain("Source notes");
+    // Diagnostics name rules, never content.
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("made-up");
+    warn.mockRestore();
+  });
+
+  it("does not re-ask a provider error or when the step has no room left", async () => {
+    const generate = vi.fn().mockRejectedValue(new AiProviderRequestError(504, "openrouter"));
+    await expect(
+      personalizeOnboardingBrain(brief, research, Date.now() + 150_000, generate),
+    ).rejects.toBeInstanceOf(AiProviderRequestError);
+    expect(generate).toHaveBeenCalledTimes(1);
+
+    const late = vi.fn().mockRejectedValue(rejected());
+    await expect(
+      personalizeOnboardingBrain(brief, research, Date.now() + 30_000, late),
+    ).rejects.toBeTruthy();
+    expect(late).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops after one repair when the corrected answer still breaks the rules", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const generate = vi.fn().mockRejectedValue(rejected());
+    await expect(
+      personalizeOnboardingBrain(brief, research, Date.now() + 150_000, generate),
+    ).rejects.toBeTruthy();
+    expect(generate).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
+  it("reports rule names and schema paths for a rejected Brain", () => {
+    expect(brainOutputIssues(rejected())).toEqual([
+      "Use exact document claims and exact quotes from the supplied source.",
+    ]);
+    expect(brainOutputIssues(new Error("other"))).toBeNull();
+  });
+});
+
+describe("Brain document kinds", () => {
+  it("maps display names the prompt uses to kinds and still rejects unknown kinds", () => {
+    expect(normalizeBrainDocumentKind("Writing voice")).toBe("instruction");
+    expect(normalizeBrainDocumentKind("My Human")).toBe("profile");
+    expect(normalizeBrainDocumentKind("Audience & positioning")).toBe("profile");
+    expect(normalizeBrainDocumentKind("LinkedIn Strategy")).toBe("strategy");
+    expect(normalizeBrainDocumentKind("STORY")).toBe("story");
+    expect(normalizeBrainDocumentKind("my_writing_voice")).toBe("instruction");
+    expect(normalizeBrainDocumentKind("horoscope")).toBe("horoscope");
+    const schema = onboardingBrainSchema(onboardingBrainSources(brief, research));
+    const named = documents().map((doc) => ({
+      ...doc,
+      kind: doc.kind === "instruction" ? "Writing voice" : doc.kind,
+    }));
+    expect(schema.safeParse({ documents: named }).success).toBe(true);
+    const unknown = documents().map((doc) => ({
+      ...doc,
+      kind: doc.kind === "instruction" ? "horoscope" : doc.kind,
+    }));
+    const parsed = schema.safeParse({ documents: unknown });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success)
+      expect(brainOutputIssues(parsed.error)).toContain(
+        "Each document kind must be one of: profile, instruction, strategy, story.",
+      );
   });
 });

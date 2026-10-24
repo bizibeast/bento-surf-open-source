@@ -5,7 +5,12 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { hasPlanEntitlement } from "./plan.server";
 import { requireContentWorkspace } from "./content-access.server";
-import { contentProfileFromRow, contentProfileSchema, type BrainItem } from "./content-brain";
+import {
+  contentProfileFromRow,
+  contentProfileSchema,
+  isTrustedBrainItem,
+  type BrainItem,
+} from "./content-brain";
 import {
   BRAIN_ITEM_COLUMNS,
   CONTENT_PROFILE_COLUMNS,
@@ -507,13 +512,14 @@ const defaultDependencies: CreatorDiscoverDependencies = {
         ? contentProfileFromRow(profileResult.data)
         : contentProfileSchema.parse({}),
       useBrainContext: canUseBrain,
-      brainItems: (brainResult.data || []).map((row: any) => ({
+      brainItems: (brainResult.data || []).filter(isTrustedBrainItem).map((row: any) => ({
         id: row.id,
         kind: row.kind,
         title: row.title,
         content: row.content,
         tags: row.tags || [],
         provenance: row.provenance,
+        evidenceVerification: row.evidence_verification,
         sourceUrl: row.source_url || null,
         sourceRef: row.source_ref || null,
         status: row.status,

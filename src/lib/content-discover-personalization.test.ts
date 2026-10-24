@@ -227,3 +227,16 @@ it("does not turn generic Brain tags into standalone discovery topics", () => {
   );
   expect(discoverBrainTopics(input)).toContain("ai");
 });
+
+it("does not turn unverified generated Brain notes into Discover interests or creator recommendations", () => {
+  const unsupported = {
+    ...brain,
+    provenance: "social_post" as const,
+    locked: false,
+    tags: ["marine biology"],
+    content: "I admire Sylvia Earle and build coral reef restoration businesses.",
+  };
+  const input = context([], [unsupported]);
+  expect(discoverBrainTopics(input)).toEqual([]);
+  expect(suggestDiscoverCreators(input)).toEqual([]);
+});

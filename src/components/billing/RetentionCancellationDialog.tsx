@@ -217,17 +217,19 @@ export function RetentionCancellationDialog({
           intentId: intent?.intentId,
         },
       });
-      await queryClient.invalidateQueries();
       // Cancelling a trial ends it, and its access, immediately with no charge.
       const trialEnded = next.status === "canceled";
       setOutcome(trialEnded ? "trial_cancelled" : "cancelled");
       setResultDate(next.currentPeriodEnd);
+      // Show the result before refreshing billing. Refetched billing is no
+      // longer "trialing", which would flash paid-cancel wording on this step.
       setStep("complete");
       toast.success(
         trialEnded
           ? "Trial cancelled. Your trial has ended, and you won't be charged."
           : "Renewal cancelled. Your paid access continues until the date shown.",
       );
+      void queryClient.invalidateQueries();
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Renewal could not be cancelled.";
       setError(message);

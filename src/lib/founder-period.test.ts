@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { founderPeriod } from "./founder-period";
+import { founderInvoiceEndDayExclusive, founderPeriod } from "./founder-period";
 
 describe("founder report dates", () => {
   it("includes today and exactly seven UTC calendar dates", () => {
@@ -21,5 +21,11 @@ describe("founder report dates", () => {
     expect(range.start).toBe("2026-10-21T00:00:00.000Z");
     expect(range.end).toBe("2026-10-28T00:00:00.000Z");
     expect(range.dates.at(-1)).toBe("2026-10-27");
+  });
+  it("includes today's date-only invoices while excluding a previous period's end day", () => {
+    const now = new Date("2026-11-02T15:00:00Z");
+    expect(founderInvoiceEndDayExclusive(founderPeriod(7, 0, now).end)).toBe("2026-11-03");
+    expect(founderInvoiceEndDayExclusive(founderPeriod(7, 7, now).end)).toBe("2026-10-27");
+    expect(founderInvoiceEndDayExclusive("2026-11-03T00:00:00Z")).toBe("2026-11-03");
   });
 });

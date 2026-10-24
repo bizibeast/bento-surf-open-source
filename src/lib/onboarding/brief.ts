@@ -10,6 +10,7 @@ import { isValidTimeZone } from "../timezones";
 import { completeContentStrategy, contentProfileSchema } from "../content-brain";
 import type { PaidPlanId } from "../plans";
 import { onboardingEvidenceSchema } from "./evidence";
+import { BRAIN_EVIDENCE_VERSION, brainEvidenceSha256 } from "../content-brain-evidence";
 
 export const ONBOARDING_GOALS = [
   { id: "presence", label: "Build my online presence", detail: "One link for everything I do" },
@@ -114,6 +115,24 @@ export const onboardingCandidatesSchema = z.object({
     )
     .min(3)
     .max(12),
+  brainEvidence: z
+    .object({
+      version: z.literal(BRAIN_EVIDENCE_VERSION),
+      documentHash: z.string().regex(/^[a-f0-9]{64}$/),
+      method: z.enum(["creator_answers", "creator_review", "independent_source_review"]),
+    })
+    .optional(),
+  // Old generated prose is retained for review/export, never silently used as facts.
+  deferredBrain: z
+    .array(
+      z.object({
+        kind: z.enum(["profile", "instruction", "strategy", "story"]),
+        title: z.string().min(1).max(160),
+        content: z.string().min(1).max(20000),
+      }),
+    )
+    .max(120)
+    .optional(),
   evidence: onboardingEvidenceSchema.optional(),
   personalization: z
     .object({
@@ -126,11 +145,75 @@ export const onboardingCandidatesSchema = z.object({
     .optional(),
   drafts: z.array(onboardingCandidateDraftSchema).max(3),
   // Kept in preparation/export only; explicitly excluded from starter activation.
-  deferredDrafts: z.array(onboardingCandidateDraftSchema).max(20).optional(),
+  deferredDrafts: z.array(onboardingCandidateDraftSchema).max(60).optional(),
   nextAction: z.string().min(1).max(1000),
   warning: z.string().max(1000).nullable().default(null),
+  /** Why the starter draft fell back to the answer-only starter. Used for retry UI and analytics. */
+  warningReason: z.enum(["timeout", "provider", "evidence", "quality"]).nullable().optional(),
 });
 export type OnboardingCandidates = z.infer<typeof onboardingCandidatesSchema>;
+
+function onboardingBrainHash(brain: OnboardingCandidates["brain"]) {
+  return brainEvidenceSha256(
+    JSON.stringify(brain.map(({ kind, title, content }) => [kind, title, content])),
+  );
+}
+
+export function hasCurrentOnboardingBrain(candidates: OnboardingCandidates) {
+  return (
+    candidates.brainEvidence?.version === BRAIN_EVIDENCE_VERSION &&
+    candidates.brainEvidence.documentHash === onboardingBrainHash(candidates.brain)
+  );
+}
+
+/** Server-owned marker. User edit endpoints must replace, never copy, caller markers. */
+export function stampOnboardingBrain(
+  candidates: OnboardingCandidates,
+  method: NonNullable<OnboardingCandidates["brainEvidence"]>["method"],
+): OnboardingCandidates {
+  return onboardingCandidatesSchema.parse({
+    ...candidates,
+    brainEvidence: {
+      version: BRAIN_EVIDENCE_VERSION,
+      documentHash: onboardingBrainHash(candidates.brain),
+      method,
+    },
+  });
+}
+
+export function reconcileOnboardingBrain(
+  brief: OnboardingBrief,
+  candidates: OnboardingCandidates,
+): OnboardingCandidates {
+  if (hasCurrentOnboardingBrain(candidates)) return candidates;
+  const manual = buildManualCandidates(brief);
+  if (onboardingBrainHash(candidates.brain) === onboardingBrainHash(manual.brain))
+    return stampOnboardingBrain(candidates, "creator_answers");
+  const unique = <T>(items: T[]) => [
+    ...new Map(items.map((item) => [JSON.stringify(item), item])).values(),
+  ];
+  return stampOnboardingBrain(
+    {
+      ...candidates,
+      brain: manual.brain,
+      deferredBrain: unique([...(candidates.deferredBrain || []), ...candidates.brain]),
+      deferredDrafts: unique([...(candidates.deferredDrafts || []), ...candidates.drafts]),
+      drafts: [],
+      ...(candidates.personalization
+        ? {
+            personalization: {
+              ...candidates.personalization,
+              status: "unavailable" as const,
+              note: "Your earlier generated Brain is saved for review. These starter notes use only your own answers until source verification is completed.",
+            },
+          }
+        : {}),
+      warning:
+        "Earlier generated details and drafts are preserved in your preparation download. Review your answer-based starter notes before continuing.",
+    },
+    "creator_answers",
+  );
+}
 
 /** Explicit manual continuation retains prior copy without applying it as starter posts. */
 export function continueWithoutOnboardingDrafts(
@@ -178,37 +261,40 @@ export function buildManualCandidates(brief: OnboardingBrief): OnboardingCandida
       "Ask a focused question and use the response to choose your next topic.",
     ],
   ];
-  return {
-    brain: [
-      {
-        kind: "profile",
-        title: "My Human",
-        content: `# ${brief.displayName || "About me"}\n\nExpertise: ${brief.expertise || "To be confirmed"}\nAudience: ${brief.audience || "To be confirmed"}\nFirst goal: ${goal}\nOffer: ${brief.offer || "Not defined yet; explore ideas without claiming an existing offer."}\n\n${brief.bio}`,
-      },
-      {
-        kind: "instruction",
-        title: "Writing voice",
-        content: `${brief.voice}\n\nLanguage: ${brief.language}. Do not invent personal stories, credentials, results, products, prices, or customer evidence.${brief.writingSample ? `\n\nCreator-supplied writing sample:\n${brief.writingSample}` : ""}`,
-      },
-      {
-        kind: "strategy",
-        title: `${brief.platform === "twitter" ? "X" : brief.platform === "linkedin" ? "LinkedIn" : brief.platform[0].toUpperCase() + brief.platform.slice(1)} Strategy`,
-        content: `## Strategic Goal\n${goal}. Begin with a small, reviewable experiment.\n\n## Target Audience\n${brief.audience || "Confirm your audience"}\n\n## Content Pillars\n${pillars.map(([weight, title, share]) => `### ${weight}% ${title}\nCore Message: Help ${brief.audience || "your audience"} make progress.\nWhat I Share: ${share}\nWhy It Matters: Offer something useful before asking for an action.`).join("\n\n")}\n\n## Posting Rhythm\nAim for ${brief.postsPerWeek} posts per week on ${brief.platform}, in ${brief.timezone}. Review each draft before scheduling.\n\n## Notes\nThis is a starting strategy, not a claim about past performance. Review real responses after the first week. ${brief.offer ? `Only mention this confirmed offer when relevant: ${brief.offer}` : "Validate an offer idea before promising delivery or setting a price."}`,
-      },
-    ],
-    drafts: [],
-    nextAction:
-      brief.goal === "sell"
-        ? "Review your first offer in Store, then share your page."
-        : brief.goal === "bookings"
-          ? "Set your availability in Calendar and review a booking page."
-          : brief.goal === "grow"
-            ? "Explore a relevant idea in Discover and save it for your next post."
-            : brief.goal === "publish"
-              ? "Review your first draft and choose a realistic posting time."
-              : "Copy your page link and add it to your social bio.",
-    warning: null,
-  };
+  return stampOnboardingBrain(
+    {
+      brain: [
+        {
+          kind: "profile",
+          title: "My Human",
+          content: `# ${brief.displayName || "About me"}\n\nExpertise: ${brief.expertise || "To be confirmed"}\nAudience: ${brief.audience || "To be confirmed"}\nFirst goal: ${goal}\nOffer: ${brief.offer || "Not defined yet; explore ideas without claiming an existing offer."}\n\n${brief.bio}`,
+        },
+        {
+          kind: "instruction",
+          title: "Writing voice",
+          content: `${brief.voice}\n\nLanguage: ${brief.language}. Do not invent personal stories, credentials, results, products, prices, or customer evidence.${brief.writingSample ? `\n\nCreator-supplied writing sample:\n${brief.writingSample}` : ""}`,
+        },
+        {
+          kind: "strategy",
+          title: `${brief.platform === "twitter" ? "X" : brief.platform === "linkedin" ? "LinkedIn" : brief.platform[0].toUpperCase() + brief.platform.slice(1)} Strategy`,
+          content: `## Strategic Goal\n${goal}. Begin with a small, reviewable experiment.\n\n## Target Audience\n${brief.audience || "Confirm your audience"}\n\n## Content Pillars\n${pillars.map(([weight, title, share]) => `### ${weight}% ${title}\nCore Message: Help ${brief.audience || "your audience"} make progress.\nWhat I Share: ${share}\nWhy It Matters: Offer something useful before asking for an action.`).join("\n\n")}\n\n## Posting Rhythm\nAim for ${brief.postsPerWeek} posts per week on ${brief.platform}, in ${brief.timezone}. Review each draft before scheduling.\n\n## Notes\nThis is a starting strategy, not a claim about past performance. Review real responses after the first week. ${brief.offer ? `Only mention this confirmed offer when relevant: ${brief.offer}` : "Validate an offer idea before promising delivery or setting a price."}`,
+        },
+      ],
+      drafts: [],
+      nextAction:
+        brief.goal === "sell"
+          ? "Review your first offer in Store, then share your page."
+          : brief.goal === "bookings"
+            ? "Set your availability in Calendar and review a booking page."
+            : brief.goal === "grow"
+              ? "Explore a relevant idea in Discover and save it for your next post."
+              : brief.goal === "publish"
+                ? "Review your first draft and choose a realistic posting time."
+                : "Copy your page link and add it to your social bio.",
+      warning: null,
+    },
+    "creator_answers",
+  );
 }
 
 export function preparationReady(brief: OnboardingBrief, candidates: OnboardingCandidates | null) {

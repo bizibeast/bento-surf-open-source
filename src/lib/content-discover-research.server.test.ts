@@ -165,3 +165,44 @@ it("keeps topic research when profile search fails and degrades gracefully when 
   expect(failed.research).toBeUndefined();
   expect(failed.warnings?.length).toBeGreaterThan(0);
 });
+
+it("never promotes unrelated profiles retained in an expired research cache", async () => {
+  const first = await researchDiscoverContext(context, {
+    generate: async () => plan,
+    searchProfiles: async () => profiles,
+    now: () => 0,
+  });
+  const generate = vi.fn();
+  const searchProfiles = vi.fn();
+  const cached = {
+    ...first.cache!,
+    profiles: [
+      {
+        name: "Unrelated repair shop",
+        profileUrl: "https://www.instagram.com/repairshop",
+        platform: "Instagram",
+        description: "Gambling and phone repairs",
+      },
+    ],
+    expiresAt: 1,
+  };
+  const result = await researchDiscoverContext(
+    context,
+    { generate, searchProfiles, now: () => 1000000 },
+    cached,
+    false,
+  );
+  expect(result.research?.creators).toEqual([]);
+  expect(result.research?.topics).toEqual(plan.topics);
+  expect(generate).not.toHaveBeenCalled();
+  expect(searchProfiles).not.toHaveBeenCalled();
+});
+
+it("does not send unverified legacy generated Brain claims to interest research", () => {
+  const unsupported = {
+    ...context.brainItems[0],
+    provenance: "social_post" as const,
+    locked: false,
+  };
+  expect(discoverResearchInput({ ...context, brainItems: [unsupported] }).brain).toEqual([]);
+});

@@ -2,7 +2,7 @@
 // select("*") on social_content_insights also pulls media_sources jsonb.
 
 export const BRAIN_ITEM_COLUMNS =
-  "id,user_id,kind,title,content,provenance,source_url,source_ref,status,locked,tags,created_at,updated_at";
+  "id,user_id,kind,title,content,provenance,source_url,source_ref,status,locked,tags,created_at,updated_at,evidence_verification";
 
 export const CONTENT_PROFILE_COLUMNS =
   "user_id,goal,niche_keywords,language,region,timezone,platform_frequencies,discover_use_brain,created_at,updated_at";

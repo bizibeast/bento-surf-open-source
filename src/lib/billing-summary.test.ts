@@ -98,3 +98,13 @@ describe("Billing header", () => {
       expect(`${summary.badge} ${summary.note}`).not.toMatch(/[\u2013\u2014]/);
   });
 });
+
+describe("Billing header after a trial cancel", () => {
+  it("says the trial ended instead of a paid cancellation", () => {
+    const summary = billingSummary({ ...base, status: "canceled", trialEnded: true }, "free", now);
+    expect(summary.badge).toBe("Store trial ended");
+    expect(
+      billingSummary({ ...base, status: "canceled", trialEnded: false }, "free", now).badge,
+    ).toBe("Store canceled");
+  });
+});

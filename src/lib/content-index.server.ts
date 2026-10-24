@@ -14,6 +14,7 @@ import {
   type BrainItem,
 } from "./content-brain";
 import { BRAIN_ITEM_COLUMNS, CONTENT_PROFILE_COLUMNS } from "./large-table-columns";
+import { hasCurrentBrainEvidence } from "./content-brain-evidence";
 
 export async function contentSourceFingerprint(
   posts: Array<Record<string, unknown>>,
@@ -26,7 +27,7 @@ export async function contentSourceFingerprint(
   const digest = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(
-      "brain-evidence-v2\n" +
+      "brain-evidence-v3\n" +
         material +
         (profile ? "\n" + JSON.stringify(contentProfileSchema.parse(profile)) : ""),
     ),
@@ -65,6 +66,10 @@ async function saveIndexedBrain(
     const prior = existingIndexedBrainItem(existing, item);
     // Creator confirmations and edits always outrank automatic source refreshes.
     if (prior && (prior.locked || prior.provenance !== "social_post")) continue;
+    if (!hasCurrentBrainEvidence(item))
+      throw new Error(
+        "Generated Brain content needs a current source review before it can be saved as confirmed.",
+      );
     const row = {
       user_id: userId,
       kind: item.kind,
@@ -76,6 +81,7 @@ async function saveIndexedBrain(
       provenance: "social_post",
       status: "confirmed",
       locked: false,
+      evidence_verification: item.evidenceVerification,
       updated_at: new Date().toISOString(),
     };
     const result = prior
@@ -136,7 +142,9 @@ const defaults: ContentIndexDependencies = {
     const [posts, sourceTotal, brain, profile, identity] = await Promise.all([
       db
         .from("social_content_insights")
-        .select("provider,remote_post_id,remote_post_url,caption,published_at,engagements")
+        .select(
+          "provider,remote_post_id,remote_post_url,caption,published_at,engagements,fetched_at",
+        )
         .eq("user_id", userId)
         .order("published_at", { ascending: false })
         .limit(300),

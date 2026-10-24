@@ -1,7 +1,12 @@
 import { normalizeDashes } from "./text/dashes";
 import { ProviderBudgetError } from "./provider-budget.server";
 import { z } from "zod";
-import { AiProviderRequestError, runAiJson, type AiProviderEnv } from "./ai-json.server";
+import {
+  AiProviderRequestError,
+  AiStructuredOutputError,
+  runAiJson,
+  type AiProviderEnv,
+} from "./ai-json.server";
 import { SOCIAL_PROVIDER_DEFINITIONS } from "./social-scheduler";
 import {
   editorialDraftSchema,
@@ -177,6 +182,27 @@ function bounded<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
     promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
   });
 }
+/** True when the provider answered but the answer was not a usable draft object. */
+export function isStructuredOutputFailure(error: unknown) {
+  return error instanceof AiStructuredOutputError || error instanceof z.ZodError;
+}
+/** Error class and schema paths only. Never the model output, prompt or sources. */
+function reportStructuredOutputFailure(error: unknown, repairing: boolean) {
+  console.warn("content_editorial_structured_output", {
+    kind: error instanceof AiStructuredOutputError ? "unparseable" : "schema",
+    finishReason: error instanceof AiStructuredOutputError ? error.finishReason || null : null,
+    paths:
+      error instanceof z.ZodError
+        ? [...new Set(error.issues.map((issue) => issue.path.slice(0, 2).join(".")))].slice(0, 8)
+        : [],
+    repairing,
+  });
+}
+const STRUCTURED_OUTPUT_REPAIR: EditorialIssue = {
+  code: "format",
+  message:
+    "The previous answer was not a valid draft object. Return one JSON object with every required key (platform, format, title, body, angle, whyNow, sourceIds, sourceUrls, claims). angle and whyNow need at least 10 characters. Use at most 5 sourceIds and 5 sourceUrls. Do not add other keys.",
+};
 function reportEditorialIssues(phase: "validation" | "critique", issues: EditorialIssue[]) {
   if (!issues.length) return;
   const allowed = new Set([
@@ -278,6 +304,11 @@ export async function generateEditorialDraft(
     timeoutMs?: number;
     signal?: AbortSignal;
     initialDraft?: unknown;
+    /**
+     * Re-ask once, in the same deadline, when the provider answered with output that is
+     * not a valid draft object. Opt-in because it can bill one more write call.
+     */
+    repairStructuredOutput?: boolean;
   } = {},
 ): Promise<EditorialGenerationResult> {
   if (!brief.claimsAllowed.length && !brief.voiceProfile.instructions.length)
@@ -297,6 +328,7 @@ export async function generateEditorialDraft(
   let issues: EditorialIssue[] = [];
   let lastEdited: EditorialDraft | undefined;
   let reviewRejected = false;
+  let repairUsed = false;
   const keepQualityDraft = () => {
     if (
       !lastEdited ||
@@ -363,6 +395,19 @@ export async function generateEditorialDraft(
         const saved =
           keepQualityDraft() || keepCheckedDraft(signal.aborted ? "timeout" : "provider");
         if (saved) return saved;
+        if (isStructuredOutputFailure(error) && !signal.aborted) {
+          const repairing = Boolean(
+            options.repairStructuredOutput && !options.initialDraft && !repairUsed && !lastEdited,
+          );
+          reportStructuredOutputFailure(error, repairing);
+          if (repairing) {
+            repairUsed = true;
+            issues = [STRUCTURED_OUTPUT_REPAIR];
+            // Redo the first write with the repair instruction instead of an edit pass.
+            attempt -= 1;
+            continue;
+          }
+        }
         if (error instanceof ProviderBudgetError)
           return {
             ...fallback(brief, [{ code: "generation", message: error.message }]),
@@ -383,6 +428,14 @@ export async function generateEditorialDraft(
           }
         }
         // Never log source bodies, draft text or provider errors containing private context.
+        if (!isStructuredOutputFailure(error) && !(error instanceof AiProviderRequestError))
+          console.warn("content_editorial_failure", {
+            kind: signal.aborted
+              ? "timeout"
+              : error instanceof Error
+                ? error.name.slice(0, 40)
+                : "unknown",
+          });
         issues = [
           {
             code: signal.aborted ? "timeout" : "generation",

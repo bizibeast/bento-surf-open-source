@@ -1,6 +1,7 @@
 import { motion, useReducedMotion } from "motion/react";
 import { ArrowUpRight, Clock3 } from "lucide-react";
 import type { BillingLifecycle } from "@/lib/billing-lifecycle";
+import { planName } from "@/lib/plans";
 
 export function BillingLifecycleNotice({
   lifecycle,
@@ -9,8 +10,11 @@ export function BillingLifecycleNotice({
   onResume,
   onRestart,
   busy,
+  trialEnded = false,
 }: {
   lifecycle: BillingLifecycle;
+  /** The stop came from cancelling a trial, not from an unpaid bill. */
+  trialEnded?: boolean;
   onBilling: () => void;
   onExport: () => void;
   onResume?: () => void;
@@ -64,6 +68,7 @@ export function BillingLifecycleNotice({
   const pending = Date.parse(lifecycle.stoppedAt) > now;
   const toolsPaused = Date.parse(lifecycle.toolsStopAt) <= now;
   const publicPaused = Date.parse(lifecycle.publicStopAt) <= now;
+  const trial = trialEnded && lifecycle.reason === "canceled" && !pending;
   return (
     <motion.section
       initial={reduced ? false : { opacity: 0, y: 10 }}
@@ -74,21 +79,25 @@ export function BillingLifecycleNotice({
     >
       <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-amber-900">
         <Clock3 className="size-4" />
-        Workspace access
+        {trial ? "Trial ended" : "Workspace access"}
       </div>
       <h3 className="mt-3 font-ui-display text-2xl text-[#17213a]">
         {lifecycle.deletingAt
           ? "This workspace is being deleted"
-          : pending
-            ? "Your plan stays active until the paid period ends"
-            : toolsPaused
-              ? "Your work is saved. Your tools are paused."
-              : "There’s time to keep your workspace running."}
+          : trial
+            ? "Your trial has ended"
+            : pending
+              ? "Your plan stays active until the paid period ends"
+              : toolsPaused
+                ? "Your work is saved. Your tools are paused."
+                : "There’s time to keep your workspace running."}
       </h3>
       <p className="mt-2 max-w-2xl text-sm leading-relaxed text-[#17213a]/70">
-        {pending
-          ? "Cancellation stops your tools, public page and products at the date below. You can resume renewal before then."
-          : "Manage your payment to restore access. You can still review Billing and export your work during the retention period."}
+        {trial
+          ? "You cancelled your trial, so you were not charged. Your work is saved. Pick a plan to continue, or export your work during the retention period."
+          : pending
+            ? "Cancellation stops your tools, public page and products at the date below. You can resume renewal before then."
+            : "Manage your payment to restore access. You can still review Billing and export your work during the retention period."}
       </p>
       <dl className="mt-5 grid gap-3 sm:grid-cols-3">
         {[
@@ -106,8 +115,8 @@ export function BillingLifecycleNotice({
         ))}
       </dl>
       <p className="mt-3 text-xs leading-relaxed text-[#17213a]/60">
-        Only this unpaid workspace is affected. Other workspaces stay available. Your login is
-        removed only if no workspaces remain.
+        {trial ? "Only this workspace is affected." : "Only this unpaid workspace is affected."}{" "}
+        Other workspaces stay available. Your login is removed only if no workspaces remain.
       </p>
       {!lifecycle.deletingAt && (
         <div className="mt-4 flex flex-wrap gap-3">
@@ -118,7 +127,8 @@ export function BillingLifecycleNotice({
               disabled={busy}
               className="inline-flex items-center gap-2 rounded-xl bg-[#17213a] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
             >
-              Restart Bento <ArrowUpRight className="size-4" />
+              {trial ? `Continue with ${planName(lifecycle.plan)}` : "Restart Bento"}{" "}
+              <ArrowUpRight className="size-4" />
             </button>
           ) : (
             <button

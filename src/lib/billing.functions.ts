@@ -150,7 +150,9 @@ async function createHostedCheckoutSession(input: {
   const checkout: CheckoutSessionCreateParams = {
     product_cart: [{ product_id: productId, quantity: 1, ...(addons.length ? { addons } : {}) }],
     subscription_data: { trial_period_days: input.trial ? TRIAL_DAYS : 0 },
-    allowed_payment_method_types: ["credit"],
+    // No allowed_payment_method_types: Dodo offers every method enabled for the
+    // business that fits the buyer's country, currency, device and a
+    // subscription (cards, UPI, Apple Pay, Google Pay and other local methods).
     ...(input.email ? { customer: { email: input.email, name: input.email.split("@")[0] } } : {}),
   };
   if (input.period === "yearly" && !input.trial) await verifyYearlyProduct(productId, input.plan);
@@ -345,6 +347,8 @@ export type MyBillingOverview = {
   complimentaryAccessExpiresAt: string | null;
   contactTierContacts: ContactTier;
   storageAddonUnits: number;
+  /** The workspace stopped because its trial was cancelled (never charged). */
+  trialEnded?: boolean;
 };
 
 async function mySubscription(supabase: SupabaseClient<Database>, userId: string) {
@@ -435,12 +439,17 @@ export const getMyBillingOverview = createServerFn({ method: "GET" })
     if (profileResult.error)
       throw new Error("Your workspace billing deadlines could not be loaded.");
     if (pauseResult.error) throw new Error("Your pause date could not be loaded.");
-    return billingOverview(
-      subscription,
-      grantResult.data?.expires_at ?? null,
-      readBillingLifecycle(profileResult.data?.billing_lifecycle),
-      pauseResult.data?.resume_at ?? null,
-    );
+    const lifecycle = readBillingLifecycle(profileResult.data?.billing_lifecycle);
+    const { readLifecycleEndedTrial } = await import("./billing-trial-ended.server");
+    return {
+      ...billingOverview(
+        subscription,
+        grantResult.data?.expires_at ?? null,
+        lifecycle,
+        pauseResult.data?.resume_at ?? null,
+      ),
+      trialEnded: await readLifecycleEndedTrial(context.userId, lifecycle),
+    };
   });
 
 async function setRenewal(

@@ -104,12 +104,45 @@ it("retains server-owned media and personalization when a client spoofs draft fi
   mocks.row.candidates = candidates;
   const supplied = structuredClone(candidates);
   supplied.personalization!.note = "Client forged this status";
+  supplied.brainEvidence!.method = "independent_source_review";
   supplied.drafts[0].mediaIds = ["22222222-2222-4222-8222-222222222222"];
   supplied.drafts[0].mediaPreview!.url = "https://example.com/spoof.jpg";
   const edited = await editOnboardingCandidates({ data: { revision: 4, candidates: supplied } });
   expect(edited.candidates?.drafts[0].mediaIds).toEqual(candidates.drafts[0].mediaIds);
   expect(edited.candidates?.drafts[0].mediaPreview).toEqual(candidates.drafts[0].mediaPreview);
   expect(edited.candidates?.personalization).toEqual(candidates.personalization);
+  expect(edited.candidates?.brainEvidence?.method).toBe("creator_answers");
+});
+
+it("does not show or activate unsupported legacy Brain as confirmed onboarding evidence", async () => {
+  const original = structuredClone(mocks.row.candidates) as ReturnType<
+    typeof buildManualCandidates
+  >;
+  original.brain[0].content = "I earned money from an app I only reviewed.";
+  original.personalization = {
+    generation: 1,
+    status: "ready",
+    profileCount: 1,
+    postCount: 1,
+    note: "Legacy inference",
+  };
+  mocks.row.candidates = original;
+  mocks.row.status = "prepared";
+  mocks.row.approved_revision = 4;
+  const { sessionView } = await import("./session.server");
+  const visible = sessionView(mocks.row);
+  expect(JSON.stringify(visible.candidates?.brain)).not.toContain("I earned money");
+  expect(visible.candidates?.deferredBrain).toEqual(original.brain);
+  await expect(activateOnboarding()).rejects.toThrow("earlier generated Brain");
+  expect(mocks.activateRpc).not.toHaveBeenCalled();
+  await expect(
+    approveOnboarding({ data: { revision: 4, candidates: original, allowPartial: true } }),
+  ).rejects.toThrow("Save your latest");
+  const saved = await editOnboardingCandidates({ data: { revision: 4, candidates: original } });
+  expect(saved.candidates?.brainEvidence?.method).toBe("creator_answers");
+  expect(JSON.stringify(saved.candidates?.brain)).not.toContain("I earned money");
+  expect(saved.candidates?.deferredBrain).toEqual(original.brain);
+  expect(mocks.generate).not.toHaveBeenCalled();
 });
 
 beforeEach(() => {

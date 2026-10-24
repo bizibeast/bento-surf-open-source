@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Private profile cache uses a newly migrated column. */
 import { z } from "zod";
+import { isTrustedBrainItem } from "./content-brain";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { runAiJson, type AiProviderEnv } from "./ai-json.server";
 import type { CreatorDiscoverContext } from "./content-discovery.functions";
@@ -47,9 +48,7 @@ type ResearchCache = z.infer<typeof cacheSchema>;
 // and public creator names go to search; the Brain itself never enters a shared brief.
 export function discoverResearchInput(context: CreatorDiscoverContext) {
   const confirmed =
-    context.useBrainContext === false
-      ? []
-      : context.brainItems.filter((item) => item.status === "confirmed");
+    context.useBrainContext === false ? [] : context.brainItems.filter(isTrustedBrainItem);
   const perItem = Math.min(4_000, Math.floor(24_000 / Math.max(1, confirmed.length)));
   return {
     useBrainContext: context.useBrainContext !== false,

@@ -8,6 +8,7 @@ type SummaryBilling = {
   currentPeriodEnd: string | null;
   hasSubscription: boolean;
   billingLifecycle?: BillingLifecycle | null;
+  trialEnded?: boolean;
 };
 
 export type BillingSummary = {
@@ -48,7 +49,7 @@ export function billingSummary(
     const stop = lifecycle?.toolsStopAt ?? null;
     return {
       plan: subscribed,
-      badge: `${name} canceled`,
+      badge: billing.trialEnded ? `${name} trial ended` : `${name} canceled`,
       description,
       note: null,
       date: stop

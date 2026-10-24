@@ -3,6 +3,7 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import {
   onboardingBriefSchema,
   onboardingCandidatesSchema,
+  reconcileOnboardingBrain,
   type OnboardingBrief,
   type OnboardingCandidates,
 } from "./brief";
@@ -26,7 +27,14 @@ export function sessionView(row: any): OnboardingSession {
     revision: row.revision,
     step: row.step,
     brief: onboardingBriefSchema.parse(row.brief),
-    candidates: row.candidates ? onboardingCandidatesSchema.parse(row.candidates) : null,
+    candidates: row.candidates
+      ? row.status === "applied"
+        ? onboardingCandidatesSchema.parse(row.candidates)
+        : reconcileOnboardingBrain(
+            onboardingBriefSchema.parse(row.brief),
+            onboardingCandidatesSchema.parse(row.candidates),
+          )
+      : null,
     status: row.status,
     jobStatus: row.job_status,
     jobError: row.job_error,
