@@ -56,8 +56,8 @@ export function UpgradeBanner({
             <p className="mt-1 text-[13px] leading-5 text-white/70">
               Paid plans add selling, post scheduling and content ideas. The Brain and AI drafting
               are included with Creator Plus only. If you have not had a trial yet, start a{" "}
-              {TRIAL_DAYS}-day trial of the plan you pick. Card required. No charge if you cancel
-              before the trial ends.
+              {TRIAL_DAYS}-day trial of the plan you pick. Card, UPI or wallet required. No charge
+              if you cancel before the trial ends.
             </p>
           </div>
           <button

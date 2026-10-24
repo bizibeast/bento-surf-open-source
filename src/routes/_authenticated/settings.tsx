@@ -849,6 +849,7 @@ function SettingsPage() {
                             {
                               {
                                 renews: "Renews",
+                                renewal_processing: "Renewal payment processing since",
                                 trial_ends: "Trial ends",
                                 access_ends: "Access until",
                                 access_ended: "Access ended",

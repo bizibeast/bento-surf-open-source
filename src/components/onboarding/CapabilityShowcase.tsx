@@ -56,7 +56,7 @@ export function CapabilityShowcase({
       </ul>
       <p className="ob-center-note ob-showcase-note">
         Your trial includes only the plan you pick, so it includes only the tools labeled for that
-        plan. Card required. No charge if you cancel before the trial ends.
+        plan. Card, UPI or wallet required. No charge if you cancel before the trial ends.
       </p>
       <div className="ob-ready-actions ob-showcase-actions">
         <button

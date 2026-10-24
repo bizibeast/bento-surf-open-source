@@ -84,6 +84,16 @@ describe("Billing header", () => {
     expect(summary.date?.kind).toBe("renews");
     expect(summary.note).toBeNull();
   });
+  it("shows a processing renewal, not an ended plan, while a late debit settles", () => {
+    const due = "2026-10-22T00:00:00.000Z";
+    const summary = billingSummary(
+      { ...base, status: "active", currentPeriodEnd: due },
+      "store",
+      now,
+    );
+    expect(summary.badge).toBe("Store is active");
+    expect(summary.date).toEqual({ kind: "renewal_processing", at: due });
+  });
   it("uses the effective plan when there is no subscription", () => {
     expect(billingSummary(null, "free", now).badge).toBe("Choose your Bento plan");
     expect(billingSummary({ ...base, hasSubscription: false }, "creator", now).badge).toBe(

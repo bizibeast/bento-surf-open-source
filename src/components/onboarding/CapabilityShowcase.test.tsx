@@ -23,7 +23,7 @@ it("shows the five capabilities with honest plan labels and trial copy", () => {
   expect(screen.getByText("Included with Store, Creator and Creator Plus")).toBeVisible();
   expect(screen.getAllByText("Included with Creator and Creator Plus")).toHaveLength(2);
   expect(screen.getByText(/Your trial includes only the plan you pick/)).toHaveTextContent(
-    "Card required.",
+    "Card, UPI or wallet required.",
   );
   expect(screen.getByText(/No charge if you cancel before the trial ends/)).toBeVisible();
   expect(captureProductEvent).toHaveBeenCalledWith("onboarding_showcase_viewed", {

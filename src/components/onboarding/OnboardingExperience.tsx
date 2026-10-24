@@ -944,8 +944,8 @@ export function OnboardingExperience() {
                     {trialEligible ? (
                       <>
                         Then {price.label}
-                        {price.cadence} after {TRIAL_DAYS} days. Card required. Cancel before your
-                        trial ends to avoid the subscription charge. We'll remind you 24 hours
+                        {price.cadence} after {TRIAL_DAYS} days. Card, UPI or wallet required. No
+                        charge if you cancel before the trial ends. We'll remind you 24 hours
                         before.
                       </>
                     ) : (

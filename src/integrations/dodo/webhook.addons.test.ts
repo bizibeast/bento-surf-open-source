@@ -273,6 +273,82 @@ describe("verified Dodo add-on state", () => {
       expect.objectContaining({ reason: null, plan: "creator" }),
     );
   });
+  describe("renewal debit still processing (Indian cards and UPI settle about 48h late)", () => {
+    const H = 3_600_000;
+    function renewalInFlight(hoursPastDue: number, status = "active") {
+      const due = new Date(Date.now() - hoursPastDue * H).toISOString();
+      mocks.currentSubscription = {
+        dodo_subscription_id: "sub_123",
+        status: "active",
+        plan_id: "creator",
+        current_period_end: due,
+      };
+      const event = subscriptionEvent("creator");
+      event.type = "subscription.updated" as DodoEvent["type"];
+      Object.assign(event.data, {
+        status,
+        next_billing_date: due,
+        previous_billing_date: new Date(Date.parse(due) - 30 * 24 * H).toISOString(),
+      });
+      return { event, due };
+    }
+
+    it("keeps full access with no shutdown deadline 50h past the renewal date", async () => {
+      const { event } = renewalInFlight(50);
+      await processVerifiedDodoEvent(event, "renewal-processing-50h");
+      expect(mocks.lifecycle).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: null, plan: "creator" }),
+      );
+      expect(mocks.subscriptionUpsert).toHaveBeenCalledWith(
+        expect.objectContaining({ plan_id: "creator", status: "active" }),
+        { onConflict: "user_id" },
+      );
+      expect(mocks.profileUpdates).toContainEqual({
+        id: "user_123",
+        value: expect.objectContaining({ plan_id: "creator", workspace_status: "active" }),
+      });
+    });
+
+    it("keeps the paid plan while Dodo reports the renewal as pending", async () => {
+      const { event } = renewalInFlight(20, "pending");
+      await processVerifiedDodoEvent(event, "renewal-pending");
+      expect(mocks.subscriptionUpsert).toHaveBeenCalledWith(
+        expect.objectContaining({ plan_id: "creator", status: "active" }),
+        { onConflict: "user_id" },
+      );
+      expect(mocks.lifecycle).toHaveBeenCalledWith(expect.objectContaining({ reason: null }));
+    });
+
+    it("still fails closed for a pending subscription that was never paid for", async () => {
+      const { event } = renewalInFlight(1, "pending");
+      mocks.currentSubscription = null;
+      await processVerifiedDodoEvent(event, "first-payment-pending");
+      expect(mocks.subscriptionUpsert).toHaveBeenCalledWith(
+        expect.objectContaining({ plan_id: "free", status: "incomplete" }),
+        { onConflict: "user_id" },
+      );
+    });
+
+    it("starts the normal past-due wind-down only after the processing window", async () => {
+      const { event, due } = renewalInFlight(80);
+      await processVerifiedDodoEvent(event, "renewal-unpaid-80h");
+      expect(mocks.lifecycle).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reason: "past_due",
+          plan: "creator",
+          stoppedAt: new Date(Date.parse(due) + 72 * H).toISOString(),
+        }),
+      );
+    });
+
+    it("winds down from the due date as soon as the payment actually fails", async () => {
+      const { event, due } = renewalInFlight(50, "on_hold");
+      await processVerifiedDodoEvent(event, "renewal-failed");
+      expect(mocks.lifecycle).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: "past_due", stoppedAt: due }),
+      );
+    });
+  });
   it("activates only the workspace named by purchaser-verified metadata", async () => {
     const workspaceId = "33333333-3333-4333-8333-333333333333";
     const authUserId = "11111111-1111-4111-8111-111111111111";
