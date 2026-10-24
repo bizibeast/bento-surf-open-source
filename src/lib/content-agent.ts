@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isTrustedBrainItem } from "./content-brain-evidence";
 import { carouselSlideSchema, editorialMetadataSchema } from "./content-editorial";
 import { parsePublicHttpUrl } from "./safe-url";
 import { SOCIAL_PROVIDERS } from "./social-scheduler";
@@ -378,8 +379,12 @@ export function buildContentAgentInput(input: {
     request: input.userText.slice(0, 20_000),
     currentTime: new Date().toISOString(),
     confirmedBrain: input.brain
-      .filter((item) => item.status === "confirmed")
-      .map(safePromptValue)
+      .filter(isTrustedBrainItem)
+      .map((item) => {
+        // Receipt validation stays on the server; hashes add no writing context.
+        const { evidenceVerification: _camel, evidence_verification: _raw, ...context } = item;
+        return safePromptValue(context);
+      })
       .slice(0, 100),
     recommendations: input.recommendations.map(safePromptValue).slice(0, 50),
     connectedKnowledge: quoteContentSourcesForAgent(input.sources || []),

@@ -100,12 +100,6 @@ describe("newsletter send-time eligibility", () => {
     const order: string[] = [];
     const tables: string[] = [];
     mocks.from.mockImplementation((table: string) => {
-      if (table === "provider_budget_policies") {
-        return query([
-          { resource: "marketing_emails", daily_limit: 70 },
-          { resource: "transactional_emails", daily_limit: 100 },
-        ]);
-      }
       tables.push(table);
       if (table === "email_outbox") return query(null);
       throw new Error(`Unexpected table ${table}`);
@@ -121,6 +115,11 @@ describe("newsletter send-time eligibility", () => {
       if (name === "update_audience_campaign_recipient_status") {
         return Promise.resolve({ data: 1, error: null });
       }
+      if (name === "reserve_email_send") {
+        order.push("reserve");
+        expect(input).toEqual({ p_category: "marketing" });
+        return Promise.resolve({ data: { allowed: true }, error: null });
+      }
       throw new Error(`Unexpected RPC ${name}`);
     });
     mocks.fetch.mockImplementation(() => {
@@ -134,7 +133,7 @@ describe("newsletter send-time eligibility", () => {
     });
 
     await expect(processEmailOutbox(1)).resolves.toEqual({ claimed: 1, sent: 1, configured: true });
-    expect(order).toEqual(["authorize", "provider-post"]);
+    expect(order).toEqual(["authorize", "reserve", "provider-post"]);
     expect(tables).toEqual(["email_outbox"]);
     expect(mocks.entitlement).toHaveBeenCalledWith(row.payload.creatorId, "emailMarketing");
   });

@@ -78,10 +78,12 @@ export async function readLifecycleNotice(
       timeStyle: "short",
       timeZone: "UTC",
     }).format(new Date(value)) + " UTC";
+  const { readLifecycleEndedTrial } = await import("./billing-trial-ended.server");
   return {
     episodeId,
     subscriptionId: lifecycle.subscriptionId,
     reason: lifecycle.reason,
+    trialEnded: await readLifecycleEndedTrial(workspaceId, lifecycle),
     workspaceName: profile?.display_name || "your workspace",
     toolsDate: date(lifecycle.toolsStopAt),
     publicDate: date(lifecycle.publicStopAt),

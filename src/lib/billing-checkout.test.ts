@@ -106,19 +106,17 @@ describe("checkout after preparation", () => {
     });
     expect(mocks.create).not.toHaveBeenCalled();
   });
-  it("starts three full days with a required credit card and no paid extras", async () => {
+  it("starts three full days with a required payment method and no paid extras", async () => {
     await createCheckout({ data: input });
     expect(mocks.product).toHaveBeenCalledWith("creator-39");
     expect(mocks.preview).toHaveBeenCalledWith(
       expect.objectContaining({
-        allowed_payment_method_types: ["credit"],
         subscription_data: { trial_period_days: 3 },
         product_cart: [{ product_id: "creator-39", quantity: 1 }],
       }),
     );
     expect(mocks.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        allowed_payment_method_types: ["credit"],
         subscription_data: { trial_period_days: 3 },
         product_cart: [{ product_id: "creator-39", quantity: 1 }],
         metadata: expect.objectContaining({
@@ -129,6 +127,9 @@ describe("checkout after preparation", () => {
         return_url: expect.stringContaining("/onboarding?checkout=return&trial=1"),
       }),
     );
+    // Every Dodo-enabled method (cards, UPI, wallets, local methods) stays available.
+    expect(mocks.preview.mock.calls[0][0]).not.toHaveProperty("allowed_payment_method_types");
+    expect(mocks.create.mock.calls[0][0]).not.toHaveProperty("allowed_payment_method_types");
     // Adaptive Currency stays on: Dodo may show the buyer's local currency.
     expect(mocks.create.mock.calls[0][0]).not.toHaveProperty("billing_currency");
     expect(mocks.save).toHaveBeenCalledWith(

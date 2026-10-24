@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RetentionCancellationDialog } from "./RetentionCancellationDialog";
+import { CancellationFlowHost } from "./CancellationFlowHost";
 import { cancelMyRenewal, resumeMyRenewal, type MyBillingOverview } from "@/lib/billing.functions";
 import { getMyCancellationImpact, startMyCancellation } from "@/lib/cancellation.functions";
 
@@ -140,11 +141,12 @@ describe("cancellation dialog", () => {
   });
 });
 
-it("keeps trial access until the trial end and promises no charge", async () => {
+it("warns that a trial cancel ends access immediately with no charge, then ends the trial", async () => {
   vi.mocked(cancelMyRenewal).mockResolvedValue({
     ...billing,
-    status: "trialing",
-    cancelAtPeriodEnd: true,
+    plan: "free",
+    status: "canceled",
+    cancelAtPeriodEnd: false,
   });
   render(
     <RetentionCancellationDialog
@@ -154,11 +156,93 @@ it("keeps trial access until the trial end and promises no charge", async () => 
       billing={{ ...billing, status: "trialing" }}
     />,
   );
-  expect(screen.getByText(/Your trial access continues until .*won't be charged/)).toBeVisible();
-  expect(screen.queryByText(/immediately/)).not.toBeInTheDocument();
+  const warning =
+    "Cancelling now ends your trial immediately. You'll lose access to your plan's features right away and won't be charged.";
+  expect(screen.getByRole("alert")).toHaveTextContent(warning);
+  expect(screen.queryByText(/continues until|keep your trial until|Access until/)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Skip and continue cancelling" }));
-  expect(await screen.findByText(/You won't be charged. You keep your trial until/)).toBeVisible();
+  expect(await screen.findByText("Review your cancellation")).toBeVisible();
+  // The warning is shown again right before the creator confirms.
+  expect(screen.getByText(new RegExp(`^${warning.replace(/[.?]/g, "\\$&")}`))).toBeVisible();
+  expect(screen.queryByText(/keep your trial until|continues until/i)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Confirm cancellation" }));
-  expect(await screen.findByText("Your trial is cancelled")).toBeVisible();
+  expect(await screen.findByText("Your trial has ended")).toBeVisible();
+  expect(
+    screen.getByText(/Your trial is cancelled and access has ended. You won't be charged./),
+  ).toBeVisible();
   expect(screen.queryByRole("button", { name: "Keep my plan" })).not.toBeInTheDocument();
+});
+
+it("keeps paid cancellation at period end with the access date", async () => {
+  render(
+    <RetentionCancellationDialog open onOpenChange={vi.fn()} plan="creator" billing={billing} />,
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByText(/Your current access continues until/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Skip and continue cancelling" }));
+  expect(await screen.findByText(/Your plan will not renew. You keep Creator until/)).toBeVisible();
+  expect(screen.queryByText(/ends your trial immediately/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Confirm cancellation" }));
+  expect(
+    await screen.findByText(/Renewal is cancelled. Your Creator access continues until/),
+  ).toBeVisible();
+});
+
+it("keeps the trial-ended step on screen after the workspace drops to free", async () => {
+  vi.mocked(cancelMyRenewal).mockResolvedValue({
+    ...billing,
+    plan: "free",
+    status: "canceled",
+    cancelAtPeriodEnd: false,
+  });
+  const onOpenChange = vi.fn();
+  const trialing = { ...billing, plan: "store" as const, status: "trialing" as const };
+  const { rerender } = render(
+    <CancellationFlowHost open onOpenChange={onOpenChange} plan="store" billing={trialing} />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Skip and continue cancelling" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Confirm cancellation" }));
+  expect(await screen.findByText("Your trial has ended")).toBeVisible();
+  // The settings page refetches: the workspace plan is now free and billing is canceled.
+  const ended = { ...trialing, status: "canceled" as const };
+  rerender(<CancellationFlowHost open onOpenChange={onOpenChange} plan="free" billing={ended} />);
+  expect(screen.getByText("Your trial has ended")).toBeVisible();
+  expect(onOpenChange).not.toHaveBeenCalledWith(false);
+  // Once dismissed, a free workspace no longer hosts the flow.
+  rerender(
+    <CancellationFlowHost open={false} onOpenChange={onOpenChange} plan="free" billing={ended} />,
+  );
+  expect(screen.queryByText("Your trial has ended")).toBeNull();
+});
+
+it("does not host the flow for a workspace that never had a paid plan", () => {
+  render(<CancellationFlowHost open onOpenChange={vi.fn()} plan="free" billing={billing} />);
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+it("goes straight to the trial-ended step before billing refreshes", async () => {
+  vi.mocked(cancelMyRenewal).mockResolvedValue({
+    ...billing,
+    plan: "free",
+    status: "canceled",
+    cancelAtPeriodEnd: false,
+  });
+  let finishRefresh = () => {};
+  mocks.invalidateQueries.mockImplementationOnce(
+    () => new Promise<undefined>((resolve) => (finishRefresh = () => resolve(undefined))),
+  );
+  render(
+    <RetentionCancellationDialog
+      open
+      onOpenChange={vi.fn()}
+      plan="store"
+      billing={{ ...billing, plan: "store", status: "trialing" }}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Skip and continue cancelling" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Confirm cancellation" }));
+  // Still refreshing, and the result is already on screen.
+  expect(await screen.findByText("Your trial has ended")).toBeVisible();
+  expect(screen.queryByText(/Your plan will not renew/)).toBeNull();
+  finishRefresh();
 });

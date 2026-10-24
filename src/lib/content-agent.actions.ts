@@ -65,7 +65,7 @@ export async function approveAgentBrainProposalForUser(userId: string, input: un
       source_url: card.sourceUrl,
       source_ref: card.sourceRef || `agent:${data.messageId}:${card.cardId}`,
       status: "confirmed",
-      locked: false,
+      locked: true,
     })
     .select("id")
     .single();

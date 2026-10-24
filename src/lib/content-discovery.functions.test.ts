@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ContentProfile } from "./content-brain";
+import { normalizeNicheKey } from "./content-briefs.server";
 import {
   buildCreatorDiscover,
   inferDiscoverNiche,
@@ -615,7 +616,7 @@ describe("personalized Discover", () => {
       storedDiscoverData(
         [recommendation],
         {
-          nicheKey: "social-v16:creator ai",
+          nicheKey: normalizeNicheKey(["creator ai"]),
           warnings: [],
           fetchedAt: "2026-09-20T09:00:00.000Z",
           expiresAt: "2026-09-21T09:00:00.000Z",

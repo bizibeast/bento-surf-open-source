@@ -28,6 +28,9 @@ import {
   type CancellationReason,
 } from "@/lib/cancellation.functions";
 
+export const TRIAL_CANCEL_WARNING =
+  "Cancelling now ends your trial immediately. You'll lose access to your plan's features right away and won't be charged.";
+
 type Step = "reason" | "offer" | "loss" | "confirm" | "complete";
 type Outcome =
   | "cancelled"
@@ -214,17 +217,19 @@ export function RetentionCancellationDialog({
           intentId: intent?.intentId,
         },
       });
-      await queryClient.invalidateQueries();
-      // A cancelled trial keeps access until its end date and is never charged.
-      const trialEnded = next.status === "trialing" || next.status === "canceled";
+      // Cancelling a trial ends it, and its access, immediately with no charge.
+      const trialEnded = next.status === "canceled";
       setOutcome(trialEnded ? "trial_cancelled" : "cancelled");
       setResultDate(next.currentPeriodEnd);
+      // Show the result before refreshing billing. Refetched billing is no
+      // longer "trialing", which would flash paid-cancel wording on this step.
       setStep("complete");
       toast.success(
         trialEnded
-          ? "Trial cancelled. You won't be charged, and your access continues until the date shown."
+          ? "Trial cancelled. Your trial has ended, and you won't be charged."
           : "Renewal cancelled. Your paid access continues until the date shown.",
       );
+      void queryClient.invalidateQueries();
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Renewal could not be cancelled.";
       setError(message);
@@ -283,16 +288,16 @@ export function RetentionCancellationDialog({
                   : `Cancel ${planLabel} renewal`}
               </DialogTitle>
               <DialogDescription className="leading-6">
-                What is the main reason? Choose one, or skip this question.{" "}
+                What is the main reason? Choose one, or skip this question.
                 {billing.status === "trialing"
-                  ? `Your trial access continues until ${date(billing.currentPeriodEnd)}, and you won't be charged.`
-                  : `Your current access continues until ${date(billing.currentPeriodEnd)}.`}
+                  ? ""
+                  : ` Your current access continues until ${date(billing.currentPeriodEnd)}.`}
               </DialogDescription>
             </DialogHeader>
             {billing.status === "trialing" && (
-              <div className="rounded-2xl bg-[#dfeaff] p-4 text-sm leading-6">
-                Cancelling now stops the first charge. You keep your trial until{" "}
-                {date(billing.currentPeriodEnd)}. Your saved work remains available for export.
+              <div role="alert" className="rounded-2xl bg-[#dfeaff] p-4 text-sm leading-6">
+                <p className="font-semibold">{TRIAL_CANCEL_WARNING}</p>
+                <p className="mt-1">Your saved work remains available for export.</p>
               </div>
             )}
             <div role="radiogroup" aria-label="Main cancellation reason" className="grid gap-2">
@@ -490,8 +495,9 @@ export function RetentionCancellationDialog({
                 What changes for your workspace
               </DialogTitle>
               <DialogDescription className="leading-6">
-                Your paid access stays active through {date(billing.currentPeriodEnd)}. Then your
-                hosted page, store, and creator tools pause.
+                {billing.status === "trialing"
+                  ? `${TRIAL_CANCEL_WARNING} Your hosted page, store, and creator tools pause when you confirm.`
+                  : `Your paid access stays active through ${date(billing.currentPeriodEnd)}. Then your hosted page, store, and creator tools pause.`}
               </DialogDescription>
             </DialogHeader>
             {impactItems.length > 0 && (
@@ -538,7 +544,7 @@ export function RetentionCancellationDialog({
               </DialogTitle>
               <DialogDescription className="leading-6">
                 {billing.status === "trialing"
-                  ? `You won't be charged. You keep your trial until ${date(billing.currentPeriodEnd)}. After that, this workspace’s hosted page, store, and creator tools pause.`
+                  ? `${TRIAL_CANCEL_WARNING} This workspace’s hosted page, store, and creator tools pause as soon as you confirm.`
                   : `Your plan will not renew. You keep ${planLabel} until ${date(billing.currentPeriodEnd)}. After that, this workspace’s hosted page, store, and creator tools pause.`}{" "}
                 You can renew or export during the 90-day retention window.
               </DialogDescription>
@@ -556,7 +562,11 @@ export function RetentionCancellationDialog({
                 onClick={() => void confirmCancellation()}
                 className="h-11 w-full rounded-2xl bg-destructive px-4 text-sm font-semibold text-white disabled:opacity-50"
               >
-                {pending ? "Cancelling renewal…" : "Confirm cancellation"}
+                {pending
+                  ? billing.status === "trialing"
+                    ? "Ending trial…"
+                    : "Cancelling renewal…"
+                  : "Confirm cancellation"}
               </button>
               <button
                 type="button"
@@ -584,7 +594,7 @@ export function RetentionCancellationDialog({
               </div>
               <DialogTitle className="font-ui-display text-2xl">
                 {outcome === "trial_cancelled"
-                  ? "Your trial is cancelled"
+                  ? "Your trial has ended"
                   : outcome === "cancelled"
                     ? intent?.displayName
                       ? `Thank you, ${intent.displayName}, for building with Bento`
@@ -601,7 +611,7 @@ export function RetentionCancellationDialog({
               </DialogTitle>
               <DialogDescription className="leading-6">
                 {outcome === "trial_cancelled"
-                  ? `You won't be charged. Your trial access continues until ${date(resultDate)}. After that your work is saved for 90 days; you can export it or choose a paid plan in Billing.`
+                  ? "Your trial is cancelled and access has ended. You won't be charged. Your work is saved for 90 days; you can export it or choose a paid plan in Billing."
                   : outcome === "cancelled"
                     ? `Renewal is cancelled. Your ${planLabel} access continues until ${date(resultDate)}. You can change your mind before then.`
                     : outcome === "paused"

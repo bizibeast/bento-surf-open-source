@@ -73,6 +73,12 @@ import {
   StandoutPost,
   type OnboardingConnection,
 } from "./OnboardingScreens";
+import { CapabilityShowcase } from "./CapabilityShowcase";
+import { brainDraftOutcome } from "@/lib/onboarding/draft-outcome";
+import {
+  ONBOARDING_DEFAULT_TRIAL_PLAN,
+  onboardingPlanAftercare,
+} from "@/lib/onboarding/trial-plan";
 import "./onboarding.css";
 
 type ContextField = "displayName" | "expertise" | "audience";
@@ -95,7 +101,8 @@ const questions: Record<ContextField, { title: string; hint: string; placeholder
 };
 const missingContext = (brief: OnboardingBrief) =>
   (["displayName", "expertise", "audience"] as const).find((key) => !brief[key].trim());
-const chapterFor = (step: number) => (step === 0 ? 0 : step === 1 ? 1 : step < 5 ? 2 : 3);
+// Step 4 is the client-only capability showcase between the Brain and the trial step.
+const chapterFor = (step: number) => (step === 0 ? 0 : step === 1 ? 1 : step < 4 ? 2 : 3);
 const normalizedStep = (session: OnboardingSession) =>
   session.status === "applied" ? 6 : session.step === 4 ? 3 : session.step;
 
@@ -115,7 +122,7 @@ export function OnboardingExperience() {
   const [checkoutFailure, setCheckoutFailure] = useState<string | null>(null);
   const checkoutReturnRef = useRef<ReturnType<typeof readCheckoutReturn> | null>(null);
   const [savedLabel, setSavedLabel] = useState("Saved");
-  const [plan, setPlan] = useState<PaidPlanId>("creator_plus");
+  const [plan, setPlan] = useState<PaidPlanId>(ONBOARDING_DEFAULT_TRIAL_PLAN);
   const [period, setPeriod] = useState<BillingPeriod>("monthly");
   const [usernameStatus, setUsernameStatus] = useState<"idle" | "checking" | "available" | "taken">(
     "idle",
@@ -246,6 +253,22 @@ export function OnboardingExperience() {
     // A query refresh must not overwrite answers currently being typed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query.data]);
+  const lastJobStatus = useRef<string | null>(null);
+  // Set when this tab asks for a draft. The request can come back already finished, so the
+  // client may never see a queued or running session.
+  const awaitingDraft = useRef(false);
+  useEffect(() => {
+    if (!session) return;
+    const previous = awaitingDraft.current ? "queued" : lastJobStatus.current;
+    lastJobStatus.current = session.jobStatus;
+    const outcome = brainDraftOutcome(previous, session, brief.platform);
+    if (outcome) {
+      awaitingDraft.current = false;
+      captureProductEvent(outcome.event, outcome.properties);
+    }
+    // Only job transitions matter here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.jobStatus, session?.revision]);
   useEffect(() => {
     if (step !== 0) return;
     let current = true;
@@ -382,6 +405,7 @@ export function OnboardingExperience() {
     const latest = await save(3, value);
     setStep(3);
     setReveal(0);
+    if (!manual) awaitingDraft.current = true;
     accept(await prepareOnboarding({ data: { revision: latest.revision, generate: !manual } }));
     await query.refetch();
   }
@@ -440,13 +464,22 @@ export function OnboardingExperience() {
             },
           }),
         );
-        setStep(5);
+        // Free workspaces see what Bento can do before choosing a plan.
+        setStep(hasHostedAccess ? 5 : 4);
         captureProductEvent("onboarding_preparation_ready");
         if (hasHostedAccess) await activate();
       }
     });
   }
   async function checkout() {
+    captureProductEvent("trial_cta_clicked", {
+      source: "onboarding",
+      surface: "onboarding_trial_step",
+      plan,
+      billing_interval: period,
+      trial: trialEligible,
+      retry: Boolean(checkoutFailure),
+    });
     await action(async () => {
       await saveQueue.current;
       const result = await createCheckout({
@@ -454,7 +487,15 @@ export function OnboardingExperience() {
       });
       const href = safeNavigationHref(result.url);
       if (!href) throw new Error("The checkout link was invalid.");
+      const properties = {
+        source: "onboarding",
+        surface: "onboarding_trial_step",
+        plan,
+        billing_interval: period,
+        trial: trialEligible,
+      };
       captureProductEvent("onboarding_checkout_started", { plan });
+      captureProductEvent("checkout_started", properties);
       window.location.assign(href);
     });
   }
@@ -522,21 +563,27 @@ export function OnboardingExperience() {
                   "Let's give your ideas, experience, and voice a home.",
                 ]
               : headings[currentReveal]
-            : step === 5
+            : step === 4
               ? [
-                  "Your next chapter",
-                  hasHostedAccess
-                    ? "Your workspace is ready to open."
-                    : "You've seen the start. Make it yours.",
-                  hasHostedAccess
-                    ? "Your plan is active. Your personal preparation is saved."
-                    : "Your Brain and your first ideas are waiting. Choose how you want to build with Bento.",
+                  "Everything in one place",
+                  "Here's what you can do with Bento.",
+                  "Your Brain is ready. These are the tools that put it to work. Pick the plan that fits.",
                 ]
-              : [
-                  "Welcome to your Bento",
-                  "Your Bento is ready.",
-                  "A home for your work. A Brain that grows with you. Your next idea starts here.",
-                ];
+              : step === 5
+                ? [
+                    "Your next chapter",
+                    hasHostedAccess
+                      ? "Your workspace is ready to open."
+                      : "You've seen the start. Make it yours.",
+                    hasHostedAccess
+                      ? "Your plan is active. Your personal preparation is saved."
+                      : "Your Brain and your first ideas are waiting. Choose how you want to build with Bento.",
+                  ]
+                : [
+                    "Welcome to your Bento",
+                    "Your Bento is ready.",
+                    "A home for your work. A Brain that grows with you. Your next idea starts here.",
+                  ];
 
   if (query.isError && !session)
     return (
@@ -803,6 +850,13 @@ export function OnboardingExperience() {
                 )}
               </>
             )}
+            {step === 4 && (
+              <CapabilityShowcase
+                brainChapters={candidates?.brain.length || 0}
+                onContinue={() => setStep(5)}
+                onSkip={() => setStep(5)}
+              />
+            )}
             {step === 5 &&
               (hasHostedAccess ? (
                 <div className="ob-ready">
@@ -849,6 +903,9 @@ export function OnboardingExperience() {
                       <span>{trialEligible ? "today" : price.cadence}</span>
                     </div>
                   </div>
+                  <p className="ob-center-note ob-plan-aftercare" data-testid="plan-aftercare">
+                    {onboardingPlanAftercare(plan)}
+                  </p>
                   {(session.jobError || !candidates?.drafts.length) &&
                     session.generationCount < 2 && (
                       <button
@@ -887,8 +944,8 @@ export function OnboardingExperience() {
                     {trialEligible ? (
                       <>
                         Then {price.label}
-                        {price.cadence} after {TRIAL_DAYS} days. Card required. Cancel before your
-                        trial ends to avoid the subscription charge. We'll remind you 24 hours
+                        {price.cadence} after {TRIAL_DAYS} days. Card, UPI or wallet required. No
+                        charge if you cancel before the trial ends. We'll remind you 24 hours
                         before.
                       </>
                     ) : (
@@ -912,11 +969,11 @@ export function OnboardingExperience() {
                   </span>
                   <span>
                     <Check />
-                    {candidates?.brain.length || 0} Brain chapters
+                    {candidates?.brain.length || 0} Brain chapters saved
                   </span>
                   <span>
                     <Check />
-                    {candidates?.drafts.length || 0} saved drafts
+                    {candidates?.drafts.length || 0} starter drafts saved
                   </span>
                 </div>
                 <div className="ob-ready-actions">
@@ -950,6 +1007,15 @@ export function OnboardingExperience() {
                     ? "Your page is live."
                     : "Your page stays private until you choose to publish it."}
                 </p>
+                {query.data?.plan &&
+                  query.data.plan !== "free" &&
+                  query.data.plan !== "creator_plus" &&
+                  !query.data.selfHosted && (
+                    <p className="ob-center-note" data-testid="ready-aftercare">
+                      Brain and Agent are included with Creator Plus only. Your Brain chapters and
+                      starter drafts stay saved here, and you can download them below.
+                    </p>
+                  )}
                 <button className="ob-text-link" onClick={() => void action(exportPreparation)}>
                   Download my Brain and drafts
                 </button>
@@ -972,7 +1038,7 @@ export function OnboardingExperience() {
             {error}
           </div>
         )}
-        {step < 5 && !(step === 3 && (!candidates || building)) && (
+        {step < 4 && !(step === 3 && (!candidates || building)) && (
           <div className="ob-footer">
             {step > 0 ? (
               <button
@@ -1019,9 +1085,13 @@ export function OnboardingExperience() {
         )}
         {step === 5 && (
           <div className="ob-footer">
-            <button className="ob-back" disabled={busy} onClick={() => setStep(3)}>
+            <button
+              className="ob-back"
+              disabled={busy}
+              onClick={() => setStep(hasHostedAccess ? 3 : 4)}
+            >
               <ArrowLeft />
-              Back to my Brain
+              {hasHostedAccess ? "Back to my Brain" : "Back"}
             </button>
             {!hasHostedAccess && (
               <button

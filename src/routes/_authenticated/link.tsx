@@ -1,5 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { UpgradeDialog } from "@/components/UpgradeDialog";
+import { UpgradeBanner } from "@/components/UpgradeBanner";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { DecodedImage } from "@/components/DecodedImage";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
@@ -1169,6 +1170,13 @@ function DashboardPage() {
       <div
         className={`link-editor-shell mx-auto w-full ${effectiveViewMode === "phone" ? "max-w-none px-0 pb-32" : "max-w-6xl px-3 pb-32 lg:px-6 lg:pb-32"}`}
       >
+        <div className={effectiveViewMode === "phone" ? "mx-auto max-w-[430px] px-4" : ""}>
+          <UpgradeBanner
+            profileId={profile?.id}
+            planId={profile?.plan_id}
+            isPro={profile?.is_pro}
+          />
+        </div>
         <div
           className={
             effectiveViewMode === "phone"
@@ -1578,6 +1586,7 @@ function DashboardPage() {
         <UpgradeDialog
           trigger={null}
           open={welcomeUpgradeOpen}
+          source="post_onboarding"
           showFreeOption
           onOpenChange={(open) => {
             if (!open && welcomeUpgradeOpen) {
@@ -2289,7 +2298,7 @@ function ProfileSidebar({
 
       {profile && !profile.is_pro && (
         <div className="mt-4">
-          <UpgradeDialog />
+          <UpgradeDialog source="profile_sidebar" />
         </div>
       )}
     </>

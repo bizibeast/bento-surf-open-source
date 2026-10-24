@@ -15,7 +15,7 @@ import { resolveBillingProduct, verifiedTrialEnd } from "@/lib/billing-catalog";
 import { readTrialTerms } from "@/lib/billing-trial-terms.server";
 import { enqueueBentoBillingEmail } from "@/lib/email.server";
 import { syncWorkspaceBillingLifecycle } from "@/lib/billing-lifecycle.server";
-import type { BillingLifecycle } from "@/lib/billing-lifecycle";
+import { BILLING_DAY_MS, type BillingLifecycle } from "@/lib/billing-lifecycle";
 import {
   BASE_MARKETING_CONTACTS,
   highestPlan,
@@ -147,6 +147,26 @@ function eventStatus(type: string, data: JsonRecord): string {
 
 function occurredAt(event: DodoEvent): string | null {
   return asString(event.timestamp) ?? asString(event.data.created_at) ?? null;
+}
+
+/**
+ * When the subscription was cancelled. Dodo reports `cancelled_at`; a manual
+ * refresh has no event timestamp, so never fall back to `created_at` (that is
+ * the trial or contract start, not the cancel).
+ */
+export function cancellationTime(
+  data: JsonRecord,
+  current: { status?: string | null; canceled_at?: string | null } | null | undefined,
+  event: Pick<DodoEvent, "timestamp">,
+  now = new Date(),
+): string {
+  return (
+    asString(data.cancelled_at) ??
+    asString(data.canceled_at) ??
+    (current?.status === "canceled" ? (current.canceled_at ?? null) : null) ??
+    asString(event.timestamp) ??
+    now.toISOString()
+  );
 }
 
 async function applyPlan(
@@ -346,8 +366,32 @@ async function recordRefund(
   return userId;
 }
 
-function subscriptionState(event: DodoEvent): { active: boolean; status: SubStatus } {
+/**
+ * Indian cards, RuPay and UPI renew on RBI mandates: Dodo starts the debit on the
+ * renewal date and the bank settles it about 48 to 51 hours later. The
+ * subscription stays active meanwhile, so a renewal that is merely processing
+ * past its due date keeps full access for this window. Access only starts to
+ * wind down when the payment fails (on_hold/failed), the subscription ends, or
+ * a renewal is still unpaid after the window.
+ */
+export const RENEWAL_PROCESSING_GRACE_MS = 3 * BILLING_DAY_MS;
+const RENEWAL_PROCESSING_STATUSES = ["pending", "processing", "requires_customer_action"];
+
+export function subscriptionState(
+  event: DodoEvent,
+  current?: { dodo_subscription_id: string | null; status: string | null } | null,
+): { active: boolean; status: SubStatus } {
   const rawStatus = eventStatus(event.type, event.data);
+  // A renewal debit in flight on a subscription that is already paid for must
+  // not drop the workspace to free; only a failure or an ended contract does.
+  if (
+    RENEWAL_PROCESSING_STATUSES.includes(rawStatus) &&
+    current?.dodo_subscription_id &&
+    current.dodo_subscription_id === asString(event.data.subscription_id) &&
+    ["active", "trialing"].includes(current.status ?? "")
+  ) {
+    return { active: true, status: "active" };
+  }
   if (event.type === "subscription.cancelled" || event.type === "subscription.expired") {
     return { active: false, status: "canceled" };
   }
@@ -383,7 +427,7 @@ async function syncSubscriptionUnderLease(
   const { data: current, error: currentError } = await supabaseAdmin
     .from("subscriptions")
     .select(
-      "dodo_subscription_id,status,billing_catalog,plan_id,current_period_end,cancel_at_period_end",
+      "dodo_subscription_id,status,billing_catalog,plan_id,current_period_end,cancel_at_period_end,canceled_at",
     )
     .eq("user_id", userId)
     .maybeSingle();
@@ -420,7 +464,7 @@ async function syncSubscriptionUnderLease(
       throw new Error("Subscription product could not be verified.");
     event = { ...event, type: `subscription.${remote.status}`, data };
   }
-  const state = subscriptionState(event);
+  const state = subscriptionState(event, current);
   const plan = state.active ? requiredPlanFromEvent(data) : "free";
   const billingPeriod = billingPeriodFromEvent(data);
   const addonState = addonStateForSubscription(
@@ -473,7 +517,12 @@ async function syncSubscriptionUnderLease(
           ? eventTime
           : now,
   ).toISOString();
-  const overdue = state.active && isUnpaidBoundary(providerDue);
+  // Still active at Dodo but unpaid past the due date: an Indian card/UPI debit
+  // settles about 48h late, so only treat it as overdue after the grace window.
+  const overdue =
+    state.active &&
+    isUnpaidBoundary(providerDue) &&
+    now >= providerDue + RENEWAL_PROCESSING_GRACE_MS;
   const lifecycleReason =
     state.status === "paused"
       ? "paused"
@@ -570,20 +619,22 @@ async function syncSubscriptionUnderLease(
     currency: asString(data.currency),
     billingInterval: asString(data.payment_frequency_interval),
     cancelAtPeriodEnd: asBoolean(data.cancel_at_next_billing_date) ?? false,
-    canceledAt: state.status === "canceled" ? occurredAt(event) : null,
+    canceledAt: state.status === "canceled" ? cancellationTime(data, current, event) : null,
     addonState,
     ...(isPaidPlan(contractPlan)
       ? {
           lifecycle: {
             reason: lifecycleReason,
             stoppedAt:
-              state.active && (lifecycleReason === "canceled" || overdue)
-                ? asString(data.next_billing_date)
-                : lifecycleReason === "paused"
-                  ? occurredAt(event)
-                  : lifecycleReason
-                    ? stoppedAt
-                    : null,
+              state.active && overdue && lifecycleReason === "past_due"
+                ? new Date(providerDue + RENEWAL_PROCESSING_GRACE_MS).toISOString()
+                : state.active && lifecycleReason === "canceled"
+                  ? asString(data.next_billing_date)
+                  : lifecycleReason === "paused"
+                    ? occurredAt(event)
+                    : lifecycleReason
+                      ? stoppedAt
+                      : null,
             plan: contractPlan,
             lastPaidAt: asString(data.previous_billing_date),
           },

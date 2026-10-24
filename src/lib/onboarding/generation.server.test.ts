@@ -298,3 +298,171 @@ it("only replaces a completed starter batch on explicit refresh and still compar
   expect(generate).toHaveBeenCalledOnce();
   expect(generate.mock.calls[0][0].recentOutputs).toHaveLength(3);
 });
+
+it("backs off, retries the primary writer, then uses the fallback writer last", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const brief = onboardingBriefSchema.parse({
+    platform: "linkedin",
+    expertise: "Coral restoration",
+    audience: "Divers",
+  });
+  const transient = {
+    status: "retry",
+    reason: "provider",
+    message: "retry",
+    issues: [],
+    card: { type: "idea" },
+  };
+  const ready = {
+    status: "ready",
+    message: "ok",
+    issues: [],
+    card: {
+      type: "draft",
+      cardId: "editorial-draft",
+      platform: "linkedin",
+      format: "post",
+      title: "Reef notes",
+      body: "Divers can help coral restoration by logging what they see on each dive.",
+      sourceUrls: [],
+      rationale: "Practical advice",
+    },
+  };
+  const fallbackEnv = { AI_TEXT_PROVIDER: "workers-ai" as const };
+  const generate = vi
+    .fn()
+    .mockResolvedValueOnce(transient)
+    .mockResolvedValueOnce(transient)
+    .mockResolvedValueOnce(ready);
+  const result = await generateOnboardingDrafts(
+    brief,
+    buildManualCandidates(brief),
+    [],
+    generate,
+    Date.now() + 120_000,
+    true,
+    null,
+    [0, 0],
+    { fallbackEnv },
+  );
+  expect(generate).toHaveBeenCalledTimes(3);
+  expect(generate.mock.calls[0][1]).not.toHaveProperty("env");
+  expect(generate.mock.calls[1][1]).not.toHaveProperty("env");
+  expect(generate.mock.calls[2][1]).toMatchObject({ env: fallbackEnv });
+  expect(generate.mock.calls.every((call) => call[1].repairStructuredOutput === true)).toBe(true);
+  expect(result.warning).toBeNull();
+  expect(result.warningReason).toBeNull();
+  expect(result.drafts[0].body).toContain("coral restoration");
+});
+
+it("keeps the answer-only starter and records why when every attempt fails", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const brief = onboardingBriefSchema.parse({
+    platform: "linkedin",
+    expertise: "Coral restoration",
+    audience: "Divers",
+  });
+  const generate = vi.fn().mockResolvedValue({
+    status: "retry",
+    reason: "provider",
+    message: "retry",
+    issues: [],
+    card: { type: "idea" },
+  });
+  const result = await generateOnboardingDrafts(
+    brief,
+    buildManualCandidates(brief),
+    [],
+    generate,
+    Date.now() + 120_000,
+    true,
+    null,
+    [0, 0],
+  );
+  expect(generate).toHaveBeenCalledTimes(3);
+  expect(result.warningReason).toBe("provider");
+  expect(onboardingCandidatesSchema.parse(result).warningReason).toBe("provider");
+  expect(result.drafts[0].body).toContain("Coral restoration");
+});
+
+it("skips retries that cannot fit in the remaining deadline", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const brief = onboardingBriefSchema.parse({
+    platform: "linkedin",
+    expertise: "Coral restoration",
+    audience: "Divers",
+  });
+  const generate = vi.fn().mockResolvedValue({
+    status: "retry",
+    reason: "timeout",
+    message: "retry",
+    issues: [],
+    card: { type: "idea" },
+  });
+  const result = await generateOnboardingDrafts(
+    brief,
+    buildManualCandidates(brief),
+    [],
+    generate,
+    Date.now() + 15_000,
+    true,
+    null,
+    [0, 0],
+  );
+  expect(generate).toHaveBeenCalledOnce();
+  expect(result.warningReason).toBe("timeout");
+});
+
+it("only falls back to the bundled writer when the primary writer is different", async () => {
+  const { onboardingFallbackEnv } = await import("./generation.server");
+  const AI = { run: vi.fn() };
+  expect(onboardingFallbackEnv(undefined)).toBeUndefined();
+  expect(onboardingFallbackEnv({ OPENROUTER_API_KEY: "k" })).toBeUndefined();
+  expect(onboardingFallbackEnv({ AI, OPENROUTER_API_KEY: "k" })).toMatchObject({
+    AI_TEXT_PROVIDER: "workers-ai",
+  });
+  expect(onboardingFallbackEnv({ AI, AI_TEXT_PROVIDER: "workers-ai" })).toBeUndefined();
+});
+
+it("gives a rejected draft one fresh write but never retries missing evidence", async () => {
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  const brief = onboardingBriefSchema.parse({
+    platform: "linkedin",
+    expertise: "Coral restoration",
+    audience: "Divers",
+  });
+  const needsInput = (reason: "quality" | "evidence") => ({
+    status: "needs_input",
+    reason,
+    message: "question",
+    issues: [],
+    card: { type: "idea" },
+  });
+  const quality = vi.fn().mockResolvedValue(needsInput("quality"));
+  const result = await generateOnboardingDrafts(
+    brief,
+    buildManualCandidates(brief),
+    [],
+    quality,
+    Date.now() + 120_000,
+    true,
+    null,
+    [0, 0],
+  );
+  expect(quality).toHaveBeenCalledTimes(2);
+  expect(result.warningReason).toBe("quality");
+
+  const evidence = vi.fn().mockResolvedValue(needsInput("evidence"));
+  const missing = await generateOnboardingDrafts(
+    brief,
+    buildManualCandidates(brief),
+    [],
+    evidence,
+    Date.now() + 120_000,
+    true,
+    null,
+    [0, 0],
+  );
+  expect(evidence).toHaveBeenCalledOnce();
+  expect(missing.warningReason).toBe("evidence");
+});

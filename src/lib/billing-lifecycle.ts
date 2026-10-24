@@ -68,3 +68,28 @@ export function dueLifecycleNotices(
   if (now >= deletion - BILLING_DAY_MS) notices.push("workspace_deletion_final");
   return notices;
 }
+
+export type TrialClaim = {
+  subscription_id: string;
+  trial_ends_at: string;
+  extension_approved_until?: string | null;
+};
+
+/**
+ * True when a cancellation stopped the workspace during its trial (the
+ * creator cancelled the trial). Paid cancellations and failed payments are
+ * never trials.
+ */
+export function lifecycleEndedTrial(
+  lifecycle: BillingLifecycle | null | undefined,
+  trial: TrialClaim | null | undefined,
+) {
+  if (!lifecycle || !trial || lifecycle.reason !== "canceled") return false;
+  if (trial.subscription_id !== lifecycle.subscriptionId) return false;
+  const trialEnd = Math.max(
+    Date.parse(trial.trial_ends_at),
+    Date.parse(trial.extension_approved_until ?? "") || 0,
+  );
+  const stopped = Date.parse(lifecycle.stoppedAt);
+  return Number.isFinite(trialEnd) && Number.isFinite(stopped) && stopped < trialEnd;
+}

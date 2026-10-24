@@ -163,6 +163,8 @@ import {
   type YouTubeVideoMeta,
 } from "@/lib/social-scheduler";
 import { isoToZonedDateTimeInput, zonedDateTimeInputToIso } from "@/lib/local-datetime";
+import { schedulerPollInterval } from "@/lib/page-poll";
+import { usePageActivity } from "@/hooks/use-page-activity";
 import {
   requireWebMcpUserConfirmation,
   useWebMcpTools,
@@ -628,16 +630,14 @@ export function createAvatarRepairHandler(input: {
 
 function SchedulerPage() {
   const queryClient = useQueryClient();
+  const activity = usePageActivity();
   const { data, isLoading, isError } = useQuery({
     queryKey: ["social-scheduler"],
     queryFn: () => getSocialScheduler(),
-    refetchInterval: (query) => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return false;
-      if (query.state.error) return false;
-      return query.state.data?.posts.some((post: SchedulerPost) => post.status === "publishing")
-        ? 3_000
-        : 60_000;
-    },
+    refetchInterval: (query) =>
+      query.state.error ? false : schedulerPollInterval(query.state.data?.posts, activity),
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   });
   const repairAvatar = useMemo(
     () =>

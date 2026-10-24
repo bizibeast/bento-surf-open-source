@@ -85,11 +85,18 @@ type QueryConfig = {
   fetcher?: typeof fetch;
   environment?: "production" | "staging";
   report?: "all" | "audience" | "journeys";
+  /** Bypass a settled snapshot. An in-flight load is still not joined. */
+  fresh?: boolean;
 };
 
-type ResolvedQueryConfig = Required<
+type QueryRuntime = Required<
   Pick<QueryConfig, "apiKey" | "host" | "projectId" | "fetcher" | "environment" | "report">
 >;
+
+type ResolvedQueryConfig = QueryRuntime & {
+  limit: <T>(work: () => Promise<T>) => Promise<T>;
+  deadline: AbortSignal;
+};
 
 const PANEL_NAMES = [
   "overview",
@@ -112,11 +119,18 @@ const PANEL_NAMES = [
   "journeys",
   "crawlers",
 ] as const;
-const CACHE_MS = 55_000;
-const analyticsCache = new Map<
-  string,
-  { expiresAt: number; value: Promise<FounderWebAnalytics> }
->();
+const SUCCESS_CACHE_MS = 5 * 60_000;
+const FAILURE_CACHE_MS = 2 * 60_000;
+const ATTEMPT_GAP_MS = 60_000;
+// Settled snapshots only. A shared in-flight promise is resolved from whichever
+// request finishes it, which Cloudflare rejects as a cross-request promise.
+const analyticsCache = new Map<string, { expiresAt: number; value: FounderWebAnalytics }>();
+const analyticsInFlight = new Map<string, number>();
+
+export function clearFounderAnalyticsCache() {
+  analyticsCache.clear();
+  analyticsInFlight.clear();
+}
 
 function emptyBreakdowns() {
   return {
@@ -185,24 +199,24 @@ function appHost(value: string | undefined) {
     .replace(/\/$/, "");
 }
 
-const POSTHOG_TIMEOUT_MS = 20_000;
+const POSTHOG_TIMEOUT_MS = 8_000;
+const POSTHOG_BUDGET_MS = 12_000;
 const MAX_CONCURRENT_QUERIES = 4;
-let activeQueries = 0;
-const queryWaiters: Array<() => void> = [];
 
-async function withQuerySlot<T>(work: () => Promise<T>) {
-  if (activeQueries >= MAX_CONCURRENT_QUERIES) {
-    await new Promise<void>((resolve) => queryWaiters.push(resolve));
-  } else {
-    activeQueries += 1;
-  }
-  try {
-    return await work();
-  } finally {
-    const next = queryWaiters.shift();
-    if (next) next();
-    else activeQueries -= 1;
-  }
+function createQueryLimiter(max: number) {
+  let active = 0;
+  const waiters: Array<() => void> = [];
+  return async function limit<T>(work: () => Promise<T>): Promise<T> {
+    if (active >= max) await new Promise<void>((resolve) => waiters.push(resolve));
+    else active += 1;
+    try {
+      return await work();
+    } finally {
+      const next = waiters.shift();
+      if (next) next();
+      else active -= 1;
+    }
+  };
 }
 
 function queryCategory(query: string) {
@@ -233,7 +247,7 @@ async function runHogQL(query: string, config: ResolvedQueryConfig) {
     `FROM events WHERE ${environmentFilter} AND`,
   );
   const queuedAt = Date.now();
-  return withQuerySlot(async () => {
+  return config.limit(async () => {
     const startedAt = Date.now();
     let status: number | null = null;
     let reason = "network";
@@ -243,9 +257,9 @@ async function runHogQL(query: string, config: ResolvedQueryConfig) {
         {
           method: "POST",
           headers: { authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" },
-          // Begin the timeout after obtaining a slot, not while waiting behind
-          // other reports or Workers' six simultaneous outbound connections.
-          signal: AbortSignal.timeout(POSTHOG_TIMEOUT_MS),
+          // One analytics load owns this limiter. Do not queue another request's
+          // promise here: resolving it trips Workers' cross-request warning.
+          signal: AbortSignal.any([config.deadline, AbortSignal.timeout(POSTHOG_TIMEOUT_MS)]),
           body: JSON.stringify({ query: { kind: "HogQLQuery", query: scopedQuery } }),
         },
       );
@@ -320,8 +334,13 @@ function crawlerRows(rows: unknown[][], category: string): CrawlerBreakdown[] {
 async function loadFounderWebAnalytics(
   days: 7 | 30 | 90,
   offset: number,
-  config: ResolvedQueryConfig,
+  runtime: QueryRuntime,
 ): Promise<FounderWebAnalytics> {
+  const config: ResolvedQueryConfig = {
+    ...runtime,
+    limit: createQueryLimiter(MAX_CONCURRENT_QUERIES),
+    deadline: AbortSignal.timeout(POSTHOG_BUDGET_MS),
+  };
   const period = founderPeriod(days, offset);
   const previous = founderPeriod(days, offset + days);
   const timestamp = (value: string) =>
@@ -601,21 +620,38 @@ export async function getFounderWebAnalytics(
   const environment =
     overrides.environment ?? (process.env.APP_ENV === "staging" ? "staging" : "production");
   const report = overrides.report ?? "all";
-  const config = { apiKey, projectId, host, fetcher, environment, report };
-  const cacheable = Object.keys(overrides).every((key) => key === "report");
-  if (cacheable) {
-    const cached = analyticsCache.get(`${environment}:${report}:${days}:${offset}`);
-    if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const runtime = { apiKey, projectId, host, fetcher, environment, report };
+  // Injected fetchers are tests. Production polls share one settled snapshot.
+  const useCache = overrides.fetcher === undefined;
+  const cacheKey = `${environment}:${report}:${days}:${offset}`;
+  if (useCache) {
+    const now = Date.now();
+    const cached = analyticsCache.get(cacheKey);
+    if (cached && cached.expiresAt > now && !overrides.fresh) return cached.value;
+    const started = analyticsInFlight.get(cacheKey) ?? 0;
+    if (started && now - started < ATTEMPT_GAP_MS) {
+      return (
+        cached?.value ??
+        emptyAnalytics(days, "Product analytics is temporarily unavailable.", offset)
+      );
+    }
+    analyticsInFlight.set(cacheKey, now);
   }
 
-  const value = loadFounderWebAnalytics(days, offset, config).catch((error) => {
+  let value: FounderWebAnalytics;
+  try {
+    value = await loadFounderWebAnalytics(days, offset, runtime);
+  } catch (error) {
     console.warn("[posthog] founder analytics unavailable", error);
-    return emptyAnalytics(days, "PostHog reporting is temporarily unavailable.", offset);
-  });
-  if (cacheable)
-    analyticsCache.set(`${environment}:${report}:${days}:${offset}`, {
-      expiresAt: Date.now() + CACHE_MS,
+    value = emptyAnalytics(days, "PostHog reporting is temporarily unavailable.", offset);
+  } finally {
+    if (useCache) analyticsInFlight.delete(cacheKey);
+  }
+  if (useCache) {
+    analyticsCache.set(cacheKey, {
+      expiresAt: Date.now() + (value.available ? SUCCESS_CACHE_MS : FAILURE_CACHE_MS),
       value,
     });
+  }
   return value;
 }

@@ -4,6 +4,7 @@ import {
   lifecycleDeadlines,
   readBillingLifecycle,
   dueLifecycleNotices,
+  lifecycleEndedTrial,
 } from "./billing-lifecycle";
 
 const start = Date.parse("2030-01-01T00:00:00Z");
@@ -65,5 +66,34 @@ describe("workspace billing lifecycle", () => {
     expect(billingAllows(paused, "tools", start)).toBe(false);
     expect(billingAllows(paused, "public", start)).toBe(false);
     expect(dueLifecycleNotices(paused, start + 180 * day)).toEqual([]);
+  });
+});
+
+describe("trial-ended lifecycle", () => {
+  const canceled = { ...episode, reason: "canceled" as const, subscriptionId: "sub_trial" };
+  const claim = {
+    subscription_id: "sub_trial",
+    trial_ends_at: new Date(start + 3 * day).toISOString(),
+  };
+  it("is a trial end when the trial subscription stopped before its trial ended", () => {
+    expect(lifecycleEndedTrial(canceled, claim)).toBe(true);
+  });
+  it("respects an approved trial extension", () => {
+    const late = { ...canceled, stoppedAt: new Date(start + 4 * day).toISOString() };
+    expect(lifecycleEndedTrial(late, claim)).toBe(false);
+    expect(
+      lifecycleEndedTrial(late, {
+        ...claim,
+        extension_approved_until: new Date(start + 7 * day).toISOString(),
+      }),
+    ).toBe(true);
+  });
+  it("is never a trial end for paid cancels, unpaid bills or other subscriptions", () => {
+    const afterTrial = { ...canceled, stoppedAt: new Date(start + 33 * day).toISOString() };
+    expect(lifecycleEndedTrial(afterTrial, claim)).toBe(false);
+    expect(lifecycleEndedTrial({ ...canceled, reason: "past_due" }, claim)).toBe(false);
+    expect(lifecycleEndedTrial(canceled, { ...claim, subscription_id: "sub_other" })).toBe(false);
+    expect(lifecycleEndedTrial(canceled, null)).toBe(false);
+    expect(lifecycleEndedTrial(null, claim)).toBe(false);
   });
 });

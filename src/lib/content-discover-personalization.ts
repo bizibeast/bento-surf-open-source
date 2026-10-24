@@ -1,3 +1,4 @@
+import { isTrustedBrainItem } from "./content-brain";
 import type { CreatorDiscoverContext } from "./content-discovery.functions";
 import { sourceCreator } from "./content-source-media";
 import { creatorMatchesSource, normalizeDiscoverCreator } from "./content-discover-creators";
@@ -280,7 +281,7 @@ const REFERENCES = [
 export function discoverBrainText(context: CreatorDiscoverContext) {
   if (context.useBrainContext === false) return "";
   return context.brainItems
-    .filter((item) => item.status === "confirmed")
+    .filter(isTrustedBrainItem)
     .map(
       (item) => `${item.title}\n${(item.tags || []).join(" ")}\n${item.content.slice(0, 12_000)}`,
     )
@@ -340,7 +341,7 @@ export function discoverBrainTopics(context: CreatorDiscoverContext) {
   if (context.research) return context.research.topics.filter(isDiscoverSubjectTopic);
   const excluded = discoverExcludedTopics(context);
   const tags = context.brainItems
-    .filter((item) => item.status === "confirmed")
+    .filter(isTrustedBrainItem)
     .flatMap((item) => item.tags || [])
     .map((tag) => tag.trim().toLowerCase())
     .filter(Boolean);
@@ -416,7 +417,7 @@ export function suggestDiscoverCreators(
   if (context.useBrainContext !== false) {
     for (const item of context.brainItems) {
       if (
-        item.status !== "confirmed" ||
+        !isTrustedBrainItem(item) ||
         !["inspiration", "link"].includes(item.kind) ||
         !item.sourceUrl
       )

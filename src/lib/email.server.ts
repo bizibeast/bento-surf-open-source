@@ -1,12 +1,19 @@
-import { reserveProviderUsage, ProviderBudgetError } from "./provider-budget.server";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Email tables are introduced by the lifecycle migration. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { compareEmailDeliveryPriority, resendMinIntervalMs } from "./email-daily-cap";
 import {
-  compareEmailDeliveryPriority,
-  resendMinIntervalMs,
-  syncEmailDailyCaps,
-} from "./email-daily-cap";
+  EmailBudgetDeferred,
+  nextUtcDayStart,
+  nextUtcMonthStart,
+  recordResendQuota,
+  RESEND_FREE_DAILY_LIMIT,
+  RESEND_FREE_MONTHLY_LIMIT,
+  reserveEmailSend,
+  resendQuotaExceeded,
+  resendQuotaFromHeaders,
+} from "./email-send-budget.server";
 import { enqueueWeeklyDigests } from "./weekly-digest.server";
+import { weeklyDigestExpired } from "./weekly-digest";
 import { renderBentoEmail, type BentoEmailCategory, type BentoEmailEvent } from "./email-templates";
 import {
   publicNewsletterPath,
@@ -452,6 +459,13 @@ export function resolveEmailDeliveryEnvelope(input: {
 }
 
 async function sendWithResend(row: EmailOutboxRow) {
+  if (row.event_type === "weekly_digest" && weeklyDigestExpired(row.event_key, new Date())) {
+    await updateOutbox(row.id, {
+      status: "suppressed",
+      last_error: "Weekly digest week ended before it could be sent.",
+    });
+    return false;
+  }
   if (
     [
       "billing_access_ending",
@@ -580,16 +594,8 @@ async function sendWithResend(row: EmailOutboxRow) {
     headers["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";
   }
   if (!(await audienceCampaignDeliveryAuthorized(row))) return false;
-  await reserveProviderUsage(
-    row.category === "marketing" ? "marketing_emails" : "transactional_emails",
-    1,
-    {
-      workspaceId:
-        typeof row.payload?.creatorId === "string"
-          ? row.payload.creatorId
-          : row.user_id || undefined,
-    },
-  );
+  // Every send takes one slot from the shared Resend day before the POST.
+  await reserveEmailSend(row.category === "marketing" ? "marketing" : "transactional");
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -617,9 +623,24 @@ async function sendWithResend(row: EmailOutboxRow) {
   });
   const result = (await response.json().catch(() => ({}))) as {
     id?: string;
+    name?: string;
     message?: string;
-    error?: { message?: string };
+    error?: { name?: string; message?: string };
   };
+  const quotaExceeded = resendQuotaExceeded(response.status, result);
+  if (quotaExceeded) {
+    await recordResendQuota(
+      quotaExceeded === "daily"
+        ? { daily: RESEND_FREE_DAILY_LIMIT, monthly: null }
+        : { daily: null, monthly: RESEND_FREE_MONTHLY_LIMIT },
+    );
+    throw new EmailBudgetDeferred(
+      row.category === "marketing" ? "marketing" : "transactional",
+      `provider_${quotaExceeded}`,
+      quotaExceeded === "daily" ? nextUtcDayStart() : nextUtcMonthStart(),
+    );
+  }
+  await recordResendQuota(resendQuotaFromHeaders(response.headers));
   if (!response.ok || !result.id) {
     throw new Error(
       result.message || result.error?.message || `Resend returned ${response.status}.`,
@@ -651,11 +672,6 @@ async function failDelivery(row: EmailOutboxRow, error: unknown) {
 
 export async function processEmailOutbox(limit = 25) {
   if (!resendReady()) return { claimed: 0, sent: 0, configured: false };
-  try {
-    await syncEmailDailyCaps(supabaseAdmin as any);
-  } catch (capError) {
-    console.error("[email] daily cap sync deferred", capError);
-  }
   const db = supabaseAdmin as any;
   const { data, error } = await db.rpc("claim_email_outbox", { p_limit: limit });
   if (error) throw new Error(error.message);
@@ -663,20 +679,37 @@ export async function processEmailOutbox(limit = 25) {
   let sent = 0;
   let nextAllowedAt = 0;
   const interval = resendMinIntervalMs();
+  // Once a category is out of budget, hold the rest of the batch without more lookups.
+  const held = new Map<string, EmailBudgetDeferred>();
+  const hold = async (row: EmailOutboxRow, deferred: EmailBudgetDeferred) => {
+    // Back to pending with the attempt returned: a held email rolls over, it is not a failure.
+    await updateOutbox(row.id, {
+      status: "pending",
+      attempts: Math.max(0, row.attempts - 1),
+      available_at: deferred.retryAt,
+      last_error: deferred.message,
+    });
+  };
   for (const row of rows) {
+    const category = row.category === "marketing" ? "marketing" : "transactional";
+    const alreadyHeld = held.get(category);
+    if (alreadyHeld) {
+      await hold(row, alreadyHeld);
+      continue;
+    }
     const wait = nextAllowedAt - Date.now();
     if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
     nextAllowedAt = Date.now() + interval;
     try {
       if (await sendWithResend(row)) sent += 1;
     } catch (deliveryError) {
-      if (deliveryError instanceof ProviderBudgetError) {
-        await updateOutbox(row.id, {
-          status: "pending",
-          attempts: Math.max(0, row.attempts - 1),
-          available_at: new Date(Date.now() + 86400000).toISOString(),
-          last_error: deliveryError.message,
-        });
+      if (deliveryError instanceof EmailBudgetDeferred) {
+        held.set(category, deliveryError);
+        // Transactional has the larger allowance, so marketing is out too.
+        if (category === "transactional" && deliveryError.reason !== "unavailable") {
+          held.set("marketing", deliveryError);
+        }
+        await hold(row, deliveryError);
         continue;
       }
       console.error(`[email] failed ${row.event_key}`, deliveryError);

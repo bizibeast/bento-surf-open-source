@@ -19,6 +19,9 @@ import {
   onboardingCandidatesSchema,
   onboardingContentProfile,
   preparationReady,
+  hasCurrentOnboardingBrain,
+  reconcileOnboardingBrain,
+  stampOnboardingBrain,
 } from "./brief";
 import {
   onboardingDb as db,
@@ -118,7 +121,7 @@ export const saveOnboarding = createServerFn({ method: "POST" })
       "timezone",
     ] as const;
     const contextChanged = contextKeys.some((key) => priorBrief[key] !== data.brief[key]);
-    const retainedCandidates =
+    let retainedCandidates =
       session.candidates && !contextChanged
         ? {
             ...session.candidates,
@@ -128,15 +131,23 @@ export const saveOnboarding = createServerFn({ method: "POST" })
                 : item,
             ),
           }
-        : session.candidates?.deferredDrafts?.length
+        : session.candidates?.deferredDrafts?.length || session.candidates?.deferredBrain?.length
           ? onboardingCandidatesSchema.parse({
               ...buildManualCandidates(data.brief),
               // Answer changes invalidate active preparation, not the archived copy.
               deferredDrafts: session.candidates.deferredDrafts,
+              deferredBrain: session.candidates.deferredBrain,
               warning:
                 "Your answers changed. Review your updated Brain and prepare new drafts, or continue without a starter batch. Your earlier draft copy remains saved in your preparation download.",
             })
           : null;
+    if (
+      retainedCandidates &&
+      session.candidates &&
+      !contextChanged &&
+      hasCurrentOnboardingBrain(onboardingCandidatesSchema.parse(session.candidates))
+    )
+      retainedCandidates = stampOnboardingBrain(retainedCandidates, "creator_review");
     const { data: saved, error } = await db
       .from("onboarding_sessions")
       .update({
@@ -299,7 +310,10 @@ export const approveOnboarding = createServerFn({ method: "POST" })
     const session = await requireOnboardingPreview(context.userId);
     if (session.revision !== data.revision || ["running", "queued"].includes(session.job_status))
       throw new Error("Wait for preparation or reload your latest answers.");
-    const savedCandidates = onboardingCandidatesSchema.parse(session.candidates);
+    const savedCandidates = reconcileOnboardingBrain(
+      onboardingBriefSchema.parse(session.brief),
+      onboardingCandidatesSchema.parse(session.candidates),
+    );
     if (JSON.stringify(savedCandidates) !== JSON.stringify(data.candidates))
       throw new Error("Save your latest Brain and draft edits before approving them.");
     const owner = await resolvePublicUsername(db, session.brief.username);
@@ -339,17 +353,35 @@ export const editOnboardingCandidates = createServerFn({ method: "POST" })
     const session = await requireOnboardingPreview(context.userId);
     if (session.revision !== data.revision || ["running", "queued"].includes(session.job_status))
       throw new Error("Wait for preparation or reload the latest version.");
+    const previous = onboardingCandidatesSchema.parse(session.candidates);
+    const safePrevious = reconcileOnboardingBrain(
+      onboardingBriefSchema.parse(session.brief),
+      previous,
+    );
+    const brainEdited = JSON.stringify(previous.brain) !== JSON.stringify(data.candidates.brain);
+    const sameSafeBrain =
+      JSON.stringify(safePrevious.brain) === JSON.stringify(data.candidates.brain);
     const { data: saved, error } = await db
       .from("onboarding_sessions")
       .update({
-        candidates: onboardingCandidatesSchema.parse({
-          ...data.candidates,
-          evidence: session.candidates?.evidence,
-          personalization: session.candidates?.personalization,
-          // The archive is server-owned; older clients may omit this optional field.
-          deferredDrafts: session.candidates?.deferredDrafts,
-          drafts:
-            JSON.stringify(session.candidates?.brain) === JSON.stringify(data.candidates.brain)
+        candidates: stampOnboardingBrain(
+          onboardingCandidatesSchema.parse({
+            ...data.candidates,
+            brain: brainEdited ? data.candidates.brain : safePrevious.brain,
+            brainEvidence: safePrevious.brainEvidence,
+            evidence: session.candidates?.evidence,
+            personalization: safePrevious.personalization,
+            deferredBrain: safePrevious.deferredBrain,
+            // The archive is server-owned; older clients may omit this optional field.
+            deferredDrafts: [
+              ...new Map(
+                [
+                  ...(safePrevious.deferredDrafts || []),
+                  ...(!sameSafeBrain ? data.candidates.drafts : []),
+                ].map((draft) => [JSON.stringify(draft), draft]),
+              ).values(),
+            ],
+            drafts: sameSafeBrain
               ? data.candidates.drafts.map((draft, index) => ({
                   ...draft,
                   mediaIds: session.candidates?.drafts[index]?.mediaIds,
@@ -358,11 +390,12 @@ export const editOnboardingCandidates = createServerFn({ method: "POST" })
                   mediaNote: session.candidates?.drafts[index]?.mediaNote,
                 }))
               : [],
-          warning:
-            JSON.stringify(session.candidates?.brain) === JSON.stringify(data.candidates.brain)
+            warning: sameSafeBrain
               ? data.candidates.warning
               : "Your Brain changed. Refresh drafts to use this context, or continue without a starter batch.",
-        }),
+          }),
+          brainEdited ? "creator_review" : safePrevious.brainEvidence!.method,
+        ),
         revision: session.revision + 1,
         approved_revision: null,
         status: "draft",
@@ -417,6 +450,14 @@ export const activateOnboarding = createServerFn({ method: "POST" })
     );
     const session = await readOnboardingSession(context.userId);
     if (!session) throw new Error("Complete your preparation first.");
+    if (session.status !== "applied" && session.candidates) {
+      const candidates = onboardingCandidatesSchema.parse(session.candidates);
+      const safe = reconcileOnboardingBrain(onboardingBriefSchema.parse(session.brief), candidates);
+      if (JSON.stringify(safe.brain) !== JSON.stringify(candidates.brain))
+        throw new Error(
+          "Your earlier generated Brain is saved for review. Review the current starter notes before activating.",
+        );
+    }
     if (
       session.status === "prepared" &&
       session.candidates &&

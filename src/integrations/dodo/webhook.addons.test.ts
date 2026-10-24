@@ -69,7 +69,7 @@ vi.mock("@/lib/posthog.server", () => ({
 }));
 
 import { verifiedDodoAddonState } from "@/lib/billing-addons";
-import { processVerifiedDodoEvent, type DodoEvent } from "./webhook.server";
+import { cancellationTime, processVerifiedDodoEvent, type DodoEvent } from "./webhook.server";
 
 const env = {
   DODO_CONTACT_TIER_5000_MONTHLY_ADDON_ID: "contact-5000-monthly",
@@ -272,6 +272,82 @@ describe("verified Dodo add-on state", () => {
     expect(mocks.lifecycle).toHaveBeenCalledWith(
       expect.objectContaining({ reason: null, plan: "creator" }),
     );
+  });
+  describe("renewal debit still processing (Indian cards and UPI settle about 48h late)", () => {
+    const H = 3_600_000;
+    function renewalInFlight(hoursPastDue: number, status = "active") {
+      const due = new Date(Date.now() - hoursPastDue * H).toISOString();
+      mocks.currentSubscription = {
+        dodo_subscription_id: "sub_123",
+        status: "active",
+        plan_id: "creator",
+        current_period_end: due,
+      };
+      const event = subscriptionEvent("creator");
+      event.type = "subscription.updated" as DodoEvent["type"];
+      Object.assign(event.data, {
+        status,
+        next_billing_date: due,
+        previous_billing_date: new Date(Date.parse(due) - 30 * 24 * H).toISOString(),
+      });
+      return { event, due };
+    }
+
+    it("keeps full access with no shutdown deadline 50h past the renewal date", async () => {
+      const { event } = renewalInFlight(50);
+      await processVerifiedDodoEvent(event, "renewal-processing-50h");
+      expect(mocks.lifecycle).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: null, plan: "creator" }),
+      );
+      expect(mocks.subscriptionUpsert).toHaveBeenCalledWith(
+        expect.objectContaining({ plan_id: "creator", status: "active" }),
+        { onConflict: "user_id" },
+      );
+      expect(mocks.profileUpdates).toContainEqual({
+        id: "user_123",
+        value: expect.objectContaining({ plan_id: "creator", workspace_status: "active" }),
+      });
+    });
+
+    it("keeps the paid plan while Dodo reports the renewal as pending", async () => {
+      const { event } = renewalInFlight(20, "pending");
+      await processVerifiedDodoEvent(event, "renewal-pending");
+      expect(mocks.subscriptionUpsert).toHaveBeenCalledWith(
+        expect.objectContaining({ plan_id: "creator", status: "active" }),
+        { onConflict: "user_id" },
+      );
+      expect(mocks.lifecycle).toHaveBeenCalledWith(expect.objectContaining({ reason: null }));
+    });
+
+    it("still fails closed for a pending subscription that was never paid for", async () => {
+      const { event } = renewalInFlight(1, "pending");
+      mocks.currentSubscription = null;
+      await processVerifiedDodoEvent(event, "first-payment-pending");
+      expect(mocks.subscriptionUpsert).toHaveBeenCalledWith(
+        expect.objectContaining({ plan_id: "free", status: "incomplete" }),
+        { onConflict: "user_id" },
+      );
+    });
+
+    it("starts the normal past-due wind-down only after the processing window", async () => {
+      const { event, due } = renewalInFlight(80);
+      await processVerifiedDodoEvent(event, "renewal-unpaid-80h");
+      expect(mocks.lifecycle).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reason: "past_due",
+          plan: "creator",
+          stoppedAt: new Date(Date.parse(due) + 72 * H).toISOString(),
+        }),
+      );
+    });
+
+    it("winds down from the due date as soon as the payment actually fails", async () => {
+      const { event, due } = renewalInFlight(50, "on_hold");
+      await processVerifiedDodoEvent(event, "renewal-failed");
+      expect(mocks.lifecycle).toHaveBeenCalledWith(
+        expect.objectContaining({ reason: "past_due", stoppedAt: due }),
+      );
+    });
   });
   it("activates only the workspace named by purchaser-verified metadata", async () => {
     const workspaceId = "33333333-3333-4333-8333-333333333333";
@@ -501,6 +577,56 @@ describe("verified Dodo add-on state", () => {
           plan: "store",
         }),
       );
+  });
+
+  it("revokes plan access right away when a trial is cancelled immediately", async () => {
+    vi.stubEnv("DODO_STORE_19_MONTHLY_PRODUCT_ID", "current-store");
+    const trialEnd = new Date(Date.now() + 2 * 86_400_000).toISOString();
+    mocks.currentSubscription = {
+      user_id: "user_123",
+      dodo_subscription_id: "sub_123",
+      status: "trialing",
+      billing_catalog: "2026-10",
+      plan_id: "store",
+      current_period_end: trialEnd,
+    };
+    const remote = {
+      subscription_id: "sub_123",
+      status: "cancelled",
+      product_id: "current-store",
+      created_at: new Date(Date.now() - 86_400_000).toISOString(),
+      next_billing_date: trialEnd,
+      trial_period_days: 3,
+      has_payment_method: true,
+      trial_amount: null,
+      cancel_at_next_billing_date: false,
+      metadata: {
+        workspace_id: "user_123",
+        auth_user_id: "owner",
+        billing_catalog: "2026-10",
+        trial_checkout_key: "three-day-checkout",
+      },
+    };
+    mocks.retrieve.mockResolvedValue(remote);
+    const before = Date.now();
+    await processVerifiedDodoEvent(
+      { type: "subscription.cancelled", timestamp: new Date().toISOString(), data: remote },
+      "trial-cancel-now",
+    );
+    expect(mocks.subscriptionUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ plan_id: "free", status: "canceled", trial_ends_at: null }),
+      { onConflict: "user_id" },
+    );
+    const lifecycle = mocks.lifecycle.mock.calls.at(-1)?.[0] as {
+      stoppedAt: string;
+      reason: string;
+    };
+    expect(lifecycle.reason).toBe("canceled");
+    // Access stops now, not at the (never charged) trial end date.
+    expect(Date.parse(lifecycle.stoppedAt)).toBeLessThanOrEqual(Date.now());
+    expect(Date.parse(lifecycle.stoppedAt)).toBeGreaterThanOrEqual(before - 60_000);
+    expect(mocks.profileUpdates.at(-1)?.value).toMatchObject({ plan_id: "free" });
+    expect(mocks.rpc).not.toHaveBeenCalledWith("claim_bento_trial", expect.anything());
   });
 
   it.each([
@@ -769,4 +895,36 @@ describe("verified Dodo add-on state", () => {
       );
     },
   );
+});
+
+describe("cancellation time", () => {
+  const now = new Date("2026-10-24T03:00:00.000Z");
+  const trialStart = "2026-10-23T19:41:03.000Z";
+  it("uses Dodo's cancelled_at, never the subscription start", () => {
+    expect(
+      cancellationTime(
+        { created_at: trialStart, cancelled_at: "2026-10-23T19:45:35.978821Z" },
+        null,
+        {},
+        now,
+      ),
+    ).toBe("2026-10-23T19:45:35.978821Z");
+  });
+  it("keeps a recorded cancel time on later refreshes, then falls back to the event or now", () => {
+    const recorded = { status: "canceled", canceled_at: "2026-10-23T19:45:36.000Z" };
+    expect(cancellationTime({ created_at: trialStart }, recorded, {}, now)).toBe(
+      recorded.canceled_at,
+    );
+    expect(
+      cancellationTime(
+        { created_at: trialStart },
+        null,
+        { timestamp: "2026-10-23T19:45:40Z" },
+        now,
+      ),
+    ).toBe("2026-10-23T19:45:40Z");
+    expect(cancellationTime({ created_at: trialStart }, { status: "trialing" }, {}, now)).toBe(
+      now.toISOString(),
+    );
+  });
 });

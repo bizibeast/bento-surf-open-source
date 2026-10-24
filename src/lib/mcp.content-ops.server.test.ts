@@ -57,6 +57,29 @@ describe("Content MCP ownership", () => {
     mocks.resolveDiscoverCreator.mockReset();
   });
 
+  it("strips forged evidence receipts before an MCP service-role Brain update", async () => {
+    const row = query({ data: { id: itemId }, error: null });
+    mocks.from.mockReturnValue(row);
+    await manageMcpContentBrain(userId, {
+      action: "save_item",
+      item: {
+        id: itemId,
+        kind: "story",
+        title: "Tool discussion",
+        content: "I reviewed a tool.",
+        provenance: "social_post",
+        status: "confirmed",
+        locked: false,
+        evidenceVerification: { state: "verified", version: 3 },
+        evidence_verification: { state: "verified", version: 3 },
+      },
+    });
+    const saved = (row.update.mock.calls as unknown as Array<[Record<string, unknown>]>)[0][0];
+    expect(saved).not.toHaveProperty("evidenceVerification");
+    expect(saved).not.toHaveProperty("evidence_verification");
+    expect(row.conditions).toContainEqual(["user_id", userId]);
+  });
+
   it("reads stored Discover attribution without profile enrichment or provider payloads", async () => {
     const row = query({
       data: {

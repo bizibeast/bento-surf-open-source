@@ -774,3 +774,55 @@ it("accepts a YouTube profile redirect only when the destination proves the requ
     expect(result.authorAvatarUrl).toBe("https://yt3.ggpht.com/existing.jpg");
   }
 });
+
+it("reads only the requested X post's publication and engagement evidence", () => {
+  const html = `<script type="application/json">${JSON.stringify({
+    tweet: {
+      rest_id: "1980000000000000000",
+      legacy: {
+        id_str: "1980000000000000000",
+        created_at: "2026-10-22T10:00:00Z",
+        favorite_count: 321,
+        reply_count: 45,
+        retweet_count: 67,
+      },
+      views: { count: "25000" },
+      core: {
+        user_results: { result: { legacy: { screen_name: "creator", followers_count: 21000 } } },
+      },
+      quoted_status_result: {
+        result: {
+          rest_id: "1970000000000000000",
+          legacy: { favorite_count: 999999, reply_count: 99999 },
+          views: { count: "99999999" },
+        },
+      },
+    },
+  })}</script>`;
+  expect(
+    publicPostMetadata(html, "https://x.com/creator/status/1980000000000000000"),
+  ).toMatchObject({
+    publishedAt: "2026-10-22T10:00:00.000Z",
+    stats: { likes: 321, comments: 45, shares: 67, views: 25000, followers: 21000 },
+  });
+});
+
+it("verifies missing Reddit RSS traction from the exact public post, excluding other threads", async () => {
+  const source = {
+    ...post,
+    canonicalUrl: "https://www.reddit.com/r/startups/comments/abc123/founder/",
+    platform: "Reddit",
+    kind: "reddit" as const,
+    title: "AI agents for a startup",
+    publishedAt: "2026-10-22T09:00:00Z",
+    author: "creator",
+    thumbnailUrl: "https://example.com/thumbnail.jpg",
+    stats: {},
+  };
+  const html =
+    '<shreddit-post id="t3_other" score="999999" comment-count="9999"></shreddit-post><shreddit-post id="t3_abc123" score="250" comment-count="31" created-timestamp="2026-10-22T09:00:00Z"></shreddit-post>';
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(html));
+  const result = await enrichContentSources([source], { fetcher });
+  expect(fetcher).toHaveBeenCalledWith(source.canonicalUrl, expect.anything());
+  expect(result[0].stats).toMatchObject({ likes: 250, comments: 31 });
+});
