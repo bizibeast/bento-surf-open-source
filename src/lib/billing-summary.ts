@@ -8,6 +8,7 @@ type SummaryBilling = {
   currentPeriodEnd: string | null;
   hasSubscription: boolean;
   billingLifecycle?: BillingLifecycle | null;
+  trialEnded?: boolean;
 };
 
 export type BillingSummary = {
@@ -48,7 +49,7 @@ export function billingSummary(
     const stop = lifecycle?.toolsStopAt ?? null;
     return {
       plan: subscribed,
-      badge: `${name} canceled`,
+      badge: billing.trialEnded ? `${name} trial ended` : `${name} canceled`,
       description,
       note: null,
       date: stop
@@ -71,7 +72,9 @@ export function billingSummary(
     note: null,
     date: end
       ? {
-          kind: billing.cancelAtPeriodEnd ? "access_ends" : trialing ? "trial_ends" : "renews",
+          // "Access until" is only for paid cancels. Cancelling a trial in Bento ends it
+          // immediately; a trial still scheduled to stop (set outside Bento) shows its end.
+          kind: trialing ? "trial_ends" : billing.cancelAtPeriodEnd ? "access_ends" : "renews",
           at: end,
         }
       : null,

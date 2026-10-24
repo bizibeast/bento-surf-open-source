@@ -36,7 +36,7 @@ describe("paid hosted plans", () => {
     expect(screen.getByText("$390")).toBeVisible();
     expect(screen.getByText("$490")).toBeVisible();
     expect(screen.getByText(/then \$190\/year plus applicable tax/)).toBeVisible();
-    expect(screen.getByText(/Credit card required. \$0 today/)).toBeVisible();
+    expect(screen.getByText(/Card, UPI or wallet required. \$0 today/)).toBeVisible();
     expect(screen.getByText(/after 3 full days/)).toBeVisible();
   });
   it("recommends the plan that actually includes Brain", async () => {

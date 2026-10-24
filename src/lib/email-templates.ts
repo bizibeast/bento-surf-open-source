@@ -582,6 +582,15 @@ function templateCopy(input: EmailTemplateInput) {
         href: absoluteUrl(input.appUrl, "/settings?section=plan", "/settings?section=plan"),
       };
     case "billing_access_ending":
+      if (payload.trialEnded === true)
+        return {
+          subject: "Your Bento trial has ended",
+          eyebrow: "Trial ended",
+          title: "Your trial has ended.",
+          body: `${asText(payload.workspaceName, "Your workspace")}: You cancelled your trial, so you were not charged. Your public page, products and creator tools are now paused. Your work is saved until ${asText(payload.deletionDate)}. Pick a plan before then to continue, or sign in to export your work.`,
+          cta: "Pick a plan",
+          href: billing,
+        };
       return {
         subject: "Your Bento workspace needs attention",
         eyebrow: "Workspace access",

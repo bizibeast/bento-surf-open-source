@@ -1048,7 +1048,7 @@ it("loads an empty selected platform independently of another platform's pending
   expect(onLoadMore).toHaveBeenCalledWith("Instagram", false);
 });
 
-it("prefetches near the end only once per cursor and keeps manual retry after a page failure", async () => {
+it("does not automatically spend provider quota near the end and keeps explicit load/retry", async () => {
   const observers: Array<{
     callback: IntersectionObserverCallback;
     node?: Element;
@@ -1093,19 +1093,18 @@ it("prefetches near the end only once per cursor and keeps manual retry after a 
         pagination={{ all: { cursor: "page-2", hasMore: true, loading: false, error: null } }}
       />,
     );
-    const observer = observers.find((entry) =>
+    for (const observer of observers.filter((entry) =>
       entry.node?.classList.contains("discover-pagination"),
-    )!;
-    act(() => {
-      observer.callback(
-        [{ isIntersecting: true, target: observer.node } as IntersectionObserverEntry],
-        {} as IntersectionObserver,
+    )) {
+      act(() =>
+        observer.callback(
+          [{ isIntersecting: true, target: observer.node } as IntersectionObserverEntry],
+          {} as IntersectionObserver,
+        ),
       );
-      observer.callback(
-        [{ isIntersecting: true, target: observer.node } as IntersectionObserverEntry],
-        {} as IntersectionObserver,
-      );
-    });
+    }
+    expect(onLoadMore).not.toHaveBeenCalled();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Load more posts" }));
     expect(onLoadMore).toHaveBeenCalledTimes(1);
     rerender(
       <ContentDiscover

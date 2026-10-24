@@ -2,6 +2,8 @@ import { z } from "zod";
 import { SOCIAL_PROVIDERS, type SocialProvider } from "./social-scheduler";
 import { isValidTimeZone } from "./timezones";
 import { parsePublicHttpUrl } from "./safe-url";
+import { isTrustedBrainItem, type BrainEvidenceReceipt } from "./content-brain-evidence";
+export { isTrustedBrainItem } from "./content-brain-evidence";
 
 export const STRATEGY_PLATFORMS = [
   "twitter",
@@ -94,6 +96,7 @@ export type BrainItem = BrainItemInput & {
   sourceRef: string | null;
   createdAt: string;
   updatedAt: string;
+  evidenceVerification?: BrainEvidenceReceipt | null;
 };
 
 export type BrainSuggestion = Omit<
@@ -103,6 +106,7 @@ export type BrainSuggestion = Omit<
   sourceUrl?: string | null;
   sourceRef?: string | null;
   evidence?: Array<{ sourceRef: string; quote: string }>;
+  evidenceVerification?: BrainEvidenceReceipt;
 };
 
 /** Structural citation check; semantic claim approval is performed independently on the server. */
@@ -156,10 +160,15 @@ export function buildContentStrategy(
   platform: StrategyPlatform,
   profile: ContentProfile,
   items: readonly BrainItem[],
+  options: { pendingSourceReview?: boolean } = {},
 ) {
   const niche = profile.nicheKeywords.join(", ") || "your work and areas of expertise";
   const cadence = profile.platformFrequencies[platform] ?? 3;
-  const confirmed = items.filter((item) => item.status === "confirmed");
+  const confirmed = items.filter(
+    (item) =>
+      isTrustedBrainItem(item) ||
+      (options.pendingSourceReview === true && item.status === "suggested"),
+  );
   const rules = confirmed
     .filter((item) => item.kind === "instruction")
     .map((item) => item.content)
@@ -375,6 +384,7 @@ export function brainItemFromRow(row: {
   created_at: string;
   updated_at: string;
   tags?: string[];
+  evidence_verification?: BrainEvidenceReceipt | null;
 }): BrainItem {
   return {
     id: row.id,
@@ -384,11 +394,15 @@ export function brainItemFromRow(row: {
     provenance: row.provenance as BrainItemProvenance,
     sourceUrl: row.source_url,
     sourceRef: row.source_ref,
-    status: row.status as BrainItemStatus,
+    status:
+      row.status === "confirmed" && !isTrustedBrainItem(row)
+        ? "suggested"
+        : (row.status as BrainItemStatus),
     locked: row.locked,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     tags: row.tags || [],
+    evidenceVerification: row.evidence_verification || null,
   };
 }
 

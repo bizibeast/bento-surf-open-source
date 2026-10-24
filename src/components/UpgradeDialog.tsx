@@ -24,13 +24,17 @@ import {
 import { safeNavigationHref } from "@/lib/safe-url";
 import { OPEN_SOURCE_REPOSITORY_URL } from "@/lib/open-source";
 import { motionTokens } from "@/lib/motion";
+import { captureProductEvent } from "@/lib/posthog";
 
 export function UpgradeDialog({
   trigger,
   feature,
   open,
   onOpenChange,
+  source,
 }: {
+  /** Where the dialog was opened from, for analytics (for example "dashboard_banner"). */
+  source?: string;
   trigger?: React.ReactNode;
   feature?: EntitlementKey;
   open?: boolean;
@@ -48,6 +52,18 @@ export function UpgradeDialog({
   const [offerError, setOfferError] = useState(false);
   const reduced = useReducedMotion();
   const price = PLAN_PRICING[plan][period];
+  const analyticsSource = source ?? (feature ? `feature:${feature}` : "upgrade_button");
+  useEffect(() => {
+    if (!isOpen) return;
+    captureProductEvent("upgrade_dialog_opened", {
+      source: analyticsSource,
+      feature: feature ?? null,
+      plan,
+      billing_interval: period,
+    });
+    // Count each opening once; plan and period changes inside the dialog are not new opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
   useEffect(() => {
     if (!isOpen) return;
     let live = true;
@@ -70,6 +86,14 @@ export function UpgradeDialog({
       window.location.href = "/settings?section=plan";
       return;
     }
+    const properties = {
+      source: analyticsSource,
+      surface: "upgrade_dialog",
+      plan,
+      billing_interval: period,
+      trial: offer.trialEligible,
+    };
+    if (offer.trialEligible) captureProductEvent("trial_cta_clicked", properties);
     setLoading(true);
     try {
       const { url } = await createCheckout({
@@ -77,6 +101,7 @@ export function UpgradeDialog({
       });
       const destination = safeNavigationHref(url);
       if (!destination) throw new Error("Checkout returned an invalid destination.");
+      captureProductEvent("checkout_started", properties);
       window.location.href = destination;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not start checkout.");
@@ -163,7 +188,7 @@ export function UpgradeDialog({
             {offer?.active
               ? "Your current contract stays in place until you choose a change in Billing."
               : offer?.trialEligible
-                ? `Credit card required. $0 today, then ${price.label}${price.cadence} plus applicable tax after ${TRIAL_DAYS} full days. We’ll email you one day before the first charge and ask for feedback. Cancel before renewal to avoid a charge. Your trial includes the ${planName(plan)} plan.`
+                ? `Card, UPI or wallet required. $0 today, then ${price.label}${price.cadence} plus applicable tax after ${TRIAL_DAYS} full days. We’ll email you one day before the first charge and ask for feedback. No charge if you cancel before the trial ends. Cancelling during the trial ends it and your access immediately. Your trial includes the ${planName(plan)} plan.`
                 : offer
                   ? `Your trial has already been used. ${price.label}${price.cadence} plus applicable tax is due at checkout. Review the final total before paying.`
                   : offerError

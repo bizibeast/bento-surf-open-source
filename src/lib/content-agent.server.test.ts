@@ -1694,3 +1694,63 @@ it("reserves the full 6K Brain completion ceiling and sends nothing when its bud
     fetcher.mockRestore();
   }
 });
+
+it("retains the full reviewer source pack and bundles many creator corrections", async () => {
+  const item = {
+    kind: "profile",
+    title: "My Human",
+    content: "I build creator tools.",
+    provenance: "social_post",
+    sourceRef: "post-1",
+    tags: [],
+    evidence: [{ sourceRef: "post-1", quote: "I build creator tools." }],
+  };
+  const ai = {
+    run: vi
+      .fn()
+      .mockResolvedValueOnce({ response: JSON.stringify({ suggestions: [item] }) })
+      .mockImplementation(async (_model, input) => {
+        const payload = JSON.parse(
+          input.messages.find((message: { role: string }) => message.role === "user").content,
+        );
+        return {
+          response: JSON.stringify({
+            reviews: payload.documents.map((document: { id: string }) => ({
+              id: document.id,
+              approved: true,
+              sourceIds: ["instagram:post-2"],
+              issues: [],
+            })),
+          }),
+        };
+      }),
+  };
+  const corrections = Array.from({ length: 32 }, (_, index) => ({
+    id: `correction-${index}`,
+    kind: "instruction" as const,
+    title: `Correction ${index}`,
+    content: `Creator correction ${index}.`,
+    provenance: "creator" as const,
+    sourceUrl: null,
+    sourceRef: null,
+    status: "confirmed" as const,
+    locked: true,
+    tags: [],
+    createdAt: "2026-10-23T00:00:00Z",
+    updatedAt: "2026-10-23T00:00:00Z",
+  }));
+  const result = await generateConnectedBrainSuggestions(
+    [
+      { provider: "threads", remote_post_id: "post-1", caption: "I build creator tools." },
+      { provider: "instagram", remote_post_id: "post-2", caption: "I build tools for creators." },
+    ],
+    undefined,
+    { AI_TEXT_PROVIDER: "workers-ai", AI: ai },
+    corrections,
+  );
+  expect(ai.run).toHaveBeenCalledTimes(2);
+  expect(result[0].evidenceVerification?.sources.map((source) => source.id)).toEqual(
+    expect.arrayContaining(["threads:post-1", "instagram:post-2", "creator-corrections"]),
+  );
+  expect(result[0].evidenceVerification?.sources).toHaveLength(3);
+});

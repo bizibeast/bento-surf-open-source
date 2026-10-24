@@ -550,3 +550,34 @@ describe("email preference tokens", () => {
     await expect(response.text()).resolves.toContain('method="post"');
   });
 });
+
+describe("access-ended email", () => {
+  const payload = {
+    reason: "canceled",
+    workspaceName: "Asha's Bento",
+    toolsDate: "January 1, 2030 at 12:00 AM UTC",
+    publicDate: "January 1, 2030 at 12:00 AM UTC",
+    deletionDate: "April 1, 2030 at 12:00 AM UTC",
+  };
+  const render = (extra: Record<string, unknown>) =>
+    renderBentoEmail({
+      eventType: "billing_access_ending",
+      category: "transactional",
+      appUrl: "https://app.bento.surf",
+      payload: { ...payload, ...extra },
+    });
+  it("uses trial wording after a trial cancel", () => {
+    const rendered = render({ trialEnded: true });
+    expect(rendered.subject).toBe("Your Bento trial has ended");
+    expect(rendered.text).toContain("Your trial has ended.");
+    expect(rendered.text).toContain("You cancelled your trial, so you were not charged.");
+    expect(rendered.text).toContain("Pick a plan before then to continue");
+    expect(rendered.text).not.toMatch(/paid period|unpaid|Renew before/);
+    expect(rendered.text + rendered.subject).not.toContain("\u2014");
+  });
+  it("keeps paid-period wording for paid cancels", () => {
+    const rendered = render({ trialEnded: false });
+    expect(rendered.text).toContain("paid period has ended");
+    expect(rendered.text).not.toContain("trial");
+  });
+});

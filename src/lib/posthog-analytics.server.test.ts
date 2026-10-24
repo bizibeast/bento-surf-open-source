@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getFounderWebAnalytics } from "./posthog-analytics.server";
+import { clearFounderAnalyticsCache, getFounderWebAnalytics } from "./posthog-analytics.server";
 
 function response(results: unknown[][]) {
   return new Response(JSON.stringify({ results }), {
@@ -9,9 +9,13 @@ function response(results: unknown[][]) {
 }
 
 describe("founder PostHog analytics", () => {
+  const previousKey = process.env.POSTHOG_QUERY_API_KEY;
   afterEach(() => {
+    clearFounderAnalyticsCache();
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    if (previousKey === undefined) delete process.env.POSTHOG_QUERY_API_KEY;
+    else process.env.POSTHOG_QUERY_API_KEY = previousKey;
   });
 
   it("fails closed when the read-only reporting key is absent", async () => {
@@ -241,5 +245,71 @@ describe("founder PostHog analytics", () => {
     );
     expect(JSON.stringify(warning.mock.calls)).not.toMatch(/private|SELECT|Bearer/);
     warning.mockRestore();
+  });
+
+  it("reuses a settled snapshot and does not await another request's PostHog query", async () => {
+    process.env.POSTHOG_QUERY_API_KEY = "phx_test";
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fetcher = vi.fn(async () => {
+      await gate;
+      return response([[1, 1, 0, 0, 0, 0, 0]]);
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const first = getFounderWebAnalytics(7);
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalled());
+    const callsWhileRunning = fetcher.mock.calls.length;
+    const second = await getFounderWebAnalytics(7);
+    expect(second.available).toBe(false);
+    expect(second.error).toMatch(/temporarily unavailable/);
+    expect(fetcher).toHaveBeenCalledTimes(callsWhileRunning);
+    release();
+    const settled = await first;
+    expect(settled.available).toBe(true);
+    const callsAfterSettle = fetcher.mock.calls.length;
+    const third = await getFounderWebAnalytics(7);
+    expect(third).toBe(settled);
+    expect(fetcher).toHaveBeenCalledTimes(callsAfterSettle);
+    const refreshed = await getFounderWebAnalytics(7, { fresh: true });
+    expect(refreshed.available).toBe(true);
+    expect(fetcher.mock.calls.length).toBeGreaterThan(callsAfterSettle);
+  });
+
+  it("keeps a failed snapshot so the next poll does not repeat the timed-out queries", async () => {
+    process.env.POSTHOG_QUERY_API_KEY = "phx_test";
+    const fetcher = vi.fn(async () => new Response("unavailable", { status: 503 }));
+    vi.stubGlobal("fetch", fetcher);
+    const first = await getFounderWebAnalytics(7);
+    expect(first.available).toBe(false);
+    const calls = fetcher.mock.calls.length;
+    const second = await getFounderWebAnalytics(7);
+    expect(second).toBe(first);
+    expect(fetcher).toHaveBeenCalledTimes(calls);
+  });
+
+  it("does not let one analytics load take another load's query slots", async () => {
+    let active = 0;
+    let maximum = 0;
+    const releases: Array<() => void> = [];
+    const fetcher = vi.fn(async () => {
+      active += 1;
+      maximum = Math.max(maximum, active);
+      await new Promise<void>((resolve) => releases.push(resolve));
+      active -= 1;
+      return response([[1, 1, 0, 0, 0, 0, 0]]);
+    });
+    const pending = Promise.all([
+      getFounderWebAnalytics(7, { apiKey: "test", fetcher, report: "audience" }),
+      getFounderWebAnalytics(7, { apiKey: "test", fetcher, report: "audience" }),
+    ]);
+    await vi.waitFor(() => expect(fetcher.mock.calls.length).toBeGreaterThanOrEqual(8));
+    expect(maximum).toBeGreaterThan(4);
+    while (releases.length) {
+      releases.splice(0).forEach((release) => release());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    await pending;
   });
 });

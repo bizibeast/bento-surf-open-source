@@ -7,8 +7,9 @@ import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { reserveBrightDataSeoRequest } from "./seo-bright-data.server";
 import { sourceFreshnessTier, sourcePublicationTime } from "./content-source-recency";
 import { evaluateDiscoverQuality } from "./content-discover-quality";
+import { discoverPostKey } from "./content-discover-identity";
 
-export const DISCOVER_BRIEF_VERSION = "social-v16";
+export const DISCOVER_BRIEF_VERSION = "social-v17";
 export const DISCOVER_PROGRESS_WARNING =
   "Checking remaining sources. New posts appear as they are verified.";
 import {
@@ -46,7 +47,7 @@ export type TrendBriefDependencies = {
     input: Omit<TrendBrief, "id">,
     options?: { onlyIfMissing?: boolean },
   ): Promise<TrendBrief>;
-  enrichSources?(items: ContentSourceItem[]): Promise<ContentSourceItem[]>;
+  enrichSources?: typeof enrichContentSources;
 };
 
 export function normalizeNicheKey(keywords: string[], creatorNames: string[] = []) {
@@ -80,6 +81,18 @@ const BROAD_TOPICS = new Set([
 ]);
 const DOCUMENT_METADATA_TOPIC =
   /^(?:factual[- ]correction|correction|ownership|profile|instruction|writing[- ]voice|brand[- ]voice)$/i;
+function hasStartupDirection(keywords: string[]) {
+  return keywords.some((topic) =>
+    /\b(startups?|founders?|entrepreneurs?|bootstrapp\w*|saas|venture capital)\b/i.test(topic),
+  );
+}
+
+function contextualDiscoverTopic(topic: string, keywords: string[]) {
+  return /^fund[ -]?raising$/i.test(topic.trim()) && hasStartupDirection(keywords)
+    ? "startup fundraising"
+    : topic;
+}
+
 function focusedTopics(keywords: string[]) {
   const focused = keywords.filter(
     (topic) =>
@@ -87,7 +100,7 @@ function focusedTopics(keywords: string[]) {
       isDiscoverSubjectTopic(topic) &&
       !DOCUMENT_METADATA_TOPIC.test(topic.trim()),
   );
-  return focused;
+  return focused.map((topic) => contextualDiscoverTopic(topic, keywords));
 }
 
 export function discoverSearchQuery(keywords: string[]) {
@@ -95,6 +108,7 @@ export function discoverSearchQuery(keywords: string[]) {
   return keywords
     .filter((topic) => !DOCUMENT_METADATA_TOPIC.test(topic.trim()))
     .slice(0, 8)
+    .map((topic) => contextualDiscoverTopic(topic, keywords))
     .map((topic) =>
       BROAD_TOPICS.has(topic.toLowerCase().trim()) && topic !== anchor
         ? `("${anchor}" "${topic.replace(/["()]/g, " ").trim()}")`
@@ -118,8 +132,15 @@ export function sourceMatchesDiscoverNiche(
   const prose = text.replace(/(?:^|\s)#[\p{L}\p{N}_]+/gu, " ");
   // Role labels in fictional twist stories are not evidence of a business topic.
   // Keep fiction/storytelling niches available; this guard targets business feeds.
-  const fictionNiche = keywords.some((topic) =>
-    /\b(fiction|drama|storytelling|creative writing|short stories|moral stories)\b/i.test(topic),
+  const businessNiche = keywords.some((topic) =>
+    /\b(startups?|founders?|entrepreneurs?|business|saas|ai|artificial intelligence|technology|product management)\b/i.test(
+      topic,
+    ),
+  );
+  const fictionNiche = keywords.some(
+    (topic) =>
+      /\b(fiction|drama|creative writing|short stories|moral stories)\b/i.test(topic) ||
+      (!businessNiche && /\bstorytelling\b/i.test(topic)),
   );
   const explicitFiction =
     /\b(fiction(?:al)? (?:story|tale|drama)|moral story|inspirational story|short drama)\b/i.test(
@@ -140,6 +161,22 @@ export function sourceMatchesDiscoverNiche(
     ((explicitFiction && !educationalTool) || (genericRichRole && humiliation && dramaticReveal))
   )
     return false;
+  // Fundraising also means election campaigns, charity appeals and game streams.
+  // In a startup direction it needs capital-raising context, even when generic
+  // business/AI words or hashtags appear elsewhere in the description.
+  const startupFundraising =
+    /\b(startups?|entrepreneurs?|venture capital|angel investors?|seed (?:round|funding)|series [a-f]|pitch decks?|funding rounds?|saas|bootstrapp\w*)\b/i;
+  const otherFundraisingDirection = keywords.some((topic) =>
+    /\b(politic\w*|elections?|charit\w*|non[ -]?profits?|donations?|gaming)\b/i.test(topic),
+  );
+  if (
+    hasStartupDirection(keywords) &&
+    !otherFundraisingDirection &&
+    /\bfund[ -]?rais\w*\b/i.test(prose) &&
+    !startupFundraising.test(prose)
+  )
+    return false;
+
   const proseWords = prose.match(/[\p{L}\p{N}]+/gu) || [];
   const words: string[] = text.match(/[\p{L}\p{N}]+/gu) || [];
   return focusedTopics(keywords).some((topic) => {
@@ -147,6 +184,8 @@ export function sourceMatchesDiscoverNiche(
       (term) => term.length > 1 && !BROAD_TOPICS.has(term),
     );
     if (!terms.length) return true;
+    if (normalize(topic) === "startup fundraising")
+      return /\bfund[ -]?rais\w*\b/i.test(prose) && startupFundraising.test(prose);
     if (terms.includes("startup")) {
       terms.push("founder", "entrepreneur", "bootstrapp");
       // A startup interest must refer to a business, not an engine or a computer.
@@ -216,6 +255,7 @@ type TrendSourceDependencies = {
   reddit: typeof fetchRedditStories;
   hackerNews: typeof fetchHackerNewsStories;
   reserveSearch: () => Promise<boolean>;
+  youtubeConfigured: boolean;
 };
 
 /** One bounded batch across all platforms; at most four paid attempts, including retries. */
@@ -230,6 +270,7 @@ export async function fetchTrendSources(
     youtube: fetchYouTubeStories,
     reddit: fetchRedditStories,
     hackerNews: fetchHackerNewsStories,
+    youtubeConfigured: Boolean(process.env.YOUTUBE_API_KEY?.trim()),
     reserveSearch: () =>
       reserveBrightDataSeoRequest(process.env, new Date().toISOString().slice(0, 7)),
     ...overrides,
@@ -247,10 +288,20 @@ export async function fetchTrendSources(
     .map((name) => `"${name.replace(/["()]/g, " ").trim()}"`)
     .filter((name) => name !== '""');
   const query = [discoverSearchQuery(input.nicheKeywords), ...references].join(" OR ");
-  const primaryTopic =
-    input.nicheKeywords[0]?.toLowerCase() === "startup journey"
-      ? "startup founder"
-      : input.nicheKeywords[0] || "";
+  const topics = focusedTopics(input.nicheKeywords)
+    .slice(0, 4)
+    .map((topic) =>
+      topic.toLowerCase() === "startup journey"
+        ? "startup founder"
+        : topic.replace(/["()|]/g, " ").trim(),
+    );
+  const topicQuery = topics.map((topic) => `"${topic}"`).join(" OR ");
+  const youtubeQuery = topics.map((topic) => `"${topic}"`).join(" | ");
+  const technicalTopic = topics.find((topic) =>
+    /\b(ai|artificial intelligence|tech|technology|software|programming|developer|startup|founder|science|engineering|cybersecurity|saas)\b/i.test(
+      topic,
+    ),
+  );
   const named = async (name: string, fetchSource: () => Promise<ContentSourceItem[]>) => {
     try {
       const items = await fetchSource();
@@ -262,15 +313,10 @@ export async function fetchTrendSources(
       throw new Error(`${name}: ${reason}`);
     }
   };
-  // Every supported social platform is queried on every refresh. Pairing domains
-  // retains the existing four-request ceiling; no single free platform cancels
-  // the rest. A per-platform continuation can search deeper when requested.
-  const platformGroups = [
-    [0, 5],
-    [3, 4],
-    [2, 6],
-    [1, 7],
-  ];
+  // Use native YouTube/Reddit discovery before spending scarce SERP requests there.
+  // All six remaining networks participate within the same four-attempt ceiling.
+  const platformGroups = [[0], [2], [3, 4], [5, 6]];
+  if (!dependencies.youtubeConfigured) platformGroups[1].push(1);
   const socialRequests = platformGroups.map((indices) => {
     const sources = indices.map((index) => socialSearchPlatforms[index]);
     return named(sources.map((source) => source.platform).join(" / "), () =>
@@ -295,7 +341,7 @@ export async function fetchTrendSources(
   const results = await Promise.allSettled([
     ...socialRequests,
     named("News", () =>
-      dependencies.news(primaryTopic, {
+      dependencies.news(topicQuery, {
         limit: 25,
         signal,
         language: input.language,
@@ -303,7 +349,7 @@ export async function fetchTrendSources(
       }),
     ),
     named("YouTube", () =>
-      dependencies.youtube(primaryTopic, {
+      dependencies.youtube(youtubeQuery, {
         limit: 50,
         windowDays: 30,
         signal,
@@ -311,11 +357,15 @@ export async function fetchTrendSources(
         region: input.region,
       }),
     ),
-    named("Reddit", () => dependencies.reddit(primaryTopic, { limit: 25, windowDays: 30, signal })),
+    named("Reddit", () => dependencies.reddit(topicQuery, { limit: 25, windowDays: 30, signal })),
     ...(technicalNiche
       ? [
           named("Hacker News", () =>
-            dependencies.hackerNews(primaryTopic, { limit: 6, windowDays: 30, signal }),
+            dependencies.hackerNews(technicalTopic || topics[0] || "", {
+              limit: 25,
+              windowDays: 30,
+              signal,
+            }),
           ),
         ]
       : []),
@@ -394,6 +444,37 @@ const defaultDependencies: TrendBriefDependencies = {
   },
 };
 
+/** Public-page enrichment can fill gaps, but never erase native API observations. */
+function mergeSourceEnrichment(
+  source: ContentSourceItem,
+  enriched?: ContentSourceItem,
+): ContentSourceItem {
+  if (!enriched) return source;
+  const primary = source.kind === "social_search" ? enriched : source;
+  const secondary = source.kind === "social_search" ? source : enriched;
+  const present = Object.fromEntries(
+    Object.entries(primary).filter(
+      ([, value]) =>
+        value !== null &&
+        value !== undefined &&
+        value !== "" &&
+        (!Array.isArray(value) || value.length > 0),
+    ),
+  );
+  const observed = (item: ContentSourceItem) =>
+    Object.fromEntries(
+      Object.entries(item.stats || {}).filter(
+        ([, value]) => typeof value === "number" && Number.isFinite(value) && value >= 0,
+      ),
+    );
+  return {
+    ...secondary,
+    ...present,
+    canonicalUrl: source.canonicalUrl,
+    stats: { ...observed(secondary), ...observed(primary) },
+  } as ContentSourceItem;
+}
+
 export async function getOrBuildTrendBrief(
   input: TrendBriefInput,
   dependencies: TrendBriefDependencies = defaultDependencies,
@@ -417,45 +498,143 @@ export async function getOrBuildTrendBrief(
   let partialItems: ContentSourceItem[] = [];
   let previewBriefId = existing?.id;
   let progress = Promise.resolve();
-  const results = await dependencies.fetchSources(
-    input,
-    onProgress
-      ? (batch) => {
-          const eligible = batch.filter(
-            (item) =>
-              sourceMatchesDiscoverNiche(item, input.nicheKeywords) &&
-              evaluateDiscoverQuality(item, now).eligible,
-          );
-          if (!eligible.length) return;
-          partialItems = dedupeSourceItems([...partialItems, ...eligible]).slice(0, 96);
-          const snapshot = partialItems;
-          // Serialize writes so an earlier, smaller batch cannot overwrite a later one.
-          // A failed preview must not retry paid providers or hide the final result.
-          progress = progress
-            .then(async () => {
-              const partial = {
-                ...input,
-                nicheKey,
-                items: snapshot,
-                warnings: [DISCOVER_PROGRESS_WARNING],
-              };
-              // A late partial refresh must never replace a complete shared brief
-              // produced by another workspace. Reserve its identity only once.
-              if (!previewBriefId)
-                previewBriefId = (await dependencies.saveBrief(partial, { onlyIfMissing: true }))
-                  .id;
-              await onProgress({ ...partial, id: previewBriefId });
-            })
-            .catch((error) => {
-              console.warn("Discover preview could not be saved", error);
-            });
+  const nativeEvidence = new Map<string, ContentSourceItem>();
+  const verified = new Map<string, ContentSourceItem>();
+  let retrievalComplete = false;
+  const publishProgress = (batch: ContentSourceItem[]) => {
+    if (!onProgress) return;
+    const eligible = batch
+      .map((item) => {
+        const enriched = mergeSourceEnrichment(item, verified.get(item.canonicalUrl));
+        const native = nativeEvidence.get(discoverPostKey(item));
+        return native ? mergeSourceEnrichment(native, enriched) : enriched;
+      })
+      .filter(
+        (item) =>
+          // Native-backed networks must not preview weaker search metrics before
+          // their native retrieval finishes. Qualified native posts still stream immediately.
+          (retrievalComplete ||
+            item.kind !== "social_search" ||
+            !["YouTube", "Reddit", "Hacker News"].includes(item.platform || "")) &&
+          sourceMatchesDiscoverNiche(item, input.nicheKeywords) &&
+          evaluateDiscoverQuality(item, now).eligible,
+      );
+    if (!eligible.length) return;
+    partialItems = dedupeSourceItems([...partialItems, ...eligible]).slice(0, 96);
+    const snapshot = partialItems;
+    progress = progress
+      .then(async () => {
+        const partial = {
+          ...input,
+          nicheKey,
+          items: snapshot,
+          warnings: [DISCOVER_PROGRESS_WARNING],
+        };
+        if (!previewBriefId)
+          previewBriefId = (await dependencies.saveBrief(partial, { onlyIfMissing: true })).id;
+        await onProgress({ ...partial, id: previewBriefId });
+      })
+      .catch((error) => {
+        console.warn("Discover preview could not be saved", error);
+      });
+  };
+  // Verification overlaps source retrieval. Every URL is attempted once, with
+  // at most two concurrent metadata batches, 64 candidates and a shared 36-second deadline.
+  const attempted = new Set<string>();
+  const platformAttempts = new Map<string, number>();
+  const queue: ContentSourceItem[][] = [];
+  const workers: Promise<void>[] = [];
+  let active = 0;
+  const verificationDeadline =
+    onProgress && dependencies.enrichSources ? AbortSignal.timeout(36_000) : null;
+  const verifyBatch = (batch: ContentSourceItem[]) => {
+    for (const item of batch)
+      if (item.kind !== "social_search" && !nativeEvidence.has(discoverPostKey(item)))
+        nativeEvidence.set(discoverPostKey(item), item);
+    publishProgress(batch);
+    if (!dependencies.enrichSources || !verificationDeadline || verificationDeadline.aborted)
+      return;
+    const groups = new Map<string, ContentSourceItem[]>();
+    for (const item of dedupeSourceItems(batch)) {
+      if (
+        attempted.has(item.canonicalUrl) ||
+        !sourceMatchesDiscoverNiche(item, input.nicheKeywords) ||
+        sourceFreshnessTier(item.publishedAt, now) === 0
+      )
+        continue;
+      if (
+        !["publication_unknown", "followers_unknown", "traction_unknown"].includes(
+          evaluateDiscoverQuality(item, now).reason,
+        )
+      )
+        continue;
+      const key = item.platform || item.kind;
+      groups.set(key, [...(groups.get(key) || []), item]);
+    }
+    const selected: ContentSourceItem[] = [];
+    const lists = [...groups.values()];
+    while (lists.some((list) => list.length) && attempted.size < 64) {
+      for (const list of lists) {
+        const item = list.shift();
+        if (item && attempted.size < 64) {
+          const platform = item.platform || item.kind;
+          const count = platformAttempts.get(platform) || 0;
+          if (count >= 8) continue;
+          platformAttempts.set(platform, count + 1);
+          attempted.add(item.canonicalUrl);
+          selected.push(item);
         }
-      : undefined,
-  );
+      }
+    }
+    for (let offset = 0; offset < selected.length; offset += 16)
+      queue.push(selected.slice(offset, offset + 16));
+    while (active < 2 && queue.length) {
+      active++;
+      workers.push(
+        (async () => {
+          try {
+            while (queue.length && !verificationDeadline.aborted) {
+              const candidates = queue.shift()!;
+              const items = await dependencies.enrichSources!(candidates, {
+                timeoutMs: 12_000,
+                signal: verificationDeadline,
+              }).catch(() => candidates);
+              for (const item of items) verified.set(item.canonicalUrl, item);
+              publishProgress(items);
+            }
+          } finally {
+            active--;
+          }
+        })(),
+      );
+    }
+  };
+  const results = await dependencies.fetchSources(input, onProgress ? verifyBatch : undefined);
+  retrievalComplete = true;
+  if (onProgress)
+    verifyBatch(results.flatMap((result) => (result.status === "fulfilled" ? result.value : [])));
+  await Promise.all(workers);
   await progress;
+  // Consolidate identity-level evidence before popularity ranking. A duplicate
+  // search hit must never outrank a native API's explicit zero or known date.
+  const byPost = new Map<string, ContentSourceItem>();
+  for (const item of results.flatMap((result) =>
+    result.status === "fulfilled" ? result.value : [],
+  )) {
+    const candidate = mergeSourceEnrichment(item, verified.get(item.canonicalUrl));
+    const key = discoverPostKey(candidate);
+    const existing = byPost.get(key);
+    byPost.set(
+      key,
+      !existing
+        ? candidate
+        : existing.kind === "social_search" && candidate.kind !== "social_search"
+          ? mergeSourceEnrichment(candidate, existing)
+          : mergeSourceEnrichment(existing, candidate),
+    );
+  }
   const ranked = dedupeSourceItems(
-    results
-      .flatMap((result) => (result.status === "fulfilled" ? result.value : []))
+    [...byPost.values()]
       .filter(
         (item) =>
           sourceFreshnessTier(item.publishedAt, now) > 0 &&
@@ -463,8 +642,6 @@ export async function getOrBuildTrendBrief(
       )
       .sort(
         (left, right) =>
-          Number(sourceMatchesDiscoverNiche(right, input.nicheKeywords)) -
-            Number(sourceMatchesDiscoverNiche(left, input.nicheKeywords)) ||
           sourceFreshnessTier(right.publishedAt, now) -
             sourceFreshnessTier(left.publishedAt, now) ||
           sourcePopularity(right, now) - sourcePopularity(left, now),
@@ -493,9 +670,10 @@ export async function getOrBuildTrendBrief(
       ? [result.reason instanceof Error ? result.reason.message : "A source could not be reached."]
       : [],
   );
-  const enriched = dependencies.enrichSources
-    ? await dependencies.enrichSources(items).catch(() => items)
-    : items;
+  const enriched =
+    dependencies.enrichSources && !onProgress
+      ? await dependencies.enrichSources(items).catch(() => items)
+      : items;
   const relevant = dedupeSourceItems(
     enriched
       .filter(

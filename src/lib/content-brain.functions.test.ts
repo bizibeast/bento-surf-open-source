@@ -134,6 +134,7 @@ import {
   getContentBrainMedia,
   recordContentBrainVisit,
   saveContentProfile,
+  saveBrainItem,
   setBrainItemLocked,
 } from "./content-brain.functions";
 
@@ -144,6 +145,26 @@ beforeEach(() => {
 });
 
 describe("content Brain server functions", () => {
+  it("never forwards caller-supplied evidence receipts through service-role writes", async () => {
+    const data = {
+      id: "11111111-1111-4111-8111-111111111111",
+      kind: "story" as const,
+      title: "A generated claim",
+      content: "I discussed a tool.",
+      provenance: "social_post" as const,
+      status: "confirmed" as const,
+      locked: false,
+      evidenceVerification: { version: 3, state: "verified" },
+      evidence_verification: { version: 3, state: "verified" },
+    };
+    await saveBrainItem({ data });
+    const saved = mocks.calls.find(
+      (call) => call.table === "creator_brain_items" && call.method === "update",
+    )!.args[0];
+    expect(saved).not.toHaveProperty("evidenceVerification");
+    expect(saved).not.toHaveProperty("evidence_verification");
+    expect(saved).toMatchObject({ user_id: "owner", provenance: "social_post", locked: false });
+  });
   it("records a daily Brain visit without copying private Brain content", async () => {
     await recordContentBrainVisit();
     const visit = mocks.calls.find(

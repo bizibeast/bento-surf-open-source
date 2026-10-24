@@ -140,6 +140,7 @@ export type SchedulerTarget = {
   remotePostUrl: string | null;
   errorMessage: string | null;
   publishedAt: string | null;
+  nextAttemptAt?: string | null;
   likes?: number | null;
   comments?: number | null;
   providerSettings?: Record<string, unknown>;

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isTrustedBrainItem } from "./content-brain-evidence";
 import { proseHasForbiddenDash } from "./text/dashes";
 import { carouselCopyIssues } from "./content-carousel";
 import { parsePublicHttpUrl } from "./safe-url";
@@ -186,7 +187,7 @@ export function buildEditorialBrief(input: EditorialContext): EditorialBrief {
       : /\blinkedin\b/i.test(input.request || "")
         ? "linkedin"
         : "twitter");
-  const confirmed = input.brain.filter((item) => item.status === "confirmed");
+  const confirmed = input.brain.filter(isTrustedBrainItem);
   const terms = normalized(input.request || "")
     .split(" ")
     .filter((term) => term.length > 3);

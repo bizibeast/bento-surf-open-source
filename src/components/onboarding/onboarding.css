@@ -1425,3 +1425,121 @@
   color: #b42318;
   font-weight: 600;
 }
+
+/* Capability showcase: one short screen before the trial step. */
+.ob-showcase {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+}
+.ob-showcase-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.ob-showcase-card {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 16px 18px;
+  border: 1px solid #17213a14;
+  border-radius: 18px;
+  background: #fff;
+  text-align: left;
+}
+.ob-showcase-brain {
+  grid-column: 1 / -1;
+  background: #17213a;
+  color: #fff;
+  border-color: #17213a;
+}
+.ob-showcase-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: #3478f614;
+  color: #3478f6;
+}
+.ob-showcase-brain .ob-showcase-icon {
+  background: #3478f6;
+  color: #fff;
+}
+.ob-showcase-icon svg {
+  width: 19px;
+  height: 19px;
+}
+.ob-showcase-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.ob-showcase-copy strong {
+  font-size: 15px;
+  font-weight: 650;
+}
+.ob-showcase-copy span {
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--ob-muted);
+}
+.ob-showcase-brain .ob-showcase-copy span {
+  color: #ffffffc4;
+}
+.ob-showcase-copy small {
+  margin-top: 2px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #3478f6;
+}
+.ob-showcase-brain .ob-showcase-copy small {
+  color: #9fc0ff;
+}
+.ob-showcase-note {
+  margin-top: 18px;
+}
+.ob-showcase-actions {
+  flex-direction: column;
+  align-items: center;
+}
+@media (max-width: 640px) {
+  .ob-showcase-grid {
+    grid-template-columns: 1fr;
+  }
+  .ob-showcase-card {
+    padding: 14px;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ob-showcase-card {
+    animation: ob-showcase-in 0.28s ease both;
+  }
+  .ob-showcase-card:nth-child(2) {
+    animation-delay: 0.04s;
+  }
+  .ob-showcase-card:nth-child(3) {
+    animation-delay: 0.08s;
+  }
+  .ob-showcase-card:nth-child(4) {
+    animation-delay: 0.12s;
+  }
+  .ob-showcase-card:nth-child(5) {
+    animation-delay: 0.16s;
+  }
+}
+@keyframes ob-showcase-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

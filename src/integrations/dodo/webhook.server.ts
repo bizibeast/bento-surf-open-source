@@ -149,6 +149,26 @@ function occurredAt(event: DodoEvent): string | null {
   return asString(event.timestamp) ?? asString(event.data.created_at) ?? null;
 }
 
+/**
+ * When the subscription was cancelled. Dodo reports `cancelled_at`; a manual
+ * refresh has no event timestamp, so never fall back to `created_at` (that is
+ * the trial or contract start, not the cancel).
+ */
+export function cancellationTime(
+  data: JsonRecord,
+  current: { status?: string | null; canceled_at?: string | null } | null | undefined,
+  event: Pick<DodoEvent, "timestamp">,
+  now = new Date(),
+): string {
+  return (
+    asString(data.cancelled_at) ??
+    asString(data.canceled_at) ??
+    (current?.status === "canceled" ? (current.canceled_at ?? null) : null) ??
+    asString(event.timestamp) ??
+    now.toISOString()
+  );
+}
+
 async function applyPlan(
   userId: string,
   plan: PlanId,
@@ -383,7 +403,7 @@ async function syncSubscriptionUnderLease(
   const { data: current, error: currentError } = await supabaseAdmin
     .from("subscriptions")
     .select(
-      "dodo_subscription_id,status,billing_catalog,plan_id,current_period_end,cancel_at_period_end",
+      "dodo_subscription_id,status,billing_catalog,plan_id,current_period_end,cancel_at_period_end,canceled_at",
     )
     .eq("user_id", userId)
     .maybeSingle();
@@ -570,7 +590,7 @@ async function syncSubscriptionUnderLease(
     currency: asString(data.currency),
     billingInterval: asString(data.payment_frequency_interval),
     cancelAtPeriodEnd: asBoolean(data.cancel_at_next_billing_date) ?? false,
-    canceledAt: state.status === "canceled" ? occurredAt(event) : null,
+    canceledAt: state.status === "canceled" ? cancellationTime(data, current, event) : null,
     addonState,
     ...(isPaidPlan(contractPlan)
       ? {

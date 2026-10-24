@@ -288,6 +288,7 @@ export function ContentDiscover({
     view === "discover" && feed !== "ideas" && !creator ? pageState?.error : null;
   const hasLocalMore = displayed.length < filtered.length;
   const canLoadMore = hasLocalMore || canResearchMore;
+  // Scrolling only reveals cached rows. Provider continuation requires the visible button.
   const sentinelRef = useRef<HTMLDivElement>(null);
   const automaticRequest = useRef("");
   const requestKey = `${windowKey}:${pageState?.cursor || "first"}:${orderedKeys.length}:${displayed.length}`;
@@ -309,7 +310,7 @@ export function ContentDiscover({
     const node = sentinelRef.current;
     if (
       !node ||
-      !canLoadMore ||
+      !hasLocalMore ||
       loadingMore ||
       refreshing ||
       loadMoreError ||
@@ -333,7 +334,7 @@ export function ContentDiscover({
       active = false;
       observer.disconnect();
     };
-  }, [canLoadMore, loadingMore, refreshing, loadMoreError, requestKey, loadNext]);
+  }, [hasLocalMore, loadingMore, refreshing, loadMoreError, requestKey, loadNext]);
   const selected = items.find((item) => item.id === selectedId) || null;
   const creatorUrl =
     creator && (publicSourceUrl(creator.authorUrl) || sourceCreator(creator.sourceUrl)?.url);

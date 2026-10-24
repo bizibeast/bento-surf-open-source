@@ -353,12 +353,29 @@ function providerEvidence(
       }
     }
   }
+  if (host === "reddit.com") {
+    const id = url.pathname.match(/\/comments\/([a-z0-9]+)(?:\/|$)/i)?.[1];
+    for (const tag of html.match(/<shreddit-post\b[^>]*>/gi) || []) {
+      const attr = attributes(tag);
+      if (!id || ![attr.id, attr["post-id"]].includes(`t3_${id}`)) continue;
+      publishedAt ||= publicationDate(attr["created-timestamp"]);
+      set("likes", attr.score);
+      set("comments", attr["comment-count"]);
+      break;
+    }
+  }
   if (["x.com", "twitter.com"].includes(host)) {
     const id = url.pathname.match(/\/status\/(\d+)/)?.[1];
     for (const payload of publicJsonPayloads(html))
       visitObjects(payload, (item) => {
         const legacy = record(item.legacy);
         if (!id || (item.rest_id !== id && legacy.id_str !== id && item.id_str !== id)) return;
+        const post = Object.keys(legacy).length ? legacy : item;
+        publishedAt ||= publicationDate(post.created_at);
+        set("likes", post.favorite_count);
+        set("comments", post.reply_count);
+        set("shares", post.retweet_count);
+        set("views", record(item.views).count ?? post.view_count);
         const candidate = record(record(record(item.core).user_results).result || item.user);
         const owner =
           candidate.__typename === "UserWithVisibilityResults"
@@ -858,10 +875,13 @@ export async function enrichContentSources(
     const item = result[index];
     const endpoint = oEmbedEndpoint(item.canonicalUrl);
     const needPresentation = !item.thumbnailUrl || !item.author;
+    const community = item.platform === "Reddit" || item.platform === "Hacker News";
     const needEvidence =
       !sourcePublicationTime(item.publishedAt, Date.now()) ||
-      ((!hasStats(item) || needsFollowers(item)) &&
-        ["social_search", "youtube"].includes(item.kind));
+      (community
+        ? observedCount(item.stats?.likes) === null || observedCount(item.stats?.comments) === null
+        : (!hasStats(item) || needsFollowers(item)) &&
+          ["social_search", "youtube"].includes(item.kind));
     if (!needPresentation && !needEvidence) return;
     // oEmbed describes presentation; it does not prove when a post was published or how it performed.
     const [page, embed] = await Promise.allSettled([

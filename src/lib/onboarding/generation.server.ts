@@ -5,6 +5,7 @@ import {
   type EditorialPlatform,
 } from "../content-editorial";
 import { generateEditorialDraft } from "../content-editorial.server";
+import { selectAiProvider, type AiProviderEnv } from "../ai-json.server";
 import {
   buildManualCandidates,
   onboardingBriefSchema,
@@ -12,6 +13,7 @@ import {
   ONBOARDING_GOALS,
   ONBOARDING_OUTPUT_PLATFORMS,
   hasUnsupportedOnboardingDrafts,
+  reconcileOnboardingBrain,
   type OnboardingBrief,
   type OnboardingCandidates,
 } from "./brief";
@@ -99,28 +101,59 @@ const starterWarnings = {
     "I couldn't settle a checked model draft. This starter uses only the answers you already gave. Edit it, try again, or continue and publish your page.",
 } as const;
 
+export type OnboardingDraftWarningReason = "timeout" | "provider" | "evidence" | "quality";
+
 function withGroundedStarter(
   candidates: OnboardingCandidates,
   brief: OnboardingBrief,
   warning: string,
-  reason: string,
+  reason: OnboardingDraftWarningReason,
+  attempts = 0,
 ) {
-  console.warn("[onboarding] draft fallback", { reason });
+  console.warn("[onboarding] draft fallback", { reason, attempts });
   return {
     ...candidates,
     drafts: [groundedOnboardingDraft(brief)],
     warning,
+    warningReason: reason,
     retry: false as const,
   };
 }
 
-function starterWarning(reason: string | undefined, message: string) {
+function starterWarning(
+  reason: string | undefined,
+  message: string,
+): { warning: string; reason: OnboardingDraftWarningReason } {
   if (/credits|connection needs attention/.test(message))
     return { warning: message, reason: "provider" };
   if (reason === "timeout" || reason === "evidence" || reason === "quality")
     return { warning: starterWarnings[reason], reason };
   return { warning: starterWarnings.provider, reason: "provider" };
 }
+
+/** Bounded schedule for transient writer failures: same model, same model after backoff, then fallback. */
+export const ONBOARDING_DRAFT_RETRY_DELAYS_MS = [1_500, 4_000] as const;
+/** Each further attempt needs at least this much of the shared deadline left. */
+const MIN_ATTEMPT_BUDGET_MS = 20_000;
+
+/**
+ * Cloudflare Workers AI is billed through the same provider budget and is the only bundled
+ * provider. Use it as the last attempt when the primary writer is a different provider.
+ */
+export function onboardingFallbackEnv(env: AiProviderEnv | undefined): AiProviderEnv | undefined {
+  if (!env?.AI) return undefined;
+  try {
+    if (selectAiProvider(env) === "workers-ai") return undefined;
+  } catch {
+    // An unavailable preferred provider still allows the bundled fallback.
+  }
+  return { ...env, AI_TEXT_PROVIDER: "workers-ai" };
+}
+
+export type OnboardingDraftOptions = {
+  /** Environment for the final fallback attempt. Omit to retry only the primary writer. */
+  fallbackEnv?: AiProviderEnv;
+};
 
 /** Before trial activation, use only the approved preparation and owned imported samples. */
 export async function generateOnboardingDrafts(
@@ -131,8 +164,11 @@ export async function generateOnboardingDrafts(
   deadline = Date.now() + 90_000,
   preserveExisting = true,
   photoPostId?: string | null,
-  retryDelayMs = 1_500,
+  retryDelayMs: number | readonly number[] = ONBOARDING_DRAFT_RETRY_DELAYS_MS,
+  options: OnboardingDraftOptions = {},
 ) {
+  const delays = typeof retryDelayMs === "number" ? [retryDelayMs] : retryDelayMs;
+  candidates = reconcileOnboardingBrain(brief, candidates);
   if (!(ONBOARDING_OUTPUT_PLATFORMS as readonly string[]).includes(brief.platform))
     return {
       ...candidates,
@@ -154,7 +190,11 @@ export async function generateOnboardingDrafts(
   const context: EditorialContext = {
     platform: brief.platform as EditorialPlatform,
     request: `Prepare one original useful starter draft for ${brief.audience} about ${brief.expertise}. Goal: ${brief.goal}. Language: ${brief.language}. Develop one specific argument and useful reader decision in the creator's voice.${photoSourceIndex >= 0 ? ` Adapt the supported experience or lesson from source-${photoSourceIndex} into an original LinkedIn post and cite that source. Its owned Instagram photo can accompany the draft. Do not describe unseen image contents or invent new events.` : ""}`,
-    brain: candidates.brain.map((item) => ({ ...item, status: "confirmed" })),
+    brain: candidates.brain.map((item) => ({
+      ...item,
+      status: "confirmed",
+      provenance: "creator",
+    })),
     sources: [
       ...candidates.brain
         .filter((item) => item.kind === "profile")
@@ -199,25 +239,45 @@ export async function generateOnboardingDrafts(
     const remaining = deadline - Date.now();
     if (remaining <= 0)
       return withGroundedStarter(candidates, brief, starterWarnings.timeout, "timeout");
-    let result = await generate(buildEditorialBrief(context), {
-      timeoutMs: Math.min(80_000, remaining),
-    });
-    // One paid retry after a short pause. A finished failure does not requeue itself.
-    if (result.status === "retry" && deadline - Date.now() > 15_000) {
-      const pause = Math.min(retryDelayMs, Math.max(0, deadline - Date.now() - 15_000));
-      if (pause > 0) await new Promise((resolve) => setTimeout(resolve, pause));
-      if (deadline - Date.now() > 5_000)
-        result = await generate(buildEditorialBrief(context), {
-          timeoutMs: Math.min(80_000, deadline - Date.now()),
-        });
+    // Attempt plan: primary writer, then the primary writer again after each backoff.
+    // The final retry moves to the bundled fallback writer when one is configured.
+    const plan: Array<{ delay: number; env?: AiProviderEnv }> = [
+      { delay: 0 },
+      ...delays.map((delay, i) => ({
+        delay,
+        env: i === delays.length - 1 ? options.fallbackEnv : undefined,
+      })),
+    ];
+    let result: Awaited<ReturnType<typeof generate>> | undefined;
+    let attempts = 0;
+    let qualityRewrites = 0;
+    for (const step of plan) {
+      if (attempts > 0) {
+        // Transient failures retry. A draft the checks kept rejecting gets one fresh write,
+        // because nobody is in the chat to answer the follow-up question during onboarding.
+        // Missing evidence still stops here so the starter never gains invented facts.
+        const qualityRewrite = result?.reason === "quality" && qualityRewrites === 0;
+        if (result?.status !== "retry" && !qualityRewrite) break;
+        if (qualityRewrite) qualityRewrites++;
+        if (deadline - Date.now() - step.delay < MIN_ATTEMPT_BUDGET_MS) break;
+        if (step.delay > 0) await new Promise((resolve) => setTimeout(resolve, step.delay));
+      }
+      attempts++;
+      result = await generate(buildEditorialBrief(context), {
+        timeoutMs: Math.min(80_000, deadline - Date.now()),
+        repairStructuredOutput: true,
+        ...(step.env ? { env: step.env } : {}),
+      });
+      if (result.status === "ready") break;
     }
-    if (result.status !== "ready" || result.card.type !== "draft") {
-      const fallback = starterWarning(result.reason, result.message);
+    if (!result || result.status !== "ready" || result.card.type !== "draft") {
+      const fallback = starterWarning(result?.reason, result?.message || "");
       return withGroundedStarter(
         { ...candidates, drafts },
         brief,
         fallback.warning,
         fallback.reason,
+        attempts,
       );
     }
     const { card } = result;
@@ -236,7 +296,7 @@ export async function generateOnboardingDrafts(
       createdAt: new Date().toISOString(),
     });
   }
-  return { ...candidates, drafts, warning: null, retry: false };
+  return { ...candidates, drafts, warning: null, warningReason: null, retry: false };
 }
 
 async function processOnboardingGenerationScoped(workspaceId: string) {
@@ -288,6 +348,10 @@ async function processOnboardingGenerationScoped(workspaceId: string) {
       // The claim increments attempts. A deliberate refresh starts at one; recovery retains partial work.
       session.job_attempts > 1,
       research.photoPostId,
+      ONBOARDING_DRAFT_RETRY_DELAYS_MS,
+      {
+        fallbackEnv: onboardingFallbackEnv(globalThis.__env__ as AiProviderEnv | undefined),
+      },
     );
     let parsed = onboardingCandidatesSchema.parse(generated);
     parsed = {

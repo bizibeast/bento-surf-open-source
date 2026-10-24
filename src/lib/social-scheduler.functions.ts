@@ -174,6 +174,7 @@ function postFromRow(row: any, insights: Map<string, TargetInsight>): SchedulerP
           remotePostUrl: target.remote_post_url || insight?.remotePostUrl || null,
           errorMessage: target.last_error_message || null,
           publishedAt: target.published_at || null,
+          nextAttemptAt: typeof target.next_attempt_at === "string" ? target.next_attempt_at : null,
           likes: insight?.likes ?? null,
           comments: insight?.comments ?? null,
           providerSettings:
@@ -236,7 +237,7 @@ async function schedulerData(userId: string, plan?: PlanId) {
     db
       .from("social_posts")
       .select(
-        "*, targets:social_post_targets(id, connection_id, provider, status, remote_post_id, remote_post_url, last_error_message, published_at, provider_settings, repost:social_repost_jobs(phase, repost_due_at, remove_due_at, reposted_at, removed_at, last_error_message))",
+        "*, targets:social_post_targets(id, connection_id, provider, status, remote_post_id, remote_post_url, last_error_message, published_at, next_attempt_at, provider_settings, repost:social_repost_jobs(phase, repost_due_at, remove_due_at, reposted_at, removed_at, last_error_message))",
       )
       .eq("user_id", userId)
       .order("created_at", { ascending: false })

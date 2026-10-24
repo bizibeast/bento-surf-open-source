@@ -1,6 +1,6 @@
 import { exportOnboardingContent } from "@/lib/onboarding/functions";
 import { BillingLifecycleNotice } from "@/components/billing-lifecycle-notice";
-import { RetentionCancellationDialog } from "@/components/billing/RetentionCancellationDialog";
+import { CancellationFlowHost } from "@/components/billing/CancellationFlowHost";
 import { resumeMyPausedSubscription } from "@/lib/cancellation.functions";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -825,6 +825,7 @@ function SettingsPage() {
                     onExport={() =>
                       void navigate({ to: "/settings", search: { section: "account" } })
                     }
+                    trialEnded={billing.trialEnded}
                   />
                 )}
                 <BentoCard className="overflow-hidden">
@@ -854,7 +855,7 @@ function SettingsPage() {
                               }[summary.date.kind]
                             }{" "}
                             {formatBillingDate(summary.date.at)}
-                            {summary.date.kind === "access_ends" && billing?.status === "trialing"
+                            {summary.date.kind === "trial_ends" && billing?.cancelAtPeriodEnd
                               ? ". No charge"
                               : ""}
                           </span>
@@ -949,11 +950,13 @@ function SettingsPage() {
                             : "Automatic renewal is on"}
                         </div>
                         <p className="mt-2 max-w-2xl text-sm leading-6 text-[#17213a]/52">
-                          {billing.cancelAtPeriodEnd
-                            ? billing.status === "trialing"
-                              ? `Your trial access stays active until ${formatBillingDate(billing.currentPeriodEnd)}. You won't be charged, and hosted access pauses after that.`
-                              : `Your ${planName(summary.plan)} access stays active until ${formatBillingDate(billing.currentPeriodEnd)}, then hosted access pauses.`
-                            : `Your current trial or billing period runs through ${formatBillingDate(billing.currentPeriodEnd)}. Cancelling stops the next charge without removing access early.`}
+                          {billing.status === "trialing"
+                            ? billing.cancelAtPeriodEnd
+                              ? `Your trial ends ${formatBillingDate(billing.currentPeriodEnd)} and you won't be charged.`
+                              : `Your trial runs through ${formatBillingDate(billing.currentPeriodEnd)}. Cancelling during the trial ends it and your access immediately, and you won't be charged.`
+                            : billing.cancelAtPeriodEnd
+                              ? `Your ${planName(summary.plan)} access stays active until ${formatBillingDate(billing.currentPeriodEnd)}, then hosted access pauses.`
+                              : `Your current billing period runs through ${formatBillingDate(billing.currentPeriodEnd)}. Cancelling stops the next charge without removing access early.`}
                         </p>
                       </div>
                       {billing.cancelAtPeriodEnd ? (
@@ -971,7 +974,7 @@ function SettingsPage() {
                           onClick={() => setCancelFlowOpen(true)}
                           className={`${micro.btnOutline} shrink-0`}
                         >
-                          Cancel renewal
+                          {billing.status === "trialing" ? "Cancel trial" : "Cancel renewal"}
                         </button>
                       )}
                     </div>
@@ -1796,14 +1799,12 @@ function SettingsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {billing && isPro && (
-        <CancellationFlowDialog
-          open={cancelFlowOpen}
-          onOpenChange={setCancelFlowOpen}
-          plan={plan}
-          billing={billing}
-        />
-      )}
+      <CancellationFlowHost
+        open={cancelFlowOpen}
+        onOpenChange={setCancelFlowOpen}
+        plan={plan}
+        billing={billing}
+      />
       <Dialog
         open={deleteAccountOpen}
         onOpenChange={(open) => {
@@ -2083,8 +2084,10 @@ function PlanOptionCard({
   onCancel: () => void;
 }) {
   const definition = PLAN_CONFIG[plan];
-  const current = plan === currentPlan;
   const ended = billing?.status === "canceled" || billing?.status === "incomplete";
+  // A cancelled or never-started subscription is not the current plan, even
+  // while the workspace keeps its last plan id for retention.
+  const current = plan === currentPlan && !ended;
   const legacyAnnual = billing?.billingPeriod === "yearly" && billing.billingCatalog !== "2026-10";
   const displayPrice =
     plan === "free" || (current && legacyAnnual)
@@ -2112,7 +2115,8 @@ function PlanOptionCard({
     } else if (billing.cancelAtPeriodEnd) {
       action = (
         <button type="button" disabled className={`${buttonClass} bg-[#f2f5fb] text-[#17213a]/52`}>
-          Access ends {formatBillingDate(billing.currentPeriodEnd)}
+          {billing.status === "trialing" ? "Trial ends" : "Access ends"}{" "}
+          {formatBillingDate(billing.currentPeriodEnd)}
         </button>
       );
     } else {
@@ -2123,7 +2127,7 @@ function PlanOptionCard({
           onClick={onCancel}
           className={`${buttonClass} ${micro.btnOutline} hover:bg-[#f2f5fb]`}
         >
-          Cancel renewal
+          {billing.status === "trialing" ? "Cancel trial" : "Cancel renewal"}
         </button>
       );
     }
@@ -2196,27 +2200,6 @@ function PlanOptionCard({
       </ul>
       {action}
     </div>
-  );
-}
-
-function CancellationFlowDialog({
-  open,
-  onOpenChange,
-  plan,
-  billing,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  plan: PaidPlanId;
-  billing: MyBillingOverview;
-}) {
-  return (
-    <RetentionCancellationDialog
-      open={open}
-      onOpenChange={onOpenChange}
-      plan={plan}
-      billing={billing}
-    />
   );
 }
 

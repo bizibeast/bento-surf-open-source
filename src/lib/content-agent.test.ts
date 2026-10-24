@@ -57,6 +57,7 @@ describe("content Agent contract", () => {
           title: "Launch",
           content: "Confirmed launch story",
           status: "confirmed",
+          provenance: "creator",
           locked: false,
         },
       ],
