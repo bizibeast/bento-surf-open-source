@@ -140,6 +140,8 @@ export const onboardingCandidatesSchema = z.object({
       status: z.enum(["running", "ready", "unavailable"]),
       profileCount: z.number().int().min(0).max(20),
       postCount: z.number().int().min(0).max(24),
+      /** Chapters written from the creator's evidence; the rest are answer-based starter notes. */
+      personalChapters: z.number().int().min(0).max(12).optional(),
       note: z.string().max(500),
     })
     .optional(),

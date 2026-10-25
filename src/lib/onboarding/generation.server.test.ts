@@ -195,7 +195,7 @@ it("retries a transient failure once, then keeps an answer-only starter", async 
   expect(result.warning).toMatch(/answers you already gave/);
   expect(JSON.stringify(result.drafts)).not.toMatch(/\u2014|\d+%|\$\d|million/);
 });
-it("does not spend a second model call when evidence is missing", async () => {
+it("falls back to the answer-only starter when the fresh write still lacks evidence", async () => {
   const brief = onboardingBriefSchema.parse({
     platform: "linkedin",
     expertise: "Coral restoration",
@@ -209,7 +209,7 @@ it("does not spend a second model call when evidence is missing", async () => {
     card: { type: "idea" },
   });
   const result = await generateOnboardingDrafts(brief, buildManualCandidates(brief), [], generate);
-  expect(generate).toHaveBeenCalledOnce();
+  expect(generate).toHaveBeenCalledTimes(2);
   expect(result.drafts[0].body).toContain("Coral restoration");
   expect(result.warning).toMatch(/without adding facts/);
 });
@@ -424,45 +424,32 @@ it("only falls back to the bundled writer when the primary writer is different",
   expect(onboardingFallbackEnv({ AI, AI_TEXT_PROVIDER: "workers-ai" })).toBeUndefined();
 });
 
-it("gives a rejected draft one fresh write but never retries missing evidence", async () => {
+it("gives a rejected draft one fresh write, checked again by the same gates", async () => {
   vi.spyOn(console, "warn").mockImplementation(() => {});
   const brief = onboardingBriefSchema.parse({
     platform: "linkedin",
     expertise: "Coral restoration",
     audience: "Divers",
   });
-  const needsInput = (reason: "quality" | "evidence") => ({
-    status: "needs_input",
-    reason,
-    message: "question",
-    issues: [],
-    card: { type: "idea" },
-  });
-  const quality = vi.fn().mockResolvedValue(needsInput("quality"));
-  const result = await generateOnboardingDrafts(
-    brief,
-    buildManualCandidates(brief),
-    [],
-    quality,
-    Date.now() + 120_000,
-    true,
-    null,
-    [0, 0],
-  );
-  expect(quality).toHaveBeenCalledTimes(2);
-  expect(result.warningReason).toBe("quality");
-
-  const evidence = vi.fn().mockResolvedValue(needsInput("evidence"));
-  const missing = await generateOnboardingDrafts(
-    brief,
-    buildManualCandidates(brief),
-    [],
-    evidence,
-    Date.now() + 120_000,
-    true,
-    null,
-    [0, 0],
-  );
-  expect(evidence).toHaveBeenCalledOnce();
-  expect(missing.warningReason).toBe("evidence");
+  for (const reason of ["quality", "evidence"] as const) {
+    const generate = vi.fn().mockResolvedValue({
+      status: "needs_input",
+      reason,
+      message: "question",
+      issues: [],
+      card: { type: "idea" },
+    });
+    const result = await generateOnboardingDrafts(
+      brief,
+      buildManualCandidates(brief),
+      [],
+      generate,
+      Date.now() + 120_000,
+      true,
+      null,
+      [0, 0],
+    );
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(result.warningReason).toBe(reason);
+  }
 });

@@ -75,6 +75,7 @@ import {
 } from "./OnboardingScreens";
 import { CapabilityShowcase } from "./CapabilityShowcase";
 import { brainDraftOutcome } from "@/lib/onboarding/draft-outcome";
+import { brainChapterSummary } from "@/lib/onboarding/brain-summary";
 import {
   ONBOARDING_DEFAULT_TRIAL_PLAN,
   onboardingPlanAftercare,
@@ -877,7 +878,7 @@ export function OnboardingExperience() {
                       <strong>{brief.displayName}'s Bento</strong>
                       <small>
                         {new URL(configuredPublicOrigin(import.meta.env.VITE_PUBLIC_URL)).host}/
-                        {brief.username} · {candidates?.brain.length || 0} personal Brain chapters
+                        {brief.username} · {brainChapterSummary(candidates)}
                       </small>
                     </span>
                     <CheckCircle2 />
@@ -969,7 +970,7 @@ export function OnboardingExperience() {
                   </span>
                   <span>
                     <Check />
-                    {candidates?.brain.length || 0} Brain chapters saved
+                    {brainChapterSummary(candidates)} saved
                   </span>
                   <span>
                     <Check />

@@ -255,8 +255,9 @@ export async function generateOnboardingDrafts(
       if (attempts > 0) {
         // Transient failures retry. A draft the checks kept rejecting gets one fresh write,
         // because nobody is in the chat to answer the follow-up question during onboarding.
-        // Missing evidence still stops here so the starter never gains invented facts.
-        const qualityRewrite = result?.reason === "quality" && qualityRewrites === 0;
+        // The fresh write goes through the same evidence and critique checks.
+        const qualityRewrite =
+          (result?.reason === "quality" || result?.reason === "evidence") && qualityRewrites === 0;
         if (result?.status !== "retry" && !qualityRewrite) break;
         if (qualityRewrite) qualityRewrites++;
         if (deadline - Date.now() - step.delay < MIN_ATTEMPT_BUDGET_MS) break;
