@@ -453,3 +453,100 @@ it("gives a rejected draft one fresh write, checked again by the same gates", as
     expect(result.warningReason).toBe(reason);
   }
 });
+
+const linkedinReady = (body: string) => ({
+  status: "ready",
+  message: "ready",
+  issues: [],
+  card: {
+    type: "draft",
+    cardId: "editorial-draft",
+    platform: "linkedin",
+    format: "post",
+    title: "Start with one leaf",
+    body,
+    sourceUrls: [],
+    editorial: { sourceIds: [], angle: "One leaf", whyNow: "Useful", validationState: "passed" },
+  },
+});
+
+it("tells the writer the grounding rules and checks the finished draft against the answers", async () => {
+  const brief = onboardingBriefSchema.parse({
+    platform: "linkedin",
+    displayName: "Lena",
+    expertise: "I make watercolor botanical illustrations and teach beginner classes.",
+    audience: "Adults picking up painting as a calm hobby.",
+  });
+  const generate = vi
+    .fn()
+    .mockResolvedValue(
+      linkedinReady(
+        "Most beginners who get discouraged early made the same first mistake: they started with a full painting.\n\nHere is the decision I suggest instead: commit to one leaf. Fifteen minutes, one small piece of paper.\n\nThis is also where I would start anyone in a first lesson, and it is the exercise I recommend when people ask how to begin on their own.\n\nPick one leaf this week and give it fifteen minutes.",
+      ),
+    );
+  const checkDraft = vi.fn().mockResolvedValue({
+    flags: [
+      {
+        id: "s2",
+        rewrite: "Starting with a full painting puts a lot of pressure on a calm hobby.",
+      },
+      { id: "s3", rewrite: "Try this instead: commit to one leaf." },
+      { id: "s5", rewrite: "" },
+    ],
+  });
+  const output = await generateOnboardingDrafts(
+    brief,
+    buildManualCandidates(brief),
+    [],
+    generate,
+    Date.now() + 90_000,
+    false,
+    null,
+    [0],
+    { checkDraft },
+  );
+  expect(generate.mock.calls[0][0].request).toContain("Grounding rules for this first draft");
+  expect(checkDraft).toHaveBeenCalledOnce();
+  expect(checkDraft.mock.calls[0][0].evidence[0].text).toContain("teach beginner classes");
+  expect(output.warning).toBeNull();
+  expect(output.drafts[0].body).toBe(
+    "Starting with a full painting puts a lot of pressure on a calm hobby.\n\nTry this instead: commit to one leaf. Fifteen minutes, one small piece of paper.\n\nPick one leaf this week and give it fifteen minutes.",
+  );
+});
+
+it("removes unsupported experience lines without a checker and keeps the answer-only starter when nothing is left", async () => {
+  const brief = onboardingBriefSchema.parse({
+    platform: "linkedin",
+    expertise: "Watercolor",
+    audience: "Adults picking up painting",
+  });
+  const cleaned = await generateOnboardingDrafts(
+    brief,
+    buildManualCandidates(brief),
+    [],
+    vi
+      .fn()
+      .mockResolvedValue(
+        linkedinReady(
+          "In my experience, wet paper helps. The mistake I see most often is a big brush.\n\nWet the paper first, then drop in color and let it spread on its own.",
+        ),
+      ),
+    Date.now() + 90_000,
+    false,
+  );
+  expect(cleaned.drafts[0].body).toBe(
+    "Wet the paper first, then drop in color and let it spread on its own.",
+  );
+  const gutted = await generateOnboardingDrafts(
+    brief,
+    buildManualCandidates(brief),
+    [],
+    vi
+      .fn()
+      .mockResolvedValue(linkedinReady("Most beginners I teach rush. My students love leaves.")),
+    Date.now() + 90_000,
+    false,
+  );
+  expect(gutted.warningReason).toBe("evidence");
+  expect(gutted.drafts[0].rationale).toContain("No added facts");
+});

@@ -142,6 +142,31 @@ export const onboardingCandidatesSchema = z.object({
       postCount: z.number().int().min(0).max(24),
       /** Chapters written from the creator's evidence; the rest are answer-based starter notes. */
       personalChapters: z.number().int().min(0).max(12).optional(),
+      /** Steps finished so far, for the waiting screen. */
+      progress: z
+        .array(z.enum(["profile", "instruction", "strategy", "review"]))
+        .max(4)
+        .optional(),
+      /** Content-free notes on what each step did, so a partial Brain can be explained later. */
+      diagnostics: z
+        .object({
+          missingAfterWrite: z.array(z.string().max(20)).max(4),
+          failedWrites: z.array(z.string().max(80)).max(4),
+          toppedUp: z.number().int().min(0).max(12),
+          strategyRepaired: z.boolean(),
+          strategyIssue: z.string().max(200).nullable(),
+          reviewed: z.boolean(),
+          starterFallbacks: z.array(z.string().max(20)).max(4),
+        })
+        .optional(),
+      failure: z
+        .object({
+          errorClass: z.string().max(60),
+          providerStatus: z.number().int().nullable(),
+          issues: z.array(z.string().max(120)).max(8).nullable(),
+          elapsedMs: z.number().int().min(0),
+        })
+        .optional(),
       note: z.string().max(500),
     })
     .optional(),
@@ -278,8 +303,8 @@ export function buildManualCandidates(brief: OnboardingBrief): OnboardingCandida
         },
         {
           kind: "strategy",
-          title: `${brief.platform === "twitter" ? "X" : brief.platform === "linkedin" ? "LinkedIn" : brief.platform[0].toUpperCase() + brief.platform.slice(1)} Strategy`,
-          content: `## Strategic Goal\n${goal}. Begin with a small, reviewable experiment.\n\n## Target Audience\n${brief.audience || "Confirm your audience"}\n\n## Content Pillars\n${pillars.map(([weight, title, share]) => `### ${weight}% ${title}\nCore Message: Help ${brief.audience || "your audience"} make progress.\nWhat I Share: ${share}\nWhy It Matters: Offer something useful before asking for an action.`).join("\n\n")}\n\n## Posting Rhythm\nAim for ${brief.postsPerWeek} posts per week on ${brief.platform}, in ${brief.timezone}. Review each draft before scheduling.\n\n## Notes\nThis is a starting strategy, not a claim about past performance. Review real responses after the first week. ${brief.offer ? `Only mention this confirmed offer when relevant: ${brief.offer}` : "Validate an offer idea before promising delivery or setting a price."}`,
+          title: onboardingStrategyTitle(brief),
+          content: `## Strategic Goal\n${goal}. Begin with a small, reviewable experiment.\n\n## Target Audience\n${brief.audience || "Confirm your audience"}\n\n## Content Pillars\n${pillars.map(([weight, title, share]) => `### ${weight}% ${title}\nCore Message: Help ${brief.audience || "your audience"} make progress.\nWhat I Share: ${share}\nWhy It Matters: Offer something useful before asking for an action.`).join("\n\n")}\n\n## Posting Rhythm\nAim for ${brief.postsPerWeek} posts per week on ${onboardingPlatformIsNeutral(brief) ? "the platform you choose" : onboardingPlatformName(brief.platform)}, in ${brief.timezone}. Review each draft before scheduling.\n\n## Notes\nThis is a starting strategy, not a claim about past performance. Review real responses after the first week. ${brief.offer ? `Only mention this confirmed offer when relevant: ${brief.offer}` : "Validate an offer idea before promising delivery or setting a price."}`,
         },
       ],
       drafts: [],
@@ -297,6 +322,69 @@ export function buildManualCandidates(brief: OnboardingBrief): OnboardingCandida
     },
     "creator_answers",
   );
+}
+
+const PLATFORM_MENTIONS: [OnboardingOutputPlatform, RegExp][] = [
+  ["linkedin", /\blinked\s?in\b|linkedin\.com\//gi],
+  ["instagram", /\binstagram\b|\binsta\b|\breels?\b|instagram\.com\//gi],
+  ["twitter", /\btwitter\b|\btweets?\b|(?:^|\/\/|\s)x\.com\//gi],
+];
+export type OnboardingOutputPlatform = (typeof ONBOARDING_OUTPUT_PLATFORMS)[number];
+
+/** The output platform the creator named in their own answers or links, if exactly one leads. */
+export function mentionedOnboardingPlatform(
+  brief: Pick<
+    OnboardingBrief,
+    "expertise" | "audience" | "offer" | "bio" | "goal" | "writingSample" | "links"
+  >,
+): OnboardingOutputPlatform | null {
+  const text = [
+    brief.expertise,
+    brief.audience,
+    brief.offer,
+    brief.bio,
+    ...brief.links.map((link) => `${link.title} ${link.url}`),
+  ].join("\n");
+  const counts = PLATFORM_MENTIONS.map(
+    ([platform, pattern]) => [platform, text.match(pattern)?.length ?? 0] as const,
+  ).sort((a, b) => b[1] - a[1]);
+  return counts[0][1] > 0 && counts[0][1] > counts[1][1] ? counts[0][0] : null;
+}
+
+/**
+ * Nothing connected and no platform named in the answers: the strategy stays platform-neutral
+ * and the starter draft is a plain text post rather than a claim about a specific network.
+ */
+export function onboardingPlatformIsNeutral(brief: OnboardingBrief) {
+  return !brief.primaryConnectionId && !mentionedOnboardingPlatform(brief);
+}
+
+export function onboardingPlatformName(platform: string) {
+  return platform === "twitter"
+    ? "X"
+    : platform === "linkedin"
+      ? "LinkedIn"
+      : platform[0].toUpperCase() + platform.slice(1);
+}
+
+export function onboardingStrategyTitle(brief: OnboardingBrief) {
+  return onboardingPlatformIsNeutral(brief)
+    ? "Content Strategy"
+    : `${onboardingPlatformName(brief.platform)} Strategy`;
+}
+
+/** The draft platform: the connected account's, else the one named in the answers. */
+export function resolveOnboardingPlatform(
+  brief: OnboardingBrief,
+  connectedProvider?: string | null,
+): OnboardingBrief["platform"] {
+  if (
+    connectedProvider &&
+    (ONBOARDING_OUTPUT_PLATFORMS as readonly string[]).includes(connectedProvider)
+  )
+    return connectedProvider as OnboardingOutputPlatform;
+  if (brief.primaryConnectionId) return brief.platform;
+  return mentionedOnboardingPlatform(brief) ?? "linkedin";
 }
 
 export function preparationReady(brief: OnboardingBrief, candidates: OnboardingCandidates | null) {

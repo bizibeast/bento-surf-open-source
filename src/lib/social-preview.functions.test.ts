@@ -184,6 +184,12 @@ describe("social handle normalization", () => {
   ])("normalizes %s profile inputs", (platform, input, expected) => {
     expect(normalizeSocialHandle(platform, input)).toBe(expected);
   });
+
+  it("keeps a URL whose host does not match the selected platform", () => {
+    expect(normalizeSocialHandle("instagram", "https://x.com/lotusW3PM")).toBe(
+      "https://x.com/lotusW3PM",
+    );
+  });
 });
 
 describe("LinkedIn follower counts", () => {

@@ -72,6 +72,48 @@ const documents = () =>
         : [],
   }));
 
+type WriteRequest = {
+  input: { write?: string; chapters?: { id: string }[] };
+  system: string;
+  timeoutMs: number;
+  maxTokens: number;
+};
+const identityDocs = () => documents().filter((doc) => doc.kind !== "strategy");
+const strategyDocs = () => documents().filter((doc) => doc.kind === "strategy");
+const approve = ({ input }: WriteRequest) => ({
+  value: { reviews: (input.chapters ?? []).map((doc) => ({ id: doc.id, unsupported: [] })) },
+});
+/** Routes the parallel writes and the review to separate handlers. */
+const router = (handlers: {
+  identity?: (request: WriteRequest, call: number) => unknown;
+  strategy?: (request: WriteRequest, call: number) => unknown;
+  review?: (request: WriteRequest, call: number) => unknown;
+}) => {
+  const counts: Record<string, number> = {};
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return vi.fn(async (raw: any): Promise<any> => {
+    const request = raw as WriteRequest;
+    const task = request.input.chapters ? "review" : request.input.write || "identity";
+    counts[task] = (counts[task] ?? 0) + 1;
+    const handler =
+      handlers[task as keyof typeof handlers] ??
+      (task === "review"
+        ? approve
+        : task === "strategy"
+          ? () => ({ value: { documents: strategyDocs() } })
+          : () => ({ value: { documents: identityDocs() } }));
+    return handler(request, counts[task]);
+  });
+};
+const callsFor = (generate: ReturnType<typeof router>, task: string) =>
+  generate.mock.calls
+    .map((call) => call[0] as WriteRequest)
+    .filter((request) =>
+      task === "review"
+        ? request.input.chapters
+        : !request.input.chapters && request.input.write === task,
+    );
+
 describe("bounded personal Brain evidence", () => {
   it("reserves room for answers, profiles and posts without forwarding private metadata", () => {
     const many = {
@@ -112,27 +154,20 @@ describe("bounded personal Brain evidence", () => {
       expect(ids).toContain(`${provider}-39`);
     }
   });
-  it("uses one generation and one independent bounded review before adding source links", async () => {
-    const generate = vi
-      .fn()
-      .mockResolvedValueOnce({ value: { documents: documents() } })
-      .mockImplementation(async ({ input }) => ({
-        value: {
-          reviews: (input.chapters ?? input.documents).map((doc: { id: string }) => ({
-            id: doc.id,
-            approved: true,
-            sourceIds: ["answers"],
-            issues: [],
-          })),
-        },
-      }));
+  it("writes the personal chapters and the strategy in parallel, then one bounded review", async () => {
+    const generate = router({});
     const result = await personalizeOnboardingBrain(brief, research, Date.now() + 90000, generate);
-    expect(generate).toHaveBeenCalledTimes(2);
+    expect(generate).toHaveBeenCalledTimes(3);
+    const [identity] = callsFor(generate, "identity");
+    const [strategy] = callsFor(generate, "strategy");
     // Real post history keeps the full output budget.
-    expect(generate.mock.calls[0][0].maxTokens).toBe(6000);
-    expect(generate.mock.calls[0][0].timeoutMs).toBeLessThanOrEqual(75000);
-    expect(JSON.stringify(generate.mock.calls[0][0].input)).not.toContain("https://");
+    expect(identity.maxTokens).toBe(6000);
+    expect(strategy.maxTokens).toBeLessThan(6000);
+    expect(identity.timeoutMs).toBeLessThanOrEqual(75000);
+    expect(JSON.stringify(identity.input)).not.toContain("https://");
     expect(result.brain[0].content).toContain("Source notes");
+    expect(result.personalChapters).toBe(3);
+    expect(result.diagnostics?.starterFallbacks).toEqual([]);
   });
 });
 
@@ -280,28 +315,18 @@ it("spends no more than the remaining shared onboarding review window", async ()
   const start = Date.now();
   const now = vi.spyOn(Date, "now");
   now.mockReturnValue(start);
-  const generate = vi
-    .fn()
-    .mockImplementationOnce(async () => {
+  const generate = router({
+    identity: () => {
       now.mockReturnValue(start + 38000);
-      return { value: { documents: documents() } };
-    })
-    .mockImplementation(async ({ input }) => ({
-      value: {
-        reviews: (input.chapters ?? input.documents).map((doc: { id: string }) => ({
-          id: doc.id,
-          approved: true,
-          sourceIds: ["answers"],
-          issues: [],
-        })),
-      },
-    }));
+      return { value: { documents: identityDocs() } };
+    },
+  });
   try {
     await personalizeOnboardingBrain(brief, research, start + 90000, generate);
     // Writing leaves 5s of the job deadline for the review: 90s - 5s.
-    expect(generate.mock.calls[0][0].timeoutMs).toBe(75000);
+    expect(callsFor(generate, "identity")[0].timeoutMs).toBe(75000);
     // The review gets up to 25s of what is left (capped at 20s per review call).
-    expect(generate.mock.calls[1][0].timeoutMs).toBe(20000);
+    expect(callsFor(generate, "review")[0].timeoutMs).toBe(20000);
   } finally {
     now.mockRestore();
   }
@@ -311,54 +336,34 @@ it("gives the Brain up to 110s: 75s to write, then up to 25s of what remains to 
   const start = Date.now();
   const now = vi.spyOn(Date, "now");
   now.mockReturnValue(start);
-  const generate = vi
-    .fn()
-    .mockImplementationOnce(async () => {
+  const generate = router({
+    identity: () => {
       now.mockReturnValue(start + 100_000);
-      return { value: { documents: documents() } };
-    })
-    .mockImplementation(async ({ input }) => ({
-      value: {
-        reviews: (input.chapters ?? input.documents).map((doc: { id: string }) => ({
-          id: doc.id,
-          approved: true,
-          sourceIds: ["answers"],
-          issues: [],
-        })),
-      },
-    }));
+      return { value: { documents: identityDocs() } };
+    },
+  });
   try {
     await personalizeOnboardingBrain(brief, research, start + 150_000, generate);
-    expect(generate.mock.calls[0][0].timeoutMs).toBe(75000);
+    expect(callsFor(generate, "identity")[0].timeoutMs).toBe(75000);
+    expect(callsFor(generate, "strategy")[0].timeoutMs).toBe(75000);
     // Step ends at 110s, so only 10s remain for the review.
-    expect(generate.mock.calls[1][0].timeoutMs).toBe(10000);
+    expect(callsFor(generate, "review")[0].timeoutMs).toBe(10000);
   } finally {
     now.mockRestore();
   }
 });
 
-it("asks for three shorter documents when there is no post history", async () => {
-  const generate = vi
-    .fn()
-    .mockResolvedValueOnce({ value: { documents: documents().slice(0, 3) } })
-    .mockImplementation(async ({ input }) => ({
-      value: {
-        reviews: (input.chapters ?? input.documents).map((doc: { id: string }) => ({
-          id: doc.id,
-          approved: true,
-          sourceIds: ["answers"],
-          issues: [],
-        })),
-      },
-    }));
+it("asks for shorter chapters and a focused strategy when there is no post history", async () => {
+  const generate = router({});
   await personalizeOnboardingBrain(
     brief,
     { ...research, posts: [], photoPostId: null },
     Date.now() + 150_000,
     generate,
   );
-  expect(generate.mock.calls[0][0].maxTokens).toBe(3000);
-  expect(generate.mock.calls[0][0].system).toContain("return exactly 3 documents");
+  expect(callsFor(generate, "identity")[0].maxTokens).toBe(2400);
+  expect(callsFor(generate, "identity")[0].system).toContain("return exactly 2 documents");
+  expect(callsFor(generate, "strategy")[0].system).toContain("Return exactly 1 document");
 });
 
 describe("Brain failure reporting", () => {
@@ -409,9 +414,9 @@ describe("Brain failure reporting", () => {
 describe("evidence-grounded personal Brain", () => {
   const review =
     (unsupported: Record<string, string[]> = {}) =>
-    async ({ input }: { input: { chapters: { id: string }[] } }) => ({
+    async ({ input }: WriteRequest) => ({
       value: {
-        reviews: input.chapters.map((chapter) => ({
+        reviews: (input.chapters ?? []).map((chapter) => ({
           id: chapter.id,
           unsupported: unsupported[chapter.id] ?? [],
         })),
@@ -496,13 +501,13 @@ describe("evidence-grounded personal Brain", () => {
   });
 
   it("removes sentences the reviewer flags instead of failing the Brain", async () => {
-    const docs = documents();
+    const docs = identityDocs();
     docs[0].content += "\n\nI have coached 500 photographers.";
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
-    const generate = vi
-      .fn()
-      .mockResolvedValueOnce({ value: { documents: docs } })
-      .mockImplementation(review({ "chapter-1": ["I have coached 500 photographers."] }));
+    const generate = router({
+      identity: () => ({ value: { documents: docs } }),
+      review: review({ "chapter-1": ["I have coached 500 photographers."] }),
+    });
     const result = await personalizeOnboardingBrain(
       brief,
       research,
@@ -512,44 +517,46 @@ describe("evidence-grounded personal Brain", () => {
     expect(result.personalChapters).toBe(3);
     expect(result.brain[0].content).not.toContain("500");
     expect(result.brain[0].content).toContain("Source notes");
-    expect(generate.mock.calls[1][0].input.sources.map((s: { id: string }) => s.id)).toEqual(
-      sources.map((source) => source.id),
-    );
+    expect(
+      (callsFor(generate, "review")[0].input as { sources: { id: string }[] }).sources.map(
+        (s) => s.id,
+      ),
+    ).toEqual(sources.map((source) => source.id));
     info.mockRestore();
   });
 
   it("keeps the Brain when the reviewer is unavailable, without unsourced numbers", async () => {
-    const docs = documents();
+    const docs = identityDocs();
     docs[0].content += "\n\nI have coached 500 photographers.";
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
-    const generate = vi
-      .fn()
-      .mockResolvedValueOnce({ value: { documents: docs } })
-      .mockRejectedValue(new AiProviderRequestError(504, "openrouter"));
+    const generate = router({
+      identity: () => ({ value: { documents: docs } }),
+      review: () => {
+        throw new AiProviderRequestError(504, "openrouter");
+      },
+    });
     const result = await personalizeOnboardingBrain(
       brief,
       research,
       Date.now() + 150_000,
       generate,
     );
-    expect(generate).toHaveBeenCalledTimes(3);
+    expect(callsFor(generate, "review")).toHaveLength(2);
     expect(result.personalChapters).toBe(3);
     expect(result.brain[0].content).not.toContain("500");
     warn.mockRestore();
     info.mockRestore();
   });
 
-  it("fills a missing or incomplete chapter with the answer-based version", async () => {
+  it("fills a chapter that stays incomplete with the answer-based version", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
-    const docs = documents().map((doc) =>
-      doc.kind === "strategy" ? { ...doc, content: "Vague strategy. ".repeat(10) } : doc,
-    );
-    const generate = vi
-      .fn()
-      .mockResolvedValueOnce({ value: { documents: [...docs, { kind: "nonsense" }] } })
-      .mockImplementation(review());
+    const vague = { ...strategyDocs()[0], content: "Vague strategy. ".repeat(10) };
+    const generate = router({
+      identity: () => ({ value: { documents: [...identityDocs(), { kind: "nonsense" }] } }),
+      strategy: () => ({ value: { documents: [vague] } }),
+    });
     const result = await personalizeOnboardingBrain(
       brief,
       research,
@@ -558,51 +565,140 @@ describe("evidence-grounded personal Brain", () => {
     );
     expect(result.brain.map((doc) => doc.kind)).toEqual(["profile", "instruction", "strategy"]);
     expect(result.personalChapters).toBe(2);
+    // The strategy write got one focused retry before the starter version was used.
+    expect(callsFor(generate, "strategy")).toHaveLength(2);
+    expect(result.diagnostics).toMatchObject({
+      missingAfterWrite: ["strategy"],
+      starterFallbacks: ["strategy"],
+      strategyIssue: expect.stringContaining("missing sections"),
+    });
     warn.mockRestore();
+    info.mockRestore();
+  });
+
+  it("repairs a strategy written in a slightly different format", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const loose = {
+      kind: "strategy",
+      title: "Strategy",
+      content: `**Strategic goal:**\nHelp new photographers trust their light.\n\n## Target Audience\nNew photographers.\n\n## Content Pillars\n### Pillar 1: Window light (50%)\n**Core message:** Light is a choice.\n**What I share:** Setups.\n**Why it matters:** Confidence.\n\n### Pillar 2: Simple gear (40%)\n- core message: Less gear.\n- What I Share: Kits.\n- Why It Matters: Budget.\n\n## Posting rhythm\nThree posts a week.`,
+    };
+    const generate = router({ strategy: () => ({ value: { documents: [loose] } }) });
+    const result = await personalizeOnboardingBrain(
+      brief,
+      research,
+      Date.now() + 150_000,
+      generate,
+    );
+    const strategy = result.brain.find((doc) => doc.kind === "strategy")!;
+    expect(result.personalChapters).toBe(3);
+    expect(strategy.content).toContain("### 56% Window light");
+    expect(strategy.content).toContain("### 44% Simple gear");
+    expect(strategy.content).toContain("## Notes");
+    expect(callsFor(generate, "strategy")).toHaveLength(1);
+    expect(result.diagnostics?.strategyRepaired).toBe(true);
+    info.mockRestore();
+  });
+
+  it("never lets the reviewer break the strategy's structure", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const strategy = strategyDocs()[0];
+    const pillarLine = strategy.content
+      .split("\n")
+      .find((line) => line.startsWith("Core Message"))!;
+    const generate = router({ review: review({ "chapter-3": [pillarLine] }) });
+    const result = await personalizeOnboardingBrain(
+      brief,
+      research,
+      Date.now() + 150_000,
+      generate,
+    );
+    expect(result.personalChapters).toBe(3);
     info.mockRestore();
   });
 
   it("asks once more for a required chapter the writer left out", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const docs = documents();
-    const generate = vi
-      .fn()
-      .mockResolvedValueOnce({ value: { documents: docs.filter((doc) => doc.kind === "profile") } })
-      .mockResolvedValueOnce({ value: { documents: docs.filter((doc) => doc.kind !== "profile") } })
-      .mockImplementation(review());
+    const generate = router({
+      identity: (_request, call) => ({
+        value: {
+          documents: docs.filter((doc) =>
+            call === 1 ? doc.kind === "profile" : doc.kind === "instruction",
+          ),
+        },
+      }),
+    });
     const result = await personalizeOnboardingBrain(
       brief,
       research,
       Date.now() + 150_000,
       generate,
     );
-    expect(generate.mock.calls[1][0].system).toMatch(/missing these required documents/);
+    expect(callsFor(generate, "identity")[1].system).toMatch(/missing these required documents/);
     expect(result.personalChapters).toBe(3);
     expect(result.brain.map((doc) => doc.kind)).toEqual(["profile", "instruction", "strategy"]);
+    expect(result.diagnostics?.toppedUp).toBe(1);
+    info.mockRestore();
+  });
+
+  it("retries a strategy write that failed while keeping the personal chapters", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const generate = router({
+      strategy: (_request, call) => {
+        if (call === 1) throw new AiProviderRequestError(502, "openrouter");
+        return { value: { documents: strategyDocs() } };
+      },
+    });
+    const result = await personalizeOnboardingBrain(
+      brief,
+      research,
+      Date.now() + 150_000,
+      generate,
+    );
+    expect(result.personalChapters).toBe(3);
+    expect(result.diagnostics?.failedWrites).toEqual(["strategy:AiProviderRequestError"]);
+    warn.mockRestore();
+    info.mockRestore();
+  });
+
+  it("reports chapter progress as each write finishes", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const progress: string[][] = [];
+    await personalizeOnboardingBrain(brief, research, Date.now() + 150_000, router({}), (done) =>
+      progress.push([...done]),
+    );
+    expect(progress.at(-1)).toEqual(
+      expect.arrayContaining(["profile", "instruction", "strategy", "review"]),
+    );
+    expect(progress.length).toBeGreaterThanOrEqual(3);
     info.mockRestore();
   });
 
   it("re-asks once only when the answer is not usable JSON", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
-    const generate = vi
-      .fn()
-      .mockRejectedValueOnce(new AiStructuredOutputError("length"))
-      .mockResolvedValueOnce({ value: { documents: documents() } })
-      .mockImplementation(review());
+    const generate = router({
+      identity: (_request, call) => {
+        if (call === 1) throw new AiStructuredOutputError("length");
+        return { value: { documents: identityDocs() } };
+      },
+    });
     const result = await personalizeOnboardingBrain(
       brief,
       research,
       Date.now() + 150_000,
       generate,
     );
-    expect(generate).toHaveBeenCalledTimes(3);
+    expect(callsFor(generate, "identity")).toHaveLength(2);
     expect(result.personalChapters).toBe(3);
     const provider = vi.fn().mockRejectedValue(new AiProviderRequestError(504, "openrouter"));
     await expect(
       personalizeOnboardingBrain(brief, research, Date.now() + 150_000, provider),
     ).rejects.toBeInstanceOf(AiProviderRequestError);
-    expect(provider).toHaveBeenCalledTimes(1);
+    // Both parallel writes and their focused retries, nothing more.
+    expect(provider).toHaveBeenCalledTimes(4);
     expect(brainOutputIssues(new Error("other"))).toBeNull();
     warn.mockRestore();
     info.mockRestore();

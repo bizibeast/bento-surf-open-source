@@ -1543,3 +1543,71 @@
     transform: none;
   }
 }
+.ob-progress {
+  max-width: 380px;
+  margin: 26px auto 14px;
+  text-align: left;
+}
+.ob-progress-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ob-muted) 18%, transparent);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.ob-progress-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #3478f6;
+  transition: width 0.6s ease;
+}
+.ob-progress-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.ob-progress-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--ob-muted);
+}
+.ob-progress-step svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+.ob-progress-step.is-done {
+  color: inherit;
+}
+.ob-progress-step.is-done svg {
+  color: #3478f6;
+}
+.ob-progress-step.is-active {
+  color: inherit;
+  font-weight: 600;
+}
+.ob-progress-dot {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+.ob-progress-dot::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.45;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ob-progress-bar > span {
+    transition: none;
+  }
+}

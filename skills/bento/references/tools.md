@@ -2,6 +2,7 @@
 
 - `read_workspace_data`: paginated stored Brain/source documents, routines/runs, Discover/bookmarks and social account/post/history records. Read an item by ID for full text; no provider refresh.
 - `get_bento_overview`: profile, plan, feature links, counts, and recent workspace state.
+- `list_workspaces`: active and unavailable creator workspaces owned by the OAuth login. For social work in a second workspace, pass its returned ID as `workspaceId` to `list_social_accounts`, `upload_media`, `begin_media_upload`, `list_social_posts`, `get_social_post`, `search_stock_photos`, `resolve_post_media`, `create_social_post`, `get_scheduler_workspace`, and `manage_scheduler`. Omit it to use the original workspace. IDs and uploaded media belong to one workspace; schedule and verify a separate post for each workspace.
 - `list_social_accounts`: connected publishing/Auto-DM accounts and readiness.
 - `upload_media`: stream a public media URL into Bento storage, or send inline base64 up to 25 MiB over remote MCP (128 KiB through browser WebMCP). Prefer binary chunks for local files over 8 MB.
 - `begin_media_upload`: check storage/plan and prepare a private two-hour binary upload. The returned HTTP instructions handle parts, completion and cancellation without exposing the account OAuth token.

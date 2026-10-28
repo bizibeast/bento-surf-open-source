@@ -866,10 +866,26 @@ async function normalizeCatastrophicSsrResponse(
   });
 }
 
+function leakedRouteTemplateResponse(request: Request) {
+  const url = new URL(request.url);
+  if (!url.pathname.includes("$") && !/%24/i.test(url.pathname)) return null;
+  return new Response("Gone", {
+    status: 410,
+    headers: {
+      "content-type": "text/plain; charset=utf-8",
+      "x-robots-tag": "noindex",
+      "cache-control": "public, max-age=86400",
+    },
+  });
+}
+
 export default {
   async fetch(request: CloudflareRequest) {
     const env = hydrateRuntimeEnv(request.runtime?.cloudflare?.env ?? globalThis.__env__);
     const ctx = request.runtime?.cloudflare?.context;
+
+    const leakedTemplate = leakedRouteTemplateResponse(request);
+    if (leakedTemplate) return withDeploymentHeaders(leakedTemplate, env, request);
 
     const canonicalRedirect = routeCanonicalHostname(
       request,

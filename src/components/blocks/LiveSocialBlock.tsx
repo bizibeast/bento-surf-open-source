@@ -16,7 +16,8 @@ import {
   SocialTile,
 } from "./SocialTile";
 import { githubActivityWeekCount } from "@/lib/github-activity";
-import { safeCssColor, safeMediaUrl, safeNavigationHref } from "@/lib/safe-url";
+import { socialProfileHref } from "@/lib/platform-detection";
+import { safeCssColor, safeMediaUrl } from "@/lib/safe-url";
 import { YouTubePlayer } from "./YouTubePlayer";
 import { liveSocialRefetchInterval } from "./live-social-refetch";
 import { DecodedImage } from "@/components/DecodedImage";
@@ -58,6 +59,7 @@ function useSocialPreview(
   liveEnabled = false,
 ) {
   const cleanHandle = handle ? normalizeSocialHandle(platform, handle) : "";
+  const previewHandle = /^(https?:\/\/|www\.)/i.test(cleanHandle) ? "" : cleanHandle;
   const [settledHandle, setSettledHandle] = useState(cleanHandle);
 
   useEffect(() => {
@@ -74,6 +76,7 @@ function useSocialPreview(
     enabled:
       liveEnabled &&
       !!blockId &&
+      !!previewHandle &&
       !!settledHandle &&
       settledHandle === cleanHandle &&
       LIVE_PLATFORMS.has(platform),
@@ -231,9 +234,7 @@ function GitHubActivityTile({
 }) {
   const platform = findPlatform("github")!;
   const Icon = platform.icon;
-  const href =
-    safeNavigationHref(url || (handle ? `https://github.com/${handle}` : "https://github.com")) ||
-    "https://github.com";
+  const href = socialProfileHref("github", handle, url) || "https://github.com";
   const wide = w === 4 && h <= 2;
   const metric = formatSocialMetric(followerCount);
   const cta = ctaLabel || socialCtaFor("github");
@@ -324,10 +325,7 @@ export function LiveSocialGallery({
     (liveEnabled && platform !== "instagram" ? fallbackFollowerCount : null) ??
     null;
   const wide = w === 4 && h <= 2;
-  const href =
-    safeNavigationHref(
-      url || (handle && p?.urlBase ? `${p.urlBase}${handle}` : p?.urlBase || ""),
-    ) || "#";
+  const href = socialProfileHref(platform, handle, url) || "#";
   const [failedImages, setFailedImages] = useState<Set<string>>(() => new Set());
   const postSignature = posts.map((post) => post.imageUrl).join("|");
 

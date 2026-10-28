@@ -120,11 +120,26 @@ function checkoutReturnUrl(appUrl: string, returnTo: CheckoutReturnTo, trial = f
   return `${appUrl}/link?upgraded=1&${marker}`;
 }
 
+/** Dodo customer details: the creator's own name when there is one, never the email prefix. */
+export function checkoutCustomer(email: string, name?: string | null) {
+  const cleaned = (name ?? "").replace(/\s+/g, " ").trim().slice(0, 100);
+  return cleaned ? { email, name: cleaned } : { email };
+}
+
+/** A saved profile name, unless it is only the signup default taken from the email. */
+export function checkoutProfileName(email: string | undefined, displayName?: string | null) {
+  const name = displayName?.trim();
+  if (!name) return undefined;
+  return email && name.toLowerCase() === email.split("@")[0]?.toLowerCase() ? undefined : name;
+}
+
 async function createHostedCheckoutSession(input: {
   userId: string;
   authUserId?: string;
   workspaceId?: string;
   email?: string;
+  /** The name the creator entered, never derived from the email address. */
+  name?: string;
   plan: PaidPlanId;
   period: BillingPeriod;
   returnTo: CheckoutReturnTo;
@@ -153,7 +168,8 @@ async function createHostedCheckoutSession(input: {
     // No allowed_payment_method_types: Dodo offers every method enabled for the
     // business that fits the buyer's country, currency, device and a
     // subscription (cards, UPI, Apple Pay, Google Pay and other local methods).
-    ...(input.email ? { customer: { email: input.email, name: input.email.split("@")[0] } } : {}),
+    // Prefill the creator's own name. Without one, Dodo asks for it on the checkout page.
+    ...(input.email ? { customer: checkoutCustomer(input.email, input.name) } : {}),
   };
   if (input.period === "yearly" && !input.trial) await verifyYearlyProduct(productId, input.plan);
   // Verify before reserving: a failed read/preview creates no provider session
@@ -250,8 +266,11 @@ export const createCheckout = createServerFn({ method: "POST" })
       throw new Error(
         "Manage your existing subscription in Billing; a second subscription is not needed.",
       );
+    let name: string | undefined;
     if (eligibility.profile.billing_catalog === "2026-10" && !eligibility.profile.onboarded) {
       const preparation = await readOnboardingSession(userId);
+      const entered = (preparation?.brief as { displayName?: unknown } | null)?.displayName;
+      if (typeof entered === "string") name = entered;
       if (
         preparation?.status !== "prepared" ||
         preparation.approved_revision !== preparation.revision
@@ -265,6 +284,7 @@ export const createCheckout = createServerFn({ method: "POST" })
       authUserId,
       workspaceId: userId,
       email,
+      name: name?.trim() || checkoutProfileName(email, eligibility.profile.display_name),
       plan: data.plan,
       period: data.period,
       returnTo: data.returnTo,

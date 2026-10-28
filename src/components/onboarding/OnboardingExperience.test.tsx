@@ -311,3 +311,29 @@ it("restores the username chosen before signup", async () => {
   mount();
   expect(await screen.findByLabelText("Your Bento username")).toHaveValue("ari_creates");
 });
+
+it("keeps the draft on screen while approving instead of flashing the Brain progress screen", async () => {
+  state = { ...state, step: 3, brief: profile(), candidates: prepared(), jobStatus: "ready" };
+  let finishApproval: () => void = () => undefined;
+  api.approve.mockImplementation(
+    ({ data }) =>
+      new Promise((resolve) => {
+        finishApproval = () => {
+          state = { ...state, candidates: data.candidates, status: "prepared", step: 5 };
+          resolve(structuredClone(state));
+        };
+      }),
+  );
+  mount();
+  fireEvent.click(await screen.findByRole("button", { name: "See my first draft" }));
+  expect(await screen.findByText(prepared().drafts[0].body)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "This feels like me" }));
+  await waitFor(() => expect(api.approve).toHaveBeenCalledOnce());
+  // While the approval request is in flight the draft stays put and the button shows it is busy.
+  expect(screen.queryByText(/Connecting the dots/)).not.toBeInTheDocument();
+  expect(screen.getByText(prepared().drafts[0].body)).toBeVisible();
+  expect(screen.getByRole("button", { name: "This feels like me" })).toBeDisabled();
+  finishApproval();
+  expect(await screen.findByTestId("capability-showcase")).toBeVisible();
+  expect(screen.queryByText(/Connecting the dots/)).not.toBeInTheDocument();
+});

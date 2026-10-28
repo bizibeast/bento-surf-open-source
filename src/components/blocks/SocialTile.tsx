@@ -1,6 +1,7 @@
 import { findPlatform } from "@/lib/platforms";
+import { socialProfileHref } from "@/lib/platform-detection";
 import { Link as LinkIcon } from "lucide-react";
-import { safeCssColor, safeNavigationHref } from "@/lib/safe-url";
+import { safeCssColor } from "@/lib/safe-url";
 
 /** Default CTA label per platform category. */
 export function socialCtaFor(key: string): string {
@@ -167,11 +168,15 @@ export function SocialTile({
   const label = p?.label ?? "Link";
   const brand = p?.color ?? "#1f2937";
   const fg = p?.fg ?? "#fff";
-  const href = safeNavigationHref(url || (handle && p?.urlBase ? p.urlBase + handle : "")) || "#";
+  const href = socialProfileHref(platformKey, handle, url) || "#";
   const cta = ctaLabel || socialCtaFor(platformKey);
   const metric = formatSocialMetric(followerCount);
   const domain = domainOf(p?.urlBase) || label.toLowerCase();
-  const displayTitle = title || (handle ? `@${handle}` : label);
+  const handleLabel =
+    handle && !/^(https?:\/\/|www\.)/i.test(handle.trim())
+      ? `@${handle.trim().replace(/^@/, "")}`
+      : "";
+  const displayTitle = title || handleLabel || (handle?.trim() ? handle.trim() : label);
   const isInstagram = platformKey === "instagram";
   const btnBg =
     safeCssColor(ctaBgColor) || safeCssColor(colorOverride) || (isInstagram ? "#0095f6" : brand);
@@ -190,7 +195,7 @@ export function SocialTile({
         href={href}
         target="_blank"
         rel="noopener noreferrer"
-        aria-label={`${label}${handle ? ` @${handle}` : ""}`}
+        aria-label={`${label}${handleLabel ? ` ${handleLabel}` : ""}`}
         className={`${SOCIAL_TILE_SHELL} relative`}
         style={tileStyle}
       >
@@ -260,7 +265,9 @@ export function SocialTile({
           <div className="truncate text-xs text-card-foreground/55">{domain}</div>
         )}
         <div className="truncate font-display text-lg leading-tight">{title || label}</div>
-        {handle && <div className="mt-0.5 truncate text-xs text-card-foreground/60">@{handle}</div>}
+        {handleLabel && (
+          <div className="mt-0.5 truncate text-xs text-card-foreground/60">{handleLabel}</div>
+        )}
         {description && (
           <div className="mt-1 line-clamp-2 text-xs text-card-foreground/60">{description}</div>
         )}

@@ -138,7 +138,7 @@ describe("Instagram gallery resilience", () => {
 
     const tile = screen.getByTestId("social-gallery-tile");
     expect(tile.tagName).toBe("A");
-    expect(tile).toHaveAttribute("href", "https://instagram.com/bento.surf");
+    expect(tile).toHaveAttribute("href", "https://www.instagram.com/bento.surf");
     await waitFor(() => expect(getSocialPreview).toHaveBeenCalled());
     expect(screen.queryByTestId("social-post-grid")).not.toBeInTheDocument();
   });

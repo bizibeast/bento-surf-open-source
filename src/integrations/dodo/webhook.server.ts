@@ -5,6 +5,7 @@ import { dodo } from "./client.server";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { Json } from "@/integrations/supabase/types";
 import { captureServerEvent, captureServerException } from "@/lib/posthog.server";
+import { isTestEmail } from "@/lib/analytics-identity";
 import {
   verifiedDodoAddonState,
   type DodoAddonCartItem,
@@ -793,6 +794,7 @@ async function markEvent(
 }
 
 export function buildBillingAnalyticsProperties(event: DodoEvent, webhookId: string) {
+  const customerEmail = asString(asRecord(event.data.customer).email);
   const isPayment = event.type === "payment.succeeded";
   const isRefund = event.type === "refund.succeeded";
   const amount =
@@ -814,13 +816,28 @@ export function buildBillingAnalyticsProperties(event: DodoEvent, webhookId: str
     payment_id: asString(event.data.payment_id),
     refund_id: asString(event.data.refund_id),
     billing_status: eventStatus(event.type, event.data),
+    // Dodo reports card-optional trials as "active"; the trial length tells them apart.
+    trial:
+      (asNumber(event.data.trial_period_days) ?? 0) > 0 ||
+      Boolean(asString(asRecord(event.data.metadata).trial_checkout_key)),
+    // Only the boolean is sent; the customer email never reaches analytics.
+    is_test_account: customerEmail ? isTestEmail(customerEmail) : undefined,
   };
 }
 
+/**
+ * Billing events belong to the person who checked out. Workspace ids equal the owner id
+ * for personal workspaces, but team workspaces differ, so prefer the auth user id.
+ */
+export function billingAnalyticsDistinctId(event: DodoEvent, userId: string | null) {
+  return asString(asRecord(event.data.metadata).auth_user_id) ?? userId;
+}
+
 async function captureBillingEvent(event: DodoEvent, userId: string | null, webhookId: string) {
-  if (!userId) return;
+  const distinctId = userId ? billingAnalyticsDistinctId(event, userId) : null;
+  if (!distinctId) return;
   await captureServerEvent(
-    userId,
+    distinctId,
     event.type.replaceAll(".", "_"),
     buildBillingAnalyticsProperties(event, webhookId),
   );
