@@ -19,7 +19,18 @@ import {
 } from "./brief";
 import { onboardingDb } from "./session.server";
 import { prepareOnboardingInstagramPhoto } from "./media.server";
-import { loadOnboardingResearch, type OnboardingSource } from "./research.server";
+import {
+  loadOnboardingResearch,
+  onboardingBrainSources,
+  type OnboardingSource,
+} from "./research.server";
+import type { BrainSource } from "./brain-evidence";
+import { DRAFT_GROUNDING_RULES } from "./draft-grounding";
+import {
+  groundOnboardingDraft,
+  productionDraftChecker,
+  type DraftChecker,
+} from "./draft-grounding.server";
 import { prepareOnboardingBrain } from "./personalization.server";
 
 export function citedInstagramPhoto(
@@ -153,7 +164,17 @@ export function onboardingFallbackEnv(env: AiProviderEnv | undefined): AiProvide
 export type OnboardingDraftOptions = {
   /** Environment for the final fallback attempt. Omit to retry only the primary writer. */
   fallbackEnv?: AiProviderEnv;
+  /**
+   * The creator's own evidence (answers, connected profiles, their posts). Defaults to the
+   * answers plus the supplied posts.
+   */
+  evidence?: BrainSource[];
+  /** Model check of the finished draft. Without it only the deterministic check runs. */
+  checkDraft?: DraftChecker;
 };
+
+/** A checked draft shorter than this lost its substance; the grounded starter replaces it. */
+const MIN_GROUNDED_BODY_CHARS = 60;
 
 /** Before trial activation, use only the approved preparation and owned imported samples. */
 export async function generateOnboardingDrafts(
@@ -189,7 +210,7 @@ export async function generateOnboardingDrafts(
       : -1;
   const context: EditorialContext = {
     platform: brief.platform as EditorialPlatform,
-    request: `Prepare one original useful starter draft for ${brief.audience} about ${brief.expertise}. Goal: ${brief.goal}. Language: ${brief.language}. Develop one specific argument and useful reader decision in the creator's voice.${photoSourceIndex >= 0 ? ` Adapt the supported experience or lesson from source-${photoSourceIndex} into an original LinkedIn post and cite that source. Its owned Instagram photo can accompany the draft. Do not describe unseen image contents or invent new events.` : ""}`,
+    request: `Prepare one original useful starter draft for ${brief.audience} about ${brief.expertise}. Goal: ${brief.goal}. Language: ${brief.language}. Develop one specific argument and useful reader decision in the creator's voice. ${DRAFT_GROUNDING_RULES}${photoSourceIndex >= 0 ? ` Adapt the supported experience or lesson from source-${photoSourceIndex} into an original LinkedIn post and cite that source. Its owned Instagram photo can accompany the draft. Do not describe unseen image contents or invent new events.` : ""}`,
     brain: candidates.brain.map((item) => ({
       ...item,
       status: "confirmed",
@@ -255,8 +276,9 @@ export async function generateOnboardingDrafts(
       if (attempts > 0) {
         // Transient failures retry. A draft the checks kept rejecting gets one fresh write,
         // because nobody is in the chat to answer the follow-up question during onboarding.
-        // Missing evidence still stops here so the starter never gains invented facts.
-        const qualityRewrite = result?.reason === "quality" && qualityRewrites === 0;
+        // The fresh write goes through the same evidence and critique checks.
+        const qualityRewrite =
+          (result?.reason === "quality" || result?.reason === "evidence") && qualityRewrites === 0;
         if (result?.status !== "retry" && !qualityRewrite) break;
         if (qualityRewrite) qualityRewrites++;
         if (deadline - Date.now() - step.delay < MIN_ATTEMPT_BUDGET_MS) break;
@@ -280,7 +302,31 @@ export async function generateOnboardingDrafts(
         attempts,
       );
     }
-    const { card } = result;
+    const evidence =
+      options.evidence ??
+      onboardingBrainSources(brief, { profiles: [], posts: sources, photoPostId: null });
+    const grounded = await groundOnboardingDraft(
+      result.card,
+      evidence,
+      options.checkDraft ??
+        (async () => {
+          throw new Error("No draft checker configured.");
+        }),
+      options.checkDraft ? deadline : Date.now(),
+    );
+    console.info("[onboarding] draft grounding", grounded.report);
+    const card = grounded.draft;
+    if (
+      card.body.trim().length < MIN_GROUNDED_BODY_CHARS ||
+      (card.format === "carousel" && (card.slides?.length || 0) < 2)
+    )
+      return withGroundedStarter(
+        { ...candidates, drafts },
+        brief,
+        starterWarnings.evidence,
+        "evidence",
+        attempts,
+      );
     drafts.push(
       onboardingCandidatesSchema.shape.drafts.element.parse({
         ...card,
@@ -351,6 +397,8 @@ async function processOnboardingGenerationScoped(workspaceId: string) {
       ONBOARDING_DRAFT_RETRY_DELAYS_MS,
       {
         fallbackEnv: onboardingFallbackEnv(globalThis.__env__ as AiProviderEnv | undefined),
+        evidence: onboardingBrainSources(brief, research),
+        checkDraft: productionDraftChecker((globalThis.__env__ ?? {}) as AiProviderEnv),
       },
     );
     let parsed = onboardingCandidatesSchema.parse(generated);

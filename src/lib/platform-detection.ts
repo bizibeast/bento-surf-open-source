@@ -1,4 +1,5 @@
-import { PLATFORMS, type PlatformDef } from "@/lib/platforms";
+import { findPlatform, PLATFORMS, type PlatformDef } from "@/lib/platforms";
+import { safeNavigationHref } from "@/lib/safe-url";
 
 // Extract the first non-empty path segment, stripping a leading "@".
 const firstSeg = (u: URL) => (u.pathname.split("/").filter(Boolean)[0] ?? "").replace(/^@/, "");
@@ -43,7 +44,17 @@ export const PLATFORM_HOST_MAP: PlatformHostMatch[] = [
   { test: /(^|\.)(wa\.me|whatsapp\.com)$/i, key: "whatsapp", extract: firstSeg },
 
   // Video
-  { test: /(^|\.)(youtube\.com|youtu\.be)$/i, key: "youtube", extract: firstSeg },
+  {
+    test: /(^|\.)(youtube\.com|youtu\.be)$/i,
+    key: "youtube",
+    extract: (u) => {
+      const parts = u.pathname.split("/").filter(Boolean);
+      if ((parts[0] === "channel" || parts[0] === "c" || parts[0] === "user") && parts[1]) {
+        return parts[1];
+      }
+      return firstSeg(u);
+    },
+  },
   { test: /(^|\.)vimeo\.com$/i, key: "vimeo", extract: firstSeg },
   { test: /(^|\.)twitch\.tv$/i, key: "twitch", extract: firstSeg },
   { test: /(^|\.)loom\.com$/i, key: "loom", extract: firstSeg },
@@ -115,4 +126,123 @@ export function detectPlatformFromUrl(
     // Invalid or incomplete URLs are not platform links.
   }
   return null;
+}
+
+const DIRECT_SOCIAL_URL = /^(https?:\/\/|www\.)/i;
+const TRACKING_PARAMS = new Set(["hl", "s", "lang"]);
+
+function knownPlatformHost(hostname: string) {
+  const host = hostname.replace(/\.$/, "").toLowerCase();
+  return PLATFORM_HOST_MAP.some((match) => match.test.test(host));
+}
+
+/** A full URL, a www host, or a bare known platform host. Dotted handles stay handles. */
+function absoluteHttpUrl(value: string) {
+  const trimmed = value.trim();
+  let candidate: string | null = null;
+  if (/^https?:\/\//i.test(trimmed)) candidate = trimmed;
+  else if (/^www\./i.test(trimmed)) candidate = `https://${trimmed}`;
+  else {
+    const host = trimmed.split(/[/?#]/)[0]?.replace(/:\d+$/, "") ?? "";
+    if (host && !host.includes("@") && knownPlatformHost(host)) candidate = `https://${trimmed}`;
+  }
+  if (!candidate) return null;
+  try {
+    const url = new URL(candidate);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (!url.hostname.includes(".")) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function withoutTrackingParams(absolute: string) {
+  const url = new URL(absolute);
+  for (const key of [...url.searchParams.keys()]) {
+    const name = key.toLowerCase();
+    if (TRACKING_PARAMS.has(name) || name.startsWith("utm_")) url.searchParams.delete(key);
+  }
+  return url.toString();
+}
+
+/** Host, path, and query with www and a trailing slash folded away. */
+function profileUrlKey(value: string) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    const host = url.hostname
+      .replace(/^www\./i, "")
+      .replace(/^twitter\.com$/i, "x.com")
+      .toLowerCase();
+    const path = url.pathname.replace(/\/+$/, "") || "/";
+    const search = [...url.searchParams.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${key}=${item}`)
+      .join("&");
+    return `${host}${path}${search ? `?${search}` : ""}`;
+  } catch {
+    return null;
+  }
+}
+
+function sameProfileUrl(left: string, right: string) {
+  const key = profileUrlKey(left);
+  return key !== null && key === profileUrlKey(right);
+}
+
+/**
+ * Shorten only when urlBase + handle rebuilds this exact profile.
+ * Anything else (profile.php, /groups, /channel, /company, /u, invites) stays a full URL.
+ */
+function shortenProfileUrl(absolute: string) {
+  const detected = detectPlatformFromUrl(absolute);
+  if (!detected?.platform.urlBase || detected.platform.blockType !== "social_link") return null;
+  const handle = detected.handle.replace(/^@/, "").trim().slice(0, 100);
+  if (!handle || /[/?#]/.test(handle)) return null;
+  const rebuilt = `${detected.platform.urlBase}${handle}`;
+  if (!sameProfileUrl(absolute, rebuilt)) return null;
+  return { platform: detected.platform.key, handle };
+}
+
+/** Turn a pasted profile URL into a handle only when that handle rebuilds the same URL. */
+export function normalizeStoredSocialLink(platform: string, value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return { platform, handle: "" };
+  const absolute = absoluteHttpUrl(trimmed);
+  if (absolute) {
+    const shortened = shortenProfileUrl(withoutTrackingParams(absolute));
+    if (shortened) return shortened;
+    return { platform, handle: absolute.slice(0, 2_048) };
+  }
+  if (/^https?:\/\//i.test(trimmed) || /^[^\s/@]+:\d+(?:\/|$)/.test(trimmed)) {
+    return { platform, handle: "" };
+  }
+  return {
+    platform,
+    handle: trimmed
+      .replace(/^@/, "")
+      .replace(/[/?#].*$/, "")
+      .trim()
+      .slice(0, 100),
+  };
+}
+
+/** Use a stored full URL as the link. Otherwise prefix the platform base. */
+export function socialProfileHref(
+  platformKey: string,
+  handle?: string | null,
+  explicitUrl?: string | null,
+) {
+  const explicit = explicitUrl?.trim();
+  if (explicit) return safeNavigationHref(explicit);
+  const raw = handle?.trim() ?? "";
+  const platform = findPlatform(platformKey);
+  if (raw && DIRECT_SOCIAL_URL.test(raw)) {
+    return safeNavigationHref(/^www\./i.test(raw) ? `https://${raw}` : raw);
+  }
+  if (raw && platform?.urlBase) {
+    return safeNavigationHref(`${platform.urlBase}${raw.replace(/^@/, "")}`);
+  }
+  return platform?.urlBase ? safeNavigationHref(platform.urlBase) : null;
 }

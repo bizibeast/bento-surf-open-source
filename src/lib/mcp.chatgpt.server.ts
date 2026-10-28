@@ -11,6 +11,7 @@ import { postingScheduleSchema } from "./social-scheduler";
 
 export const CHATGPT_MCP_PATH = "/chatgpt/mcp";
 export const CHATGPT_MCP_INSTRUCTIONS =
+  "For social posts across brands, call list_workspaces, then pass each active workspaceId to account, media, scheduling, and verification tools. Create and verify a separate post in each workspace; connection IDs and media keys cannot cross workspaces. Omission uses the original workspace. " +
   "Use list tools to read IDs before creating or updating. Counts are summaries, not proof of individual posts; paginate list_social_posts and retain publication and metric timestamps. Page tools edit the creator's public link-in-bio. Social tools save a draft or a scheduled post in Bento. Create Auto-DM starts paused unless enabled is true. This server has no store, product, discount, checkout, payment, booking, or referral tools.";
 
 /** Checkout, paid booking, and tip blocks stay on the full MCP server. */
@@ -91,6 +92,8 @@ const READ: ChatGptAnnotations = {
 };
 
 export type ChatGptToolOperations = {
+  listMcpWorkspaces: (authUserId: string) => Promise<any>;
+  resolveMcpWorkspaceId: (authUserId: string, requestedId?: string) => Promise<string>;
   getBentoOverview: (userId: string, origin: string) => Promise<any>;
   getProfileWorkspace: (context: CreatorMcpContext) => Promise<any>;
   listPages: (userId: string) => Promise<{ pages: any[]; blocks: any[] }>;
@@ -212,6 +215,8 @@ export function registerChatGptTools(
   creatorContext: () => CreatorMcpContext,
 ) {
   const userId = userIdFrom(authInfo);
+  const socialWorkspaceId = (workspaceId?: string) =>
+    operations.resolveMcpWorkspaceId(userId, workspaceId);
   const register = (
     name: string,
     title: string,
@@ -248,6 +253,18 @@ export function registerChatGptTools(
     async () =>
       textResult("Loaded the Bento workspace overview.", {
         overview: publicOverview(await operations.getBentoOverview(userId, origin)),
+      }),
+  );
+
+  register(
+    "list_workspaces",
+    "List Bento workspaces",
+    "List workspaces owned by this login. Use an active workspace ID when scheduling for another brand.",
+    READ,
+    z.object({}),
+    async () =>
+      textResult("Loaded owned Bento workspaces.", {
+        workspaces: await operations.listMcpWorkspaces(userId),
       }),
   );
 
@@ -481,12 +498,16 @@ export function registerChatGptTools(
   register(
     "list_social_accounts",
     "List social accounts",
-    "List connected social profiles and whether each one can publish or run Auto-DMs.",
+    "List connected social profiles in one workspace and whether each one can publish or run Auto-DMs. Use list_workspaces before selecting another brand.",
     READ,
-    z.object({ provider: socialProviderSchema.optional() }),
-    async ({ provider }) => {
-      const accounts = await operations.listSocialAccounts(userId, provider);
-      return textResult(`Found ${accounts.length} connected social account(s).`, { accounts });
+    z.object({ workspaceId: z.uuid().optional(), provider: socialProviderSchema.optional() }),
+    async ({ workspaceId, provider }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      const accounts = await operations.listSocialAccounts(selectedId, provider);
+      return textResult(`Found ${accounts.length} connected social account(s).`, {
+        workspaceId: selectedId,
+        accounts,
+      });
     },
   );
 
@@ -496,15 +517,17 @@ export function registerChatGptTools(
     "List stored Scheduler posts with full captions and destination settings. Follow pagination.nextCursor using cursor. status is parent state; targetStatus is platform state; date bounds default to destination published_at. No provider refresh.",
     READ,
     z.object({
+      workspaceId: z.uuid().optional(),
       status: socialPostStatusSchema.optional(),
       ...schedulerReadFiltersShape,
       limit: z.number().int().min(1).max(100).default(30),
     }),
-    async ({ status, limit, ...filters }) => {
-      const result = await operations.listSocialPosts(userId, status, limit, filters);
+    async ({ workspaceId, status, limit, ...filters }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      const result = await operations.listSocialPosts(selectedId, status, limit, filters);
       return textResult(
         `Found ${result.posts.length} social post(s) on this page.`,
-        sanitizeMcpReadData(result),
+        sanitizeMcpReadData({ workspaceId: selectedId, ...result }),
       );
     },
   );
@@ -520,6 +543,7 @@ export function registerChatGptTools(
       openWorldHint: false,
     },
     z.object({
+      workspaceId: z.uuid().optional(),
       body: z.string().max(25_000),
       title: z.string().max(300).default(""),
       connectionIds: z.array(z.uuid()).max(20).default([]),
@@ -527,16 +551,19 @@ export function registerChatGptTools(
       captions: z.array(captionSchema).max(20).optional(),
       timezone: z.string().min(1).max(100).default("UTC"),
     }),
-    async ({ captions, ...input }) =>
-      textResult("Saved the social draft.", {
-        post: await operations.saveSocialPostForUser(userId, {
+    async ({ workspaceId, captions, ...input }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      return textResult("Saved the social draft.", {
+        workspaceId: selectedId,
+        post: await operations.saveSocialPostForUser(selectedId, {
           ...input,
           connectionOverrides: connectionOverrides(captions),
           scheduledAt: null,
           asDraft: true,
           publishNow: false,
         }),
-      }),
+      });
+    },
   );
 
   register(
@@ -550,6 +577,7 @@ export function registerChatGptTools(
       openWorldHint: true,
     },
     z.object({
+      workspaceId: z.uuid().optional(),
       id: z.uuid().optional(),
       body: z.string().max(25_000),
       title: z.string().max(300).default(""),
@@ -559,15 +587,18 @@ export function registerChatGptTools(
       scheduledAt: z.iso.datetime({ offset: true }),
       timezone: z.string().min(1).max(100).default("UTC"),
     }),
-    async ({ captions, ...input }) =>
-      textResult("Scheduled the social post.", {
-        post: await operations.saveSocialPostForUser(userId, {
+    async ({ workspaceId, captions, ...input }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      return textResult("Scheduled the social post.", {
+        workspaceId: selectedId,
+        post: await operations.saveSocialPostForUser(selectedId, {
           ...input,
           connectionOverrides: connectionOverrides(captions),
           asDraft: false,
           publishNow: false,
         }),
-      }),
+      });
+    },
   );
 
   register(
@@ -581,6 +612,7 @@ export function registerChatGptTools(
       openWorldHint: true,
     },
     z.object({
+      workspaceId: z.uuid().optional(),
       id: z.uuid(),
       body: z.string().max(25_000),
       title: z.string().max(300).default(""),
@@ -590,16 +622,22 @@ export function registerChatGptTools(
       scheduledAt: z.iso.datetime({ offset: true }).optional(),
       timezone: z.string().min(1).max(100).default("UTC"),
     }),
-    async ({ captions, scheduledAt, ...input }) =>
-      textResult(scheduledAt ? "Updated the scheduled social post." : "Updated the social draft.", {
-        post: await operations.saveSocialPostForUser(userId, {
-          ...input,
-          connectionOverrides: connectionOverrides(captions),
-          scheduledAt: scheduledAt ?? null,
-          asDraft: !scheduledAt,
-          publishNow: false,
-        }),
-      }),
+    async ({ workspaceId, captions, scheduledAt, ...input }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      return textResult(
+        scheduledAt ? "Updated the scheduled social post." : "Updated the social draft.",
+        {
+          workspaceId: selectedId,
+          post: await operations.saveSocialPostForUser(selectedId, {
+            ...input,
+            connectionOverrides: connectionOverrides(captions),
+            scheduledAt: scheduledAt ?? null,
+            asDraft: !scheduledAt,
+            publishNow: false,
+          }),
+        },
+      );
+    },
   );
 
   register(
@@ -612,11 +650,14 @@ export function registerChatGptTools(
       idempotentHint: true,
       openWorldHint: false,
     },
-    z.object({ id: z.uuid() }),
-    async ({ id }) =>
-      textResult("Cancelled the social post.", {
-        scheduler: await operations.manageScheduler(userId, { action: "cancel_post", id }),
-      }),
+    z.object({ workspaceId: z.uuid().optional(), id: z.uuid() }),
+    async ({ workspaceId, id }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      return textResult("Cancelled the social post.", {
+        workspaceId: selectedId,
+        scheduler: await operations.manageScheduler(selectedId, { action: "cancel_post", id }),
+      });
+    },
   );
 
   register(
@@ -624,11 +665,13 @@ export function registerChatGptTools(
     "Get content calendar",
     "Read saved posting times and the posts currently scheduled in Bento.",
     READ,
-    z.object({}),
-    async () => {
-      const scheduler = await operations.getSchedulerWorkspace(userId);
+    z.object({ workspaceId: z.uuid().optional() }),
+    async ({ workspaceId }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      const scheduler = await operations.getSchedulerWorkspace(selectedId);
       const posts = Array.isArray(scheduler?.posts) ? scheduler.posts : [];
       return textResult("Loaded the content calendar.", {
+        workspaceId: selectedId,
         calendar: {
           postingSchedule: scheduler?.postingSchedule ?? null,
           scheduledPosts: posts.filter((post: { status?: string }) => post?.status === "scheduled"),
@@ -647,14 +690,17 @@ export function registerChatGptTools(
       idempotentHint: true,
       openWorldHint: false,
     },
-    z.object({ schedule: postingScheduleSchema }),
-    async ({ schedule }) =>
-      textResult("Saved posting times.", {
-        scheduler: await operations.manageScheduler(userId, {
+    z.object({ workspaceId: z.uuid().optional(), schedule: postingScheduleSchema }),
+    async ({ workspaceId, schedule }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      return textResult("Saved posting times.", {
+        workspaceId: selectedId,
+        scheduler: await operations.manageScheduler(selectedId, {
           action: "save_posting_schedule",
           schedule,
         }),
-      }),
+      });
+    },
   );
 
   register(
@@ -694,16 +740,24 @@ export function registerChatGptTools(
       openWorldHint: true,
     },
     z.object({
+      workspaceId: z.uuid().optional(),
       sourceUrl: z.url().optional(),
       base64: z.string().optional(),
       fileName: z.string().min(1).max(255),
       mimeType: z.string().min(1).max(100),
       kind: z.enum(["image", "video", "audio", "file"]),
     }),
-    async (input) =>
-      textResult("Uploaded media to Bento.", {
-        media: await operations.uploadMedia(authInfo, origin, input),
-      }),
+    async ({ workspaceId, ...input }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      return textResult("Uploaded media to Bento.", {
+        workspaceId: selectedId,
+        media: await operations.uploadMedia(
+          { ...authInfo, extra: { ...authInfo.extra, userId: selectedId } },
+          origin,
+          input,
+        ),
+      });
+    },
   );
 
   register(
@@ -717,6 +771,7 @@ export function registerChatGptTools(
       openWorldHint: false,
     },
     z.object({
+      workspaceId: z.uuid().optional(),
       fileName: z.string().min(1).max(255),
       mimeType: z.string().min(1).max(100),
       kind: z.enum(["image", "video", "audio", "file"]),
@@ -726,10 +781,13 @@ export function registerChatGptTools(
         .positive()
         .max(5 * 1024 * 1024 * 1024),
     }),
-    async (input) =>
-      textResult("Prepared the media upload.", {
-        upload: await operations.beginMcpMediaUpload(userId, origin, input),
-      }),
+    async ({ workspaceId, ...input }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      return textResult("Prepared the media upload.", {
+        workspaceId: selectedId,
+        upload: await operations.beginMcpMediaUpload(selectedId, origin, input),
+      });
+    },
   );
 
   register(

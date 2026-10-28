@@ -340,6 +340,7 @@ const readOnlyAnnotations = {
 /** Pins the hints OpenAI reads from tools/list. Idempotent is omitted unless true. */
 const bentoMcpToolAnnotations = {
   get_bento_overview: readOnlyAnnotations,
+  list_workspaces: readOnlyAnnotations,
   read_workspace_data: readOnlyAnnotations,
   get_content_brain: readOnlyAnnotations,
   manage_content_brain: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
@@ -546,6 +547,7 @@ describe("Bento MCP tools", () => {
     const toolsPayload = await payload(toolsResponse);
     expect(toolsPayload.result.tools.map((tool: { name: string }) => tool.name)).toEqual(
       expect.arrayContaining([
+        "list_workspaces",
         "upload_media",
         "create_social_post",
         "save_auto_dm_automation",
@@ -593,7 +595,12 @@ describe("Bento MCP tools", () => {
         .map((tool: { name: string }) => tool.name)
         .filter(
           (name: string) =>
-            !["upload_media", "begin_media_upload", "manage_content_agent"].includes(name),
+            ![
+              "upload_media",
+              "begin_media_upload",
+              "manage_content_agent",
+              "list_workspaces",
+            ].includes(name),
         )
         .sort(),
     );
@@ -608,6 +615,7 @@ describe("Bento MCP tools", () => {
     const socialPostTool = toolsPayload.result.tools.find(
       (tool: { name: string }) => tool.name === "create_social_post",
     );
+    expect(socialPostTool.inputSchema.properties.workspaceId).toMatchObject({ format: "uuid" });
     expect(storeTool.inputSchema.properties.publicationId).toMatchObject({ format: "uuid" });
     expect(JSON.stringify(audienceTool.inputSchema)).toContain("publicationId");
     expect(
@@ -642,6 +650,7 @@ describe("Bento MCP tools", () => {
     }[];
     expect(Object.fromEntries(tools.map((tool) => [tool.name, tool.annotations]))).toEqual({
       get_bento_overview: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      list_workspaces: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
       read_workspace_data: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
       get_content_brain: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
       manage_content_brain: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
@@ -894,6 +903,98 @@ describe("Bento MCP tools", () => {
       2,
       authInfo.extra!.userId,
       expect.objectContaining({ scheduledAt: null, asDraft: false, publishNow: true }),
+    );
+  });
+
+  it("keeps the in-app Agent inside its selected browser workspace", async () => {
+    const ownerId = String(authInfo.extra!.userId);
+    const brandId = "00000000-0000-4000-8000-000000000002";
+    const resolveMcpWorkspaceId = vi.fn(
+      async (_authUserId: string, workspaceId?: string) => workspaceId ?? ownerId,
+    );
+    const listSocialAccounts = vi.fn(async () => []);
+    const saveSocialPostForUser = vi.fn(async () => ({ id: "post-1" }));
+    const tools = createBentoAppTools(
+      {
+        userId: ownerId,
+        accessToken: authInfo.token,
+        supabase: {} as Parameters<typeof createBentoAppTools>[0]["supabase"],
+      },
+      "https://app.bento.surf",
+      {
+        ...defaultBentoMcpOperations,
+        resolveMcpWorkspaceId,
+        listSocialAccounts,
+        saveSocialPostForUser,
+      },
+    );
+
+    expect(tools.has("list_workspaces")).toBe(false);
+    await expect(
+      tools.get("list_social_accounts")!.execute({ workspaceId: brandId }),
+    ).rejects.toMatchObject({ statusCode: 403 });
+    await tools.get("create_social_post")!.execute({
+      body: "A Bento Surf update",
+      connectionIds: ["00000000-0000-4000-8000-000000000010"],
+      mode: "schedule",
+      scheduledAt: "2026-11-01T12:00:00+00:00",
+    });
+    await tools.get("list_social_accounts")!.execute({});
+
+    expect(resolveMcpWorkspaceId).not.toHaveBeenCalled();
+    expect(saveSocialPostForUser).toHaveBeenCalledWith(
+      ownerId,
+      expect.objectContaining({ asDraft: false, publishNow: false }),
+    );
+    expect(listSocialAccounts).toHaveBeenCalledExactlyOnceWith(ownerId, undefined);
+  });
+
+  it("routes remote MCP social tools to an explicitly selected workspace", async () => {
+    const ownerId = String(authInfo.extra!.userId);
+    const brandId = "00000000-0000-4000-8000-000000000002";
+    const resolveMcpWorkspaceId = vi.fn(
+      async (_authUserId: string, workspaceId?: string) => workspaceId ?? ownerId,
+    );
+    const listSocialAccounts = vi.fn(async () => []);
+    const saveSocialPostForUser = vi.fn(async () => ({ id: "post-1" }));
+    const handler = createMcpHandler(() =>
+      createBentoMcpServer(authInfo, "https://mcp.bento.surf", {
+        ...defaultBentoMcpOperations,
+        resolveMcpWorkspaceId,
+        listSocialAccounts,
+        saveSocialPostForUser,
+      }),
+    );
+    const call = async (name: string, arguments_: Record<string, unknown>) => {
+      const response = await handler.fetch(
+        request({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name, arguments: arguments_ },
+        }),
+        { authInfo },
+      );
+      return payload(response);
+    };
+
+    const accounts = await call("list_social_accounts", { workspaceId: brandId });
+    const scheduled = await call("create_social_post", {
+      workspaceId: brandId,
+      body: "Bento Surf update",
+      connectionIds: ["00000000-0000-4000-8000-000000000010"],
+      mode: "schedule",
+      scheduledAt: "2026-11-01T12:00:00+00:00",
+    });
+
+    expect(accounts.result.structuredContent.workspaceId).toBe(brandId);
+    expect(scheduled.result.isError).not.toBe(true);
+    expect(scheduled.result.structuredContent.workspaceId).toBe(brandId);
+    expect(resolveMcpWorkspaceId).toHaveBeenCalledWith(ownerId, brandId);
+    expect(listSocialAccounts).toHaveBeenCalledWith(brandId, undefined);
+    expect(saveSocialPostForUser).toHaveBeenCalledWith(
+      brandId,
+      expect.objectContaining({ asDraft: false, publishNow: false }),
     );
   });
 

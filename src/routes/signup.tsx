@@ -7,7 +7,7 @@ import { checkUsername } from "@/lib/profile.functions";
 import { useUsernameAvailability } from "@/lib/use-username-availability";
 import { normalizeUsername } from "@/lib/username";
 import { storePendingUsername } from "@/lib/pending-username";
-import { captureProductEvent } from "@/lib/posthog";
+import { captureProductEvent, captureSignupCompleted } from "@/lib/posthog";
 import { AuthDivider, AuthField, AuthShell, GoogleIcon } from "@/components/AuthShell";
 import { trustedApplicationOrigin } from "@/lib/safe-url";
 import { redirectAuthenticatedVisitor } from "@/lib/auth-entry";
@@ -76,9 +76,13 @@ function SignupPage() {
           options: { emailRedirectTo: `${authOrigin}/onboarding` },
         });
         if (error) throw error;
-        captureProductEvent("signup_completed", {
+        // Supabase returns an obfuscated user with no identities for an existing email.
+        const createdUserId = data.user?.identities?.length ? data.user.id : null;
+        captureSignupCompleted({
           method: "email",
-          confirmation_required: !data.session,
+          email: email.trim(),
+          userId: createdUserId,
+          properties: { confirmation_required: !data.session },
         });
         if (data.session) {
           await navigate({ to: "/onboarding", replace: true });

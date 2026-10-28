@@ -327,6 +327,7 @@ export function normalizeSocialHandle(platform: string, value: string) {
   } catch {
     // Plain handles are expected and do not need URL parsing.
   }
+  if (/^(https?:\/\/|www\.)/i.test(candidate)) return candidate.trim().slice(0, 2_048);
   return candidate
     .replace(/^@/, "")
     .replace(/[/?#].*$/, "")

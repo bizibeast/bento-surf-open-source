@@ -45,6 +45,7 @@ const POST = "00000000-0000-4000-8000-000000000013";
 const AUTO = "00000000-0000-4000-8000-000000000014";
 
 const READ_OPS = new Set([
+  "listMcpWorkspaces",
   "getBentoOverview",
   "getProfileWorkspace",
   "listPages",
@@ -197,6 +198,11 @@ function fakeOperations() {
     ],
   };
   const operations = {
+    listMcpWorkspaces: record("listMcpWorkspaces", [
+      { id: String(authInfo.extra!.userId), username: "ada", status: "active" },
+    ]),
+    resolveMcpWorkspaceId: async (authUserId: string, requestedId?: string) =>
+      requestedId ?? authUserId,
     getBentoOverview: record("getBentoOverview", {
       profile: { username: "ada" },
       plan: { id: "creator", name: "Creator" },
@@ -293,6 +299,7 @@ async function listedTools(operations = fakeOperations().operations) {
 
 const samples: Record<string, Record<string, unknown>> = {
   get_bento_overview: {},
+  list_workspaces: {},
   get_profile: {},
   list_pages: {},
   get_page: { id: PAGE },
@@ -489,6 +496,34 @@ describe("ChatGPT MCP catalog", () => {
       cursor: "previous-page",
       dateField: "published_at",
     });
+  });
+
+  it("schedules ChatGPT social posts in the requested workspace", async () => {
+    const { calls, operations } = fakeOperations();
+    const handler = chatGptHandler(operations);
+    const brandId = "00000000-0000-4000-8000-000000000002";
+    const call = async (name: string, arguments_: Record<string, unknown>) => {
+      const response = await handler.fetch(
+        rpc("https://mcp.bento.surf/chatgpt/mcp", 3, "tools/call", { name, arguments: arguments_ }),
+        { authInfo },
+      );
+      return payload(response);
+    };
+
+    const listed = await call("list_workspaces", {});
+    expect(listed.result.structuredContent.workspaces[0].username).toBe("ada");
+    await call("list_social_accounts", { workspaceId: brandId });
+    const scheduled = await call("schedule_social_post", {
+      workspaceId: brandId,
+      body: "Bento Surf update",
+      connectionIds: [CONN],
+      scheduledAt: "2030-01-01T00:00:00+00:00",
+    });
+
+    expect(scheduled.result.isError).not.toBe(true);
+    expect(scheduled.result.structuredContent.workspaceId).toBe(brandId);
+    expect(calls.find((entry) => entry.name === "listSocialAccounts")?.args[0]).toBe(brandId);
+    expect(calls.find((entry) => entry.name === "saveSocialPostForUser")?.args[0]).toBe(brandId);
   });
 
   it("hides commerce records from reads and refuses commerce block edits", async () => {

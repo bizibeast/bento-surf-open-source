@@ -75,6 +75,11 @@ export function exploreCategoryLabel(value: string) {
   return EXPLORE_CATEGORIES.find((category) => category.id === value)?.choiceLabel ?? "Creator";
 }
 
+/** Filtered or paged Explore URLs are duplicates of the clean directory. */
+export function exploreSearchNeedsNoindex(search: object) {
+  return Object.values(search).some((value) => value !== undefined);
+}
+
 export function normalizeExploreSearch(value: string) {
   return value
     .normalize("NFKC")
