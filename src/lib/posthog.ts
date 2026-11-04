@@ -53,6 +53,7 @@ export type ProductEventName =
   | "upgrade_banner_dismissed"
   | "trial_cta_clicked"
   | "checkout_started"
+  | "checkout_page_left"
   | "onboarding_showcase_viewed"
   | "onboarding_showcase_completed"
   | "onboarding_showcase_skipped"
@@ -63,6 +64,7 @@ export type ProductEventName =
   | "commerce_checkout_started"
   | "commerce_lead_submitted"
   | "commerce_affiliate_clicked"
+  | "free_tool_signup_cta_clicked"
   | "free_tool_started"
   | "free_tool_copied"
   | "free_tool_product_cta_clicked"
@@ -81,6 +83,16 @@ let replayFlagEnabled = false;
 // Stable per tab: avoid recording every paid replay/heatmap session after a broad flag rollout.
 const sampledVisualAnalytics = Math.random() < 0.1;
 let heatmapsEnabled = false;
+// Sessions that reach the onboarding trial or checkout step are always recorded, so the
+// 10% sample cannot hide the moment someone decides to pay. Persisted per tab for the return trip.
+let checkoutReplayForced = false;
+const CHECKOUT_REPLAY_KEY = "bento:checkout-replay:v1";
+/**
+ * Never record card or payment inputs. The Dodo checkout is a hosted page on another origin
+ * and is not captured; this is defense in depth for any card-like field on our side.
+ */
+export const REPLAY_BLOCK_SELECTOR =
+  '[data-private-block], input[autocomplete^="cc-"], input[name*="card" i], input[name*="cvc" i], input[name*="cvv" i]';
 let firstTouch: Record<string, string> = {};
 let outboundTrackingAttached = false;
 
@@ -171,10 +183,27 @@ function attachOutboundLinkTracking() {
   outboundTrackingAttached = true;
 }
 
+function readCheckoutReplayForced() {
+  try {
+    return window.sessionStorage.getItem(CHECKOUT_REPLAY_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 function applySessionRecordingState() {
-  if (replayablePath && replayFlagEnabled && sampledVisualAnalytics)
+  if (!replayablePath || !replayFlagEnabled) {
+    posthog.stopSessionRecording();
+    return;
+  }
+  if (sampledVisualAnalytics) {
     posthog.startSessionRecording();
-  else posthog.stopSessionRecording();
+  } else if (checkoutReplayForced) {
+    // Skip only the sampling gate. The kill-switch flag and input masking still apply.
+    posthog.startSessionRecording({ sampling: true });
+  } else {
+    posthog.stopSessionRecording();
+  }
 }
 
 function applyHeatmapState() {
@@ -230,8 +259,10 @@ function initPostHog(): boolean {
     session_recording: {
       maskAllInputs: true,
       maskTextSelector: "[data-private]",
+      blockSelector: REPLAY_BLOCK_SELECTOR,
     },
   });
+  checkoutReplayForced = checkoutReplayForced || readCheckoutReplayForced();
   firstTouch = getFirstTouchAttribution();
   posthog.register(firstTouch);
   attachOutboundLinkTracking();
@@ -393,6 +424,22 @@ export const setProductSessionRecording = createClientOnlyFn((enabled: boolean) 
   if (!initialized && !enabled) return;
   if (!initPostHog()) return;
   replayablePath = enabled;
+  applySessionRecordingState();
+});
+
+/**
+ * Record this session from now on, regardless of the 10% sample. Call when the buyer reaches the
+ * onboarding trial step or starts checkout. Only applies on replayable routes and while the
+ * session replay flag is on.
+ */
+export const setCheckoutReplayForced = createClientOnlyFn(() => {
+  try {
+    window.sessionStorage.setItem(CHECKOUT_REPLAY_KEY, "1");
+  } catch {
+    /* Private mode: still forced for this page load. */
+  }
+  checkoutReplayForced = true;
+  if (!initPostHog()) return;
   applySessionRecordingState();
 });
 

@@ -62,10 +62,7 @@ function unsafeStoredValue(value: unknown, depth = 0): boolean {
   return false;
 }
 
-function normalizeSocialBlockContent<T extends Record<string, unknown>>(
-  type: string,
-  content: T,
-): T {
+function normalizeSocialBlockContent<T extends Record<string, unknown>>(type: string, content: T): T {
   if (typeof content.handle !== "string") return content;
   const platformKey =
     typeof content.platform === "string"

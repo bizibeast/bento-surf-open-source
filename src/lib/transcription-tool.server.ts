@@ -51,6 +51,8 @@ type WhisperResponse = {
 export type TranscriptionDependencies = {
   runWhisper?: (audioBase64: string, contentType: string, signal: AbortSignal) => Promise<unknown>;
   fetcher?: typeof fetch;
+  /** Set only after remote MCP bearer and workspace membership verification. */
+  trustedMcpWorkspaceId?: string;
 };
 
 type AudioFormat = "aac" | "flac" | "m4a" | "mp3" | "ogg" | "wav" | "webm";
@@ -290,25 +292,21 @@ export async function transcribeAudioBytes(
   } else if (env.AI) {
     const base64 = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64");
     const gatewayId = env.CLOUDFLARE_AI_GATEWAY_ID?.trim();
-    try {
-      rawResult = await env.AI.run(
-        WHISPER_MODEL,
-        {
-          audio: base64,
-          task: "transcribe",
-          vad_filter: true,
-          condition_on_previous_text: true,
-        },
-        {
-          signal,
-          ...(gatewayId ? { gateway: { id: gatewayId, collectLog: false, skipCache: true } } : {}),
-        },
-      );
-      if (!normalizeWhisperTranscription(rawResult)) throw new Error("Invalid transcription");
-    } catch (error) {
-      // A timed-out/invalid response may still have been charged. No automatic paid fallback.
-      throw error;
-    }
+    // A timed-out or invalid response may still have been charged, so do not fall back.
+    rawResult = await env.AI.run(
+      WHISPER_MODEL,
+      {
+        audio: base64,
+        task: "transcribe",
+        vad_filter: true,
+        condition_on_previous_text: true,
+      },
+      {
+        signal,
+        ...(gatewayId ? { gateway: { id: gatewayId, collectLog: false, skipCache: true } } : {}),
+      },
+    );
+    if (!normalizeWhisperTranscription(rawResult)) throw new Error("Invalid transcription");
   } else if (localGroqApiKey) {
     rawResult = await runGroqWhisper(
       bytes,
@@ -325,9 +323,15 @@ export async function transcribeAudioBytes(
   return normalizeWhisperTranscription(rawResult);
 }
 
-async function enforceTranscriptionRateLimit(request: Request, env: TranscriptionEnv) {
+async function enforceTranscriptionRateLimit(
+  request: Request,
+  env: TranscriptionEnv,
+  trustedMcpWorkspaceId?: string,
+) {
   if (!env.FREE_TOOLS_TRANSCRIPTION_RATE_LIMITER) return !isProductionLike(env);
-  const clientAddress = request.headers.get("cf-connecting-ip")?.trim() || "missing-cloudflare-ip";
+  const clientAddress = trustedMcpWorkspaceId
+    ? `mcp:${trustedMcpWorkspaceId}`
+    : request.headers.get("cf-connecting-ip")?.trim() || "missing-cloudflare-ip";
   const result = await env.FREE_TOOLS_TRANSCRIPTION_RATE_LIMITER.limit({
     key: `free-tool-transcription:${clientAddress}`.slice(0, 512),
   });
@@ -357,7 +361,11 @@ export async function handleFreeToolTranscriptionRequest(
 
   let rateLimitAllowed = false;
   try {
-    rateLimitAllowed = await enforceTranscriptionRateLimit(request, env);
+    rateLimitAllowed = await enforceTranscriptionRateLimit(
+      request,
+      env,
+      dependencies.trustedMcpWorkspaceId,
+    );
   } catch {
     return jsonError("Transcription is temporarily unavailable", 503);
   }
@@ -367,12 +375,14 @@ export async function handleFreeToolTranscriptionRequest(
       : jsonError("Transcription is temporarily unavailable", 503);
   }
 
-  try {
-    await enforceTurnstileRequest(request, env);
-  } catch (error) {
-    return error instanceof RequestHttpError
-      ? jsonError(error.message, error.statusCode)
-      : jsonError("Security verification is temporarily unavailable.", 503);
+  if (!dependencies.trustedMcpWorkspaceId) {
+    try {
+      await enforceTurnstileRequest(request, env);
+    } catch (error) {
+      return error instanceof RequestHttpError
+        ? jsonError(error.message, error.statusCode)
+        : jsonError("Security verification is temporarily unavailable.", 503);
+    }
   }
 
   const contentType = normalizedContentType(request);

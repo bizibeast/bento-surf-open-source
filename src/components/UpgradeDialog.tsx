@@ -25,6 +25,7 @@ import { safeNavigationHref } from "@/lib/safe-url";
 import { OPEN_SOURCE_REPOSITORY_URL } from "@/lib/open-source";
 import { motionTokens } from "@/lib/motion";
 import { captureProductEvent } from "@/lib/posthog";
+import { beginCheckoutTracking, forceCheckoutReplay } from "@/lib/checkout-tracking";
 
 export function UpgradeDialog({
   trigger,
@@ -61,6 +62,7 @@ export function UpgradeDialog({
       plan,
       billing_interval: period,
     });
+    forceCheckoutReplay();
     // Count each opening once; plan and period changes inside the dialog are not new opens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
@@ -102,6 +104,7 @@ export function UpgradeDialog({
       const destination = safeNavigationHref(url);
       if (!destination) throw new Error("Checkout returned an invalid destination.");
       captureProductEvent("checkout_started", properties);
+      beginCheckoutTracking({ plan, trial: offer.trialEligible, surface: "upgrade_dialog" });
       window.location.href = destination;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not start checkout.");

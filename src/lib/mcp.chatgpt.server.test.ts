@@ -23,6 +23,7 @@ vi.mock("./request-security.server", async () => ({
 
 import { RequestHttpError } from "./request-security.server";
 import type { ChatGptToolOperations } from "./mcp.chatgpt.server";
+import { runDeterministicFreeTool } from "./mcp-free-text";
 import {
   createChatGptMcpServer,
   handleBentoMcpRequest as handleInstanceMcpRequest,
@@ -45,6 +46,8 @@ const POST = "00000000-0000-4000-8000-000000000013";
 const AUTO = "00000000-0000-4000-8000-000000000014";
 
 const READ_OPS = new Set([
+  "listMcpFreeTools",
+  "runMcpFreeTextTool",
   "listMcpWorkspaces",
   "getBentoOverview",
   "getProfileWorkspace",
@@ -54,10 +57,15 @@ const READ_OPS = new Set([
   "getSchedulerWorkspace",
   "getMcpContentBrain",
   "getMcpContentMedia",
+  "listMcpUploadedMedia",
   "getAnalyticsWorkspace",
   "listAutoDmAutomations",
 ]);
 const WRITE_OPS = new Set([
+  "runMcpFreeAiTool",
+  "runMcpFreeMediaTool",
+  "runMcpFreeImageTool",
+  "transcribeMcpFreeAudio",
   "mutatePage",
   "mutateBlock",
   "reorderPages",
@@ -198,6 +206,32 @@ function fakeOperations() {
     ],
   };
   const operations = {
+    listMcpFreeTools: () => {
+      calls.push({ name: "listMcpFreeTools", args: [] });
+      return [];
+    },
+    runMcpFreeTextTool: (input: Parameters<typeof runDeterministicFreeTool>[0]) => {
+      calls.push({ name: "runMcpFreeTextTool", args: [input] });
+      return runDeterministicFreeTool(input);
+    },
+    runMcpFreeAiTool: record("runMcpFreeAiTool", {
+      outputs: ["One"],
+      provider: "workers-ai" as const,
+    }),
+    runMcpFreeMediaTool: record("runMcpFreeMediaTool", {
+      kind: "download",
+      items: [],
+      expiresInSeconds: 90,
+    }),
+    runMcpFreeImageTool: record("runMcpFreeImageTool", {
+      toolSlug: "image-compressor" as const,
+      images: [],
+    }),
+    transcribeMcpFreeAudio: record("transcribeMcpFreeAudio", {
+      transcript: "Hello",
+      wordCount: 1,
+      segments: [],
+    }),
     listMcpWorkspaces: record("listMcpWorkspaces", [
       { id: String(authInfo.extra!.userId), username: "ada", status: "active" },
     ]),
@@ -269,6 +303,7 @@ function fakeOperations() {
     beginMcpMediaUpload: record("beginMcpMediaUpload", {
       uploadUrl: "https://app.bento.surf/upload",
     }),
+    listMcpUploadedMedia: record("listMcpUploadedMedia", { media: [], nextCursor: null }),
     getAnalyticsWorkspace: record("getAnalyticsWorkspace", {
       range: "30d",
       site: { views: 1 },
@@ -298,6 +333,25 @@ async function listedTools(operations = fakeOperations().operations) {
 }
 
 const samples: Record<string, Record<string, unknown>> = {
+  list_free_tools: {},
+  run_free_text_tool: { toolSlug: "social-post-formatter", text: "Hello" },
+  run_free_ai_tool: {
+    toolSlug: "instagram-bio-generator",
+    platform: "Instagram",
+    values: { role: "Creator" },
+  },
+  run_free_media_tool: {
+    toolSlug: "youtube-video-downloader",
+    url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    rightsConfirmed: true,
+  },
+  run_free_image_tool: {
+    toolSlug: "image-compressor",
+    fileName: "a.png",
+    mimeType: "image/png",
+    base64: "AQIDBA==",
+  },
+  transcribe_free_audio: { fileName: "a.wav", mimeType: "audio/wav", base64: "UklGRg==" },
   get_bento_overview: {},
   list_workspaces: {},
   get_profile: {},
@@ -336,6 +390,7 @@ const samples: Record<string, Record<string, unknown>> = {
     sourceUrl: "https://example.com/a.png",
   },
   begin_media_upload: { fileName: "a.png", mimeType: "image/png", kind: "image", size: 1024 },
+  list_uploaded_media: {},
   get_analytics: {},
   list_auto_dm_automations: {},
   create_auto_dm_automation: {
@@ -467,7 +522,7 @@ describe("ChatGPT MCP catalog", () => {
     const { operations, calls } = fakeOperations();
     const handler = chatGptHandler(operations);
     const response = await handler.fetch(
-      rpc("https://mcp.bento.surf/chatgpt/mcp", 3, "tools/call", {
+      rpc("https://mcp.example.com/chatgpt/mcp", 3, "tools/call", {
         name: "list_social_posts",
         arguments: {
           provider: "instagram",
@@ -504,7 +559,7 @@ describe("ChatGPT MCP catalog", () => {
     const brandId = "00000000-0000-4000-8000-000000000002";
     const call = async (name: string, arguments_: Record<string, unknown>) => {
       const response = await handler.fetch(
-        rpc("https://mcp.bento.surf/chatgpt/mcp", 3, "tools/call", { name, arguments: arguments_ }),
+        rpc("https://mcp.example.com/chatgpt/mcp", 3, "tools/call", { name, arguments: arguments_ }),
         { authInfo },
       );
       return payload(response);
@@ -524,6 +579,145 @@ describe("ChatGPT MCP catalog", () => {
     expect(scheduled.result.structuredContent.workspaceId).toBe(brandId);
     expect(calls.find((entry) => entry.name === "listSocialAccounts")?.args[0]).toBe(brandId);
     expect(calls.find((entry) => entry.name === "saveSocialPostForUser")?.args[0]).toBe(brandId);
+  });
+
+  it("exposes and forwards TikTok carousel settings when scheduling through ChatGPT MCP", async () => {
+    const { calls, operations } = fakeOperations();
+    const listed = await listedTools(operations);
+    const schedule = listed.find((tool) => tool.name === "schedule_social_post")!;
+    expect(schedule.inputSchema).toMatchObject({
+      properties: {
+        providerSettings: {
+          properties: {
+            tiktok: {
+              properties: {
+                privacyLevel: { type: "string" },
+                autoAddMusic: { type: "boolean" },
+              },
+            },
+          },
+        },
+      },
+    });
+    const media = [1, 2].map((index) => ({
+      key: `users/${authInfo.extra!.userId}/image/carousel-${index}.jpg`,
+      url: `https://app.bento.surf/cdn/carousel-${index}.jpg`,
+      name: `carousel-${index}.jpg`,
+      mimeType: "image/jpeg",
+      size: 1024,
+    }));
+    const response = await chatGptHandler(operations).fetch(
+      rpc("https://mcp.example.com/chatgpt/mcp", 3, "tools/call", {
+        name: "schedule_social_post",
+        arguments: {
+          body: "A photo carousel",
+          connectionIds: [CONN],
+          scheduledAt: "2030-01-01T00:00:00+00:00",
+          media,
+          providerSettings: { tiktok: { privacyLevel: "SELF_ONLY", autoAddMusic: true } },
+        },
+      }),
+      { authInfo },
+    );
+    expect((await payload(response)).result.isError).not.toBe(true);
+    expect(calls.find((call) => call.name === "saveSocialPostForUser")?.args[1]).toMatchObject({
+      media,
+      providerSettings: { tiktok: { privacyLevel: "SELF_ONLY", autoAddMusic: true } },
+      asDraft: false,
+      publishNow: false,
+    });
+  });
+
+  it("exposes and forwards YouTube Shorts settings when scheduling through ChatGPT MCP", async () => {
+    const { calls, operations } = fakeOperations();
+    const listed = await listedTools(operations);
+    const schedule = listed.find((tool) => tool.name === "schedule_social_post")!;
+    expect(schedule.inputSchema).toMatchObject({
+      properties: {
+        providerSettings: {
+          properties: {
+            youtube: {
+              properties: {
+                youtubeFormat: { enum: ["short", "video"] },
+                youtubePrivacy: { enum: ["private", "unlisted", "public"] },
+                thumbnail: { type: "object" },
+              },
+            },
+          },
+        },
+      },
+    });
+    const video = {
+      key: "users/creator/video/short.mp4",
+      url: "https://app.bento.surf/cdn/short.mp4",
+      name: "short.mp4",
+      mimeType: "video/mp4",
+      size: 1024,
+    };
+    const response = await chatGptHandler(operations).fetch(
+      rpc("https://mcp.example.com/chatgpt/mcp", 4, "tools/call", {
+        name: "schedule_social_post",
+        arguments: {
+          body: "Short caption",
+          title: "Short title",
+          connectionIds: [CONN],
+          scheduledAt: "2030-01-01T00:00:00+00:00",
+          media: [video],
+          providerSettings: {
+            youtube: {
+              youtubeFormat: "short",
+              youtubePrivacy: "private",
+              description: "Full description",
+            },
+          },
+        },
+      }),
+      { authInfo },
+    );
+    expect((await payload(response)).result.isError).not.toBe(true);
+    expect(calls.find((call) => call.name === "saveSocialPostForUser")?.args[1]).toMatchObject({
+      media: [video],
+      providerSettings: {
+        youtube: {
+          youtubeFormat: "short",
+          youtubePrivacy: "private",
+          description: "Full description",
+        },
+      },
+    });
+  });
+
+  it("lets ChatGPT MCP recover existing uploaded media without reuploading it", async () => {
+    const media = {
+      key: "users/creator/image/old.jpg",
+      url: "https://app.bento.surf/cdn/users/creator/image/old.jpg",
+      name: "old.jpg",
+      mimeType: "image/jpeg",
+      size: 123,
+    };
+    const listMcpUploadedMedia = vi.fn(async () => ({ media: [media], nextCursor: null }));
+    const { operations } = fakeOperations();
+    const handler = chatGptHandler({ ...operations, listMcpUploadedMedia });
+    const response = await handler.fetch(
+      rpc("https://mcp.example.com/chatgpt/mcp", 5, "tools/call", {
+        name: "list_uploaded_media",
+        arguments: { limit: 10 },
+      }),
+      { authInfo },
+    );
+    const result = (await payload(response)).result;
+    expect(result.isError).not.toBe(true);
+    expect(JSON.parse(result.content[1].text)).toEqual({
+      workspaceId: authInfo.extra!.userId,
+      media: [media],
+      nextCursor: null,
+    });
+    expect(listMcpUploadedMedia).toHaveBeenCalledWith(
+      authInfo.extra!.userId,
+      "https://mcp.example.com",
+      undefined,
+      10,
+    );
   });
 
   it("hides commerce records from reads and refuses commerce block edits", async () => {

@@ -328,11 +328,7 @@ export function normalizeSocialHandle(platform: string, value: string) {
     // Plain handles are expected and do not need URL parsing.
   }
   if (/^(https?:\/\/|www\.)/i.test(candidate)) return candidate.trim().slice(0, 2_048);
-  return candidate
-    .replace(/^@/, "")
-    .replace(/[/?#].*$/, "")
-    .trim()
-    .slice(0, 100);
+  return candidate.replace(/^@/, "").replace(/[/?#].*$/, "").trim().slice(0, 100);
 }
 
 async function fetchJson(url: string, headers: Record<string, string> = {}) {

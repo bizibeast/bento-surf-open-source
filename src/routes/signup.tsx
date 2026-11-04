@@ -16,6 +16,19 @@ import { handleWebMcpFormSubmit } from "@/lib/webmcp";
 const lookupUsername = (username: string) => checkUsername({ data: { username } });
 
 export const Route = createFileRoute("/signup")({
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): {
+    utm_source?: string;
+    utm_medium?: string;
+    utm_campaign?: string;
+    utm_content?: string;
+  } => ({
+    utm_source: typeof search.utm_source === "string" ? search.utm_source : undefined,
+    utm_medium: typeof search.utm_medium === "string" ? search.utm_medium : undefined,
+    utm_campaign: typeof search.utm_campaign === "string" ? search.utm_campaign : undefined,
+    utm_content: typeof search.utm_content === "string" ? search.utm_content : undefined,
+  }),
   ssr: false,
   pendingMs: 0,
   beforeLoad: async () => {

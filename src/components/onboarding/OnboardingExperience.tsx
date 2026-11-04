@@ -52,6 +52,7 @@ import { clearOnboardedCache } from "@/lib/auth-entry";
 import { safeNavigationHref } from "@/lib/safe-url";
 import { publicProfileUrl } from "@/lib/application-urls";
 import { captureProductEvent } from "@/lib/posthog";
+import { beginCheckoutTracking, forceCheckoutReplay } from "@/lib/checkout-tracking";
 import {
   checkoutFailureMessage,
   readCheckoutReturn,
@@ -384,6 +385,10 @@ export function OnboardingExperience() {
     captureProductEvent("onboarding_workspace_ready");
   }
   useEffect(() => {
+    // The trial step is where people decide to pay: always record the session from here.
+    if (step === 5 && !hasHostedAccess) forceCheckoutReplay();
+  }, [step, hasHostedAccess]);
+  useEffect(() => {
     if (session?.status === "prepared" && step === 5 && hasHostedAccess && !busy)
       void action(activate);
     // Only verified server access can activate a workspace.
@@ -539,6 +544,7 @@ export function OnboardingExperience() {
       };
       captureProductEvent("onboarding_checkout_started", { plan });
       captureProductEvent("checkout_started", properties);
+      beginCheckoutTracking({ plan, trial: trialEligible, surface: "onboarding_trial_step" });
       window.location.assign(href);
     });
   }

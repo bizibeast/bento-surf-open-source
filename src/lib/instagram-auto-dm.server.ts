@@ -1,6 +1,17 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Meta payloads and newly migrated service tables are normalized at the boundary. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { normalizeDashes } from "./text/dashes";
+import {
+  autoDmLinkButton,
+  hasAutoDmNameToken,
+  personalizeAutoDmText,
+  selectAutoDmMessage,
+} from "./auto-dm-message-variants";
+import {
+  claimMetaDmSend,
+  handleMetaDmRecipientPreference,
+  noteMetaDmProviderRejection,
+} from "./meta-auto-dm-safety.server";
 import { decryptServerSecret, encryptServerSecret } from "./secret-crypto.server";
 import {
   extractInstagramEmailAddress,
@@ -141,6 +152,15 @@ export async function decryptInstagramConnectionAccessToken(encryptedToken: stri
 }
 
 export function isRetryableMetaResponse(status: number, data: unknown) {
+  const providerCode =
+    typeof data === "object" &&
+    data !== null &&
+    "error" in data &&
+    typeof data.error === "object" &&
+    data.error !== null &&
+    "code" in data.error
+      ? String(data.error.code)
+      : null;
   const providerMarkedTransient =
     typeof data === "object" &&
     data !== null &&
@@ -150,8 +170,19 @@ export function isRetryableMetaResponse(status: number, data: unknown) {
     "is_transient" in data.error &&
     data.error.is_transient === true;
   return (
-    status === 408 || status === 425 || status === 429 || status >= 500 || providerMarkedTransient
+    status === 408 ||
+    status === 425 ||
+    status === 429 ||
+    status >= 500 ||
+    (providerCode !== null && META_RATE_LIMIT_CODES.has(providerCode)) ||
+    providerMarkedTransient
   );
+}
+
+export function metaResponseCode(status: number, data: { error?: { code?: unknown } }) {
+  // Meta sometimes returns a different body code with HTTP 429. Preserve the
+  // rate-limit signal so account pause and backoff do not miss that response.
+  return status === 429 ? "429" : String(data.error?.code || status || "meta_error");
 }
 
 export function shouldFailInstagramRunAfterError(
@@ -468,7 +499,7 @@ async function metaRequest(url: string, token: string, body: Record<string, unkn
     data = {};
   }
   if (!response.ok || data.error) {
-    const providerCode = String(data.error?.code || response.status || "meta_error");
+    const providerCode = metaResponseCode(response.status, data);
     const retryable = isRetryableMetaResponse(response.status, data);
     throw new MetaDeliveryError(
       retryable
@@ -480,6 +511,35 @@ async function metaRequest(url: string, token: string, body: Record<string, unkn
     );
   }
   return data;
+}
+
+async function getInstagramRecipientName(
+  connection: { access_token: string },
+  senderId: string | null,
+): Promise<string | null> {
+  if (!senderId || shouldMockInstagramAutoDmProvider()) return null;
+  try {
+    // Meta permits this lookup after the recipient messages the creator. Comment-only
+    // interactions do not grant profile consent, so callers must not use it there.
+    const token = await decryptInstagramConnectionAccessToken(connection.access_token);
+    const url = new URL(
+      `https://graph.instagram.com/${graphVersion()}/${encodeURIComponent(senderId)}`,
+    );
+    url.searchParams.set("fields", "name,username");
+    const response = await fetch(url, {
+      headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(3_000),
+    });
+    if (!response.ok) return null;
+    const data = JSON.parse(await readResponseText(response, 8 * 1024));
+    return typeof data.name === "string"
+      ? data.name
+      : typeof data.username === "string"
+        ? data.username
+        : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function getInstagramUserFollowState(
@@ -1184,23 +1244,49 @@ async function sendPrivateReply(
   automation: {
     id: string;
     opening_message?: string | null;
+    opening_messages?: string[] | null;
     confirmation_button_label?: string | null;
     email_capture_enabled?: boolean;
     email_prompt_message?: string | null;
     email_marketing_consent_enabled?: boolean;
     reply_message: string;
+    reply_messages?: string[] | null;
     reply_button_label?: string | null;
     reply_button_url?: string | null;
   },
   options: {
     final?: boolean;
     confirmationPayload?: string | null;
+    recipientName?: string | null;
   } = {},
 ) {
   const final = options.final === true;
-  const replyMessage = normalizeDashes(automation.reply_message);
+  const selectedReply = selectAutoDmMessage(
+    automation.reply_messages,
+    automation.reply_message,
+    event.sourceId,
+  );
+  const linkButton = autoDmLinkButton(
+    personalizeAutoDmText(selectedReply, options.recipientName),
+    automation.reply_button_url,
+    automation.reply_button_label,
+  );
+  const replyMessage = normalizeDashes(linkButton.text || "Here is the link you requested.");
   const openingMessage = automation.opening_message
-    ? normalizeDashes(automation.opening_message)
+    ? normalizeDashes(
+        autoDmLinkButton(
+          personalizeAutoDmText(
+            selectAutoDmMessage(
+              automation.opening_messages,
+              automation.opening_message,
+              event.sourceId,
+            ),
+            options.recipientName,
+          ),
+          null,
+          null,
+        ).text,
+      )
     : "";
   const confirmationLabel = automation.confirmation_button_label
     ? normalizeDashes(automation.confirmation_button_label)
@@ -1234,11 +1320,7 @@ async function sendPrivateReply(
         },
       ],
     };
-  } else if (
-    automation.reply_button_label &&
-    automation.reply_button_url &&
-    event.eventType !== "comment"
-  ) {
+  } else if (linkButton.url && (event.eventType !== "comment" || final)) {
     message = {
       attachment: {
         type: "template",
@@ -1248,8 +1330,8 @@ async function sendPrivateReply(
           buttons: [
             {
               type: "web_url",
-              url: automation.reply_button_url,
-              title: normalizeDashes(automation.reply_button_label),
+              url: linkButton.url,
+              title: normalizeDashes(linkButton.label),
             },
           ],
         },
@@ -1257,10 +1339,7 @@ async function sendPrivateReply(
     };
   } else {
     message = {
-      text:
-        automation.reply_button_url && event.eventType === "comment"
-          ? `${replyMessage}\n\n${automation.reply_button_url}`
-          : replyMessage,
+      text: replyMessage,
     };
   }
   return metaRequest(url, token, {
@@ -1326,12 +1405,26 @@ async function sendInstagramQuickReplyMessage(
 function emailCapturePrompt(
   automation: {
     email_prompt_message?: string | null;
+    email_prompt_messages?: string[] | null;
     email_marketing_consent_enabled?: boolean;
   },
   connectionHandle: string,
+  eventKey: string,
+  recipientName: string | null,
 ) {
   const prompt = normalizeDashes(
-    automation.email_prompt_message?.trim() || "Reply with your email address.",
+    autoDmLinkButton(
+      personalizeAutoDmText(
+        selectAutoDmMessage(
+          automation.email_prompt_messages,
+          automation.email_prompt_message?.trim() || "Reply with your email address.",
+          eventKey,
+        ),
+        recipientName,
+      ),
+      null,
+      null,
+    ).text,
   );
   const disclosure = automation.email_marketing_consent_enabled
     ? `By replying, you agree to receive this resource and future emails from @${connectionHandle}. You can unsubscribe anytime.`
@@ -1393,6 +1486,17 @@ export async function processInstagramDmQueueMessage(
   }
   const event = message.event;
   const eventSenderHash = await senderHash(event.senderId);
+  // Process preferences before claiming the event. A failed STOP write must leave
+  // the queue item retryable, and the command RPC deduplicates later redeliveries.
+  const recipientPreference = await handleMetaDmRecipientPreference(
+    "instagram",
+    event.instagramAccountId,
+    eventSenderHash,
+    event.eventType,
+    event.text,
+    event.externalEventId,
+    event.occurredAt,
+  );
   const { data: claimed, error: claimError } = await (supabaseAdmin as any).rpc(
     "claim_instagram_dm_event",
     {
@@ -1411,6 +1515,15 @@ export async function processInstagramDmQueueMessage(
   const claim = Array.isArray(claimed) ? claimed[0] : claimed;
   if (!claim?.event_id || !claim.should_process) return { duplicate: true };
   const eventId = claim.event_id as string;
+  if (recipientPreference) {
+    await updateEvent(eventId, {
+      status: "ignored",
+      error_code:
+        recipientPreference === "command" ? "recipient_preference_updated" : "recipient_opted_out",
+      processed_at: new Date().toISOString(),
+    });
+    return { ignored: true };
+  }
   const policyWindowFailure = getInstagramAutoDmPolicyWindowFailure(event);
   if (policyWindowFailure) {
     await updateEvent(eventId, {
@@ -1584,6 +1697,22 @@ export async function processInstagramDmQueueMessage(
             claimedConnectionId = String(candidate.id);
             claimedUserId = String(candidate.user_id);
             claimedAutomationId = String(selected.id);
+            const sendDecision = await claimMetaDmSend({
+              provider: "instagram",
+              providerUserId: event.instagramAccountId,
+              senderHash: eventSenderHash,
+              eventId,
+              automationId: String(selected.id),
+              eventType: event.eventType,
+            });
+            if (sendDecision !== "allowed") {
+              await updateEvent(eventId, {
+                status: "ignored",
+                error_code: sendDecision,
+                processed_at: new Date().toISOString(),
+              });
+              return { ignored: true };
+            }
             await claimInstagramDeliverySlot(claimedConnectionId);
             const response = await sendInstagramTextMessage(
               candidate,
@@ -1811,6 +1940,49 @@ export async function processInstagramDmQueueMessage(
     claimedConnectionId = String(connection.id);
     claimedUserId = String(connection.user_id);
     claimedAutomationId = String(automation.id);
+    const sendDecision = await claimMetaDmSend({
+      provider: "instagram",
+      providerUserId: event.instagramAccountId,
+      senderHash: eventSenderHash,
+      eventId,
+      automationId: claimedAutomationId,
+      eventType: event.eventType,
+      outboundCount: event.eventType === "comment" && automation.public_reply_enabled ? 2 : 1,
+    });
+    if (sendDecision !== "allowed") {
+      if (activeRunId) {
+        await updateRun(activeRunId, {
+          status: "blocked",
+          processing_started_at: null,
+          completed_at: new Date().toISOString(),
+          error_code: sendDecision,
+          error_message:
+            "Bento did not send this message because an account or recipient safety guard was triggered.",
+        });
+      }
+      await updateEvent(eventId, {
+        connection_id: connection.id,
+        automation_id: automation.id,
+        status: "ignored",
+        error_code: sendDecision,
+        processed_at: new Date().toISOString(),
+      });
+      return { ignored: true };
+    }
+    const recipientName =
+      event.eventType === "message" &&
+      hasAutoDmNameToken([
+        automation.reply_message,
+        ...(automation.reply_messages || []),
+        automation.opening_message,
+        ...(automation.opening_messages || []),
+        automation.email_prompt_message,
+        ...(automation.email_prompt_messages || []),
+        automation.follow_prompt_message,
+        ...(automation.follow_prompt_messages || []),
+      ])
+        ? (await getInstagramRecipientName(connection, event.senderId)) || event.senderUsername
+        : event.senderUsername;
     if (activeRunId && confirmationFlow) {
       const { data: run, error: runError } = await (supabaseAdmin as any)
         .from("instagram_dm_runs")
@@ -1823,7 +1995,18 @@ export async function processInstagramDmQueueMessage(
       runFollowSettings = {
         enabled: Boolean(run.follow_gate_enabled),
         prompt: normalizeDashes(
-          String(run.follow_prompt_message || "Follow this account, then tap I’ve followed."),
+          autoDmLinkButton(
+            personalizeAutoDmText(
+              selectAutoDmMessage(
+                automation.follow_prompt_messages,
+                String(run.follow_prompt_message || "Follow this account, then tap I’ve followed."),
+                activeRunId,
+              ),
+              recipientName,
+            ),
+            null,
+            null,
+          ).text,
         ),
         maxRechecks: Math.min(3, Math.max(1, Number(run.follow_max_rechecks || 3))),
         failAction: run.follow_fail_action === "withhold" ? "withhold" : "send_anyway",
@@ -1963,11 +2146,12 @@ export async function processInstagramDmQueueMessage(
       ? await sendInstagramTextMessage(
           connection,
           event.senderId,
-          emailCapturePrompt(automation, connection.provider_handle),
+          emailCapturePrompt(automation, connection.provider_handle, event.sourceId, recipientName),
         )
       : await sendPrivateReply(connection, event, automation, {
           final: confirmationFlow || emailCaptureFlow,
           confirmationPayload,
+          recipientName,
         });
     const responseId = String(response.message_id || response.id || "") || null;
     if (activeRunId && runStep === "opening") {
@@ -2027,13 +2211,23 @@ export async function processInstagramDmQueueMessage(
               0,
             ) % replies.length
           : 0;
+        if (/(?:https?:\/\/|www\.)\S+/i.test(replies[replyIndex])) {
+          throw new Error("Public reply contains a link. Move the URL to the private link button.");
+        }
         const publicReply = await sendPublicCommentReply(
           connection,
           event.sourceId,
-          replies[replyIndex],
+          personalizeAutoDmText(replies[replyIndex], recipientName),
         );
         publicReplyId = String(publicReply.id || "") || null;
       } catch (error) {
+        if (error instanceof MetaDeliveryError) {
+          await noteMetaDmProviderRejection(
+            "instagram",
+            event.instagramAccountId,
+            error.code,
+          ).catch(() => undefined);
+        }
         publicReplyError =
           error instanceof Error ? error.message : "Instagram rejected the public reply.";
       }
@@ -2066,6 +2260,13 @@ export async function processInstagramDmQueueMessage(
     return { sent: true };
   } catch (error) {
     const deliveryError = error instanceof MetaDeliveryError ? error : null;
+    if (deliveryError && claimedConnectionId) {
+      await noteMetaDmProviderRejection(
+        "instagram",
+        event.instagramAccountId,
+        deliveryError.code,
+      ).catch(() => undefined);
+    }
     const accountBackoffSeconds = getInstagramAccountBackoffSeconds(error);
     if (claimedConnectionId && accountBackoffSeconds) {
       await deferInstagramDeliverySlot(claimedConnectionId, accountBackoffSeconds).catch(

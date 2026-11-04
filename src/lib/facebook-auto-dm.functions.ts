@@ -1,5 +1,6 @@
 import { hasPlanEntitlement } from "./plan.server";
 import { loadAutoDmMetrics } from "./auto-dm-metrics.server";
+import { metaDmSafetyReason } from "./meta-auto-dm-safety";
 /* eslint-disable @typescript-eslint/no-explicit-any -- New service-role tables are typed after the migration is deployed. */
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
@@ -107,7 +108,9 @@ async function dashboard(userId: string, plan?: PlanId) {
           .from("facebook_dm_events")
           .select("*, automation:facebook_dm_automations(name)")
           .in("connection_id", connectionIds)
-          .neq("status", "ignored")
+          .or(
+            "status.neq.ignored,error_code.in.(recipient_preference_updated,recipient_opted_out,recipient_cooldown,account_budget,account_paused,recipient_missing)",
+          )
           .order("created_at", { ascending: false })
           .limit(50)
       : Promise.resolve({ data: [], error: null }),
@@ -179,6 +182,7 @@ async function dashboard(userId: string, plan?: PlanId) {
         mediaScope: row.media_scope || (row.media_ids?.length ? "specific" : "any"),
         mediaIds: row.media_ids || [],
         replyMessage: row.reply_message,
+        replyMessages: row.reply_messages?.length ? row.reply_messages : [row.reply_message],
         publicReplyEnabled: row.public_reply_enabled,
         publicReplyMessages:
           row.public_reply_messages?.length > 0
@@ -187,9 +191,19 @@ async function dashboard(userId: string, plan?: PlanId) {
               ? [row.public_reply_message]
               : [],
         openingMessage: row.opening_message,
+        openingMessages: row.opening_messages?.length
+          ? row.opening_messages
+          : row.opening_message
+            ? [row.opening_message]
+            : [],
         confirmationButtonLabel: row.confirmation_button_label,
         emailCaptureEnabled: row.email_capture_enabled,
         emailPromptMessage: row.email_prompt_message,
+        emailPromptMessages: row.email_prompt_messages?.length
+          ? row.email_prompt_messages
+          : row.email_prompt_message
+            ? [row.email_prompt_message]
+            : [],
         emailMarketingConsentEnabled: row.email_marketing_consent_enabled,
         replyButtonLabel: row.reply_button_label,
         replyButtonUrl: row.reply_button_url,
@@ -206,7 +220,7 @@ async function dashboard(userId: string, plan?: PlanId) {
       senderLabel: row.sender_username || "Facebook user",
       matchedKeyword: row.matched_keyword,
       status: row.status,
-      errorMessage: row.error_message,
+      errorMessage: row.error_message || metaDmSafetyReason(row.error_code),
       createdAt: row.created_at,
     })),
     workflows: (runs || []).map((row: any): FacebookDmWorkflow => ({
@@ -290,13 +304,16 @@ export const saveFacebookAutoDmAutomation = createServerFn({ method: "POST" })
       media_scope: data.mediaScope,
       media_ids: data.mediaIds,
       reply_message: normalizeDashes(data.replyMessage),
+      reply_messages: data.replyMessages.map(normalizeDashes),
       public_reply_enabled: data.publicReplyEnabled,
       public_reply_message: normalizeOptionalCopy(data.publicReplyMessages[0]),
       public_reply_messages: data.publicReplyMessages.map(normalizeDashes),
       opening_message: normalizeOptionalCopy(data.openingMessage),
+      opening_messages: data.openingMessages.map(normalizeDashes),
       confirmation_button_label: normalizeOptionalCopy(data.confirmationButtonLabel),
       email_capture_enabled: data.emailCaptureEnabled,
       email_prompt_message: normalizeOptionalCopy(data.emailPromptMessage),
+      email_prompt_messages: data.emailPromptMessages.map(normalizeDashes),
       email_marketing_consent_enabled: data.emailMarketingConsentEnabled,
       reply_button_label: normalizeOptionalCopy(data.replyButtonLabel),
       reply_button_url: data.replyButtonUrl,

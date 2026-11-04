@@ -10,13 +10,14 @@ import {
   Scripts,
   redirect,
 } from "@tanstack/react-router";
-import { useEffect, useMemo } from "react";
+import { useEffect, useLayoutEffect, useMemo } from "react";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "sonner";
 
 import appCss from "../styles.css?url";
 import { HoverGuide } from "@/components/HoverGuide";
 import { shouldInvalidateRouterForAuthEvent } from "@/lib/auth-route-refresh";
+import { watchCheckoutExit } from "@/lib/checkout-tracking";
 import { recordFirstLanding } from "@/lib/first-landing";
 import { isReplayableProductPath, isTrackedProductPath } from "@/lib/posthog-paths";
 import { safeWebMcpPathname, useWebMcpTools, webMcpResult } from "@/lib/webmcp";
@@ -416,8 +417,16 @@ function AuthSync() {
   return null;
 }
 
+const useBrowserLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
 function ProductAnalyticsSync() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+
+  // Layout effects run before every passive effect in the tree, so the first check sees Dodo's
+  // return parameters before the onboarding screen removes them from the URL. It does nothing
+  // (and loads no analytics) unless this tab started a checkout. The listeners also cover the
+  // page that starts checkout, which can be restored from the back/forward cache.
+  useBrowserLayoutEffect(() => watchCheckoutExit(), []);
 
   useEffect(() => {
     let disposed = false;

@@ -220,11 +220,7 @@ export function normalizeStoredSocialLink(platform: string, value: string) {
   }
   return {
     platform,
-    handle: trimmed
-      .replace(/^@/, "")
-      .replace(/[/?#].*$/, "")
-      .trim()
-      .slice(0, 100),
+    handle: trimmed.replace(/^@/, "").replace(/[/?#].*$/, "").trim().slice(0, 100),
   };
 }
 

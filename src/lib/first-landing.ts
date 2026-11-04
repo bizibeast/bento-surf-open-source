@@ -1,3 +1,4 @@
+import { configuredAppOrigin, configuredPublicOrigin } from "./application-urls";
 import { redactSensitivePathname } from "./safe-url";
 
 /**
@@ -7,7 +8,7 @@ import { redactSensitivePathname } from "./safe-url";
  * marketing page (pricing, features, blog, compare...) would otherwise have no first
  * touch. This tiny recorder runs on those pages without loading the SDK and without
  * sending anything anywhere: it writes one first-party cookie, scoped to the shared
- * parent domain so app.bento.surf (and the OAuth return) can read it at signup.
+ * parent domain so app.example.com (and the OAuth return) can read it at signup.
  */
 export const FIRST_LANDING_COOKIE = "bento_first_landing";
 const MAX_AGE_SECONDS = 60 * 60 * 24 * 90;
@@ -51,11 +52,16 @@ function clean(value: string | null | undefined): string | null {
   return trimmed || null;
 }
 
-/** Shared parent domain: app.bento.surf -> .bento.surf, app.test.bento.surf -> .test.bento.surf. */
+/** Shared parent domain: app.example.com -> .example.com, app.staging.example.com -> .staging.example.com. */
 export function firstLandingCookieDomain(hostname: string): string | null {
   const host = hostname.toLowerCase();
-  if (!host.endsWith("bento.surf")) return null;
-  return `.${host.replace(/^(app|www)\./, "")}`;
+  const publicHost = new URL(configuredPublicOrigin(import.meta.env.VITE_PUBLIC_URL)).hostname;
+  const appHost = new URL(configuredAppOrigin(import.meta.env.VITE_APP_URL)).hostname;
+  if (publicHost === "localhost" || !publicHost.includes(".") || /^[\d.]+$/.test(publicHost))
+    return null;
+  if (host !== publicHost && host !== appHost) return null;
+  if (appHost !== publicHost && !appHost.endsWith(`.${publicHost}`)) return null;
+  return `.${publicHost}`;
 }
 
 export function buildFirstLanding(input: { href: string; referrer: string }): FirstLanding | null {

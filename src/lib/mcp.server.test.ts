@@ -339,6 +339,32 @@ const readOnlyAnnotations = {
 
 /** Pins the hints OpenAI reads from tools/list. Idempotent is omitted unless true. */
 const bentoMcpToolAnnotations = {
+  list_free_tools: { ...readOnlyAnnotations, idempotentHint: true },
+  run_free_text_tool: { ...readOnlyAnnotations, idempotentHint: true },
+  run_free_ai_tool: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true,
+  },
+  run_free_media_tool: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true,
+  },
+  run_free_image_tool: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true,
+  },
+  transcribe_free_audio: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true,
+  },
   get_bento_overview: readOnlyAnnotations,
   list_workspaces: readOnlyAnnotations,
   read_workspace_data: readOnlyAnnotations,
@@ -355,6 +381,7 @@ const bentoMcpToolAnnotations = {
   list_social_accounts: readOnlyAnnotations,
   upload_media: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
   begin_media_upload: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
+  list_uploaded_media: readOnlyAnnotations,
   list_social_posts: readOnlyAnnotations,
   get_social_post: readOnlyAnnotations,
   search_stock_photos: { readOnlyHint: true, openWorldHint: true, destructiveHint: false },
@@ -547,8 +574,15 @@ describe("Bento MCP tools", () => {
     const toolsPayload = await payload(toolsResponse);
     expect(toolsPayload.result.tools.map((tool: { name: string }) => tool.name)).toEqual(
       expect.arrayContaining([
+        "list_free_tools",
+        "run_free_text_tool",
+        "run_free_ai_tool",
+        "run_free_media_tool",
+        "run_free_image_tool",
+        "transcribe_free_audio",
         "list_workspaces",
         "upload_media",
+        "list_uploaded_media",
         "create_social_post",
         "save_auto_dm_automation",
         "manage_page",
@@ -600,6 +634,12 @@ describe("Bento MCP tools", () => {
               "begin_media_upload",
               "manage_content_agent",
               "list_workspaces",
+              "list_free_tools",
+              "run_free_text_tool",
+              "run_free_ai_tool",
+              "run_free_media_tool",
+              "run_free_image_tool",
+              "transcribe_free_audio",
             ].includes(name),
         )
         .sort(),
@@ -649,6 +689,14 @@ describe("Bento MCP tools", () => {
       annotations?: Record<string, boolean>;
     }[];
     expect(Object.fromEntries(tools.map((tool) => [tool.name, tool.annotations]))).toEqual({
+      list_free_tools: bentoMcpToolAnnotations.list_free_tools,
+      run_free_text_tool: bentoMcpToolAnnotations.run_free_text_tool,
+      run_free_ai_tool: bentoMcpToolAnnotations.run_free_ai_tool,
+      run_free_media_tool: bentoMcpToolAnnotations.run_free_media_tool,
+      run_free_image_tool: bentoMcpToolAnnotations.run_free_image_tool,
+      transcribe_free_audio: bentoMcpToolAnnotations.transcribe_free_audio,
+      list_uploaded_media: bentoMcpToolAnnotations.list_uploaded_media,
+
       get_bento_overview: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
       list_workspaces: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
       read_workspace_data: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
@@ -780,6 +828,202 @@ describe("Bento MCP tools", () => {
     expect(internal.structuredContent.data.items[0].content).toBe(fullText);
   });
 
+  it("returns upload media and completion instructions as readable MCP text", async () => {
+    const media = {
+      key: "users/creator/image/photo.jpg",
+      url: "https://bento.surf/cdn/users/creator/image/photo.jpg",
+      name: "photo.jpg",
+      mimeType: "image/jpeg",
+      size: 123,
+    };
+    const upload = {
+      key: "users/creator/video/clip.mp4",
+      uploadUrl: "https://mcp.bento.surf/api/mcp/media-upload",
+      headers: { Authorization: "Bearer example-upload-ticket" },
+      partSize: 8_388_608,
+      partCount: 1,
+      expiresAt: "2026-11-03T10:00:00.000Z",
+      instructions: "PUT one part, then POST the ETag to complete.",
+    };
+    const operations = {
+      ...defaultBentoMcpOperations,
+      uploadMedia: vi.fn(async () => media),
+      beginMcpMediaUpload: vi.fn(async () => upload),
+    } as unknown as typeof defaultBentoMcpOperations;
+    const handler = createMcpHandler(() =>
+      createBentoMcpServer(authInfo, "https://mcp.bento.surf", operations),
+    );
+    const call = async (name: string, arguments_: Record<string, unknown>) => {
+      const response = await handler.fetch(
+        request({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name, arguments: arguments_ },
+        }),
+        { authInfo },
+      );
+      expect(response.status).toBe(200);
+      return (await payload(response)).result;
+    };
+
+    const uploaded = await call("upload_media", {
+      sourceUrl: "https://example.com/photo.jpg",
+      fileName: "photo.jpg",
+      mimeType: "image/jpeg",
+      kind: "image",
+    });
+    expect(JSON.parse(uploaded.content[1].text)).toEqual({
+      workspaceId: authInfo.extra!.userId,
+      media,
+    });
+    expect(JSON.parse(uploaded.content[1].text).media).toEqual(uploaded.structuredContent.media);
+
+    const prepared = await call("begin_media_upload", {
+      fileName: "clip.mp4",
+      mimeType: "video/mp4",
+      kind: "video",
+      size: 123,
+    });
+    expect(JSON.parse(prepared.content[1].text)).toEqual({
+      workspaceId: authInfo.extra!.userId,
+      upload,
+    });
+  });
+
+  it("returns the saved post ID as readable MCP text", async () => {
+    const handler = createMcpHandler(() =>
+      createBentoMcpServer(authInfo, "https://mcp.bento.surf", {
+        ...defaultBentoMcpOperations,
+        saveSocialPostForUser: vi.fn(async () => ({ id: "saved-post-id", status: "scheduled" })),
+      }),
+    );
+    const response = await handler.fetch(
+      request({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "create_social_post",
+          arguments: {
+            body: "A scheduled post",
+            connectionIds: ["00000000-0000-4000-8000-000000000010"],
+            mode: "schedule",
+            scheduledAt: "2026-11-04T12:00:00+00:00",
+          },
+        },
+      }),
+      { authInfo },
+    );
+    const result = (await payload(response)).result;
+    expect(JSON.parse(result.content[1].text).post).toEqual({
+      id: "saved-post-id",
+      status: "scheduled",
+    });
+  });
+
+  it("advertises the explicit YouTube Shorts format to MCP clients", async () => {
+    const handler = createMcpHandler(() =>
+      createBentoMcpServer(authInfo, "https://mcp.bento.surf"),
+    );
+    const response = await handler.fetch(
+      request({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      { authInfo },
+    );
+    const tools = (await payload(response)).result.tools;
+    const create = tools.find((tool: { name: string }) => tool.name === "create_social_post");
+    expect(
+      create.inputSchema.properties.providerSettings.properties.youtube.properties,
+    ).toMatchObject({
+      youtubeFormat: { enum: ["short", "video"] },
+    });
+  });
+
+  it("recovers existing uploaded post media from the selected workspace", async () => {
+    const brandId = "00000000-0000-4000-8000-000000000002";
+    const list = vi.fn(async () => ({
+      objects: [
+        {
+          key: `users/${brandId}/image/first.jpg`,
+          size: 123,
+          httpMetadata: { contentType: "image/jpeg" },
+          customMetadata: { originalFilename: "first.jpg" },
+        },
+        {
+          key: `users/${brandId}/video/second.mp4`,
+          size: 456,
+          httpMetadata: { contentType: "video/mp4" },
+          customMetadata: { originalFilename: "second.mp4" },
+        },
+        {
+          key: `users/${brandId}/avatar/profile.jpg`,
+          size: 25,
+          httpMetadata: { contentType: "image/jpeg" },
+          customMetadata: {},
+        },
+      ],
+      truncated: true,
+      cursor: "next-r2-page",
+    }));
+    const previousEnv = globalThis.__env__;
+    const previousAppUrl = process.env.VITE_APP_URL;
+    globalThis.__env__ = { MEDIA_BUCKET: { list } } as unknown as Env;
+    process.env.VITE_APP_URL = "https://app.bento.surf";
+    try {
+      const handler = createMcpHandler(() =>
+        createBentoMcpServer(authInfo, "https://mcp.bento.surf", {
+          ...defaultBentoMcpOperations,
+          resolveMcpWorkspaceId: vi.fn(async (_owner, requested) => requested ?? brandId),
+        }),
+      );
+      const response = await handler.fetch(
+        request({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: {
+            name: "list_uploaded_media",
+            arguments: { workspaceId: brandId, cursor: "previous-r2-page", limit: 3 },
+          },
+        }),
+        { authInfo },
+      );
+      const result = (await payload(response)).result;
+      expect(result.isError).not.toBe(true);
+      expect(JSON.parse(result.content[1].text)).toEqual(result.structuredContent);
+      expect(result.structuredContent).toEqual({
+        workspaceId: brandId,
+        media: [
+          {
+            key: `users/${brandId}/image/first.jpg`,
+            url: `https://app.bento.surf/cdn/users/${brandId}/image/first.jpg`,
+            name: "first.jpg",
+            mimeType: "image/jpeg",
+            size: 123,
+          },
+          {
+            key: `users/${brandId}/video/second.mp4`,
+            url: `https://app.bento.surf/cdn/users/${brandId}/video/second.mp4`,
+            name: "second.mp4",
+            mimeType: "video/mp4",
+            size: 456,
+          },
+        ],
+        nextCursor: "next-r2-page",
+      });
+      expect(list).toHaveBeenCalledWith({
+        prefix: `users/${brandId}/`,
+        limit: 3,
+        cursor: "previous-r2-page",
+        include: ["httpMetadata", "customMetadata"],
+      });
+    } finally {
+      globalThis.__env__ = previousEnv;
+      if (previousAppUrl === undefined) Reflect.deleteProperty(process.env, "VITE_APP_URL");
+      else process.env.VITE_APP_URL = previousAppUrl;
+    }
+  });
+
   it("routes Content reads and edits through the authorized creator ID", async () => {
     const getMcpContentBrain = vi.fn(async () => ({
       profile: {
@@ -903,6 +1147,46 @@ describe("Bento MCP tools", () => {
       2,
       authInfo.extra!.userId,
       expect.objectContaining({ scheduledAt: null, asDraft: false, publishNow: true }),
+    );
+  });
+
+  it("passes ordered TikTok carousel media and privacy through the MCP scheduler tool", async () => {
+    const save = vi.fn(async (_userId: string, input: unknown) => ({
+      id: "saved",
+      input: socialPostInputSchema.parse(input),
+    }));
+    const tools = createBentoAppTools(
+      {
+        userId: String(authInfo.extra!.userId),
+        accessToken: authInfo.token,
+        supabase: {} as Parameters<typeof createBentoAppTools>[0]["supabase"],
+      },
+      "https://app.bento.surf",
+      { ...defaultBentoMcpOperations, saveSocialPostForUser: save },
+    );
+    const media = [1, 2].map((index) => ({
+      key: `users/${authInfo.extra!.userId}/image/carousel-${index}.jpg`,
+      url: `https://app.bento.surf/cdn/carousel-${index}.jpg`,
+      name: `carousel-${index}.jpg`,
+      mimeType: "image/jpeg",
+      size: 1024,
+    }));
+    await tools.get("create_social_post")!.execute({
+      body: "A photo carousel",
+      mode: "schedule",
+      scheduledAt: "2099-10-22T18:00:00Z",
+      connectionIds: ["00000000-0000-4000-8000-000000000001"],
+      media,
+      providerSettings: { tiktok: { privacyLevel: "SELF_ONLY", autoAddMusic: true } },
+    });
+    expect(save).toHaveBeenCalledWith(
+      authInfo.extra!.userId,
+      expect.objectContaining({
+        media,
+        providerSettings: { tiktok: { privacyLevel: "SELF_ONLY", autoAddMusic: true } },
+        asDraft: false,
+        publishNow: false,
+      }),
     );
   });
 

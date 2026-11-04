@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { resolveFirstTouch } from "./analytics-identity";
 import {
@@ -64,10 +64,12 @@ describe("first landing paths and cookie scope", () => {
   );
 
   it("scopes the cookie to the shared parent domain", () => {
-    expect(firstLandingCookieDomain("bento.surf")).toBe(".bento.surf");
-    expect(firstLandingCookieDomain("app.bento.surf")).toBe(".bento.surf");
-    expect(firstLandingCookieDomain("app.test.bento.surf")).toBe(".test.bento.surf");
-    expect(firstLandingCookieDomain("test.bento.surf")).toBe(".test.bento.surf");
+    vi.stubEnv("VITE_PUBLIC_URL", "https://example.com");
+    vi.stubEnv("VITE_APP_URL", "https://app.example.com");
+    expect(firstLandingCookieDomain("example.com")).toBe(".example.com");
+    expect(firstLandingCookieDomain("app.example.com")).toBe(".example.com");
+    expect(firstLandingCookieDomain("evil.example.com")).toBeNull();
+    vi.unstubAllEnvs();
     expect(firstLandingCookieDomain("localhost")).toBeNull();
   });
 

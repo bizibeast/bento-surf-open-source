@@ -21,6 +21,7 @@ export type PaidResource =
   | "vision_images"
   | "seo_images"
   | "transcription_requests"
+  | "mcp_media_resolutions"
   | "browser_milliseconds"
   | "marketing_emails"
   | "transactional_emails"

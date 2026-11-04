@@ -20,6 +20,7 @@ import { z } from "zod-v4";
 import {
   beginMcpMediaUpload,
   beginMediaUploadSchema,
+  listMcpUploadedMedia,
   mcpMediaOrigin,
 } from "./mcp-media-upload.server";
 import type { Database } from "@/integrations/supabase/types";
@@ -105,6 +106,7 @@ import {
 } from "./mcp.content-ops.server";
 
 import { readWorkspaceData } from "./mcp-workspace-data.server";
+import { defaultMcpFreeToolOperations, registerMcpFreeTools } from "./mcp-free-tools.server";
 import { listMcpWorkspaces, resolveMcpWorkspaceId } from "./mcp-workspace.server";
 import { sanitizeMcpReadData } from "./mcp-read-results";
 import { getSchedulerPost, listSchedulerPosts } from "./mcp-scheduler-read.server";
@@ -157,7 +159,7 @@ function db() {
   return supabaseAdmin as any;
 }
 
-function textResult(message: string, data: Record<string, unknown>) {
+function structuredResult(message: string, data: Record<string, unknown>) {
   return {
     content: [{ type: "text" as const, text: message }],
     structuredContent: data,
@@ -736,12 +738,17 @@ async function uploadMedia(
     const payload = (await response?.json().catch(() => null)) as { error?: string } | null;
     throw new Error(payload?.error || "Media could not be uploaded.");
   }
-  const payload = (await response.json()) as { key: string; publicUrl: string; size: number };
+  const payload = (await response.json()) as {
+    key: string;
+    publicUrl: string;
+    size: number;
+    mimeType?: string;
+  };
   return {
     key: payload.key,
     url: payload.publicUrl,
     name: input.fileName,
-    mimeType: input.mimeType,
+    mimeType: payload.mimeType || input.mimeType,
     size: payload.size,
   };
 }
@@ -922,6 +929,7 @@ async function resolvePostMedia(userId: string, ids: string[]) {
 }
 
 export const defaultBentoMcpOperations = {
+  ...defaultMcpFreeToolOperations,
   listMcpWorkspaces,
   resolveMcpWorkspaceId,
   readAutoDmDelay,
@@ -944,6 +952,7 @@ export const defaultBentoMcpOperations = {
   listBookings,
   uploadMedia,
   beginMcpMediaUpload,
+  listMcpUploadedMedia,
   getStoreWorkspace,
   mutateProduct,
   mutateDiscount,
@@ -1010,6 +1019,7 @@ const socialProviderSettingsSchema = z
       .optional(),
     youtube: z
       .object({
+        youtubeFormat: z.enum(["short", "video"]).optional(),
         youtubePrivacy: z.enum(["private", "unlisted", "public"]).optional(),
         description: z.string().max(5_000).optional(),
         titleOverride: z.string().max(100).optional(),
@@ -1027,6 +1037,7 @@ const socialProviderSettingsSchema = z
         brandOrganicToggle: z.boolean().optional(),
         brandContentToggle: z.boolean().optional(),
         isAigc: z.boolean().optional(),
+        autoAddMusic: z.boolean().optional(),
         videoCoverTimestampMs: z.number().int().min(0).optional(),
       })
       .passthrough()
@@ -1719,9 +1730,14 @@ function registerBentoTools(
   const userId = userIdFrom(authInfo);
   const socialWorkspaceId = (workspaceId?: string) =>
     operations.resolveMcpWorkspaceId(userId, workspaceId);
+  const textResult = (message: string, data: Record<string, unknown>) => {
+    const result = structuredResult(message, data);
+    if (includeReadableData) result.content.push({ type: "text", text: JSON.stringify(data) });
+    return result;
+  };
   const readResult = (message: string, data: Record<string, unknown>) => {
     const safeData = sanitizeMcpReadData(data);
-    const result = textResult(message, safeData);
+    const result = structuredResult(message, safeData);
     // Older MCP clients only pass text blocks to the model. Internal Agent reads
     // already consume structuredContent, so avoid duplicating its token usage.
     if (includeReadableData) result.content.push({ type: "text", text: JSON.stringify(safeData) });
@@ -1948,7 +1964,7 @@ function registerBentoTools(
     {
       title: "Upload media to Bento",
       description:
-        "Import one public media URL (streamed within plan and remaining storage limits) or inline base64 up to 25 MB. Prefer begin_media_upload for local videos over 8 MB; never compress just to fit MCP. Returns media to reuse in ONE create_social_post with all selected accounts.",
+        "Import one public media URL (streamed within plan and remaining storage limits) or inline base64 up to 25 MB. Prefer begin_media_upload for local videos over 8 MB; never compress just to fit MCP. Read the returned media object from the JSON text and pass it directly in ONE create_social_post.media array with all selected accounts.",
       inputSchema: z.object({
         workspaceId: z.uuid().optional(),
         sourceUrl: z.url().optional(),
@@ -1972,7 +1988,7 @@ function registerBentoTools(
     {
       title: "Start a large media upload",
       description:
-        "Upload an original local video or other file without putting it in MCP JSON. Checks plan and remaining storage, then returns a private two-hour upload credential and exact HTTP instructions. Use file/HTTP tools to PUT 8 MiB binary parts, then POST their ETags to complete and obtain media for create_social_post. DELETE cancels the unfinished upload. No account token is needed. If this client cannot read files or send HTTP, ask the user to attach it in Bento; do not pretend it was uploaded.",
+        "Upload an original local video or other file without putting it in MCP JSON. Checks plan and remaining storage, then returns a private two-hour upload credential and exact HTTP instructions in JSON text. Use file/HTTP tools to PUT 8 MiB binary parts, then POST their ETags to complete and obtain the media object for create_social_post.media. DELETE cancels the unfinished upload. No account token is needed. If this client cannot read files or send HTTP, ask the user to attach it in Bento; do not pretend it was uploaded.",
       inputSchema: beginMediaUploadSchema.extend({ workspaceId: z.uuid().optional() }),
       annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
     },
@@ -1985,6 +2001,28 @@ function registerBentoTools(
           upload: await operations.beginMcpMediaUpload(selectedId, origin, input),
         },
       );
+    },
+  );
+
+  server.registerTool(
+    "list_uploaded_media",
+    {
+      title: "List uploaded post media",
+      description:
+        "Recover media objects from earlier Bento uploads in this workspace without uploading them again. Returns public image, video, and file objects ready for create_social_post.media. Follow nextCursor until null; an empty page may still have a nextCursor. Private product files are excluded.",
+      inputSchema: z.object({
+        workspaceId: z.uuid().optional(),
+        cursor: z.string().min(1).max(2_000).optional(),
+        limit: z.number().int().min(1).max(100).default(50),
+      }),
+      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+    },
+    async ({ workspaceId, cursor, limit }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      return readResult("Loaded previously uploaded post media.", {
+        workspaceId: selectedId,
+        ...(await operations.listMcpUploadedMedia(selectedId, origin, cursor, limit)),
+      });
     },
   );
 
@@ -2077,7 +2115,7 @@ function registerBentoTools(
     {
       title: "Create social post",
       description:
-        "Create or edit a social draft, schedule it, or publish now. For multiple networks in ONE workspace use one action with all connectionIds and tailored connectionOverrides[id].bodyOverride. For multiple workspaces, list_workspaces first and call this tool separately with each workspaceId. Optional stockPhoto imports one selected free photo when executing. providerSettings supports Instagram Trial Reels and scheduled Auto DM (public replies, email, follow gate, link button), X and Facebook scheduledAutoDm, YouTube title, description, visibility and thumbnail, TikTok privacy and interactions, and auto repost.",
+        "Create or edit a social draft, schedule it, or publish now. Pass media objects returned by upload_media or upload completion, not file IDs. For multiple networks in ONE workspace use one action with all connectionIds and tailored connectionOverrides[id].bodyOverride. For multiple workspaces, list_workspaces first and call this tool separately with each workspaceId. Optional stockPhoto imports one selected free photo when executing. For TikTok, pass one video or 1-10 ordered JPEG or WebP images in media and set providerSettings.tiktok.privacyLevel before scheduling or publishing; the first image is the carousel cover. For YouTube Shorts set providerSettings.youtube.youtubeFormat to short; the YouTube API accepts a thumbnail image, not a frame timestamp, and may reject Shorts thumbnails until set in YouTube Studio. providerSettings also supports Instagram Trial Reels and scheduled Auto DM, X and Facebook scheduledAutoDm, YouTube title, description and visibility, TikTok interactions and autoAddMusic for photos, and auto repost.",
       inputSchema: z.object({
         workspaceId: z.uuid().optional(),
         id: z.uuid().optional(),
@@ -2653,7 +2691,7 @@ export function createBentoMcpServer(
     {
       instructions:
         "For social posts across brands, call list_workspaces first. Pass each active workspaceId to account, media, scheduling, and verification tools. Create and verify a separate post in each workspace; account IDs and media keys cannot cross workspaces. Omission uses the original workspace. " +
-        "Use stable IDs returned by list tools. Summary counts are not evidence for individual posts. For Scheduler posts, paginate list_social_posts, filter provider/targetStatus and destination published_at date bounds, then use get_social_post for exact stored details and metric freshness. read_workspace_data social_posts contains imported analytics; scheduler_posts contains Scheduler records. Preserve source and fetched_at/published_at timestamps; do not infer five platform posts from five multi-platform Scheduler rows. Before content planning or writing, read get_content_brain, get_content_routines, get_analytics_workspace and get_content_discover as relevant. These expose the creator voice, publishing cadence, performance and current stored signals. For full documents, imported source text, older runs, bookmarks and social history use read_workspace_data, follow nextCursor, and read truncated text by id. Empty or stale stored data is not permission to start paid refreshes. List accounts before posting or creating Auto-DMs. For one piece of content on several networks create ONE social post with all connectionIds, shared media uploaded once, and connectionOverrides[connectionId].bodyOverride for each caption. YouTube titleOverride/description/youtubePrivacy go in providerSettings.youtube. Edit by passing the existing post id; do not split or duplicate drafts for different captions. For local videos over 8 MB use begin_media_upload and its binary chunk instructions, not large base64 JSON or compression. Read skill://bento/bento/references/tools.md for complete examples. Publish now or delete only when the user explicitly requested that external action.",
+        "Use stable IDs returned by list tools. Summary counts are not evidence for individual posts. For Scheduler posts, paginate list_social_posts, filter provider/targetStatus and destination published_at date bounds, then use get_social_post for exact stored details and metric freshness. read_workspace_data social_posts contains imported analytics; scheduler_posts contains Scheduler records. Preserve source and fetched_at/published_at timestamps; do not infer five platform posts from five multi-platform Scheduler rows. Before content planning or writing, read get_content_brain, get_content_routines, get_analytics_workspace and get_content_discover as relevant. These expose the creator voice, publishing cadence, performance and current stored signals. For full documents, imported source text, older runs, bookmarks and social history use read_workspace_data, follow nextCursor, and read truncated text by id. Empty or stale stored data is not permission to start paid refreshes. List accounts before posting or creating Auto-DMs. For one piece of content on several networks create ONE social post with all connectionIds, shared media uploaded once, and connectionOverrides[connectionId].bodyOverride for each caption. Pass the complete media object from upload_media or upload completion; if an older reply is lost, use list_uploaded_media in the same workspace. YouTube titleOverride/description/youtubePrivacy/youtubeFormat go in providerSettings.youtube. Edit by passing the existing post id; do not split or duplicate drafts for different captions. For local videos over 8 MB use begin_media_upload and its binary chunk instructions, not large base64 JSON or compression. Read skill://bento/bento/references/tools.md for complete examples. Publish now or delete only when the user explicitly requested that external action.",
       capabilities: { extensions: { "io.modelcontextprotocol/skills": {} } },
     },
   );
@@ -2661,6 +2699,7 @@ export function createBentoMcpServer(
   installScannerSafeToolSchemas(server);
   advertiseSkillsOnlyWhenRequested(server);
   registerBentoTools(server, authInfo, origin, operations, creatorContext);
+  registerMcpFreeTools(server, authInfo, operations);
 
   server.registerResource(
     "bento-skill",
@@ -2742,13 +2781,9 @@ export function createChatGptMcpServer(
   );
   installScannerSafeToolSchemas(server);
   advertiseSkillsOnlyWhenRequested(server);
-  registerChatGptTools(
-    server,
-    authInfo,
-    origin,
-    operations ?? chatGptOperations(defaultBentoMcpOperations),
-    creatorContext,
-  );
+  const chatGptToolOperations = operations ?? chatGptOperations(defaultBentoMcpOperations);
+  registerChatGptTools(server, authInfo, origin, chatGptToolOperations, creatorContext);
+  registerMcpFreeTools(server, authInfo, chatGptToolOperations);
   return server;
 }
 

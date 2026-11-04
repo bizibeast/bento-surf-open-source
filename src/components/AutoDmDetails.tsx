@@ -129,7 +129,7 @@ export function AutoDmActivityRow({
       <summary className="cursor-pointer rounded-lg p-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
         <span className="font-semibold">{event.senderLabel}</span>
         <span className="ml-3 rounded-md bg-muted px-2 py-1 text-xs capitalize">
-          {event.status}
+          {event.status === "ignored" ? "Skipped" : event.status}
         </span>
         <span className="mt-1 block text-xs text-muted-foreground">
           {event.automationName || "No matching automation"} ·{" "}
@@ -149,7 +149,9 @@ export function AutoDmActivityRow({
         </div>
         {event.errorMessage && (
           <div>
-            <dt className="font-semibold">Delivery error</dt>
+            <dt className="font-semibold">
+              {event.status === "ignored" ? "Reason" : "Delivery error"}
+            </dt>
             <dd className="break-words text-rose-700">{event.errorMessage}</dd>
           </div>
         )}

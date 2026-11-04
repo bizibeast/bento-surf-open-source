@@ -165,10 +165,14 @@ function postFromRow(row: any, insights: Map<string, TargetInsight>): SchedulerP
     targets: (row.targets || [])
       .filter((target: any) => isPublicSocialProvider(target.provider))
       .map((target: any) => {
-        const insight = insights.get(`${target.connection_id}:${target.remote_post_id}`);
+        const insight = target.connection_id
+          ? insights.get(`${target.connection_id}:${target.remote_post_id}`)
+          : undefined;
         return {
           id: target.id,
           connectionId: target.connection_id,
+          accountHandle: target.account_handle_snapshot || null,
+          accountDisplayName: target.account_display_name_snapshot || null,
           provider: target.provider,
           status: target.status,
           remotePostUrl: target.remote_post_url || insight?.remotePostUrl || null,
@@ -237,7 +241,7 @@ async function schedulerData(userId: string, plan?: PlanId) {
     db
       .from("social_posts")
       .select(
-        "*, targets:social_post_targets(id, connection_id, provider, status, remote_post_id, remote_post_url, last_error_message, published_at, next_attempt_at, provider_settings, repost:social_repost_jobs(phase, repost_due_at, remove_due_at, reposted_at, removed_at, last_error_message))",
+        "*, targets:social_post_targets(id, connection_id, account_handle_snapshot, account_display_name_snapshot, provider, status, remote_post_id, remote_post_url, last_error_message, published_at, next_attempt_at, provider_settings, repost:social_repost_jobs(phase, repost_due_at, remove_due_at, reposted_at, removed_at, last_error_message))",
       )
       .eq("user_id", userId)
       .order("created_at", { ascending: false })

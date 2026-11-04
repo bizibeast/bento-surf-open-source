@@ -3,6 +3,7 @@ import type { AuthInfo } from "@modelcontextprotocol/server";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod-v4";
 import type { CreatorMcpContext } from "./mcp.creator-ops.server";
+import type { McpFreeToolOperations } from "./mcp-free-tools.server";
 import { reorderPagesForCreator } from "./pages.functions";
 import { schedulerReadFiltersShape } from "./mcp-scheduler-read";
 import type { listSchedulerPosts } from "./mcp-scheduler-read.server";
@@ -64,6 +65,48 @@ const mediaSchema = z.object({
   mimeType: z.string(),
   size: z.number().int().positive(),
 });
+const tiktokPostSettingsSchema = z
+  .object({
+    privacyLevel: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Required when scheduling a TikTok post. Use a privacy level allowed for the connected account.",
+      ),
+    disableComment: z.boolean().optional(),
+    disableDuet: z.boolean().optional(),
+    disableStitch: z.boolean().optional(),
+    commercialContent: z.boolean().optional(),
+    brandOrganicToggle: z.boolean().optional(),
+    brandContentToggle: z.boolean().optional(),
+    isAigc: z.boolean().optional(),
+    autoAddMusic: z
+      .boolean()
+      .optional()
+      .describe("Add recommended music to a TikTok photo carousel."),
+    videoCoverTimestampMs: z.number().int().min(0).optional(),
+  })
+  .strict();
+const youtubePostSettingsSchema = z
+  .object({
+    youtubeFormat: z.enum(["short", "video"]).optional(),
+    youtubePrivacy: z.enum(["private", "unlisted", "public"]).optional(),
+    description: z.string().max(5_000).optional(),
+    titleOverride: z.string().max(100).optional(),
+    thumbnail: mediaSchema
+      .optional()
+      .describe(
+        "Custom thumbnail image. YouTube may require Shorts thumbnails to be set in Studio.",
+      ),
+  })
+  .strict();
+const socialPostSettingsSchema = z
+  .object({
+    tiktok: tiktokPostSettingsSchema.optional(),
+    youtube: youtubePostSettingsSchema.optional(),
+  })
+  .strict();
 const captionSchema = z.object({
   connectionId: z.uuid(),
   bodyOverride: z.string().max(25_000),
@@ -91,7 +134,7 @@ const READ: ChatGptAnnotations = {
   openWorldHint: false,
 };
 
-export type ChatGptToolOperations = {
+export type ChatGptToolOperations = McpFreeToolOperations & {
   listMcpWorkspaces: (authUserId: string) => Promise<any>;
   resolveMcpWorkspaceId: (authUserId: string, requestedId?: string) => Promise<string>;
   getBentoOverview: (userId: string, origin: string) => Promise<any>;
@@ -109,6 +152,12 @@ export type ChatGptToolOperations = {
   getMcpContentMedia: (userId: string, input: any) => Promise<any>;
   uploadMedia: (authInfo: AuthInfo, origin: string, input: any) => Promise<any>;
   beginMcpMediaUpload: (userId: string, origin: string, input: any) => Promise<any>;
+  listMcpUploadedMedia: (
+    userId: string,
+    origin: string,
+    cursor?: string,
+    limit?: number,
+  ) => Promise<any>;
   getAnalyticsWorkspace: (context: CreatorMcpContext, input: any) => Promise<any>;
   listAutoDmAutomations: (
     userId: string,
@@ -535,7 +584,7 @@ export function registerChatGptTools(
   register(
     "draft_social_post",
     "Draft social post",
-    "Save a new social post as a draft in Bento. This does not publish or schedule it.",
+    "Save a new social post as a draft in Bento. Pass uploaded media objects in media. TikTok accepts one video or up to 10 ordered JPEG or WebP images; set providerSettings.tiktok.privacyLevel before scheduling. For YouTube Shorts set providerSettings.youtube.youtubeFormat to short. This does not publish or schedule it.",
     {
       readOnlyHint: false,
       destructiveHint: false,
@@ -548,6 +597,7 @@ export function registerChatGptTools(
       title: z.string().max(300).default(""),
       connectionIds: z.array(z.uuid()).max(20).default([]),
       media: z.array(mediaSchema).max(10).default([]),
+      providerSettings: socialPostSettingsSchema.optional(),
       captions: z.array(captionSchema).max(20).optional(),
       timezone: z.string().min(1).max(100).default("UTC"),
     }),
@@ -569,7 +619,7 @@ export function registerChatGptTools(
   register(
     "schedule_social_post",
     "Schedule social post",
-    "Create a social post, or schedule an existing draft when id is set, for a future time on the selected accounts. This does not publish immediately.",
+    "Create a social post, or schedule an existing draft when id is set, for a future time on the selected accounts. Pass uploaded media objects in media. For TikTok pass one video or up to 10 ordered JPEG or WebP images and set providerSettings.tiktok.privacyLevel. For YouTube Shorts set providerSettings.youtube.youtubeFormat to short; YouTube may require setting the thumbnail in Studio. This does not publish immediately.",
     {
       readOnlyHint: false,
       destructiveHint: false,
@@ -583,6 +633,7 @@ export function registerChatGptTools(
       title: z.string().max(300).default(""),
       connectionIds: z.array(z.uuid()).min(1).max(20),
       media: z.array(mediaSchema).max(10).default([]),
+      providerSettings: socialPostSettingsSchema.optional(),
       captions: z.array(captionSchema).max(20).optional(),
       scheduledAt: z.iso.datetime({ offset: true }),
       timezone: z.string().min(1).max(100).default("UTC"),
@@ -604,7 +655,7 @@ export function registerChatGptTools(
   register(
     "update_social_post",
     "Update social post",
-    "Replace the caption, title, destinations, and media of one existing social post. Pass scheduledAt to keep or set a future publish time. Omit scheduledAt to store it as a draft. This does not publish immediately.",
+    "Replace the caption, title, destinations, media, and provider settings of one existing social post. Pass scheduledAt to keep or set a future publish time. For TikTok photo carousels pass up to 10 ordered JPEG or WebP images and providerSettings.tiktok.privacyLevel. For YouTube Shorts set providerSettings.youtube.youtubeFormat to short. Omit scheduledAt to store it as a draft. This does not publish immediately.",
     {
       readOnlyHint: false,
       destructiveHint: false,
@@ -618,6 +669,7 @@ export function registerChatGptTools(
       title: z.string().max(300).default(""),
       connectionIds: z.array(z.uuid()).max(20),
       media: z.array(mediaSchema).max(10),
+      providerSettings: socialPostSettingsSchema.optional(),
       captions: z.array(captionSchema).max(20).optional(),
       scheduledAt: z.iso.datetime({ offset: true }).optional(),
       timezone: z.string().min(1).max(100).default("UTC"),
@@ -786,6 +838,30 @@ export function registerChatGptTools(
       return textResult("Prepared the media upload.", {
         workspaceId: selectedId,
         upload: await operations.beginMcpMediaUpload(selectedId, origin, input),
+      });
+    },
+  );
+
+  register(
+    "list_uploaded_media",
+    "List uploaded media",
+    "Recover existing public image, video, and file media objects from the creator's Bento workspace without uploading them again. Follow nextCursor until null. Pass a returned media object directly to a social post; private product files are excluded.",
+    {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    z.object({
+      workspaceId: z.uuid().optional(),
+      cursor: z.string().min(1).max(2_000).optional(),
+      limit: z.number().int().min(1).max(100).default(50),
+    }),
+    async ({ workspaceId, cursor, limit }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      return textResult("Loaded previously uploaded post media.", {
+        workspaceId: selectedId,
+        ...(await operations.listMcpUploadedMedia(selectedId, origin, cursor, limit)),
       });
     },
   );

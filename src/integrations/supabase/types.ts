@@ -2889,8 +2889,21 @@ export type Database = {
           p_email: string;
           p_granted_by: string;
           p_plan_id: string;
+          p_workspace_id?: string;
         };
         Returns: undefined;
+      };
+      get_founder_complimentary_workspaces: {
+        Args: { p_email: string };
+        Returns: {
+          workspace_id: string;
+          username: string | null;
+          display_name: string;
+          workspace_status: string;
+          plan_id: string;
+          complimentary_plan_id: string | null;
+          complimentary_expires_at: string | null;
+        }[];
       };
       expire_complimentary_plan_grant: {
         Args: { p_grant_id: string };

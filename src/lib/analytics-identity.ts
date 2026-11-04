@@ -113,7 +113,7 @@ function landingPath(value: unknown): string | null {
   const raw = value.trim();
   if (!raw || !(raw.startsWith("/") || /^https?:\/\//i.test(raw))) return null;
   try {
-    const path = new URL(raw, "https://bento.surf").pathname;
+    const path = new URL(raw, "https://example.com").pathname;
     return (path || "/").slice(0, 200);
   } catch {
     return null;
@@ -141,8 +141,8 @@ function referrerHost(value: unknown): string | null {
  * First-touch attribution for a signup.
  *
  * posthog-js stores `$initial_person_info` ({ r: referrer, u: landing URL }) in its
- * cross-subdomain cookie the first time it loads, so it survives the bento.surf to
- * app.bento.surf hop and the OAuth redirect. Bento's own `bento:first-touch:v1`
+ * cross-subdomain cookie the first time it loads, so it survives the example.com to
+ * app.example.com hop and the OAuth redirect. Bento's own `bento:first-touch:v1`
  * localStorage record is per-origin and is only used as a fallback.
  */
 export function resolveFirstTouch(

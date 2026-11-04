@@ -1,11 +1,24 @@
 # Bento MCP tools
 
+## Run the public free tools
+
+`list_free_tools` returns all 59 slugs, required fields, and the correct runner. Call it before choosing a tool. The five runners are:
+
+- `run_free_text_tool`: 9 UTM, counter, formatter, Unicode, and thread tools. Results are deterministic.
+- `run_free_ai_tool`: 29 writing tools. Supply the exact `toolSlug`, listed `platform`, and `values` keys. One bounded AI attempt is charged to the selected workspace and shared public AI budget.
+- `run_free_media_tool`: 15 public video, image, cover, carousel, and URL transcript tools. Supply a public URL and `rightsConfirmed: true` only after ownership or permission is confirmed. Login-only media is unsupported. Returned media URLs are short-lived.
+- `run_free_image_tool`: 5 resize, compress, flip, split, and background-removal tools. Supply inline base64 or an owned `mediaKey`, plus `fileName`; JPG, PNG, and WebP inputs can be up to 20 MB. The result is returned as MCP image content, up to 8 MB total. No output is saved to Bento storage.
+- `transcribe_free_audio`: supply inline base64 or an owned `mediaKey`, plus `fileName`; supported audio inputs can be up to 12 MB. Returns text and timestamped segments without saving a transcript.
+
+Use `list_workspaces` and pass the chosen `workspaceId` to a runner when the user names a brand. A `mediaKey` must belong to that workspace. Provider and rate limits still apply; a failed or capped call is not a successful tool result. For persistent output, save or upload it through the appropriate Bento flow after the user asks.
+
 - `read_workspace_data`: paginated stored Brain/source documents, routines/runs, Discover/bookmarks and social account/post/history records. Read an item by ID for full text; no provider refresh.
 - `get_bento_overview`: profile, plan, feature links, counts, and recent workspace state.
-- `list_workspaces`: active and unavailable creator workspaces owned by the OAuth login. For social work in a second workspace, pass its returned ID as `workspaceId` to `list_social_accounts`, `upload_media`, `begin_media_upload`, `list_social_posts`, `get_social_post`, `search_stock_photos`, `resolve_post_media`, `create_social_post`, `get_scheduler_workspace`, and `manage_scheduler`. Omit it to use the original workspace. IDs and uploaded media belong to one workspace; schedule and verify a separate post for each workspace.
+- `list_workspaces`: active and unavailable creator workspaces owned by the OAuth login. For social work in a second workspace, pass its returned ID as `workspaceId` to `list_social_accounts`, `upload_media`, `begin_media_upload`, `list_uploaded_media`, `list_social_posts`, `get_social_post`, `search_stock_photos`, `resolve_post_media`, `create_social_post`, `get_scheduler_workspace`, and `manage_scheduler`. Omit it to use the original workspace. IDs and uploaded media belong to one workspace; schedule and verify a separate post for each workspace.
 - `list_social_accounts`: connected publishing/Auto-DM accounts and readiness.
-- `upload_media`: stream a public media URL into Bento storage, or send inline base64 up to 25 MiB over remote MCP (128 KiB through browser WebMCP). Prefer binary chunks for local files over 8 MB.
-- `begin_media_upload`: check storage/plan and prepare a private two-hour binary upload. The returned HTTP instructions handle parts, completion and cancellation without exposing the account OAuth token.
+- `upload_media`: stream a public media URL into Bento storage, or send inline base64 up to 25 MiB over remote MCP (128 KiB through browser WebMCP). The JSON text contains a complete `media` object, not a separate file ID. Prefer binary chunks for local files over 8 MB.
+- `begin_media_upload`: check storage/plan and prepare a private two-hour binary upload. Read the returned HTTP instructions from JSON text; completion returns the `media` object for the post without exposing the account OAuth token.
+- `list_uploaded_media`: recover complete media objects from earlier public image, video, and file uploads in the selected workspace. Follow `nextCursor` until null; a page can be empty while another page remains. Private product files are excluded.
 - `get_content_brain`, `manage_content_brain`: inspect the Content profile, Brain documents, and index; save the profile and documents, confirm, lock, delete, or refresh indexing.
 - `get_content_media`, `manage_content_media`: list/search Brain Media and its limits; register an uploaded image/video, fetch a connected post, manage folders, move items, and set or clear four hero-image slots. Use `upload_media` first and pass its `key` to `register_upload`.
 - `get_content_routines`, `manage_content_routine`: inspect routine schedules and recent activity; save template/custom routines or pause/resume them.
@@ -13,7 +26,7 @@
 - `get_content_discover`, `manage_content_discover`: inspect recommendations and preferences or open a creator recommendation; refresh, load more, set feedback, save/unsave items, or track/untrack creators.
 - `list_social_posts`: stored Scheduler posts with full captions/media, platform/date/status filters, stable cursors and provenance.
 - `get_social_post`: full owned Scheduler post, all destination overrides, remote IDs/URLs, errors/retries, exact matching stored metrics and paginated publish attempts.
-- `create_social_post`: create or edit a draft, schedule, or publish to connected accounts. Use `providerSettings` for YouTube title, description, privacy, and thumbnail; Instagram Trial Reels and scheduled Auto DM; TikTok privacy and interactions; and X repost timing.
+- `create_social_post`: create or edit a draft, schedule, or publish to connected accounts. Pass complete uploaded media objects in `media`, not file IDs. Use `providerSettings` for YouTube title, description, privacy, format, and thumbnail; Instagram Trial Reels and scheduled Auto DM; TikTok privacy, interactions, and photo music; and X repost timing.
 - `get_scheduler_workspace`, `manage_scheduler`: inspect posting times and lifecycle state, then save posting times or reschedule, move to draft, duplicate, cancel, or delete owned posts.
 - `get_auto_dm_delay` / `set_auto_dm_delay`: read or set the workspace-wide delay before automated replies on Instagram, Facebook and X, including scheduled-post automations. Allowed seconds: 30, 60 (default), 120, 180. Related public replies and opening DMs use the same event delay; each incoming workflow response waits again.
 - `list_auto_dm_automations`: Instagram, Facebook, or X automations and connection health.
@@ -32,6 +45,9 @@
 - `list_products`, `list_bookings`: compact product and booking lookups when the full workspace is unnecessary.
 
 Media returned by `upload_media` can be passed directly in `create_social_post.media`. For a scheduled post, use an ISO-8601 timestamp with an offset and the creator's IANA timezone.
+The standard MCP and browser WebMCP tools return the same result data in `structuredContent` and a JSON text block, so clients that read only text can still use the media object, upload instructions, and saved post ID. The large upload is not complete until its HTTP completion response returns `{media:{key,url,name,mimeType,size}}`.
+For a TikTok photo carousel, upload or select 1-10 JPEG or WebP images and pass their media objects in display order. The first image becomes the cover. Set `providerSettings.tiktok.privacyLevel` to a level allowed for that connected account before scheduling or publishing; `autoAddMusic` is optional. Do not mix images and video in one TikTok post. The ChatGPT MCP tools `draft_social_post`, `schedule_social_post`, and `update_social_post` accept the same `providerSettings.tiktok` fields, but do not publish immediately.
+For a YouTube Short, pass the video media object and set `providerSettings.youtube.youtubeFormat` to `short`; title, description, and privacy also live under `youtube`. YouTube's Data API thumbnail call accepts an image, not a frame timestamp. If a selected frame is needed, capture and upload it as a JPEG and pass that object as `providerSettings.youtube.thumbnail`. YouTube may reject setting a Short thumbnail through the API; Bento reports that failure with instructions to use YouTube Studio on a computer. The ChatGPT MCP posting tools accept these YouTube fields.
 For a scheduled Instagram comment Auto DM, set `providerSettings.instagram.scheduledAutoDm` with `triggerType`, `keyword`, `openingMessage`, and `replyMessage`. Optional fields include public replies, email capture and prompt, follower check settings, and a final HTTPS link button. The automation activates only after Instagram confirms publication.
 
 Product fields are `kind`, `title`, `subtitle`, `description`, `cover_url`, `pricing_type`, `price_amount`, `currency`, `billing_interval`, `cta_label`, `settings`, and `inventory_limit`. Store money uses integer minor units. `settings` depends on product kind; inspect an existing same-kind product or Bento's current Store state before updating it.

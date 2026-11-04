@@ -185,6 +185,34 @@ describe("owned Scheduler reads", () => {
       metricsAvailability: "available",
     });
   });
+  it("keeps a disconnected account's saved link and identity without querying its deleted insights", async () => {
+    mocks.from
+      .mockReturnValueOnce(
+        query({
+          id: postId,
+          targets: [
+            {
+              ...target,
+              connection_id: null,
+              account_handle_snapshot: "bizibeast",
+              account_display_name_snapshot: "Bizibeast",
+              remote_post_url: "https://www.instagram.com/reel/DeqTCCDDGA5/",
+            },
+          ],
+        }),
+      )
+      .mockReturnValueOnce(query([]));
+    const result = await getSchedulerPost(owner, { id: postId });
+    expect(result.post.targets[0]).toMatchObject({
+      connection_id: null,
+      account_handle_snapshot: "bizibeast",
+      metrics: null,
+      metricsAvailability: "connection_disconnected",
+      resolvedRemotePostUrl: "https://www.instagram.com/reel/DeqTCCDDGA5/",
+      remotePostUrlSource: "scheduler_target",
+    });
+    expect(mocks.from).not.toHaveBeenCalledWith("social_content_insights");
+  });
   it("fails closed before related queries for another owner or a denied entitlement", async () => {
     const missing = query(null);
     mocks.from.mockReturnValue(missing);

@@ -40,11 +40,16 @@ vi.mock("@/lib/referral.functions", () => ({
   consumeReferralAttribution: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/lib/posthog", () => ({ captureProductEvent: vi.fn() }));
+vi.mock("@/lib/checkout-tracking", () => ({
+  beginCheckoutTracking: vi.fn(),
+  forceCheckoutReplay: vi.fn(),
+}));
 vi.mock("@/lib/social-connections.functions", () => ({ beginInstagramConnection: vi.fn() }));
 vi.mock("@/lib/social-oauth.functions", () => ({ beginSocialConnection: vi.fn() }));
 vi.mock("@/components/AuthShell", () => ({ AuthBrand: () => <a href="/">bento.surf</a> }));
 import { OnboardingExperience } from "./OnboardingExperience";
 import { captureProductEvent } from "@/lib/posthog";
+import { forceCheckoutReplay } from "@/lib/checkout-tracking";
 
 let state: OnboardingSession;
 let connections: OnboardingConnection[];
@@ -233,6 +238,8 @@ it("shows personal proof before payment, then activates only after verified chec
   );
   fireEvent.click(screen.getByRole("button", { name: /Choose my plan/ }));
   expect(await screen.findByRole("button", { name: "Start my 3-day trial" })).toBeVisible();
+  // Reaching the trial step always records the session, even when it was not sampled.
+  expect(forceCheckoutReplay).toHaveBeenCalled();
   expect(screen.getByText(/Then \$49\/month after 3 days/)).toBeVisible();
   expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "Your Bento is ready." })).not.toBeInTheDocument();

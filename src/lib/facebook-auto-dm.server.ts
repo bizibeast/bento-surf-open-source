@@ -1,6 +1,17 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Meta payloads and newly migrated service tables are normalized at the boundary. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { normalizeDashes } from "./text/dashes";
+import {
+  autoDmLinkButton,
+  hasAutoDmNameToken,
+  personalizeAutoDmText,
+  selectAutoDmMessage,
+} from "./auto-dm-message-variants";
+import {
+  claimMetaDmSend,
+  handleMetaDmRecipientPreference,
+  noteMetaDmProviderRejection,
+} from "./meta-auto-dm-safety.server";
 import { decryptServerSecret } from "./secret-crypto.server";
 import {
   extractFacebookEmailAddress,
@@ -15,6 +26,7 @@ export { FACEBOOK_AUTO_DM_WEBHOOK_FIELDS } from "./facebook-auto-dm";
 import {
   isRetryableMetaResponse,
   MetaDeliveryError,
+  metaResponseCode,
   parseMetaRetryAfterSeconds,
 } from "./instagram-auto-dm.server";
 import {
@@ -382,7 +394,7 @@ async function metaRequest(url: string, token: string, body: Record<string, unkn
     data = {};
   }
   if (!response.ok || data.error) {
-    const providerCode = String(data.error?.code || response.status || "meta_error");
+    const providerCode = metaResponseCode(response.status, data);
     const retryable = isRetryableMetaResponse(response.status, data);
     throw new MetaDeliveryError(
       retryable
@@ -416,7 +428,7 @@ async function metaFormRequest(url: string, token: string, fields: Record<string
     data = {};
   }
   if (!response.ok || data.error) {
-    const providerCode = String(data.error?.code || response.status || "meta_error");
+    const providerCode = metaResponseCode(response.status, data);
     const retryable = isRetryableMetaResponse(response.status, data);
     throw new MetaDeliveryError(
       retryable
@@ -592,20 +604,46 @@ async function sendPrivateReply(
   event: FacebookWebhookEvent,
   automation: {
     opening_message?: string | null;
+    opening_messages?: string[] | null;
     confirmation_button_label?: string | null;
     reply_message: string;
+    reply_messages?: string[] | null;
     reply_button_label?: string | null;
     reply_button_url?: string | null;
   },
   options: {
     final?: boolean;
     confirmationPayload?: string | null;
+    recipientName?: string | null;
   } = {},
 ) {
   const final = options.final === true;
-  const replyMessage = normalizeDashes(automation.reply_message);
+  const selectedReply = selectAutoDmMessage(
+    automation.reply_messages,
+    automation.reply_message,
+    event.sourceId,
+  );
+  const linkButton = autoDmLinkButton(
+    personalizeAutoDmText(selectedReply, options.recipientName),
+    automation.reply_button_url,
+    automation.reply_button_label,
+  );
+  const replyMessage = normalizeDashes(linkButton.text || "Here is the link you requested.");
   const openingMessage = automation.opening_message
-    ? normalizeDashes(automation.opening_message)
+    ? normalizeDashes(
+        autoDmLinkButton(
+          personalizeAutoDmText(
+            selectAutoDmMessage(
+              automation.opening_messages,
+              automation.opening_message,
+              event.sourceId,
+            ),
+            options.recipientName,
+          ),
+          null,
+          null,
+        ).text,
+      )
     : "";
   const confirmationLabel = automation.confirmation_button_label
     ? normalizeDashes(automation.confirmation_button_label)
@@ -639,11 +677,7 @@ async function sendPrivateReply(
         },
       ],
     };
-  } else if (
-    automation.reply_button_label &&
-    automation.reply_button_url &&
-    event.eventType !== "comment"
-  ) {
+  } else if (linkButton.url && (event.eventType !== "comment" || final)) {
     message = {
       attachment: {
         type: "template",
@@ -653,8 +687,8 @@ async function sendPrivateReply(
           buttons: [
             {
               type: "web_url",
-              url: automation.reply_button_url,
-              title: normalizeDashes(automation.reply_button_label),
+              url: linkButton.url,
+              title: normalizeDashes(linkButton.label),
             },
           ],
         },
@@ -662,10 +696,7 @@ async function sendPrivateReply(
     };
   } else {
     message = {
-      text:
-        automation.reply_button_url && event.eventType === "comment"
-          ? `${replyMessage}\n\n${automation.reply_button_url}`
-          : replyMessage,
+      text: replyMessage,
     };
   }
   return metaRequest(url, token, {
@@ -702,12 +733,26 @@ async function sendFacebookTextMessage(
 function emailCapturePrompt(
   automation: {
     email_prompt_message?: string | null;
+    email_prompt_messages?: string[] | null;
     email_marketing_consent_enabled?: boolean;
   },
   connectionHandle: string,
+  eventKey: string,
+  recipientName: string | null,
 ) {
   const prompt = normalizeDashes(
-    automation.email_prompt_message?.trim() || "Reply with your email address.",
+    autoDmLinkButton(
+      personalizeAutoDmText(
+        selectAutoDmMessage(
+          automation.email_prompt_messages,
+          automation.email_prompt_message?.trim() || "Reply with your email address.",
+          eventKey,
+        ),
+        recipientName,
+      ),
+      null,
+      null,
+    ).text,
   );
   const disclosure = automation.email_marketing_consent_enabled
     ? `By replying, you agree to receive this resource and future emails from ${connectionHandle}. You can unsubscribe anytime.`
@@ -763,6 +808,17 @@ async function updateRun(id: string, update: Record<string, unknown>) {
 export async function processFacebookDmQueueMessage(message: FacebookDmQueueMessage) {
   const event = message.event;
   const eventSenderHash = await senderHash(event.senderId);
+  // A failed preference write must not consume the webhook claim. The command
+  // RPC handles duplicate and out-of-order deliveries before this claim.
+  const recipientPreference = await handleMetaDmRecipientPreference(
+    "facebook",
+    event.facebookPageId,
+    eventSenderHash,
+    event.eventType,
+    event.text,
+    event.externalEventId,
+    event.occurredAt,
+  );
   const { data: claimed, error: claimError } = await (supabaseAdmin as any).rpc(
     "claim_facebook_dm_event",
     {
@@ -781,6 +837,15 @@ export async function processFacebookDmQueueMessage(message: FacebookDmQueueMess
   const claim = Array.isArray(claimed) ? claimed[0] : claimed;
   if (!claim?.event_id || !claim.should_process) return { duplicate: true };
   const eventId = claim.event_id as string;
+  if (recipientPreference) {
+    await updateEvent(eventId, {
+      status: "ignored",
+      error_code:
+        recipientPreference === "command" ? "recipient_preference_updated" : "recipient_opted_out",
+      processed_at: new Date().toISOString(),
+    });
+    return { ignored: true };
+  }
   const policyWindowFailure = getFacebookAutoDmPolicyWindowFailure(event);
   if (policyWindowFailure) {
     await updateEvent(eventId, {
@@ -947,6 +1012,22 @@ export async function processFacebookDmQueueMessage(message: FacebookDmQueueMess
             claimedConnectionId = String(candidate.id);
             claimedUserId = String(candidate.user_id);
             claimedAutomationId = String(selected.id);
+            const sendDecision = await claimMetaDmSend({
+              provider: "facebook",
+              providerUserId: event.facebookPageId,
+              senderHash: eventSenderHash,
+              eventId,
+              automationId: String(selected.id),
+              eventType: event.eventType,
+            });
+            if (sendDecision !== "allowed") {
+              await updateEvent(eventId, {
+                status: "ignored",
+                error_code: sendDecision,
+                processed_at: new Date().toISOString(),
+              });
+              return { ignored: true };
+            }
             await claimFacebookDeliverySlot(claimedConnectionId);
             const response = await sendFacebookTextMessage(
               candidate,
@@ -1129,6 +1210,34 @@ export async function processFacebookDmQueueMessage(message: FacebookDmQueueMess
     claimedConnectionId = String(connection.id);
     claimedUserId = String(connection.user_id);
     claimedAutomationId = String(automation.id);
+    const sendDecision = await claimMetaDmSend({
+      provider: "facebook",
+      providerUserId: event.facebookPageId,
+      senderHash: eventSenderHash,
+      eventId,
+      automationId: claimedAutomationId,
+      eventType: event.eventType,
+      outboundCount: event.eventType === "comment" && automation.public_reply_enabled ? 2 : 1,
+    });
+    if (sendDecision !== "allowed") {
+      if (activeRunId) {
+        await updateRun(activeRunId, {
+          status: "failed",
+          processing_started_at: null,
+          error_code: sendDecision,
+          error_message:
+            "Bento did not send this message because an account or recipient safety guard was triggered.",
+        });
+      }
+      await updateEvent(eventId, {
+        connection_id: connection.id,
+        automation_id: automation.id,
+        status: "ignored",
+        error_code: sendDecision,
+        processed_at: new Date().toISOString(),
+      });
+      return { ignored: true };
+    }
     await claimFacebookDeliverySlot(claimedConnectionId);
     const emailPromptFlow = Boolean(confirmationFlow && automation.email_capture_enabled);
     let confirmationPayload: string | null = null;
@@ -1166,6 +1275,26 @@ export async function processFacebookDmQueueMessage(message: FacebookDmQueueMess
       );
     }
 
+    let recipientName: string | null = event.senderUsername;
+    if (
+      !recipientName &&
+      activeRunId &&
+      hasAutoDmNameToken([
+        automation.reply_message,
+        ...(automation.reply_messages || []),
+        automation.opening_message,
+        ...(automation.opening_messages || []),
+        automation.email_prompt_message,
+        ...(automation.email_prompt_messages || []),
+      ])
+    ) {
+      const { data: runName } = await (supabaseAdmin as any)
+        .from("facebook_dm_runs")
+        .select("sender_username")
+        .eq("id", activeRunId)
+        .maybeSingle();
+      recipientName = runName?.sender_username || null;
+    }
     await updateEvent(eventId, {
       connection_id: connection.id,
       automation_id: automation.id,
@@ -1183,11 +1312,12 @@ export async function processFacebookDmQueueMessage(message: FacebookDmQueueMess
       ? await sendFacebookTextMessage(
           connection,
           event.senderId,
-          emailCapturePrompt(automation, connection.provider_handle),
+          emailCapturePrompt(automation, connection.provider_handle, event.sourceId, recipientName),
         )
       : await sendPrivateReply(connection, event, automation, {
           final: confirmationFlow || emailCaptureFlow,
           confirmationPayload,
+          recipientName,
         });
     const responseId = String(response.message_id || response.id || "") || null;
     if (activeRunId && runStep === "opening") {
@@ -1247,13 +1377,21 @@ export async function processFacebookDmQueueMessage(message: FacebookDmQueueMess
               0,
             ) % replies.length
           : 0;
+        if (/(?:https?:\/\/|www\.)\S+/i.test(replies[replyIndex])) {
+          throw new Error("Public reply contains a link. Move the URL to the private link button.");
+        }
         const publicReply = await sendPublicCommentReply(
           connection,
           event.sourceId,
-          replies[replyIndex],
+          personalizeAutoDmText(replies[replyIndex], recipientName),
         );
         publicReplyId = String(publicReply.id || "") || null;
       } catch (error) {
+        if (error instanceof MetaDeliveryError) {
+          await noteMetaDmProviderRejection("facebook", event.facebookPageId, error.code).catch(
+            () => undefined,
+          );
+        }
         publicReplyError =
           error instanceof Error ? error.message : "Facebook rejected the public reply.";
       }
@@ -1286,6 +1424,11 @@ export async function processFacebookDmQueueMessage(message: FacebookDmQueueMess
     return { sent: true };
   } catch (error) {
     const deliveryError = error instanceof MetaDeliveryError ? error : null;
+    if (deliveryError && claimedConnectionId) {
+      await noteMetaDmProviderRejection("facebook", event.facebookPageId, deliveryError.code).catch(
+        () => undefined,
+      );
+    }
     const accountBackoffSeconds = getFacebookAccountBackoffSeconds(error);
     if (claimedConnectionId && accountBackoffSeconds) {
       await deferFacebookDeliverySlot(claimedConnectionId, accountBackoffSeconds).catch(

@@ -12,6 +12,7 @@ export const BENTO_WEBMCP_READ_OPERATIONS = [
   "read_workspace_data",
   "get_bento_overview",
   "list_social_accounts",
+  "list_uploaded_media",
   "list_social_posts",
   "get_social_post",
   "list_auto_dm_automations",
@@ -69,6 +70,12 @@ const webMcpReadSchemas = {
       provider: z
         .enum(["instagram", "facebook", "threads", "tiktok", "linkedin", "twitter", "youtube"])
         .optional(),
+    })
+    .strict(),
+  list_uploaded_media: z
+    .object({
+      cursor: z.string().min(1).max(2_000).optional(),
+      limit: z.number().int().min(1).max(100).default(50),
     })
     .strict(),
   get_social_post: getSocialPostInputSchema.strict(),
@@ -382,6 +389,8 @@ export function sanitizeBentoWebMcpReadResult(
       };
     case "list_social_accounts":
       return projectList(result, socialAccountFields);
+    case "list_uploaded_media":
+      return sanitizeMcpReadData(result);
     case "list_social_posts":
     case "get_social_post":
       return sanitizeMcpReadData(result);
@@ -1020,6 +1029,13 @@ export const runBentoWebMcpRead = createServerFn({ method: "POST" })
           return defaultBentoMcpOperations.listSocialAccounts(
             context.userId,
             typeof input.provider === "string" ? input.provider : undefined,
+          );
+        case "list_uploaded_media":
+          return defaultBentoMcpOperations.listMcpUploadedMedia(
+            context.userId,
+            (process.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, ""),
+            typeof input.cursor === "string" ? input.cursor : undefined,
+            typeof input.limit === "number" ? input.limit : 50,
           );
         case "list_social_posts":
           return defaultBentoMcpOperations.listSocialPosts(

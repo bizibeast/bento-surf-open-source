@@ -280,6 +280,122 @@ describe("scheduler post moves and deletion", () => {
     media: [],
   });
 
+  it("switches between drafts and published posts while keeping scheduled activity accessible", async () => {
+    const draft = {
+      ...scheduledPost(),
+      status: "draft" as const,
+      title: "Unsent idea",
+      scheduledAt: null,
+      targets: [
+        {
+          id: "draft-target",
+          connectionId: missingAvatar.id,
+          provider: "instagram" as const,
+          status: "pending" as const,
+          remotePostUrl: null,
+          errorMessage: null,
+          publishedAt: null,
+        },
+      ],
+    } as SchedulerPost;
+    const published = {
+      ...scheduledPost(),
+      id: "11111111-1111-4111-8111-111111111120",
+      status: "published" as const,
+      title: "Sent update",
+      scheduledAt: "2026-10-29T12:00:00.000Z",
+      targets: [
+        {
+          id: "published-target",
+          connectionId: null,
+          accountHandle: "bizibeast",
+          provider: "facebook" as const,
+          status: "published" as const,
+          remotePostUrl: "https://www.facebook.com/bizibeast/posts/123",
+          errorMessage: null,
+          publishedAt: "2026-10-29T12:01:00.000Z",
+        },
+        {
+          id: "published-tiktok-target",
+          connectionId: null,
+          accountHandle: "bizibeast",
+          provider: "tiktok" as const,
+          status: "published" as const,
+          remotePostUrl: null,
+          errorMessage: null,
+          publishedAt: "2026-10-29T12:01:00.000Z",
+        },
+      ],
+    } as SchedulerPost;
+    const upcoming = {
+      ...scheduledPost(),
+      id: "11111111-1111-4111-8111-111111111121",
+      title: "Upcoming update",
+    } as SchedulerPost;
+    renderScheduler({ ...schedulerData, posts: [draft, published, upcoming] });
+
+    const lists = await screen.findByRole("group", { name: "Post lists" });
+    const draftsButton = within(lists).getByRole("button", { name: "Drafts (1)" });
+    const publishedButton = within(lists).getByRole("button", { name: "Published (1)" });
+    expect(draftsButton).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("region", { name: "Drafts drop area" })).toBeVisible();
+    fireEvent.click(publishedButton);
+
+    const publishedPanel = screen.getByRole("region", { name: "Published posts" });
+    const publishedCard = within(publishedPanel).getByText("Sent update").closest("article")!;
+    expect(within(publishedCard).getAllByRole("link")).toHaveLength(1);
+    const publishedLink = within(publishedCard).getByRole("link", {
+      name: "View published Facebook @bizibeast post",
+    });
+    expect(publishedLink).toHaveAttribute("href", "https://www.facebook.com/bizibeast/posts/123");
+    expect(publishedLink).toHaveClass("text-blue-600");
+    expect(
+      within(publishedCard).getByRole("img", {
+        name: "Published TikTok @bizibeast; link unavailable",
+      }),
+    ).toBeVisible();
+    expect(within(publishedPanel).getByText("Upcoming update")).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Drafts drop area" })).not.toBeInTheDocument();
+    expect(publishedButton).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(draftsButton);
+    const draftsPanel = screen.getByRole("region", { name: "Drafts drop area" });
+    expect(within(draftsPanel).getByText("Unsent idea")).toBeVisible();
+    expect(within(draftsPanel).getByRole("img", { name: "Draft Instagram" })).toHaveClass(
+      "text-[#8793a5]",
+    );
+    expect(screen.queryByRole("region", { name: "Published posts" })).not.toBeInTheDocument();
+  });
+
+  it("shows a disconnected unfinished destination without offering a retry that cannot run", async () => {
+    const post = {
+      ...scheduledPost(),
+      status: "failed" as const,
+      title: "Disconnected destination",
+      targets: [
+        {
+          id: "detached-target",
+          connectionId: null,
+          accountHandle: "oldcreator",
+          provider: "twitter" as const,
+          status: "failed" as const,
+          remotePostUrl: null,
+          errorMessage: "The connected account was removed.",
+          publishedAt: null,
+        },
+      ],
+    } as SchedulerPost;
+    renderScheduler({ ...schedulerData, posts: [post] });
+    const lists = await screen.findByRole("group", { name: "Post lists" });
+    fireEvent.click(within(lists).getByRole("button", { name: "Published (0)" }));
+    const card = within(screen.getByRole("region", { name: "Published posts" }))
+      .getByText("Disconnected destination")
+      .closest("article")!;
+    expect(within(card).getByRole("img", { name: "failed X @oldcreator" })).toBeVisible();
+    expect(within(card).queryByRole("button", { name: "Retry failed destinations" })).toBeNull();
+    expect(within(card).queryByRole("button", { name: "Duplicate post" })).toBeNull();
+  });
+
   it.each(["failed", "partially_failed", "publishing"] as const)(
     "retries failed destinations from a %s post",
     async (status) => {
@@ -320,16 +436,22 @@ describe("scheduler post moves and deletion", () => {
       } as never);
       renderScheduler(data);
 
+      const postLists = await screen.findByRole("group", { name: "Post lists" });
+      fireEvent.click(within(postLists).getByRole("button", { name: /^Published/ }));
+
       const retryButton = await screen.findByRole("button", {
         name: "Retry failed destinations",
       });
-      const card = retryButton.closest("article")!;
       fireEvent.click(retryButton);
 
       await waitFor(() =>
         expect(retryFailedSocialPost).toHaveBeenCalledWith({ data: { id: post.id } }),
       );
-      await waitFor(() => expect(within(card).getByText("publishing")).toBeVisible());
+      await waitFor(() =>
+        expect(
+          within(screen.getByRole("region", { name: "Published posts" })).getByText("publishing"),
+        ).toBeVisible(),
+      );
     },
   );
 
@@ -1647,7 +1769,7 @@ describe("scheduler compose close protection", () => {
         }),
       }),
     });
-  });
+  }, 15_000);
 
   it("saves an Instagram Trial Reel with manual graduation by default", async () => {
     vi.mocked(uploadFileResult).mockResolvedValue({

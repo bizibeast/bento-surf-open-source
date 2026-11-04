@@ -7,6 +7,10 @@ description: Operate a creator's Bento workspace through MCP, including Content 
 
 Use the connected Bento MCP server for Bento data and actions. Do not invent IDs: list the relevant accounts or records first.
 
+## Free tools
+
+Call `list_free_tools` to find the exact slug, runner, and input fields. All 59 public free tools run through MCP: `run_free_text_tool` for text and link utilities, `run_free_ai_tool` for writing, `run_free_media_tool` for public media URLs, `run_free_image_tool` for images, and `transcribe_free_audio` for audio. Pass `workspaceId` from `list_workspaces` when the user names a brand; usage limits and owned `mediaKey` access follow that workspace. Set `rightsConfirmed: true` for public media only when the user confirms ownership or permission. Media download URLs expire quickly. Image results arrive as MCP image content; save them separately if the user wants to reuse them.
+
 ## Read the creator's context
 
 Before planning, drafting, or analysing content, use the relevant stored context:

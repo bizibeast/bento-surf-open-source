@@ -173,9 +173,7 @@ export function SocialTile({
   const metric = formatSocialMetric(followerCount);
   const domain = domainOf(p?.urlBase) || label.toLowerCase();
   const handleLabel =
-    handle && !/^(https?:\/\/|www\.)/i.test(handle.trim())
-      ? `@${handle.trim().replace(/^@/, "")}`
-      : "";
+    handle && !/^(https?:\/\/|www\.)/i.test(handle.trim()) ? `@${handle.trim().replace(/^@/, "")}` : "";
   const displayTitle = title || handleLabel || (handle?.trim() ? handle.trim() : label);
   const isInstagram = platformKey === "instagram";
   const btnBg =

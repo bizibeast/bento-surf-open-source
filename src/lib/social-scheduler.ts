@@ -125,7 +125,9 @@ export function socialRetryDelaySeconds(
 
 export type SchedulerTarget = {
   id: string;
-  connectionId: string;
+  connectionId: string | null;
+  accountHandle?: string | null;
+  accountDisplayName?: string | null;
   provider: SocialProvider;
   status:
     | "pending"
@@ -966,11 +968,12 @@ export const SOCIAL_PROVIDER_DEFINITIONS: Record<SocialProvider, SocialProviderD
     name: "TikTok",
     color: "#111111",
     maxText: 2_200,
-    media: "video-required",
-    supportsImages: false,
+    media: "required",
+    supportsImages: true,
     supportsVideo: true,
+    imageMimeTypes: ["image/jpeg", "image/webp"],
     videoMimeTypes: ["video/mp4", "video/quicktime", "video/webm"],
-    maxMedia: 1,
+    maxMedia: 10,
     videoCover: "timestamp",
     setupNote:
       "TikTok Login Kit and Content Posting are live; public Direct Posts still require TikTok's separate audit.",
@@ -1315,6 +1318,16 @@ export function validatePostForProviders(
         continue;
       }
     }
+    if (provider === "tiktok") {
+      const videos = media.filter((item) => item.mimeType.startsWith("video/"));
+      if (videos.length && media.length !== 1) {
+        errors.tiktok =
+          videos.length > 1
+            ? "TikTok accepts one video per post."
+            : "TikTok cannot mix images and video in one post.";
+        continue;
+      }
+    }
     const sizeError = media.map((item) => socialMediaSizeError(provider, item)).find(Boolean);
     if (sizeError) {
       errors[provider] = sizeError;
@@ -1535,6 +1548,7 @@ export function validatePostForProviders(
       const duration = Number(settings.videoDurationSeconds);
       const maximum = Number(settings.maxVideoPostDurationSec);
       if (
+        media.some((item) => item.mimeType.startsWith("video/")) &&
         Number.isFinite(duration) &&
         Number.isFinite(maximum) &&
         maximum > 0 &&

@@ -47,6 +47,7 @@ export function socialMediaByteLimit(provider: SocialProvider, mimeType: string)
         ? LINKEDIN_VIDEO_MAX_BYTES
         : LINKEDIN_DOCUMENT_MAX_BYTES;
   if (mimeType.startsWith("image/")) {
+    if (provider === "tiktok") return 20 * 1024 * 1024;
     if (provider === "instagram" || provider === "threads") return 8 * 1024 * 1024;
     // A conservative photo publishing budget; Facebook fetches the finished URL.
     if (provider === "facebook") return 4 * 1024 * 1024;

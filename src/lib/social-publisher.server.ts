@@ -136,7 +136,7 @@ export async function providerJson(url: string, init: RequestInit, provider: Soc
       `${provider} rejected the post`;
     const providerMessage =
       code === "url_ownership_unverified"
-        ? "TikTok rejected the video URL because app.example.com / bento.surf is not verified under URL properties in the TikTok developer app. Verify domain ownership, then retry."
+        ? "TikTok rejected the media URL because your configured media domain is not verified under URL properties in the TikTok developer app. Verify domain ownership, then retry."
         : code === "unaudited_client_can_only_post_to_private_accounts"
           ? "Unaudited / sandbox TikTok apps can only post when the TikTok account is private and privacy is Only me (SELF_ONLY)."
           : code === "privacy_level_option_mismatch"
@@ -1359,11 +1359,10 @@ async function setYouTubeThumbnail(
   );
   if (!uploaded.ok) {
     const retryable = uploaded.status === 404 || uploaded.status === 429 || uploaded.status >= 500;
-    // Shorts use the same thumbnails.set call. 403 usually means the channel
-    // cannot set Shorts covers yet; the Shorts feed plays the video anyway.
-    if (format === "short" && uploaded.status === 403) return;
     throw new ProviderError(
-      "YouTube accepted the video but rejected the custom thumbnail. Confirm the channel can upload thumbnails, then retry.",
+      format === "short" && uploaded.status === 403
+        ? "YouTube published the Short but rejected its thumbnail. Add it in YouTube Studio on a computer, or remove the thumbnail and retry this destination."
+        : "YouTube accepted the video but rejected the custom thumbnail. Confirm the channel can upload thumbnails, then retry.",
       String(uploaded.status),
       retryable,
       uploaded.status,
@@ -1658,7 +1657,7 @@ export async function loadTikTokCreatorInfo(connection: any) {
   };
 }
 
-const RETRYABLE_TIKTOK_FAILURES = new Set(["internal", "video_pull_failed"]);
+const RETRYABLE_TIKTOK_FAILURES = new Set(["internal", "video_pull_failed", "photo_pull_failed"]);
 
 export function buildTikTokPostInfo(
   body: string,
@@ -1678,9 +1677,49 @@ export function buildTikTokPostInfo(
   };
 }
 
-async function publishTikTok(token: string, body: string, media: SchedulerMedia[], settings: any) {
+export function buildTikTokPhotoPostRequest(
+  body: string,
+  media: SchedulerMedia[],
+  settings: Record<string, unknown>,
+  creator: { commentDisabled: boolean },
+) {
+  return {
+    post_mode: "DIRECT_POST",
+    media_type: "PHOTO",
+    post_info: {
+      description: body,
+      privacy_level: String(settings.privacyLevel || ""),
+      disable_comment: creator.commentDisabled || Boolean(settings.disableComment),
+      auto_add_music: Boolean(settings.autoAddMusic),
+      brand_content_toggle: Boolean(settings.brandContentToggle),
+      brand_organic_toggle: Boolean(settings.brandOrganicToggle),
+    },
+    source_info: {
+      source: "PULL_FROM_URL",
+      photo_cover_index: 0,
+      photo_images: media.map((item) => item.url),
+    },
+    is_aigc: Boolean(settings.isAigc),
+  };
+}
+
+export async function publishTikTok(
+  token: string,
+  body: string,
+  media: SchedulerMedia[],
+  settings: any,
+) {
   const video = media.find((item) => item.mimeType.startsWith("video/"));
-  if (!video) throw new ProviderError("TikTok needs a video.", "video_required", false);
+  if (!media.length)
+    throw new ProviderError("TikTok needs an image or video.", "media_required", false);
+  if (video && media.length !== 1)
+    throw new ProviderError(
+      "TikTok cannot mix images and video in one post.",
+      "invalid_media",
+      false,
+    );
+  if (!video && media.some((item) => !item.mimeType.startsWith("image/")))
+    throw new ProviderError("TikTok photo posts need images only.", "invalid_media", false);
   const creator = await fetchTikTokCreatorInfo(token);
   const allowed = creator.privacyLevelOptions;
   const requested = String(settings?.privacyLevel || "");
@@ -1702,6 +1741,7 @@ async function publishTikTok(token: string, body: string, media: SchedulerMedia[
   }
   const duration = Number(settings?.videoDurationSeconds);
   if (
+    video &&
     Number.isFinite(duration) &&
     creator.maxVideoPostDurationSec > 0 &&
     duration > creator.maxVideoPostDurationSec
@@ -1729,17 +1769,23 @@ async function publishTikTok(token: string, body: string, media: SchedulerMedia[
     );
   }
   const result = await providerJson(
-    "https://open.tiktokapis.com/v2/post/publish/video/init/",
+    video
+      ? "https://open.tiktokapis.com/v2/post/publish/video/init/"
+      : "https://open.tiktokapis.com/v2/post/publish/content/init/",
     {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json; charset=UTF-8",
       },
-      body: JSON.stringify({
-        post_info: buildTikTokPostInfo(body, settings, creator),
-        source_info: { source: "PULL_FROM_URL", video_url: video.url },
-      }),
+      body: JSON.stringify(
+        video
+          ? {
+              post_info: buildTikTokPostInfo(body, settings, creator),
+              source_info: { source: "PULL_FROM_URL", video_url: video.url },
+            }
+          : buildTikTokPhotoPostRequest(body, media, settings, creator),
+      ),
     },
     "tiktok",
   );
@@ -2059,7 +2105,7 @@ async function publish(
   const token = await accessTokenForConnection(connection);
   let media = (Array.isArray(post.media) ? post.media : []) as SchedulerMedia[];
   let settings = target.provider_settings || {};
-  if (["instagram", "facebook", "threads"].includes(provider)) {
+  if (["instagram", "facebook", "threads", "tiktok"].includes(provider)) {
     try {
       // Prepare sequentially so carousels never buffer several originals at once.
       const prepared: SchedulerMedia[] = [];
