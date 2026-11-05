@@ -335,9 +335,10 @@ const readOnlyAnnotations = {
   readOnlyHint: true,
   openWorldHint: false,
   destructiveHint: false,
+  idempotentHint: true,
 };
 
-/** Pins the hints OpenAI reads from tools/list. Idempotent is omitted unless true. */
+/** Pins the hints OpenAI reads from tools/list. Idempotence is explicit. */
 const bentoMcpToolAnnotations = {
   list_free_tools: { ...readOnlyAnnotations, idempotentHint: true },
   run_free_text_tool: { ...readOnlyAnnotations, idempotentHint: true },
@@ -369,70 +370,190 @@ const bentoMcpToolAnnotations = {
   list_workspaces: readOnlyAnnotations,
   read_workspace_data: readOnlyAnnotations,
   get_content_brain: readOnlyAnnotations,
-  manage_content_brain: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
+  manage_content_brain: {
+    readOnlyHint: false,
+    openWorldHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   get_content_media: readOnlyAnnotations,
-  manage_content_media: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  manage_content_media: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   get_content_routines: readOnlyAnnotations,
-  manage_content_routine: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
+  manage_content_routine: {
+    readOnlyHint: false,
+    openWorldHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   get_content_agent: readOnlyAnnotations,
-  manage_content_agent: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  manage_content_agent: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   get_content_discover: readOnlyAnnotations,
-  manage_content_discover: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  manage_content_discover: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   list_social_accounts: readOnlyAnnotations,
-  upload_media: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
-  begin_media_upload: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
+  upload_media: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: false,
+    idempotentHint: false,
+  },
+  begin_media_upload: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: false,
+    idempotentHint: false,
+  },
   list_uploaded_media: readOnlyAnnotations,
   list_social_posts: readOnlyAnnotations,
   get_social_post: readOnlyAnnotations,
-  search_stock_photos: { readOnlyHint: true, openWorldHint: true, destructiveHint: false },
+  search_stock_photos: {
+    readOnlyHint: true,
+    openWorldHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+  },
   resolve_post_media: readOnlyAnnotations,
-  create_social_post: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  create_social_post: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   list_auto_dm_automations: readOnlyAnnotations,
   get_auto_dm_delay: readOnlyAnnotations,
   set_auto_dm_delay: {
     readOnlyHint: false,
     openWorldHint: false,
-    destructiveHint: false,
+    destructiveHint: true,
     idempotentHint: true,
   },
-  save_auto_dm_automation: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  save_auto_dm_automation: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   set_auto_dm_enabled: {
     readOnlyHint: false,
     openWorldHint: true,
-    destructiveHint: false,
+    destructiveHint: true,
     idempotentHint: true,
   },
-  delete_auto_dm_automation: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  delete_auto_dm_automation: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   list_pages: readOnlyAnnotations,
   list_products: readOnlyAnnotations,
   list_bookings: readOnlyAnnotations,
   get_priority_dm_conversations: readOnlyAnnotations,
-  send_priority_dm_message: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  send_priority_dm_message: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   set_priority_dm_closed: {
     readOnlyHint: false,
     openWorldHint: true,
-    destructiveHint: false,
+    destructiveHint: true,
     idempotentHint: true,
   },
   get_scheduler_workspace: readOnlyAnnotations,
-  manage_scheduler: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-  manage_page: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-  manage_block: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  manage_scheduler: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
+  manage_page: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
+  manage_block: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   get_store_workspace: readOnlyAnnotations,
-  manage_product: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-  manage_discount_code: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-  manage_order_bump: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-  manage_audience: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  manage_product: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
+  manage_discount_code: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
+  manage_order_bump: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
+  manage_audience: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   get_calendar_workspace: readOnlyAnnotations,
-  manage_calendar: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  manage_calendar: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   get_community_workspace: readOnlyAnnotations,
-  manage_community: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-  get_profile_workspace: readOnlyAnnotations,
-  update_profile: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  manage_community: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
+  get_profile_workspace: {
+    ...readOnlyAnnotations,
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
+  update_profile: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   get_analytics_workspace: readOnlyAnnotations,
   get_integration_workspace: readOnlyAnnotations,
-  get_earn_workspace: readOnlyAnnotations,
-  manage_earn: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  get_earn_workspace: { ...readOnlyAnnotations, readOnlyHint: false },
+  manage_earn: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
 };
 
 describe("Bento MCP tools", () => {
@@ -684,103 +805,25 @@ describe("Bento MCP tools", () => {
       { authInfo },
     );
     expect(response.status, await response.clone().text()).toBe(200);
-    const tools = (await payload(response)).result.tools as {
-      name: string;
-      annotations?: Record<string, boolean>;
-    }[];
-    expect(Object.fromEntries(tools.map((tool) => [tool.name, tool.annotations]))).toEqual({
-      list_free_tools: bentoMcpToolAnnotations.list_free_tools,
-      run_free_text_tool: bentoMcpToolAnnotations.run_free_text_tool,
-      run_free_ai_tool: bentoMcpToolAnnotations.run_free_ai_tool,
-      run_free_media_tool: bentoMcpToolAnnotations.run_free_media_tool,
-      run_free_image_tool: bentoMcpToolAnnotations.run_free_image_tool,
-      transcribe_free_audio: bentoMcpToolAnnotations.transcribe_free_audio,
-      list_uploaded_media: bentoMcpToolAnnotations.list_uploaded_media,
-
-      get_bento_overview: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      list_workspaces: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      read_workspace_data: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      get_content_brain: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      manage_content_brain: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
-      get_content_media: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      resolve_post_media: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      search_stock_photos: { readOnlyHint: true, openWorldHint: true, destructiveHint: false },
-      manage_content_media: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      get_content_routines: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      manage_content_routine: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
-      get_content_agent: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      manage_content_agent: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      get_content_discover: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      manage_content_discover: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      list_social_accounts: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      upload_media: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
-      begin_media_upload: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
-      list_social_posts: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      create_social_post: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      get_auto_dm_delay: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      set_auto_dm_delay: {
-        readOnlyHint: false,
-        openWorldHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
-      },
-      list_auto_dm_automations: {
-        readOnlyHint: true,
-        openWorldHint: false,
-        destructiveHint: false,
-      },
-      save_auto_dm_automation: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      set_auto_dm_enabled: {
-        readOnlyHint: false,
-        openWorldHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-      },
-      delete_auto_dm_automation: {
-        readOnlyHint: false,
-        openWorldHint: true,
-        destructiveHint: true,
-      },
-      list_pages: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      list_products: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      list_bookings: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      get_priority_dm_conversations: {
-        readOnlyHint: true,
-        openWorldHint: false,
-        destructiveHint: false,
-      },
-      send_priority_dm_message: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      set_priority_dm_closed: {
-        readOnlyHint: false,
-        openWorldHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-      },
-      get_scheduler_workspace: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      get_social_post: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      manage_scheduler: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      manage_page: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      manage_block: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      get_store_workspace: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      manage_product: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      manage_discount_code: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      manage_order_bump: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      manage_audience: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      get_calendar_workspace: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      manage_calendar: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      get_community_workspace: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      manage_community: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      get_profile_workspace: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      update_profile: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      get_analytics_workspace: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      get_integration_workspace: {
-        readOnlyHint: true,
-        openWorldHint: false,
-        destructiveHint: false,
-      },
-      get_earn_workspace: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      manage_earn: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-    });
+    const body = await payload(response);
+    expect(body.result.tools.length).toBeGreaterThan(0);
+    for (const tool of body.result.tools) {
+      expect(tool.title?.trim(), tool.name).toBeTruthy();
+      expect(typeof tool.annotations?.readOnlyHint, tool.name).toBe("boolean");
+      expect(typeof tool.annotations?.destructiveHint, tool.name).toBe("boolean");
+      expect(typeof tool.annotations?.idempotentHint, tool.name).toBe("boolean");
+      if (tool.annotations.readOnlyHint) {
+        expect(tool.annotations.destructiveHint, tool.name).toBe(false);
+        expect(tool.annotations.idempotentHint, tool.name).toBe(true);
+      }
+    }
+    const actual = Object.fromEntries(
+      body.result.tools.map((tool: { name: string; annotations?: unknown }) => [
+        tool.name,
+        tool.annotations,
+      ]),
+    );
+    expect(actual).toEqual(bentoMcpToolAnnotations);
   });
 
   it("exposes complete context to text-only MCP clients without duplicating internal Agent context", async () => {

@@ -114,7 +114,7 @@ const missingAvatar: SchedulerConnection = {
 const schedulerData = {
   locked: false,
   plan: "creator" as const,
-  connections: [{ ...missingAvatar, avatarUrl: "https://bento.surf/avatar.png" }],
+  connections: [{ ...missingAvatar, avatarUrl: "https://bento.example/avatar.png" }],
   posts: [],
   providers: [],
   readiness: {},
@@ -844,7 +844,7 @@ describe("scheduler compose close protection", () => {
       id: "linkedin",
       provider: "linkedin" as const,
       displayName: "LinkedIn account",
-      avatarUrl: "https://bento.surf/avatar.png",
+      avatarUrl: "https://bento.example/avatar.png",
     };
     renderScheduler({
       ...schedulerData,
@@ -910,7 +910,7 @@ describe("scheduler compose close protection", () => {
       id: provider,
       provider,
       displayName: `${provider} account`,
-      avatarUrl: "https://bento.surf/avatar.png",
+      avatarUrl: "https://bento.example/avatar.png",
     }));
     vi.mocked(getRedditCommunities).mockResolvedValue([] as never);
     renderScheduler({ ...schedulerData, connections });
@@ -954,14 +954,14 @@ describe("scheduler compose close protection", () => {
         id: "linkedin",
         provider: "linkedin" as const,
         displayName: "LinkedIn account",
-        avatarUrl: "https://bento.surf/avatar.png",
+        avatarUrl: "https://bento.example/avatar.png",
       },
       {
         ...missingAvatar,
         id: "twitter",
         provider: "twitter" as const,
         displayName: "X account",
-        avatarUrl: "https://bento.surf/avatar.png",
+        avatarUrl: "https://bento.example/avatar.png",
       },
     ];
     renderScheduler({ ...schedulerData, connections });
@@ -1037,14 +1037,14 @@ describe("scheduler compose close protection", () => {
         id: "facebook",
         provider: "facebook" as const,
         displayName: "Facebook account",
-        avatarUrl: "https://bento.surf/avatar.png",
+        avatarUrl: "https://bento.example/avatar.png",
       },
       {
         ...missingAvatar,
         id: "twitter",
         provider: "twitter" as const,
         displayName: "X account",
-        avatarUrl: "https://bento.surf/avatar.png",
+        avatarUrl: "https://bento.example/avatar.png",
       },
     ];
     renderScheduler({ ...schedulerData, connections });
@@ -1106,7 +1106,7 @@ describe("scheduler compose close protection", () => {
           ...missingAvatar,
           provider: "twitter",
           displayName: "X account",
-          avatarUrl: "https://bento.surf/avatar.png",
+          avatarUrl: "https://bento.example/avatar.png",
         },
       ],
     });
@@ -1157,7 +1157,7 @@ describe("scheduler compose close protection", () => {
           ...missingAvatar,
           provider: "twitter",
           displayName: "X account",
-          avatarUrl: "https://bento.surf/avatar.png",
+          avatarUrl: "https://bento.example/avatar.png",
         },
       ],
     });
@@ -1184,7 +1184,7 @@ describe("scheduler compose close protection", () => {
           ...missingAvatar,
           provider: "twitter",
           displayName: "X account",
-          avatarUrl: "https://bento.surf/avatar.png",
+          avatarUrl: "https://bento.example/avatar.png",
         },
       ],
     });
@@ -1214,13 +1214,13 @@ describe("scheduler compose close protection", () => {
         ...missingAvatar,
         id: "instagram",
         provider: "instagram" as const,
-        avatarUrl: "https://bento.surf/avatar.png",
+        avatarUrl: "https://bento.example/avatar.png",
       },
       {
         ...missingAvatar,
         id: "youtube",
         provider: "youtube" as const,
-        avatarUrl: "https://bento.surf/avatar.png",
+        avatarUrl: "https://bento.example/avatar.png",
       },
     ];
     renderScheduler({ ...schedulerData, connections });
@@ -1251,13 +1251,13 @@ describe("scheduler compose close protection", () => {
         ...missingAvatar,
         id: "instagram",
         provider: "instagram" as const,
-        avatarUrl: "https://bento.surf/avatar.png",
+        avatarUrl: "https://bento.example/avatar.png",
       },
       {
         ...missingAvatar,
         id: "youtube",
         provider: "youtube" as const,
-        avatarUrl: "https://bento.surf/avatar.png",
+        avatarUrl: "https://bento.example/avatar.png",
       },
     ];
     renderScheduler({ ...schedulerData, connections });
@@ -1292,13 +1292,13 @@ describe("scheduler compose close protection", () => {
         ...missingAvatar,
         id: "instagram",
         provider: "instagram" as const,
-        avatarUrl: "https://bento.surf/avatar.png",
+        avatarUrl: "https://bento.example/avatar.png",
       },
       {
         ...missingAvatar,
         id: "youtube",
         provider: "youtube" as const,
-        avatarUrl: "https://bento.surf/avatar.png",
+        avatarUrl: "https://bento.example/avatar.png",
       },
     ];
     renderScheduler({ ...schedulerData, connections });
@@ -1363,13 +1363,13 @@ describe("scheduler compose close protection", () => {
         ...missingAvatar,
         id: "instagram",
         provider: "instagram" as const,
-        avatarUrl: "https://bento.surf/avatar.png",
+        avatarUrl: "https://bento.example/avatar.png",
       },
       {
         ...missingAvatar,
         id: "youtube",
         provider: "youtube" as const,
-        avatarUrl: "https://bento.surf/avatar.png",
+        avatarUrl: "https://bento.example/avatar.png",
       },
     ];
     const post = {
@@ -1462,7 +1462,7 @@ describe("scheduler compose close protection", () => {
           ...missingAvatar,
           id: "linkedin",
           provider: "linkedin",
-          avatarUrl: "https://bento.surf/avatar.png",
+          avatarUrl: "https://bento.example/avatar.png",
         },
       ],
     });
@@ -1531,7 +1531,7 @@ describe("scheduler compose close protection", () => {
     renderScheduler({
       ...schedulerData,
       connections: [
-        { ...missingAvatar, provider: "linkedin", avatarUrl: "https://bento.surf/avatar.png" },
+        { ...missingAvatar, provider: "linkedin", avatarUrl: "https://bento.example/avatar.png" },
       ],
     });
     const create = await screen.findByRole("button", { name: "Create new post" });
@@ -1839,7 +1839,7 @@ describe("SchedulerStatusLine", () => {
     const refresh = vi
       .fn<() => Promise<{ id: string; avatarUrl: string }>>()
       .mockRejectedValueOnce(new Error("temporary"))
-      .mockResolvedValueOnce({ id: missingAvatar.id, avatarUrl: "https://bento.surf/avatar.png" });
+      .mockResolvedValueOnce({ id: missingAvatar.id, avatarUrl: "https://bento.example/avatar.png" });
     const onSuccess = vi.fn();
     const repair = createAvatarRepairHandler({
       refresh,
@@ -1859,7 +1859,7 @@ describe("SchedulerStatusLine", () => {
     expect(refresh).toHaveBeenCalledTimes(2);
     expect(onSuccess).toHaveBeenCalledWith({
       id: missingAvatar.id,
-      avatarUrl: "https://bento.surf/avatar.png",
+      avatarUrl: "https://bento.example/avatar.png",
     });
   });
 });
@@ -2079,7 +2079,7 @@ it("keeps account text separate and automatically previews the active editor", a
   vi.mocked(saveSocialPost).mockClear();
   const connections = ["personal", "company"].map((name) => ({
     ...missingAvatar,
-    avatarUrl: "https://bento.surf/avatar.png",
+    avatarUrl: "https://bento.example/avatar.png",
     id: name,
     provider: "linkedin" as const,
     displayName: name,
@@ -2128,7 +2128,7 @@ it("keeps community choices per X account while text stays synced and previews f
   vi.mocked(saveSocialPost).mockClear();
   const connections = ["personal", "company"].map((name) => ({
     ...missingAvatar,
-    avatarUrl: "https://bento.surf/avatar.png",
+    avatarUrl: "https://bento.example/avatar.png",
     id: name,
     provider: "twitter" as const,
     displayName: name,
@@ -2188,7 +2188,7 @@ it("keeps community choices per X account while text stays synced and previews f
 it("restores a saved community when editing but defaults new posts to Everyone", async () => {
   const connection = {
     ...missingAvatar,
-    avatarUrl: "https://bento.surf/avatar.png",
+    avatarUrl: "https://bento.example/avatar.png",
     id: "twitter",
     provider: "twitter" as const,
     displayName: "Creator",
@@ -2287,7 +2287,7 @@ async function openFeedbackDraft() {
 it("allows the saved X/LinkedIn video draft despite a previous Instagram Auto DM and preserves its independent repost settings", async () => {
   const connections = ["twitter", "linkedin"].map((provider, i) => ({
     ...missingAvatar,
-    avatarUrl: "https://bento.surf/avatar.png",
+    avatarUrl: "https://bento.example/avatar.png",
     id: `11111111-1111-4111-8111-11111111119${i + 1}`,
     provider: provider as "twitter" | "linkedin",
     displayName: provider,
@@ -2347,12 +2347,12 @@ it("shows another network's blocker at the action buttons and opens its editor f
   const connections = [
     {
       ...missingAvatar,
-      avatarUrl: "https://bento.surf/avatar.png",
+      avatarUrl: "https://bento.example/avatar.png",
       id: "linkedin",
       provider: "linkedin" as const,
       displayName: "Company",
     },
-    { ...missingAvatar, avatarUrl: "https://bento.surf/avatar.png" },
+    { ...missingAvatar, avatarUrl: "https://bento.example/avatar.png" },
   ];
   renderScheduler({ ...schedulerData, connections, posts: [feedbackDraft(connections)] });
   const compose = await openFeedbackDraft();
@@ -2377,7 +2377,7 @@ it("shows another network's blocker at the action buttons and opens its editor f
 it("lets an expired selected account be removed while explaining why it blocks publication", async () => {
   const connection = {
     ...missingAvatar,
-    avatarUrl: "https://bento.surf/avatar.png",
+    avatarUrl: "https://bento.example/avatar.png",
     provider: "linkedin" as const,
     canPublish: false,
     publishBlockReason: "Reconnect LinkedIn to publish.",
@@ -2406,7 +2406,7 @@ it("lets an expired selected account be removed while explaining why it blocks p
 it("keeps publish now available for a past schedule and retains server rejection feedback", async () => {
   const connection = {
     ...missingAvatar,
-    avatarUrl: "https://bento.surf/avatar.png",
+    avatarUrl: "https://bento.example/avatar.png",
     provider: "linkedin" as const,
   };
   renderScheduler({
@@ -2447,7 +2447,7 @@ it("keeps publish now available for a past schedule and retains server rejection
 it.each(["instagram", "twitter", "facebook"] as const)(
   "configures %s Auto DM inline without a manage link",
   async (provider) => {
-    const connection = { ...missingAvatar, avatarUrl: "https://bento.surf/avatar.png", provider };
+    const connection = { ...missingAvatar, avatarUrl: "https://bento.example/avatar.png", provider };
     renderScheduler({
       ...schedulerData,
       connections: [connection],
@@ -2469,7 +2469,7 @@ it("keeps X and Facebook Auto DM configuration separate across tabs and saves bo
     id: `11111111-1111-4111-8111-11111111117${i}`,
     provider: provider as "twitter" | "facebook",
     displayName: provider,
-    avatarUrl: "https://bento.surf/avatar.png",
+    avatarUrl: "https://bento.example/avatar.png",
   }));
   const data = { ...schedulerData, connections, posts: [feedbackDraft(connections)] };
   renderScheduler(data);
@@ -2527,7 +2527,7 @@ it("restores an incomplete Auto DM draft and explains missing access without blo
   const connection = {
     ...missingAvatar,
     provider: "twitter" as const,
-    avatarUrl: "https://bento.surf/avatar.png",
+    avatarUrl: "https://bento.example/avatar.png",
     autoDmBlockReason: "Reconnect X and approve Direct Message access.",
   };
   const data = {
@@ -2576,7 +2576,7 @@ it("keeps the autosave failure reason visible until the next successful save", a
   const connection = {
     ...missingAvatar,
     provider: "linkedin" as const,
-    avatarUrl: "https://bento.surf/avatar.png",
+    avatarUrl: "https://bento.example/avatar.png",
   };
   const data = {
     ...schedulerData,
@@ -2604,7 +2604,7 @@ it("keeps the autosave failure reason visible until the next successful save", a
 });
 
 it("preserves saved Instagram replies and custom messages instead of replacing them with defaults", async () => {
-  const connection = { ...missingAvatar, avatarUrl: "https://bento.surf/avatar.png" };
+  const connection = { ...missingAvatar, avatarUrl: "https://bento.example/avatar.png" };
   const scheduledAutoDm = {
     triggerType: "comment_keyword",
     keyword: "custom",
@@ -2648,4 +2648,78 @@ it("preserves saved Instagram replies and custom messages instead of replacing t
       }),
     { timeout: 3000 },
   );
+});
+
+describe("scheduler follow-ups", () => {
+  afterEach(() => vi.clearAllMocks());
+  it("splits an X post into editable replies and saves the account's thread", async () => {
+    const account = {
+      ...missingAvatar,
+      avatarUrl: "https://bento.example/avatar.png",
+      id: "11111111-1111-4111-8111-111111111121",
+      provider: "twitter" as const,
+      displayName: "X account",
+      xCapabilities: xAccountCapabilities("None", null),
+    };
+    renderScheduler({ ...schedulerData, connections: [account] });
+    const create = await screen.findByRole("button", { name: "Create new post" });
+    await waitFor(() => expect(create).toBeEnabled());
+    fireEvent.click(create);
+    const compose = await screen.findByRole("dialog", { name: "Create a post" });
+    fireEvent.click(within(compose).getByRole("button", { name: /X account/i }));
+    const text = "This is a longer thought. ".repeat(25).trim();
+    fireEvent.change(within(compose).getByRole("textbox"), { target: { value: text } });
+    fireEvent.click(within(compose).getByRole("button", { name: "Split into thread" }));
+    expect(within(compose).getByLabelText("Thread post 2")).toBeVisible();
+    fireEvent.change(within(compose).getByLabelText("Thread post 2"), {
+      target: { value: "Edited reply" },
+    });
+    await waitFor(
+      () =>
+        expect(saveSocialPost).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            connectionOverrides: expect.objectContaining({
+              [account.id]: expect.objectContaining({
+                threadReplies: expect.arrayContaining(["Edited reply"]),
+              }),
+            }),
+          }),
+        }),
+      { timeout: 3000 },
+    );
+  });
+  it("saves an optional LinkedIn first comment for the selected account", async () => {
+    const account = {
+      ...missingAvatar,
+      avatarUrl: "https://bento.example/avatar.png",
+      id: "11111111-1111-4111-8111-111111111122",
+      provider: "linkedin" as const,
+      displayName: "LinkedIn account",
+      canFirstComment: true,
+    };
+    renderScheduler({ ...schedulerData, connections: [account] });
+    const create = await screen.findByRole("button", { name: "Create new post" });
+    await waitFor(() => expect(create).toBeEnabled());
+    fireEvent.click(create);
+    const compose = await screen.findByRole("dialog", { name: "Create a post" });
+    fireEvent.click(within(compose).getByRole("button", { name: /LinkedIn account/i }));
+    fireEvent.change(within(compose).getByRole("textbox", { name: /Post text/ }), {
+      target: { value: "New announcement" },
+    });
+    fireEvent.click(within(compose).getByRole("button", { name: "Add first comment" }));
+    fireEvent.change(within(compose).getByRole("textbox", { name: "First comment" }), {
+      target: { value: "More details here" },
+    });
+    await waitFor(
+      () =>
+        expect(saveSocialPost).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            connectionOverrides: expect.objectContaining({
+              [account.id]: expect.objectContaining({ firstComment: "More details here" }),
+            }),
+          }),
+        }),
+      { timeout: 3000 },
+    );
+  });
 });

@@ -1,4 +1,14 @@
 import {
+  runSocialPublishSequence,
+  type SocialPublishProgress,
+} from "./social-publish-sequence.server";
+import {
+  xThreadReplies,
+  xThreadError,
+  linkedInFirstCommentError,
+  LINKEDIN_COMMENT_SCOPE,
+} from "./scheduler-follow-ups";
+import {
   activateScheduledPostAutoDm,
   reconcileScheduledPostAutoDms,
 } from "./scheduled-post-auto-dm.server";
@@ -441,12 +451,78 @@ async function publishFacebook(
   return { id, url: id ? `https://www.facebook.com/${id.replace("_", "/posts/")}` : undefined };
 }
 
-async function publishLinkedIn(
+function sequenceCheckpoint(target: any) {
+  return async (progress: SocialPublishProgress) => {
+    const root = progress.completed[0];
+    const { data, error } = await (supabaseAdmin as any)
+      .from("social_post_targets")
+      .update({
+        publish_progress: progress,
+        ...(root ? { remote_post_id: root.id, remote_post_url: root.url || null } : {}),
+      })
+      .eq("id", target.id)
+      .eq("idempotency_key", target.idempotency_key)
+      .eq("status", "publishing")
+      .select("id")
+      .maybeSingle();
+    if (error || !data) throw new Error("Publishing progress could not be saved.");
+    target.publish_progress = progress;
+    if (root) {
+      target.remote_post_id = root.id;
+      target.remote_post_url = root.url;
+    }
+  };
+}
+
+export async function publishLinkedIn(
   author: string,
   token: string,
   body: string,
   media: SchedulerMedia[],
-) {
+  settings: Record<string, unknown> = {},
+  target: any = {},
+): Promise<PublishResult> {
+  const commentError = linkedInFirstCommentError(settings);
+  if (commentError) throw new ProviderError(commentError, "comment_invalid", false);
+  const firstComment =
+    typeof settings.firstComment === "string" ? settings.firstComment.trim() : "";
+  if (firstComment) {
+    if (!target.connection?.scopes?.includes(LINKEDIN_COMMENT_SCOPE))
+      throw new ProviderError(
+        "Reconnect LinkedIn with comment access before publishing a first comment.",
+        "comment_scope_required",
+        false,
+      );
+    return runSocialPublishSequence(
+      target.publish_progress,
+      [
+        () => publishLinkedIn(author, token, body, media),
+        async (original) => {
+          const { data, response } = await providerJson(
+            `https://api.linkedin.com/rest/socialActions/${encodeURIComponent(original!.id)}/comments`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+                "X-Restli-Protocol-Version": "2.0.0",
+                "LinkedIn-Version": process.env.LINKEDIN_API_VERSION?.trim() || "202606",
+              },
+              body: JSON.stringify({
+                actor: author,
+                object: original!.id,
+                message: { text: firstComment },
+              }),
+            },
+            "linkedin",
+          );
+          return { id: response.headers.get("x-restli-id") || String(data.id || "") };
+        },
+      ],
+      sequenceCheckpoint(target),
+    );
+  }
+
   const version = process.env.LINKEDIN_API_VERSION?.trim() || "202606";
   const linkedInHeaders = {
     Authorization: `Bearer ${token}`,
@@ -1162,7 +1238,36 @@ export async function publishX(
   title: string,
   settings: Record<string, unknown>,
   target: any,
-) {
+): Promise<PublishResult> {
+  const threadError = xThreadError(body, settings);
+  if (threadError) throw new ProviderError(threadError, "thread_invalid", false);
+  const replies = xThreadReplies(settings);
+  if (replies) {
+    const communityError = xCommunityError(settings);
+    if (communityError) throw new ProviderError(communityError, "community_invalid", false);
+    return runSocialPublishSequence(
+      target.publish_progress,
+      [
+        () => publishX(token, body, media, title, { ...settings, threadReplies: null }, target),
+        ...replies.map((text) => async (previous?: { id: string }) => {
+          const { data } = await providerJson(
+            "https://api.x.com/2/tweets",
+            {
+              method: "POST",
+              headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                text: normalizeDashes(text),
+                reply: { in_reply_to_tweet_id: previous!.id },
+              }),
+            },
+            "twitter",
+          );
+          return { id: String(data.data?.id || data.id || "") };
+        }),
+      ],
+      sequenceCheckpoint(target),
+    );
+  }
   const communityError = xCommunityError(settings);
   if (communityError) throw new ProviderError(communityError, "community_invalid", false);
   const community = xCommunityFromSettings(settings);
@@ -2138,7 +2243,7 @@ async function publish(
   if (provider === "facebook")
     return publishFacebook(connection.provider_user_id, token, body, media);
   if (provider === "linkedin")
-    return publishLinkedIn(connection.provider_user_id, token, body, media);
+    return publishLinkedIn(connection.provider_user_id, token, body, media, settings, target);
   if (provider === "twitter")
     return publishX(token, body, media, title || "", target.provider_settings || {}, target);
   if (provider === "youtube")

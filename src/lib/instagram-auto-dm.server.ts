@@ -709,7 +709,8 @@ async function metaGetPage<T>(url: URL, token: string) {
   }
   if (!response.ok || data.error || !Array.isArray(data.data)) {
     const providerCode = String(data.error?.code || response.status || "meta_error");
-    const retryable = isRetryableMetaResponse(response.status, data);
+    const retryable =
+      isRetryableMetaResponse(response.status, data) || ["1", "2"].includes(providerCode);
     throw new MetaDeliveryError(
       retryable
         ? "Instagram is temporarily unavailable. Bento will retry."
@@ -821,7 +822,7 @@ async function processInstagramCommentReconciliation(
   const { data: connection, error: connectionError } = await (supabaseAdmin as any)
     .from("social_connections")
     .select(
-      "id,user_id,provider_user_id,access_token,status,connection_health,scopes,webhook_fields,token_expires_at,last_verified_at,reauth_required,last_comment_reconcile_completed_at",
+      "id,user_id,provider_user_id,access_token,status,connection_health,scopes,webhook_fields,token_expires_at,last_verified_at,reauth_required,last_comment_reconcile_completed_at,comment_reconcile_permanent_failures,comment_reconcile_next_check_at,comment_reconcile_paused_at",
     )
     .eq("id", connectionId)
     .eq("provider", "instagram")
@@ -829,6 +830,13 @@ async function processInstagramCommentReconciliation(
   if (connectionError) throw new Error("Unable to load the Instagram account for reconciliation.");
   if (!connection || !getInstagramConnectionReadiness(connection).ready) {
     return { skipped: true, reason: "connection_not_ready" };
+  }
+  // Queue redeliveries must honor the same gate as the scheduler.
+  if (
+    connection.comment_reconcile_paused_at ||
+    Date.parse(connection.comment_reconcile_next_check_at || "") > Date.now()
+  ) {
+    return { skipped: true, reason: "reconcile_backoff" };
   }
   if (!(await hasPlanEntitlement(String(connection.user_id), "instagramAutoDM"))) {
     await updateInstagramCommentReconcileState(connectionId, {
@@ -949,6 +957,10 @@ async function processInstagramCommentReconciliation(
       );
     }
     await updateInstagramCommentReconcileState(connectionId, {
+      comment_reconcile_permanent_failures: 0,
+      comment_reconcile_next_check_at: null,
+      comment_reconcile_paused_at: null,
+      comment_reconcile_last_provider_code: null,
       last_comment_reconcile_completed_at: now.toISOString(),
       last_comment_reconcile_error: null,
     });
@@ -971,28 +983,50 @@ async function processInstagramCommentReconciliation(
   } catch (error) {
     const deliveryError = error instanceof MetaDeliveryError ? error : null;
     const errorCode = deliveryError?.code || "reconcile_failed";
+    if (deliveryError && !deliveryError.retryable) {
+      const failures = Number(connection.comment_reconcile_permanent_failures || 0) + 1;
+      const paused = failures >= 3;
+      // Only auth errors need a reconnect. Other permanent rejections pause just this
+      // check, so Auto-DMs from live webhooks keep working.
+      const needsReconnect = instagramMetaErrorNeedsReauth(error);
+      const failedAt = new Date();
+      // Persist before acknowledging. Storage failures must retry the queue job.
+      await updateInstagramCommentReconcileState(connectionId, {
+        last_comment_reconcile_error: errorCode.slice(0, 255),
+        comment_reconcile_permanent_failures: failures,
+        comment_reconcile_next_check_at: new Date(
+          failedAt.getTime() + 15 * 60_000 * 4 ** Math.min(failures - 1, 2),
+        ).toISOString(),
+        comment_reconcile_paused_at: paused ? failedAt.toISOString() : null,
+        comment_reconcile_last_provider_code: errorCode,
+        ...(needsReconnect
+          ? {
+              connection_health: "action_required",
+              webhook_fields: [],
+              reauth_required: true,
+              provider_error_code: errorCode,
+              last_error: "Instagram access expired or was revoked. Reconnect this account.",
+            }
+          : {}),
+      });
+      if (paused) {
+        await captureServerEvent(String(connection.user_id), "instagram_comment_reconcile_paused", {
+          connection_id: connectionId,
+          provider_error_code: errorCode,
+          consecutive_permanent_failures: failures,
+        });
+      }
+      return { failed: true, retryable: false };
+    }
     await updateInstagramCommentReconcileState(connectionId, {
       last_comment_reconcile_error: errorCode.slice(0, 255),
     }).catch(() => undefined);
-    if (instagramMetaErrorNeedsReauth(error)) {
-      await (supabaseAdmin as any)
-        .from("social_connections")
-        .update({
-          connection_health: "action_required",
-          webhook_fields: [],
-          reauth_required: true,
-          provider_error_code: errorCode,
-          last_error: "Instagram access expired or was revoked. Reconnect this account.",
-        })
-        .eq("id", connectionId);
-    }
     await captureServerException(error, "instagram-comment-reconciler", {
       connection_id: connectionId,
       provider_error_code: errorCode,
       retryable: deliveryError?.retryable ?? true,
     });
-    if (!deliveryError || deliveryError.retryable) throw error;
-    return { failed: true, retryable: false };
+    throw error;
   }
 }
 

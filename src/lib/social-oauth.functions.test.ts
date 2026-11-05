@@ -19,6 +19,7 @@ const ENV_KEYS = [
   "REDDIT_CLIENT_ID",
   "REDDIT_CLIENT_SECRET",
   "LINKEDIN_CLIENT_ID",
+  "LINKEDIN_COMMENT_ACCESS_APPROVED",
   "LINKEDIN_CLIENT_SECRET",
   "SOCIAL_CONNECTION_ENCRYPTION_KEY",
   "THREADS_PROFILE_DISCOVERY_APPROVED",
@@ -107,6 +108,13 @@ describe("social provider credential readiness", () => {
     expect(socialProviderRequestedScopes("threads")).not.toContain("threads_profile_discovery");
     setEnvironment("THREADS_PROFILE_DISCOVERY_APPROVED", "true");
     expect(socialProviderRequestedScopes("threads")).toContain("threads_profile_discovery");
+  });
+
+  it("requests LinkedIn comment access only when approved", () => {
+    delete process.env.LINKEDIN_COMMENT_ACCESS_APPROVED;
+    expect(socialProviderRequestedScopes("linkedin")).not.toContain("w_member_social_feed");
+    setEnvironment("LINKEDIN_COMMENT_ACCESS_APPROVED", "true");
+    expect(socialProviderRequestedScopes("linkedin")).toContain("w_member_social_feed");
   });
 
   it("requests only LinkedIn sign-in and publishing scopes", () => {

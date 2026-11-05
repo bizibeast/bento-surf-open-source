@@ -364,7 +364,7 @@ export function registerChatGptTools(
     "Create a secondary Bento page with a name and an optional public URL.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
       openWorldHint: true,
     },
@@ -384,7 +384,7 @@ export function registerChatGptTools(
     "Rename one Bento page the creator owns.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: true,
     },
@@ -401,7 +401,7 @@ export function registerChatGptTools(
     "Set the order of the creator's visible pages. Pass every visible page ID once.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: true,
     },
@@ -461,7 +461,7 @@ export function registerChatGptTools(
     "Add a link, image, video, audio, file, heading, note, quote, map, Spotify, email-capture, contact, divider, or section block to a page. Omit pageId to place it on the home page.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
       openWorldHint: true,
     },
@@ -487,7 +487,7 @@ export function registerChatGptTools(
     "Change the content, cover, or size of one existing link, media, text, or layout block.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: true,
     },
@@ -512,7 +512,7 @@ export function registerChatGptTools(
     "Move blocks on the creator's page grid. Pass the new x, y, width, height, and position for each block you want to place.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: true,
     },
@@ -622,7 +622,7 @@ export function registerChatGptTools(
     "Create a social post, or schedule an existing draft when id is set, for a future time on the selected accounts. Pass uploaded media objects in media. For TikTok pass one video or up to 10 ordered JPEG or WebP images and set providerSettings.tiktok.privacyLevel. For YouTube Shorts set providerSettings.youtube.youtubeFormat to short; YouTube may require setting the thumbnail in Studio. This does not publish immediately.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
       openWorldHint: true,
     },
@@ -658,7 +658,7 @@ export function registerChatGptTools(
     "Replace the caption, title, destinations, media, and provider settings of one existing social post. Pass scheduledAt to keep or set a future publish time. For TikTok photo carousels pass up to 10 ordered JPEG or WebP images and providerSettings.tiktok.privacyLevel. For YouTube Shorts set providerSettings.youtube.youtubeFormat to short. Omit scheduledAt to store it as a draft. This does not publish immediately.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: true,
     },
@@ -738,7 +738,7 @@ export function registerChatGptTools(
     "Save the creator's weekly posting times and timezone. This does not publish a post.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: false,
     },
@@ -923,7 +923,7 @@ export function registerChatGptTools(
     "Create an Instagram, Facebook, or X Auto-DM automation. It stays paused unless enabled is true. Use set_auto_dm_enabled to turn a paused automation on.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
       openWorldHint: true,
     },
@@ -941,7 +941,7 @@ export function registerChatGptTools(
     "Change fields on one existing Instagram, Facebook, or X Auto-DM automation. Omitted fields stay as they are.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: true,
     },
@@ -985,7 +985,7 @@ export function registerChatGptTools(
     "Enable or pause one Instagram, Facebook, or X Auto-DM automation. Enabling lets that automation message people on the connected account.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: true,
     },

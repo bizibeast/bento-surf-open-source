@@ -1,3 +1,4 @@
+import { LINKEDIN_COMMENT_SCOPE } from "./scheduler-follow-ups";
 import { normalizeCustomerCopy, normalizeDashes } from "./text/dashes";
 import { getEditorialReviewNotes } from "./content-editorial";
 import {
@@ -83,6 +84,9 @@ function connectionFromRow(row: any): SchedulerConnection {
     status: row.status,
     connectedAt: row.created_at,
     canPublish,
+    ...(row.provider === "linkedin"
+      ? { canFirstComment: canPublish && Boolean(row.scopes?.includes(LINKEDIN_COMMENT_SCOPE)) }
+      : {}),
     publishBlockReason: canPublish
       ? null
       : needsReconnect
@@ -630,9 +634,22 @@ export async function saveSocialPostForUser(
       data.connectionOverrides?.[connection.id]?.xCommunity != null
     )
       throw new Error("Community destinations are only available for X accounts.");
+    const accountSettings = settingsForConnection(connection);
+    if (connection.provider !== "twitter" && accountSettings.threadReplies != null)
+      throw new Error("Threads are only available for X accounts.");
+    if (connection.provider !== "linkedin" && accountSettings.firstComment != null)
+      throw new Error("First comments are only available for LinkedIn accounts.");
+    if (
+      !data.asDraft &&
+      connection.provider === "linkedin" &&
+      typeof accountSettings.firstComment === "string" &&
+      accountSettings.firstComment.trim() &&
+      !connection.scopes?.includes(LINKEDIN_COMMENT_SCOPE)
+    )
+      throw new Error("Reconnect LinkedIn with comment access before scheduling a first comment.");
     const settings = {
       ...data.providerSettings,
-      [connection.provider]: settingsForConnection(connection),
+      [connection.provider]: accountSettings,
     };
     // Validate mention offsets and provider limits against each account's actual
     // text, including two destinations on the same network.

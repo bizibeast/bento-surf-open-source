@@ -1,3 +1,8 @@
+import {
+  SchedulerFirstComment,
+  SchedulerThreadReplies,
+} from "@/components/scheduler/SchedulerFollowUps";
+import { splitXThread, xThreadReplies } from "@/lib/scheduler-follow-ups";
 import { AutoDmDelaySettings } from "@/components/AutoDmDelaySettings";
 import { DraftReviewNotice } from "@/components/content/DraftReviewNotice";
 import { SchedulerActionButton } from "@/components/scheduler/SchedulerActionButton";
@@ -551,7 +556,13 @@ type SchedulerComposeFingerprintInput = {
   providerSettings: SocialProviderSettings;
   connectionOverrides?: Record<
     string,
-    { bodyOverride?: string; mentions?: unknown[]; xCommunity?: XCommunity | null }
+    {
+      bodyOverride?: string;
+      mentions?: unknown[];
+      xCommunity?: XCommunity | null;
+      threadReplies?: string[] | null;
+      firstComment?: string | null;
+    }
   >;
 };
 
@@ -752,6 +763,8 @@ function SchedulerPage() {
   const [redditCommunity, setRedditCommunity] = useState("");
   const [redditKind, setRedditKind] = useState<"self" | "link">("self");
   const [xCommunities, setXCommunities] = useState<Record<string, XCommunity | null>>({});
+  const [threadReplies, setThreadReplies] = useState<Record<string, string[] | null>>({});
+  const [firstComments, setFirstComments] = useState<Record<string, string>>({});
   const [xPostKind, setXPostKind] = useState<"post" | "article">("post");
   const [xArticle, setXArticle] = useState<XArticleDocument>({
     cover: null,
@@ -966,6 +979,8 @@ function SchedulerPage() {
     );
     setRedditKind(preferences.reddit?.kind === "link" ? "link" : "self");
     setXPostKind(preferences.twitter?.kind === "article" ? "article" : "post");
+    setThreadReplies({});
+    setFirstComments({});
     setXArticle({ cover: null, blocks: [{ kind: "text", type: "unstyled", text: "" }] });
     setRedditUrl("");
     setUploadError(null);
@@ -1061,6 +1076,25 @@ function SchedulerPage() {
           .map((target) => [
             target.connectionId!,
             xCommunityFromSettings(target.providerSettings || {}),
+          ]),
+      ),
+    );
+    setThreadReplies(
+      Object.fromEntries(
+        post.targets
+          .filter((target) => target.connectionId && target.provider === "twitter")
+          .map((target) => [target.connectionId!, xThreadReplies(target.providerSettings || {})]),
+      ),
+    );
+    setFirstComments(
+      Object.fromEntries(
+        post.targets
+          .filter((target) => target.connectionId && target.provider === "linkedin")
+          .map((target) => [
+            target.connectionId!,
+            typeof target.providerSettings?.firstComment === "string"
+              ? target.providerSettings.firstComment
+              : "",
           ]),
       ),
     );
@@ -1553,6 +1587,7 @@ function SchedulerPage() {
       twitter: {
         ...savedProviderSettings.twitter,
         xCommunity: null,
+        threadReplies: null,
         kind: xPostKind,
         article: xPostKind === "article" ? xArticle : undefined,
         autoRepost: repostSettings(reposts.twitter),
@@ -1570,6 +1605,7 @@ function SchedulerPage() {
       },
       linkedin: {
         ...savedProviderSettings.linkedin,
+        firstComment: null,
         autoRepost: repostSettings(reposts.linkedin),
       },
     };
@@ -1677,7 +1713,12 @@ function SchedulerPage() {
     () =>
       Object.fromEntries(
         selectedConnections
-          .filter((connection) => !sync || connection.provider === "twitter")
+          .filter(
+            (connection) =>
+              !sync ||
+              connection.provider === "twitter" ||
+              (connection.provider === "linkedin" && Boolean(firstComments[connection.id])),
+          )
           .map((connection) => [
             connection.id,
             {
@@ -1687,13 +1728,31 @@ function SchedulerPage() {
                     mentions: accountMentions[connection.id] || [],
                   }
                 : {}),
+              ...(connection.provider === "linkedin" && firstComments[connection.id]
+                ? { firstComment: firstComments[connection.id] || "" }
+                : {}),
               ...(connection.provider === "twitter"
-                ? { xCommunity: xCommunities[connection.id] || null }
+                ? {
+                    xCommunity: xCommunities[connection.id] || null,
+                    ...(xPostKind !== "article" && threadReplies[connection.id] != null
+                      ? { threadReplies: threadReplies[connection.id] }
+                      : {}),
+                  }
                 : {}),
             },
           ]),
       ),
-    [sync, selectedConnections, bodyOverrides, accountMentions, body, xCommunities],
+    [
+      sync,
+      selectedConnections,
+      bodyOverrides,
+      accountMentions,
+      body,
+      xCommunities,
+      threadReplies,
+      firstComments,
+      xPostKind,
+    ],
   );
   const youtubeThumbnailMedia = pendingThumbnailMedia(youtubeThumbnail);
   const instagramCoverMedia = pendingThumbnailMedia(instagramCover);
@@ -1738,23 +1797,29 @@ function SchedulerPage() {
   };
   const accountErrors = selectedConnections.flatMap((connection) => {
     const label = `${SOCIAL_PROVIDER_DEFINITIONS[connection.provider].name} (${connection.displayName || connection.handle})`;
-    const error = !connection.canPublish
-      ? connection.publishBlockReason || "Reconnect this account before posting."
-      : validatePostForProviders(
-          body,
-          media,
-          [connection.provider],
-          title,
-          {
-            ...providerSettings,
-            [connection.provider]: {
-              ...providerSettings[connection.provider],
-              ...connectionOverrides?.[connection.id],
+    const missingCommentAccess =
+      connection.provider === "linkedin" &&
+      firstComments[connection.id]?.trim() &&
+      !connection.canFirstComment;
+    const error = missingCommentAccess
+      ? "Reconnect LinkedIn with comment access before scheduling a first comment."
+      : !connection.canPublish
+        ? connection.publishBlockReason || "Reconnect this account before posting."
+        : validatePostForProviders(
+            body,
+            media,
+            [connection.provider],
+            title,
+            {
+              ...providerSettings,
+              [connection.provider]: {
+                ...providerSettings[connection.provider],
+                ...connectionOverrides?.[connection.id],
+              },
             },
-          },
-          connection.xCapabilities,
-          tiktokDirectPostAudited,
-        )[connection.provider];
+            connection.xCapabilities,
+            tiktokDirectPostAudited,
+          )[connection.provider];
     return error
       ? [
           {
@@ -1771,10 +1836,14 @@ function SchedulerPage() {
   const mediaCompatibility = schedulerMediaCompatibility(connectedProviders);
   const previewConnection = activeConnection || selectedConnections[0] || null;
   const editorUsesCaption = schedulerUsesCaption(activeProviders);
-  const editorCaptionLimit = schedulerCaptionLimit(
-    activeProviders,
-    selectedXConnection?.xCapabilities,
-  );
+  const isXThread =
+    activeProvider === "twitter" &&
+    xPostKind === "post" &&
+    activeConnection &&
+    threadReplies[activeConnection.id] != null;
+  const editorCaptionLimit = isXThread
+    ? 280
+    : schedulerCaptionLimit(activeProviders, selectedXConnection?.xCapabilities);
   const showPostTitle = activeProvider === "youtube" || activeProvider === "reddit" || isXArticle;
 
   const updateEditorBody = (value: string) => {
@@ -3158,14 +3227,76 @@ function SchedulerPage() {
                               <p className="text-xs font-semibold text-muted-foreground">
                                 X format
                               </p>
-                              <div className="mt-2 flex gap-2">
+                              <div className="mt-2 flex flex-wrap gap-2">
                                 <button
                                   type="button"
-                                  aria-pressed={xPostKind === "post"}
-                                  onClick={() => setXPostKind("post")}
-                                  className={xPostKind === "post" ? micro.btnInk : micro.btnSoft}
+                                  aria-pressed={xPostKind === "post" && !isXThread}
+                                  onClick={() => {
+                                    setXPostKind("post");
+                                    setThreadReplies((current) => ({
+                                      ...current,
+                                      [selectedXConnection.id]: null,
+                                    }));
+                                  }}
+                                  className={
+                                    xPostKind === "post" && !isXThread
+                                      ? micro.btnInk
+                                      : micro.btnSoft
+                                  }
                                 >
                                   Post
+                                </button>
+                                <button
+                                  type="button"
+                                  aria-pressed={Boolean(isXThread)}
+                                  onClick={() => {
+                                    setXPostKind("post");
+                                    setThreadReplies((current) => ({
+                                      ...current,
+                                      [selectedXConnection.id]: current[selectedXConnection.id] || [
+                                        "",
+                                      ],
+                                    }));
+                                  }}
+                                  className={isXThread ? micro.btnInk : micro.btnSoft}
+                                >
+                                  Thread
+                                </button>
+                                <button
+                                  type="button"
+                                  className={micro.btnSoft}
+                                  disabled={!editorBody.trim()}
+                                  onClick={() => {
+                                    try {
+                                      const parts = splitXThread(editorBody);
+                                      if (parts.length < 2) {
+                                        toast.info("This text already fits in one X post.");
+                                        return;
+                                      }
+                                      setXPostKind("post");
+                                      setSync(false);
+                                      setBodyOverrides((current) => ({
+                                        ...current,
+                                        [selectedXConnection.id]: parts[0],
+                                      }));
+                                      setAccountMentions((current) => ({
+                                        ...current,
+                                        [selectedXConnection.id]: [],
+                                      }));
+                                      setThreadReplies((current) => ({
+                                        ...current,
+                                        [selectedXConnection.id]: parts.slice(1),
+                                      }));
+                                    } catch (error) {
+                                      toast.error(
+                                        error instanceof Error
+                                          ? error.message
+                                          : "This text could not be split.",
+                                      );
+                                    }
+                                  }}
+                                >
+                                  Split into thread
                                 </button>
                                 <button
                                   type="button"
@@ -3522,6 +3653,31 @@ function SchedulerPage() {
                                   composeDialogRef.current,
                                 )}
                             </div>
+                          )}
+
+                          {isXThread && activeConnection && (
+                            <SchedulerThreadReplies
+                              replies={threadReplies[activeConnection.id]!}
+                              onChange={(replies) =>
+                                setThreadReplies((current) => ({
+                                  ...current,
+                                  [activeConnection.id]: replies,
+                                }))
+                              }
+                            />
+                          )}
+                          {activeProvider === "linkedin" && activeConnection && (
+                            <SchedulerFirstComment
+                              key={activeConnection.id}
+                              value={firstComments[activeConnection.id] || ""}
+                              canComment={Boolean(activeConnection.canFirstComment)}
+                              onChange={(value) =>
+                                setFirstComments((current) => ({
+                                  ...current,
+                                  [activeConnection.id]: value,
+                                }))
+                              }
+                            />
                           )}
 
                           {activeProvider === "reddit" && (

@@ -106,6 +106,7 @@ const COMMERCE_FIELDS =
 
 type ListedTool = {
   name: string;
+  title?: string;
   description: string;
   inputSchema: Record<string, unknown>;
   annotations?: Record<string, unknown>;
@@ -417,6 +418,7 @@ describe("ChatGPT MCP catalog", () => {
 
     const problems: string[] = [];
     for (const tool of tools) {
+      expect(tool.title?.trim(), tool.name).toBeTruthy();
       const annotations = tool.annotations || {};
       for (const key of [
         "readOnlyHint",
@@ -438,7 +440,12 @@ describe("ChatGPT MCP catalog", () => {
         if (tool.annotations.openWorldHint !== false)
           problems.push(`${tool.name} read is open world`);
       }
-      if (/^(delete_|cancel_)/.test(tool.name) && tool.annotations?.destructiveHint !== true)
+      if (
+        /^(delete_|cancel_|update_|reorder_|schedule_|create_|set_auto_dm_enabled$)/.test(
+          tool.name,
+        ) &&
+        tool.annotations?.destructiveHint !== true
+      )
         problems.push(`${tool.name} is not marked destructive`);
     }
     expect(problems).toEqual([]);

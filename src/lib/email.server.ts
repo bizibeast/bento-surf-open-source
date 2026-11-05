@@ -22,6 +22,7 @@ import {
 } from "./application-urls";
 import { issueCustomerLibraryMagicLinkForEmail } from "./customer-library-magic-link.server";
 import { normalizeEmailRecipient } from "./email-recipient";
+import { isLifecycleNudgeEvent, lifecycleNudgeSendDecision } from "./lifecycle-nudges";
 import { newsletterContentSchema, type NewsletterContentBlock } from "./newsletter";
 import { recordPriorityDmOrder } from "./priority-dm.server";
 import { captureServerEvent } from "./posthog.server";
@@ -527,6 +528,19 @@ async function sendWithResend(row: EmailOutboxRow) {
     }
     row = { ...row, payload };
   }
+  const mode = process.env.EMAIL_DELIVERY_MODE || "disabled";
+  let recipientEmail = row.recipient_email;
+  if (isLifecycleNudgeEvent(row.event_type)) {
+    const decision = lifecycleNudgeSendDecision({
+      recipientEmail: row.recipient_email,
+      mode,
+    });
+    if (decision.action === "suppress") {
+      await updateOutbox(row.id, { status: "suppressed", last_error: decision.reason });
+      return false;
+    }
+    recipientEmail = decision.recipient;
+  }
   if (!(await marketingAllowedForOutbox(row))) {
     await updateOutbox(row.id, {
       status: "suppressed",
@@ -538,7 +552,6 @@ async function sendWithResend(row: EmailOutboxRow) {
     });
     return false;
   }
-  const mode = process.env.EMAIL_DELIVERY_MODE || "disabled";
   const apiKey = process.env.RESEND_API_KEY?.trim();
   const from = process.env.RESEND_FROM_EMAIL?.trim();
   if (!apiKey || !from || mode === "disabled")
@@ -551,19 +564,19 @@ async function sendWithResend(row: EmailOutboxRow) {
         ? await createNewsletterUnsubscribeToken({
             publicationId: row.payload.newsletterPublicationId,
             subscriptionId: row.payload.newsletterSubscriptionId,
-            email: row.recipient_email,
+            email: recipientEmail,
           })
         : typeof row.payload?.audienceContactId === "string" &&
             typeof row.payload?.creatorId === "string"
           ? await createAudienceUnsubscribeToken({
               contactId: row.payload.audienceContactId,
               creatorId: row.payload.creatorId,
-              email: row.recipient_email,
+              email: recipientEmail,
             })
           : row.user_id
             ? await createEmailPreferenceToken({
                 userId: row.user_id,
-                email: row.recipient_email,
+                email: recipientEmail,
               })
             : "";
     unsubscribeUrl = `${appUrl()}/api/email/unsubscribe?token=${encodeURIComponent(token)}`;
@@ -584,7 +597,7 @@ async function sendWithResend(row: EmailOutboxRow) {
   const testRecipient = process.env.RESEND_TEST_RECIPIENT?.trim();
   const delivery = resolveEmailDeliveryEnvelope({
     mode,
-    originalRecipient: row.recipient_email,
+    originalRecipient: recipientEmail,
     testRecipient,
     subject: rendered.subject,
   });
