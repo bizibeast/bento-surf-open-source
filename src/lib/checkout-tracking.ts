@@ -192,3 +192,10 @@ export function forceCheckoutReplay() {
     .then(({ setCheckoutReplayForced }) => setCheckoutReplayForced())
     .catch((error) => console.error("[Analytics] Checkout replay could not start.", error));
 }
+
+/** Record onboarding using the existing replay controls and masking. */
+export function forceOnboardingReplay() {
+  void import("./posthog")
+    .then(({ setCheckoutReplayForced }) => setCheckoutReplayForced())
+    .catch((error) => console.error("[Analytics] Onboarding replay could not start.", error));
+}

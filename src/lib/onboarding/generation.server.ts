@@ -1,3 +1,4 @@
+import { captureServerEvent } from "@/lib/posthog.server";
 import { withProviderBudgetWorkspace } from "../provider-budget.server";
 import {
   buildEditorialBrief,
@@ -345,6 +346,24 @@ export async function generateOnboardingDrafts(
   return { ...candidates, drafts, warning: null, warningReason: null, retry: false };
 }
 
+export function reportBrainJobFinished(
+  workspaceId: string,
+  properties: {
+    status: "ready" | "failed";
+    drafts: number;
+    brain_chapters: number;
+    warning_reason: string | null;
+    attempts: number;
+    generation: number;
+  },
+) {
+  try {
+    void captureServerEvent(workspaceId, "brain_job_finished", properties).catch(() => undefined);
+  } catch {
+    /* Analytics must never change generation behavior. */
+  }
+}
+
 async function processOnboardingGenerationScoped(workspaceId: string) {
   const { data, error } = await onboardingDb.rpc("claim_onboarding_generation", {
     p_workspace_id: workspaceId,
@@ -455,6 +474,14 @@ async function processOnboardingGenerationScoped(workspaceId: string) {
       .eq("revision", session.revision)
       .eq("job_lease", session.job_lease);
     if (saveError) throw new Error("Prepared drafts could not be saved.");
+    reportBrainJobFinished(workspaceId, {
+      status: "retry" in generated && generated.retry ? "failed" : "ready",
+      drafts: parsed.drafts.length,
+      brain_chapters: parsed.brain.length,
+      warning_reason: parsed.warningReason ?? null,
+      attempts: session.job_attempts,
+      generation: session.generation_count,
+    });
   } catch {
     console.error("[onboarding] generation failed", { workspaceId });
     const { error: saveError } = await onboardingDb
@@ -469,6 +496,14 @@ async function processOnboardingGenerationScoped(workspaceId: string) {
       .eq("revision", session.revision)
       .eq("job_lease", session.job_lease);
     if (saveError) throw new Error("Preparation recovery could not be saved.");
+    reportBrainJobFinished(workspaceId, {
+      status: "failed",
+      drafts: session.candidates?.drafts?.length ?? 0,
+      brain_chapters: session.candidates?.brain?.length ?? 0,
+      warning_reason: "job_failed",
+      attempts: session.job_attempts,
+      generation: session.generation_count,
+    });
   }
 }
 

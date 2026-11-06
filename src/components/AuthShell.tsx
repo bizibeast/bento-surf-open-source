@@ -2,9 +2,12 @@ import type { InputHTMLAttributes, ReactNode } from "react";
 import { normalizeOrigin, PRODUCTION_PUBLIC_ORIGIN } from "@/lib/application-urls";
 import { BentoFullLogo } from "@/components/BentoBrand";
 
-export function AuthShell({ children }: { children: ReactNode }) {
+export function AuthShell({ children, translate }: { children: ReactNode; translate?: "no" }) {
   return (
-    <main className="auth-light min-h-dvh bg-[#faf9f7] text-[#1b1b1b] selection:bg-[#1b1b1b] selection:text-white">
+    <main
+      translate={translate}
+      className={`${translate === "no" ? "notranslate " : ""}auth-light min-h-dvh bg-[#faf9f7] text-[#1b1b1b] selection:bg-[#1b1b1b] selection:text-white`}
+    >
       <div className="mx-auto flex min-h-dvh w-full max-w-[1200px] flex-col px-4 sm:px-8">
         <header className="flex h-16 shrink-0 items-center border-b border-black/[0.07] sm:h-20">
           <AuthBrand />
@@ -31,7 +34,8 @@ export function AuthShell({ children }: { children: ReactNode }) {
   );
 }
 
-export function AuthBrand() {
+export function AuthBrand({ linked = true }: { linked?: boolean }) {
+  if (!linked) return <BentoFullLogo className="h-8 w-auto sm:h-9" />;
   return (
     <a
       href={normalizeOrigin(import.meta.env.VITE_PUBLIC_URL, PRODUCTION_PUBLIC_ORIGIN)}

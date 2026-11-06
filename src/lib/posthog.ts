@@ -12,6 +12,16 @@ import {
 export { isHeatmapProductPath, isReplayableProductPath, isTrackedProductPath };
 
 export type ProductEventName =
+  | "onboarding_crashed"
+  | "onboarding_step_viewed"
+  | "onboarding_step_failed"
+  | "onboarding_left"
+  | "brain_draft_started"
+  | "brain_job_finished"
+  | "signup_account_step_viewed"
+  | "signup_email_submitted"
+  | "signup_failed"
+  | "signup_abandoned"
   | "signup_started"
   | "signup_completed"
   | "login_completed"
@@ -52,6 +62,9 @@ export type ProductEventName =
   | "upgrade_banner_clicked"
   | "upgrade_banner_dismissed"
   | "trial_cta_clicked"
+  | "checkout_recovery_banner_shown"
+  | "checkout_recovery_retry_clicked"
+  | "checkout_recovery_banner_dismissed"
   | "checkout_started"
   | "checkout_page_left"
   | "onboarding_showcase_viewed"
@@ -416,7 +429,17 @@ export const captureProductPageview = createClientOnlyFn((pathname: string) => {
 export const captureProductException = createClientOnlyFn(
   (error: unknown, properties: Record<string, string | number | boolean | null> = {}) => {
     if (!initPostHog()) return;
-    posthog.captureException(error, properties);
+    posthog.captureException(error, {
+      ...properties,
+      ...(error instanceof TypeError &&
+      [
+        "Load failed",
+        "Failed to fetch",
+        "NetworkError when attempting to fetch resource.",
+      ].includes(error.message)
+        ? { network_abort: true }
+        : {}),
+    });
   },
 );
 

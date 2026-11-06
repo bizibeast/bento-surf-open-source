@@ -54,12 +54,17 @@ export type InstagramDmQueueMessage =
       connectionId: string;
     };
 
+function isSkippableReconcileMediaError(error: unknown) {
+  return error instanceof MetaDeliveryError && !error.retryable && error.code === "100";
+}
+
 export class MetaDeliveryError extends Error {
   constructor(
     message: string,
     readonly code: string,
     readonly retryable: boolean,
     readonly retryAfterSeconds?: number,
+    readonly subcode?: string,
   ) {
     super(message);
     this.name = "MetaDeliveryError";
@@ -687,7 +692,12 @@ export async function fetchInstagramAccountProfile(
 type MetaPage<T> = {
   data?: T[];
   paging?: { cursors?: { after?: string } };
-  error?: { code?: string | number; message?: string; is_transient?: boolean };
+  error?: {
+    code?: string | number;
+    error_subcode?: string | number;
+    message?: string;
+    is_transient?: boolean;
+  };
 };
 
 async function metaGetPage<T>(url: URL, token: string) {
@@ -718,6 +728,7 @@ async function metaGetPage<T>(url: URL, token: string) {
       providerCode,
       retryable,
       parseMetaRetryAfterSeconds(response.headers.get("retry-after")),
+      data.error?.error_subcode != null ? String(data.error.error_subcode) : undefined,
     );
   }
   return data;
@@ -898,9 +909,19 @@ async function processInstagramCommentReconciliation(
     );
     const candidates: InstagramWebhookEvent[] = [];
 
+    const skippedMediaErrors: MetaDeliveryError[] = [];
     for (const mediaId of mediaIds) {
       if (candidates.length >= INSTAGRAM_COMMENT_RECONCILE_EVENT_LIMIT) break;
-      const comments = await getRecentInstagramCommentsForReconciliation(mediaId, token, since);
+      let comments: ReconciledInstagramComment[];
+      try {
+        comments = await getRecentInstagramCommentsForReconciliation(mediaId, token, since);
+      } catch (mediaError) {
+        // One deleted or unreadable post (Meta code 100) must not block the
+        // check for every other post on the account.
+        if (!isSkippableReconcileMediaError(mediaError)) throw mediaError;
+        skippedMediaErrors.push(mediaError as MetaDeliveryError);
+        continue;
+      }
       for (const comment of comments) {
         if (candidates.length >= INSTAGRAM_COMMENT_RECONCILE_EVENT_LIMIT) break;
         const commentId = typeof comment.id === "string" ? comment.id : null;
@@ -932,6 +953,17 @@ async function processInstagramCommentReconciliation(
         if (creatorAlreadyReplied) continue;
         candidates.push(event);
       }
+    }
+    if (skippedMediaErrors.length && skippedMediaErrors.length === mediaIds.length) {
+      throw skippedMediaErrors[0];
+    }
+    if (skippedMediaErrors.length) {
+      console.warn("instagram_comment_reconcile_media_skipped", {
+        connection_id: connectionId,
+        skipped: skippedMediaErrors.length,
+        provider_error_code: skippedMediaErrors[0].code,
+        provider_error_subcode: skippedMediaErrors[0].subcode,
+      });
     }
 
     let freshCandidates = candidates;
@@ -983,6 +1015,9 @@ async function processInstagramCommentReconciliation(
   } catch (error) {
     const deliveryError = error instanceof MetaDeliveryError ? error : null;
     const errorCode = deliveryError?.code || "reconcile_failed";
+    const errorMessage = deliveryError?.subcode
+      ? `${errorCode} (subcode ${deliveryError.subcode})`
+      : errorCode;
     if (deliveryError && !deliveryError.retryable) {
       const failures = Number(connection.comment_reconcile_permanent_failures || 0) + 1;
       const paused = failures >= 3;
@@ -992,7 +1027,7 @@ async function processInstagramCommentReconciliation(
       const failedAt = new Date();
       // Persist before acknowledging. Storage failures must retry the queue job.
       await updateInstagramCommentReconcileState(connectionId, {
-        last_comment_reconcile_error: errorCode.slice(0, 255),
+        last_comment_reconcile_error: errorMessage.slice(0, 255),
         comment_reconcile_permanent_failures: failures,
         comment_reconcile_next_check_at: new Date(
           failedAt.getTime() + 15 * 60_000 * 4 ** Math.min(failures - 1, 2),
@@ -1013,17 +1048,19 @@ async function processInstagramCommentReconciliation(
         await captureServerEvent(String(connection.user_id), "instagram_comment_reconcile_paused", {
           connection_id: connectionId,
           provider_error_code: errorCode,
+          provider_error_subcode: deliveryError.subcode,
           consecutive_permanent_failures: failures,
         });
       }
       return { failed: true, retryable: false };
     }
     await updateInstagramCommentReconcileState(connectionId, {
-      last_comment_reconcile_error: errorCode.slice(0, 255),
+      last_comment_reconcile_error: errorMessage.slice(0, 255),
     }).catch(() => undefined);
     await captureServerException(error, "instagram-comment-reconciler", {
       connection_id: connectionId,
       provider_error_code: errorCode,
+      provider_error_subcode: deliveryError?.subcode,
       retryable: deliveryError?.retryable ?? true,
     });
     throw error;
