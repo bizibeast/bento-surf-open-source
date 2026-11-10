@@ -48,7 +48,10 @@ type WebMcpModelContext = {
 
 export function webMcpResult(message: string, data: Record<string, unknown> = {}) {
   return {
-    content: [{ type: "text", text: message }],
+    content: [
+      { type: "text", text: message },
+      { type: "text", text: JSON.stringify(data) },
+    ],
     structuredContent: data,
   };
 }

@@ -39,6 +39,33 @@ const whisperOutput = {
 };
 
 describe("free upload transcription endpoint", () => {
+  it("accepts a trusted MCP workspace with its own limiter key while public uploads still require Turnstile", async () => {
+    const limit = vi.fn().mockResolvedValue({ success: true });
+    const runWhisper = vi.fn().mockResolvedValue(whisperOutput);
+    const env = {
+      APP_ENV: "production",
+      FREE_TOOLS_TRANSCRIPTION_RATE_LIMITER: { limit },
+      TURNSTILE_VERIFIER_URL: "https://turnstile.example",
+    } as const;
+    const workspaceId = "00000000-0000-4000-8000-000000000001";
+
+    const mcpResponse = await handleFreeToolTranscriptionRequest(uploadRequest(), env, {
+      trustedMcpWorkspaceId: workspaceId,
+      runWhisper,
+    });
+    expect(mcpResponse?.status).toBe(200);
+    expect(limit).toHaveBeenCalledWith({ key: `free-tool-transcription:mcp:${workspaceId}` });
+    expect(runWhisper).toHaveBeenCalledOnce();
+
+    const publicResponse = await handleFreeToolTranscriptionRequest(
+      uploadRequest(wavBytes(), { "cf-connecting-ip": "203.0.113.21" }),
+      env,
+      { runWhisper },
+    );
+    expect(publicResponse?.status).toBe(403);
+    expect(runWhisper).toHaveBeenCalledOnce();
+  });
+
   it("transcribes an intact validated audio file without storing it", async () => {
     const runWhisper = vi.fn().mockResolvedValue(whisperOutput);
     const response = await handleFreeToolTranscriptionRequest(

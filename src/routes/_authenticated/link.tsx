@@ -84,6 +84,8 @@ import {
 import { Field } from "../login";
 import type { Database } from "@/integrations/supabase/types";
 import { findPlatform, type PlatformCategory } from "@/lib/platforms";
+import { socialProfileHref } from "@/lib/platform-detection";
+import { avatarDeliveryUrl } from "@/lib/media-variants";
 import { geocodeMapLocation } from "@/lib/map.functions";
 import { enrichMapContent, storedMapView } from "@/lib/map-content";
 import {
@@ -987,7 +989,7 @@ function DashboardPage() {
         };
       case "social_link": {
         const p = c.platform ? findPlatform(c.platform) : null;
-        const derived = c.handle && p?.urlBase ? `${p.urlBase}${c.handle}` : "";
+        const derived = c.platform ? socialProfileHref(String(c.platform), c.handle) || "" : "";
         return {
           ...c,
           title: c.title ?? c.handle ?? p?.label ?? "",
@@ -2221,9 +2223,9 @@ function ProfileSidebar({
             data-onboarding-target="avatar"
             className="group relative block"
           >
-            {profile?.avatar_url ? (
+            {avatarDeliveryUrl(profile?.avatar_url) ? (
               <DecodedImage
-                src={profile.avatar_url}
+                src={avatarDeliveryUrl(profile?.avatar_url)!}
                 alt=""
                 width={640}
                 height={640}

@@ -335,76 +335,225 @@ const readOnlyAnnotations = {
   readOnlyHint: true,
   openWorldHint: false,
   destructiveHint: false,
+  idempotentHint: true,
 };
 
-/** Pins the hints OpenAI reads from tools/list. Idempotent is omitted unless true. */
+/** Pins the hints OpenAI reads from tools/list. Idempotence is explicit. */
 const bentoMcpToolAnnotations = {
+  list_free_tools: { ...readOnlyAnnotations, idempotentHint: true },
+  run_free_text_tool: { ...readOnlyAnnotations, idempotentHint: true },
+  run_free_ai_tool: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true,
+  },
+  run_free_media_tool: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true,
+  },
+  run_free_image_tool: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true,
+  },
+  transcribe_free_audio: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true,
+  },
   get_bento_overview: readOnlyAnnotations,
+  list_workspaces: readOnlyAnnotations,
   read_workspace_data: readOnlyAnnotations,
   get_content_brain: readOnlyAnnotations,
-  manage_content_brain: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
+  manage_content_brain: {
+    readOnlyHint: false,
+    openWorldHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   get_content_media: readOnlyAnnotations,
-  manage_content_media: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  manage_content_media: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   get_content_routines: readOnlyAnnotations,
-  manage_content_routine: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
+  manage_content_routine: {
+    readOnlyHint: false,
+    openWorldHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   get_content_agent: readOnlyAnnotations,
-  manage_content_agent: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  manage_content_agent: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   get_content_discover: readOnlyAnnotations,
-  manage_content_discover: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  manage_content_discover: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   list_social_accounts: readOnlyAnnotations,
-  upload_media: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
-  begin_media_upload: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
+  upload_media: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: false,
+    idempotentHint: false,
+  },
+  begin_media_upload: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: false,
+    idempotentHint: false,
+  },
+  list_uploaded_media: readOnlyAnnotations,
   list_social_posts: readOnlyAnnotations,
   get_social_post: readOnlyAnnotations,
-  search_stock_photos: { readOnlyHint: true, openWorldHint: true, destructiveHint: false },
+  search_stock_photos: {
+    readOnlyHint: true,
+    openWorldHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+  },
   resolve_post_media: readOnlyAnnotations,
-  create_social_post: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  create_social_post: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   list_auto_dm_automations: readOnlyAnnotations,
   get_auto_dm_delay: readOnlyAnnotations,
   set_auto_dm_delay: {
     readOnlyHint: false,
     openWorldHint: false,
-    destructiveHint: false,
+    destructiveHint: true,
     idempotentHint: true,
   },
-  save_auto_dm_automation: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  save_auto_dm_automation: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   set_auto_dm_enabled: {
     readOnlyHint: false,
     openWorldHint: true,
-    destructiveHint: false,
+    destructiveHint: true,
     idempotentHint: true,
   },
-  delete_auto_dm_automation: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  delete_auto_dm_automation: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   list_pages: readOnlyAnnotations,
   list_products: readOnlyAnnotations,
   list_bookings: readOnlyAnnotations,
   get_priority_dm_conversations: readOnlyAnnotations,
-  send_priority_dm_message: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  send_priority_dm_message: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   set_priority_dm_closed: {
     readOnlyHint: false,
     openWorldHint: true,
-    destructiveHint: false,
+    destructiveHint: true,
     idempotentHint: true,
   },
   get_scheduler_workspace: readOnlyAnnotations,
-  manage_scheduler: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-  manage_page: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-  manage_block: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  manage_scheduler: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
+  manage_page: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
+  manage_block: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   get_store_workspace: readOnlyAnnotations,
-  manage_product: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-  manage_discount_code: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-  manage_order_bump: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-  manage_audience: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  manage_product: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
+  manage_discount_code: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
+  manage_order_bump: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
+  manage_audience: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   get_calendar_workspace: readOnlyAnnotations,
-  manage_calendar: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  manage_calendar: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   get_community_workspace: readOnlyAnnotations,
-  manage_community: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-  get_profile_workspace: readOnlyAnnotations,
-  update_profile: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  manage_community: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
+  get_profile_workspace: {
+    ...readOnlyAnnotations,
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
+  update_profile: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
   get_analytics_workspace: readOnlyAnnotations,
   get_integration_workspace: readOnlyAnnotations,
-  get_earn_workspace: readOnlyAnnotations,
-  manage_earn: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+  get_earn_workspace: { ...readOnlyAnnotations, readOnlyHint: false },
+  manage_earn: {
+    readOnlyHint: false,
+    openWorldHint: true,
+    destructiveHint: true,
+    idempotentHint: false,
+  },
 };
 
 describe("Bento MCP tools", () => {
@@ -546,7 +695,15 @@ describe("Bento MCP tools", () => {
     const toolsPayload = await payload(toolsResponse);
     expect(toolsPayload.result.tools.map((tool: { name: string }) => tool.name)).toEqual(
       expect.arrayContaining([
+        "list_free_tools",
+        "run_free_text_tool",
+        "run_free_ai_tool",
+        "run_free_media_tool",
+        "run_free_image_tool",
+        "transcribe_free_audio",
+        "list_workspaces",
         "upload_media",
+        "list_uploaded_media",
         "create_social_post",
         "save_auto_dm_automation",
         "manage_page",
@@ -593,7 +750,18 @@ describe("Bento MCP tools", () => {
         .map((tool: { name: string }) => tool.name)
         .filter(
           (name: string) =>
-            !["upload_media", "begin_media_upload", "manage_content_agent"].includes(name),
+            ![
+              "upload_media",
+              "begin_media_upload",
+              "manage_content_agent",
+              "list_workspaces",
+              "list_free_tools",
+              "run_free_text_tool",
+              "run_free_ai_tool",
+              "run_free_media_tool",
+              "run_free_image_tool",
+              "transcribe_free_audio",
+            ].includes(name),
         )
         .sort(),
     );
@@ -608,6 +776,7 @@ describe("Bento MCP tools", () => {
     const socialPostTool = toolsPayload.result.tools.find(
       (tool: { name: string }) => tool.name === "create_social_post",
     );
+    expect(socialPostTool.inputSchema.properties.workspaceId).toMatchObject({ format: "uuid" });
     expect(storeTool.inputSchema.properties.publicationId).toMatchObject({ format: "uuid" });
     expect(JSON.stringify(audienceTool.inputSchema)).toContain("publicationId");
     expect(
@@ -636,94 +805,25 @@ describe("Bento MCP tools", () => {
       { authInfo },
     );
     expect(response.status, await response.clone().text()).toBe(200);
-    const tools = (await payload(response)).result.tools as {
-      name: string;
-      annotations?: Record<string, boolean>;
-    }[];
-    expect(Object.fromEntries(tools.map((tool) => [tool.name, tool.annotations]))).toEqual({
-      get_bento_overview: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      read_workspace_data: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      get_content_brain: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      manage_content_brain: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
-      get_content_media: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      resolve_post_media: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      search_stock_photos: { readOnlyHint: true, openWorldHint: true, destructiveHint: false },
-      manage_content_media: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      get_content_routines: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      manage_content_routine: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
-      get_content_agent: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      manage_content_agent: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      get_content_discover: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      manage_content_discover: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      list_social_accounts: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      upload_media: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
-      begin_media_upload: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
-      list_social_posts: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      create_social_post: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      get_auto_dm_delay: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      set_auto_dm_delay: {
-        readOnlyHint: false,
-        openWorldHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
-      },
-      list_auto_dm_automations: {
-        readOnlyHint: true,
-        openWorldHint: false,
-        destructiveHint: false,
-      },
-      save_auto_dm_automation: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      set_auto_dm_enabled: {
-        readOnlyHint: false,
-        openWorldHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-      },
-      delete_auto_dm_automation: {
-        readOnlyHint: false,
-        openWorldHint: true,
-        destructiveHint: true,
-      },
-      list_pages: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      list_products: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      list_bookings: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      get_priority_dm_conversations: {
-        readOnlyHint: true,
-        openWorldHint: false,
-        destructiveHint: false,
-      },
-      send_priority_dm_message: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      set_priority_dm_closed: {
-        readOnlyHint: false,
-        openWorldHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-      },
-      get_scheduler_workspace: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      get_social_post: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      manage_scheduler: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      manage_page: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      manage_block: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      get_store_workspace: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      manage_product: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      manage_discount_code: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      manage_order_bump: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      manage_audience: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      get_calendar_workspace: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      manage_calendar: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      get_community_workspace: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      manage_community: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      get_profile_workspace: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      update_profile: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-      get_analytics_workspace: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      get_integration_workspace: {
-        readOnlyHint: true,
-        openWorldHint: false,
-        destructiveHint: false,
-      },
-      get_earn_workspace: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-      manage_earn: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
-    });
+    const body = await payload(response);
+    expect(body.result.tools.length).toBeGreaterThan(0);
+    for (const tool of body.result.tools) {
+      expect(tool.title?.trim(), tool.name).toBeTruthy();
+      expect(typeof tool.annotations?.readOnlyHint, tool.name).toBe("boolean");
+      expect(typeof tool.annotations?.destructiveHint, tool.name).toBe("boolean");
+      expect(typeof tool.annotations?.idempotentHint, tool.name).toBe("boolean");
+      if (tool.annotations.readOnlyHint) {
+        expect(tool.annotations.destructiveHint, tool.name).toBe(false);
+        expect(tool.annotations.idempotentHint, tool.name).toBe(true);
+      }
+    }
+    const actual = Object.fromEntries(
+      body.result.tools.map((tool: { name: string; annotations?: unknown }) => [
+        tool.name,
+        tool.annotations,
+      ]),
+    );
+    expect(actual).toEqual(bentoMcpToolAnnotations);
   });
 
   it("exposes complete context to text-only MCP clients without duplicating internal Agent context", async () => {
@@ -769,6 +869,202 @@ describe("Bento MCP tools", () => {
     const internal = await tools.get("read_workspace_data")!.execute(args);
     expect(internal.content).toHaveLength(1);
     expect(internal.structuredContent.data.items[0].content).toBe(fullText);
+  });
+
+  it("returns upload media and completion instructions as readable MCP text", async () => {
+    const media = {
+      key: "users/creator/image/photo.jpg",
+      url: "https://bento.surf/cdn/users/creator/image/photo.jpg",
+      name: "photo.jpg",
+      mimeType: "image/jpeg",
+      size: 123,
+    };
+    const upload = {
+      key: "users/creator/video/clip.mp4",
+      uploadUrl: "https://mcp.bento.surf/api/mcp/media-upload",
+      headers: { Authorization: "Bearer example-upload-ticket" },
+      partSize: 8_388_608,
+      partCount: 1,
+      expiresAt: "2026-11-03T10:00:00.000Z",
+      instructions: "PUT one part, then POST the ETag to complete.",
+    };
+    const operations = {
+      ...defaultBentoMcpOperations,
+      uploadMedia: vi.fn(async () => media),
+      beginMcpMediaUpload: vi.fn(async () => upload),
+    } as unknown as typeof defaultBentoMcpOperations;
+    const handler = createMcpHandler(() =>
+      createBentoMcpServer(authInfo, "https://mcp.bento.surf", operations),
+    );
+    const call = async (name: string, arguments_: Record<string, unknown>) => {
+      const response = await handler.fetch(
+        request({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name, arguments: arguments_ },
+        }),
+        { authInfo },
+      );
+      expect(response.status).toBe(200);
+      return (await payload(response)).result;
+    };
+
+    const uploaded = await call("upload_media", {
+      sourceUrl: "https://example.com/photo.jpg",
+      fileName: "photo.jpg",
+      mimeType: "image/jpeg",
+      kind: "image",
+    });
+    expect(JSON.parse(uploaded.content[1].text)).toEqual({
+      workspaceId: authInfo.extra!.userId,
+      media,
+    });
+    expect(JSON.parse(uploaded.content[1].text).media).toEqual(uploaded.structuredContent.media);
+
+    const prepared = await call("begin_media_upload", {
+      fileName: "clip.mp4",
+      mimeType: "video/mp4",
+      kind: "video",
+      size: 123,
+    });
+    expect(JSON.parse(prepared.content[1].text)).toEqual({
+      workspaceId: authInfo.extra!.userId,
+      upload,
+    });
+  });
+
+  it("returns the saved post ID as readable MCP text", async () => {
+    const handler = createMcpHandler(() =>
+      createBentoMcpServer(authInfo, "https://mcp.bento.surf", {
+        ...defaultBentoMcpOperations,
+        saveSocialPostForUser: vi.fn(async () => ({ id: "saved-post-id", status: "scheduled" })),
+      }),
+    );
+    const response = await handler.fetch(
+      request({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "create_social_post",
+          arguments: {
+            body: "A scheduled post",
+            connectionIds: ["00000000-0000-4000-8000-000000000010"],
+            mode: "schedule",
+            scheduledAt: "2026-11-04T12:00:00+00:00",
+          },
+        },
+      }),
+      { authInfo },
+    );
+    const result = (await payload(response)).result;
+    expect(JSON.parse(result.content[1].text).post).toEqual({
+      id: "saved-post-id",
+      status: "scheduled",
+    });
+  });
+
+  it("advertises the explicit YouTube Shorts format to MCP clients", async () => {
+    const handler = createMcpHandler(() =>
+      createBentoMcpServer(authInfo, "https://mcp.bento.surf"),
+    );
+    const response = await handler.fetch(
+      request({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      { authInfo },
+    );
+    const tools = (await payload(response)).result.tools;
+    const create = tools.find((tool: { name: string }) => tool.name === "create_social_post");
+    expect(
+      create.inputSchema.properties.providerSettings.properties.youtube.properties,
+    ).toMatchObject({
+      youtubeFormat: { enum: ["short", "video"] },
+    });
+  });
+
+  it("recovers existing uploaded post media from the selected workspace", async () => {
+    const brandId = "00000000-0000-4000-8000-000000000002";
+    const list = vi.fn(async () => ({
+      objects: [
+        {
+          key: `users/${brandId}/image/first.jpg`,
+          size: 123,
+          httpMetadata: { contentType: "image/jpeg" },
+          customMetadata: { originalFilename: "first.jpg" },
+        },
+        {
+          key: `users/${brandId}/video/second.mp4`,
+          size: 456,
+          httpMetadata: { contentType: "video/mp4" },
+          customMetadata: { originalFilename: "second.mp4" },
+        },
+        {
+          key: `users/${brandId}/avatar/profile.jpg`,
+          size: 25,
+          httpMetadata: { contentType: "image/jpeg" },
+          customMetadata: {},
+        },
+      ],
+      truncated: true,
+      cursor: "next-r2-page",
+    }));
+    const previousEnv = globalThis.__env__;
+    const previousAppUrl = process.env.VITE_APP_URL;
+    globalThis.__env__ = { MEDIA_BUCKET: { list } } as unknown as Env;
+    process.env.VITE_APP_URL = "https://app.bento.surf";
+    try {
+      const handler = createMcpHandler(() =>
+        createBentoMcpServer(authInfo, "https://mcp.bento.surf", {
+          ...defaultBentoMcpOperations,
+          resolveMcpWorkspaceId: vi.fn(async (_owner, requested) => requested ?? brandId),
+        }),
+      );
+      const response = await handler.fetch(
+        request({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: {
+            name: "list_uploaded_media",
+            arguments: { workspaceId: brandId, cursor: "previous-r2-page", limit: 3 },
+          },
+        }),
+        { authInfo },
+      );
+      const result = (await payload(response)).result;
+      expect(result.isError).not.toBe(true);
+      expect(JSON.parse(result.content[1].text)).toEqual(result.structuredContent);
+      expect(result.structuredContent).toEqual({
+        workspaceId: brandId,
+        media: [
+          {
+            key: `users/${brandId}/image/first.jpg`,
+            url: `https://app.bento.surf/cdn/users/${brandId}/image/first.jpg`,
+            name: "first.jpg",
+            mimeType: "image/jpeg",
+            size: 123,
+          },
+          {
+            key: `users/${brandId}/video/second.mp4`,
+            url: `https://app.bento.surf/cdn/users/${brandId}/video/second.mp4`,
+            name: "second.mp4",
+            mimeType: "video/mp4",
+            size: 456,
+          },
+        ],
+        nextCursor: "next-r2-page",
+      });
+      expect(list).toHaveBeenCalledWith({
+        prefix: `users/${brandId}/`,
+        limit: 3,
+        cursor: "previous-r2-page",
+        include: ["httpMetadata", "customMetadata"],
+      });
+    } finally {
+      globalThis.__env__ = previousEnv;
+      if (previousAppUrl === undefined) Reflect.deleteProperty(process.env, "VITE_APP_URL");
+      else process.env.VITE_APP_URL = previousAppUrl;
+    }
   });
 
   it("routes Content reads and edits through the authorized creator ID", async () => {
@@ -894,6 +1190,138 @@ describe("Bento MCP tools", () => {
       2,
       authInfo.extra!.userId,
       expect.objectContaining({ scheduledAt: null, asDraft: false, publishNow: true }),
+    );
+  });
+
+  it("passes ordered TikTok carousel media and privacy through the MCP scheduler tool", async () => {
+    const save = vi.fn(async (_userId: string, input: unknown) => ({
+      id: "saved",
+      input: socialPostInputSchema.parse(input),
+    }));
+    const tools = createBentoAppTools(
+      {
+        userId: String(authInfo.extra!.userId),
+        accessToken: authInfo.token,
+        supabase: {} as Parameters<typeof createBentoAppTools>[0]["supabase"],
+      },
+      "https://app.bento.surf",
+      { ...defaultBentoMcpOperations, saveSocialPostForUser: save },
+    );
+    const media = [1, 2].map((index) => ({
+      key: `users/${authInfo.extra!.userId}/image/carousel-${index}.jpg`,
+      url: `https://app.bento.surf/cdn/carousel-${index}.jpg`,
+      name: `carousel-${index}.jpg`,
+      mimeType: "image/jpeg",
+      size: 1024,
+    }));
+    await tools.get("create_social_post")!.execute({
+      body: "A photo carousel",
+      mode: "schedule",
+      scheduledAt: "2099-10-22T18:00:00Z",
+      connectionIds: ["00000000-0000-4000-8000-000000000001"],
+      media,
+      providerSettings: { tiktok: { privacyLevel: "SELF_ONLY", autoAddMusic: true } },
+    });
+    expect(save).toHaveBeenCalledWith(
+      authInfo.extra!.userId,
+      expect.objectContaining({
+        media,
+        providerSettings: { tiktok: { privacyLevel: "SELF_ONLY", autoAddMusic: true } },
+        asDraft: false,
+        publishNow: false,
+      }),
+    );
+  });
+
+  it("keeps the in-app Agent inside its selected browser workspace", async () => {
+    const ownerId = String(authInfo.extra!.userId);
+    const brandId = "00000000-0000-4000-8000-000000000002";
+    const resolveMcpWorkspaceId = vi.fn(
+      async (_authUserId: string, workspaceId?: string) => workspaceId ?? ownerId,
+    );
+    const listSocialAccounts = vi.fn(async () => []);
+    const saveSocialPostForUser = vi.fn(async () => ({ id: "post-1" }));
+    const tools = createBentoAppTools(
+      {
+        userId: ownerId,
+        accessToken: authInfo.token,
+        supabase: {} as Parameters<typeof createBentoAppTools>[0]["supabase"],
+      },
+      "https://app.bento.surf",
+      {
+        ...defaultBentoMcpOperations,
+        resolveMcpWorkspaceId,
+        listSocialAccounts,
+        saveSocialPostForUser,
+      },
+    );
+
+    expect(tools.has("list_workspaces")).toBe(false);
+    await expect(
+      tools.get("list_social_accounts")!.execute({ workspaceId: brandId }),
+    ).rejects.toMatchObject({ statusCode: 403 });
+    await tools.get("create_social_post")!.execute({
+      body: "A Bento Surf update",
+      connectionIds: ["00000000-0000-4000-8000-000000000010"],
+      mode: "schedule",
+      scheduledAt: "2026-11-01T12:00:00+00:00",
+    });
+    await tools.get("list_social_accounts")!.execute({});
+
+    expect(resolveMcpWorkspaceId).not.toHaveBeenCalled();
+    expect(saveSocialPostForUser).toHaveBeenCalledWith(
+      ownerId,
+      expect.objectContaining({ asDraft: false, publishNow: false }),
+    );
+    expect(listSocialAccounts).toHaveBeenCalledExactlyOnceWith(ownerId, undefined);
+  });
+
+  it("routes remote MCP social tools to an explicitly selected workspace", async () => {
+    const ownerId = String(authInfo.extra!.userId);
+    const brandId = "00000000-0000-4000-8000-000000000002";
+    const resolveMcpWorkspaceId = vi.fn(
+      async (_authUserId: string, workspaceId?: string) => workspaceId ?? ownerId,
+    );
+    const listSocialAccounts = vi.fn(async () => []);
+    const saveSocialPostForUser = vi.fn(async () => ({ id: "post-1" }));
+    const handler = createMcpHandler(() =>
+      createBentoMcpServer(authInfo, "https://mcp.bento.surf", {
+        ...defaultBentoMcpOperations,
+        resolveMcpWorkspaceId,
+        listSocialAccounts,
+        saveSocialPostForUser,
+      }),
+    );
+    const call = async (name: string, arguments_: Record<string, unknown>) => {
+      const response = await handler.fetch(
+        request({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name, arguments: arguments_ },
+        }),
+        { authInfo },
+      );
+      return payload(response);
+    };
+
+    const accounts = await call("list_social_accounts", { workspaceId: brandId });
+    const scheduled = await call("create_social_post", {
+      workspaceId: brandId,
+      body: "Bento Surf update",
+      connectionIds: ["00000000-0000-4000-8000-000000000010"],
+      mode: "schedule",
+      scheduledAt: "2026-11-01T12:00:00+00:00",
+    });
+
+    expect(accounts.result.structuredContent.workspaceId).toBe(brandId);
+    expect(scheduled.result.isError).not.toBe(true);
+    expect(scheduled.result.structuredContent.workspaceId).toBe(brandId);
+    expect(resolveMcpWorkspaceId).toHaveBeenCalledWith(ownerId, brandId);
+    expect(listSocialAccounts).toHaveBeenCalledWith(brandId, undefined);
+    expect(saveSocialPostForUser).toHaveBeenCalledWith(
+      brandId,
+      expect.objectContaining({ asDraft: false, publishNow: false }),
     );
   });
 

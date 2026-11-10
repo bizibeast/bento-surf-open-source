@@ -20,6 +20,7 @@ import { z } from "zod-v4";
 import {
   beginMcpMediaUpload,
   beginMediaUploadSchema,
+  listMcpUploadedMedia,
   mcpMediaOrigin,
 } from "./mcp-media-upload.server";
 import type { Database } from "@/integrations/supabase/types";
@@ -105,6 +106,8 @@ import {
 } from "./mcp.content-ops.server";
 
 import { readWorkspaceData } from "./mcp-workspace-data.server";
+import { defaultMcpFreeToolOperations, registerMcpFreeTools } from "./mcp-free-tools.server";
+import { listMcpWorkspaces, resolveMcpWorkspaceId } from "./mcp-workspace.server";
 import { sanitizeMcpReadData } from "./mcp-read-results";
 import { getSchedulerPost, listSchedulerPosts } from "./mcp-scheduler-read.server";
 import {
@@ -156,7 +159,7 @@ function db() {
   return supabaseAdmin as any;
 }
 
-function textResult(message: string, data: Record<string, unknown>) {
+function structuredResult(message: string, data: Record<string, unknown>) {
   return {
     content: [{ type: "text" as const, text: message }],
     structuredContent: data,
@@ -735,12 +738,17 @@ async function uploadMedia(
     const payload = (await response?.json().catch(() => null)) as { error?: string } | null;
     throw new Error(payload?.error || "Media could not be uploaded.");
   }
-  const payload = (await response.json()) as { key: string; publicUrl: string; size: number };
+  const payload = (await response.json()) as {
+    key: string;
+    publicUrl: string;
+    size: number;
+    mimeType?: string;
+  };
   return {
     key: payload.key,
     url: payload.publicUrl,
     name: input.fileName,
-    mimeType: input.mimeType,
+    mimeType: payload.mimeType || input.mimeType,
     size: payload.size,
   };
 }
@@ -795,15 +803,21 @@ async function getSchedulerWorkspace(userId: string) {
 }
 
 const schedulerMutationSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("save_posting_schedule"), schedule: postingScheduleSchema }),
+  z.object({
+    action: z.literal("save_posting_schedule"),
+    workspaceId: z.uuid().optional(),
+    schedule: postingScheduleSchema,
+  }),
   z.object({
     action: z.literal("reschedule_post"),
+    workspaceId: z.uuid().optional(),
     id: z.uuid(),
     scheduledAt: z.iso.datetime({ offset: true }),
     timezone: z.string().min(1).max(100).optional(),
   }),
   z.object({
     action: z.enum(["move_to_draft", "duplicate_post", "cancel_post", "delete_post"]),
+    workspaceId: z.uuid().optional(),
     id: z.uuid(),
   }),
 ]);
@@ -915,6 +929,9 @@ async function resolvePostMedia(userId: string, ids: string[]) {
 }
 
 export const defaultBentoMcpOperations = {
+  ...defaultMcpFreeToolOperations,
+  listMcpWorkspaces,
+  resolveMcpWorkspaceId,
   readAutoDmDelay,
   writeAutoDmDelay,
   readWorkspaceData,
@@ -935,6 +952,7 @@ export const defaultBentoMcpOperations = {
   listBookings,
   uploadMedia,
   beginMcpMediaUpload,
+  listMcpUploadedMedia,
   getStoreWorkspace,
   mutateProduct,
   mutateDiscount,
@@ -1001,6 +1019,7 @@ const socialProviderSettingsSchema = z
       .optional(),
     youtube: z
       .object({
+        youtubeFormat: z.enum(["short", "video"]).optional(),
         youtubePrivacy: z.enum(["private", "unlisted", "public"]).optional(),
         description: z.string().max(5_000).optional(),
         titleOverride: z.string().max(100).optional(),
@@ -1018,6 +1037,7 @@ const socialProviderSettingsSchema = z
         brandOrganicToggle: z.boolean().optional(),
         brandContentToggle: z.boolean().optional(),
         isAigc: z.boolean().optional(),
+        autoAddMusic: z.boolean().optional(),
         videoCoverTimestampMs: z.number().int().min(0).optional(),
       })
       .passthrough()
@@ -1655,6 +1675,16 @@ export function createBentoAppTools(
   operations: BentoMcpOperations = defaultBentoMcpOperations,
 ): Map<string, BentoAppTool> {
   const tools = new Map<string, BentoAppTool>();
+  // The in-app Agent already runs inside the browser-selected workspace. Its
+  // context.userId is a workspace ID, not necessarily the OAuth subject ID.
+  const appOperations: BentoMcpOperations = {
+    ...operations,
+    resolveMcpWorkspaceId: async (_authUserId, requestedId) => {
+      if (requestedId && requestedId !== context.userId)
+        throw new RequestHttpError(403, "Workspace is unavailable.");
+      return context.userId;
+    },
+  };
   const registry = {
     registerTool(name: string, config: any, callback: (input: any) => Promise<any>) {
       tools.set(name, {
@@ -1676,7 +1706,7 @@ export function createBentoAppTools(
       extra: { userId: context.userId },
     },
     origin,
-    operations,
+    appOperations,
     () => context,
     false,
   );
@@ -1685,6 +1715,7 @@ export function createBentoAppTools(
   tools.delete("manage_content_agent");
   tools.delete("upload_media");
   tools.delete("begin_media_upload");
+  tools.delete("list_workspaces");
   return tools;
 }
 
@@ -1697,9 +1728,16 @@ function registerBentoTools(
   includeReadableData = true,
 ) {
   const userId = userIdFrom(authInfo);
+  const socialWorkspaceId = (workspaceId?: string) =>
+    operations.resolveMcpWorkspaceId(userId, workspaceId);
+  const textResult = (message: string, data: Record<string, unknown>) => {
+    const result = structuredResult(message, data);
+    if (includeReadableData) result.content.push({ type: "text", text: JSON.stringify(data) });
+    return result;
+  };
   const readResult = (message: string, data: Record<string, unknown>) => {
     const safeData = sanitizeMcpReadData(data);
-    const result = textResult(message, safeData);
+    const result = structuredResult(message, safeData);
     // Older MCP clients only pass text blocks to the model. Internal Agent reads
     // already consume structuredContent, so avoid duplicating its token usage.
     if (includeReadableData) result.content.push({ type: "text", text: JSON.stringify(safeData) });
@@ -1711,12 +1749,36 @@ function registerBentoTools(
       title: "Get Bento overview",
       description: "Load the creator's Bento profile, plan, feature links, and workspace counts.",
       inputSchema: z.object({}),
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
     async () => {
       const overview = await operations.getBentoOverview(userId, origin);
       return readResult("Loaded the Bento workspace overview.", { overview });
     },
+  );
+  server.registerTool(
+    "list_workspaces",
+    {
+      title: "List Bento workspaces",
+      description:
+        "List the Bento workspaces owned by this login. Use an active workspace ID on social tools when posting for a specific brand.",
+      inputSchema: z.object({}),
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
+    },
+    async () =>
+      readResult("Loaded owned Bento workspaces.", {
+        workspaces: await operations.listMcpWorkspaces(userId),
+      }),
   );
 
   server.registerTool(
@@ -1725,7 +1787,12 @@ function registerBentoTools(
       title: "Read stored workspace data",
       description: WORKSPACE_DATA_DESCRIPTION,
       inputSchema: readWorkspaceDataSchema,
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
     async (input) =>
       readResult("Loaded stored workspace data.", {
@@ -1740,7 +1807,12 @@ function registerBentoTools(
       description:
         "Load the creator's content profile, voice and Brain document previews, connected sources, and indexing status. Use read_workspace_data (brain_items or brain_sources) for all documents and full text by ID.",
       inputSchema: z.object({}),
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
     async () =>
       readResult("Loaded Content Brain.", { brain: await operations.getMcpContentBrain(userId) }),
@@ -1753,7 +1825,12 @@ function registerBentoTools(
       description:
         "Save the Content profile or a Brain document, confirm, lock, delete, or refresh the index.",
       inputSchema: brainMutationSchema,
-      annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
     },
     async (input) =>
       textResult(`Completed Brain action: ${input.action}.`, {
@@ -1772,7 +1849,12 @@ function registerBentoTools(
         query: z.string().trim().max(300).optional(),
         previewOld: z.boolean().optional(),
       }),
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
     async (input) =>
       readResult("Loaded Brain Media.", {
@@ -1787,7 +1869,12 @@ function registerBentoTools(
       description:
         "Register an uploaded image or video, fetch media from a connected post, manage folders, move items, or set one of four hero images. Upload with upload_media first.",
       inputSchema: mediaMutationSchema,
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
     },
     async (input) =>
       textResult(`Completed Media action: ${input.action}.`, {
@@ -1802,7 +1889,12 @@ function registerBentoTools(
       description:
         "Load routines, schedules, instructions, and recent activity for the signed-in creator. Use read_workspace_data (routines or routine_runs) to page through all stored records.",
       inputSchema: z.object({}),
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
     async () =>
       readResult("Loaded Content Routines.", {
@@ -1816,7 +1908,12 @@ function registerBentoTools(
       title: "Manage Content Routine",
       description: "Create or edit a template or custom routine, or pause and resume a routine.",
       inputSchema: routineMutationSchema,
-      annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
     },
     async (input) =>
       textResult(`Completed Routine action: ${input.action}.`, {
@@ -1830,7 +1927,12 @@ function registerBentoTools(
       title: "Get Content Agent",
       description: "List Content Agent conversations or load one conversation and its cards.",
       inputSchema: z.object({ threadId: z.uuid().optional() }),
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
     async ({ threadId }) =>
       readResult("Loaded Content Agent.", {
@@ -1845,7 +1947,12 @@ function registerBentoTools(
       description:
         "Send a message, edit/reject/regenerate a draft, or approve Brain and scheduling proposals. Schedule approval may create social posts.",
       inputSchema: agentMutationSchema,
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
     },
     async (input) =>
       textResult(`Completed Agent action: ${input.action}.`, {
@@ -1860,7 +1967,12 @@ function registerBentoTools(
       description:
         "Load stored Discover recommendations, tracked creators, preferences and freshness. No refresh or scraping. Use read_workspace_data (discover_items, optionally savedOnly) for all recommendations and bookmarks.",
       inputSchema: z.object({ creatorId: z.uuid().optional() }),
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
     async ({ creatorId }) =>
       readResult("Loaded Content Discover.", {
@@ -1875,7 +1987,12 @@ function registerBentoTools(
       description:
         "Refresh recommendations, set feedback or bookmarks, edit preferences, or track and untrack creators.",
       inputSchema: discoverMutationSchema,
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
     },
     async (input) =>
       textResult(`Completed Discover action: ${input.action}.`, {
@@ -1888,17 +2005,27 @@ function registerBentoTools(
     {
       title: "List social accounts",
       description:
-        "List connected social profiles, publishing access, and Auto-DM readiness before acting.",
+        "List connected social profiles, publishing access, and Auto-DM readiness in one workspace. Use list_workspaces first and pass workspaceId for another brand.",
       inputSchema: z.object({
+        workspaceId: z.uuid().optional(),
         provider: z
           .enum(["instagram", "facebook", "threads", "tiktok", "linkedin", "twitter", "youtube"])
           .optional(),
       }),
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
-    async ({ provider }) => {
-      const accounts = await operations.listSocialAccounts(userId, provider);
-      return readResult(`Found ${accounts.length} connected social account(s).`, { accounts });
+    async ({ workspaceId, provider }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      const accounts = await operations.listSocialAccounts(selectedId, provider);
+      return readResult(`Found ${accounts.length} connected social account(s).`, {
+        workspaceId: selectedId,
+        accounts,
+      });
     },
   );
 
@@ -1907,19 +2034,27 @@ function registerBentoTools(
     {
       title: "Upload media to Bento",
       description:
-        "Import one public media URL (streamed within plan and remaining storage limits) or inline base64 up to 25 MB. Prefer begin_media_upload for local videos over 8 MB; never compress just to fit MCP. Returns media to reuse in ONE create_social_post with all selected accounts.",
+        "Import one public media URL (streamed within plan and remaining storage limits) or inline base64 up to 25 MB. Prefer begin_media_upload for local videos over 8 MB; never compress just to fit MCP. Read the returned media object from the JSON text and pass it directly in ONE create_social_post.media array with all selected accounts.",
       inputSchema: z.object({
+        workspaceId: z.uuid().optional(),
         sourceUrl: z.url().optional(),
         base64: z.string().optional(),
         fileName: z.string().min(1).max(255),
         mimeType: z.string().min(1).max(100),
         kind: z.enum(["image", "video", "audio", "file"]),
       }),
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: false,
+        idempotentHint: false,
+      },
     },
-    async (input) => {
-      const media = await operations.uploadMedia(authInfo, origin, input as any);
-      return textResult("Uploaded media to Bento.", { media });
+    async ({ workspaceId, ...input }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      const selectedAuthInfo = { ...authInfo, extra: { ...authInfo.extra, userId: selectedId } };
+      const media = await operations.uploadMedia(selectedAuthInfo, origin, input);
+      return textResult("Uploaded media to Bento.", { workspaceId: selectedId, media });
     },
   );
 
@@ -1928,17 +2063,52 @@ function registerBentoTools(
     {
       title: "Start a large media upload",
       description:
-        "Upload an original local video or other file without putting it in MCP JSON. Checks plan and remaining storage, then returns a private two-hour upload credential and exact HTTP instructions. Use file/HTTP tools to PUT 8 MiB binary parts, then POST their ETags to complete and obtain media for create_social_post. DELETE cancels the unfinished upload. No account token is needed. If this client cannot read files or send HTTP, ask the user to attach it in Bento; do not pretend it was uploaded.",
-      inputSchema: beginMediaUploadSchema,
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
+        "Upload an original local video or other file without putting it in MCP JSON. Checks plan and remaining storage, then returns a private two-hour upload credential and exact HTTP instructions in JSON text. Use file/HTTP tools to PUT 8 MiB binary parts, then POST their ETags to complete and obtain the media object for create_social_post.media. DELETE cancels the unfinished upload. No account token is needed. If this client cannot read files or send HTTP, ask the user to attach it in Bento; do not pretend it was uploaded.",
+      inputSchema: beginMediaUploadSchema.extend({ workspaceId: z.uuid().optional() }),
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: false,
+        idempotentHint: false,
+      },
     },
-    async (input) =>
-      textResult(
+    async ({ workspaceId, ...input }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      return textResult(
         "Upload prepared. Send the original bytes and complete before attaching to a post.",
         {
-          upload: await operations.beginMcpMediaUpload(userId, origin, input),
+          workspaceId: selectedId,
+          upload: await operations.beginMcpMediaUpload(selectedId, origin, input),
         },
-      ),
+      );
+    },
+  );
+
+  server.registerTool(
+    "list_uploaded_media",
+    {
+      title: "List uploaded post media",
+      description:
+        "Recover media objects from earlier Bento uploads in this workspace without uploading them again. Returns public image, video, and file objects ready for create_social_post.media. Follow nextCursor until null; an empty page may still have a nextCursor. Private product files are excluded.",
+      inputSchema: z.object({
+        workspaceId: z.uuid().optional(),
+        cursor: z.string().min(1).max(2_000).optional(),
+        limit: z.number().int().min(1).max(100).default(50),
+      }),
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
+    },
+    async ({ workspaceId, cursor, limit }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      return readResult("Loaded previously uploaded post media.", {
+        workspaceId: selectedId,
+        ...(await operations.listMcpUploadedMedia(selectedId, origin, cursor, limit)),
+      });
+    },
   );
 
   server.registerTool(
@@ -1948,15 +2118,25 @@ function registerBentoTools(
       description:
         "Read stored Scheduler posts with full captions/media and stable pagination. status filters the parent post; targetStatus filters a platform destination. provider + dateFrom/dateTo default to destination published_at (inclusive/exclusive); use dateField for created/scheduled dates. Follow pagination.nextCursor until hasMore is false. Use get_social_post for all destinations, stored metrics and attempt history.",
       inputSchema: z.object({
+        workspaceId: z.uuid().optional(),
         status: socialPostStatusSchema.optional(),
         ...schedulerReadFiltersShape,
         limit: z.number().int().min(1).max(100).default(30),
       }),
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
-    async ({ status, limit, ...filters }) => {
-      const result = await operations.listSocialPosts(userId, status, limit, filters);
-      return readResult(`Found ${result.posts.length} social post(s) on this page.`, result);
+    async ({ workspaceId, status, limit, ...filters }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      const result = await operations.listSocialPosts(selectedId, status, limit, filters);
+      return readResult(`Found ${result.posts.length} social post(s) on this page.`, {
+        workspaceId: selectedId,
+        ...result,
+      });
     },
   );
 
@@ -1966,14 +2146,22 @@ function registerBentoTools(
       title: "Get social post details",
       description:
         "Read one owned Scheduler post by exact ID: full caption/media, every destination and override, publish timestamps, remote IDs/URLs, errors/retry progress, exact matching stored metrics with fetched_at, and recent publish attempts. Follow attemptsPagination.nextCursor using attemptsCursor for older attempts. Stored data only; does not refresh providers.",
-      inputSchema: getSocialPostInputSchema,
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      inputSchema: getSocialPostInputSchema.extend({ workspaceId: z.uuid().optional() }),
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
-    async (input) =>
-      readResult(
-        "Loaded stored social post details.",
-        await operations.getSocialPost(userId, input),
-      ),
+    async ({ workspaceId, ...input }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      const result = await operations.getSocialPost(selectedId, input);
+      return readResult("Loaded stored social post details.", {
+        workspaceId: selectedId,
+        ...result,
+      });
+    },
   );
 
   server.registerTool(
@@ -1982,13 +2170,24 @@ function registerBentoTools(
       title: "Find free post photos",
       description:
         "Find up to six free stock photos for a generic topic. Never use stock as proof of the creator's own product, face, customer or event. Pass a returned id/provider to create_social_post.stockPhoto to import it on approval. No paid fallback.",
-      inputSchema: z.object({ query: z.string().trim().min(3).max(100) }),
-      annotations: { readOnlyHint: true, openWorldHint: true, destructiveHint: false },
-    },
-    async ({ query }) =>
-      readResult("Found stock photo options.", {
-        photos: await operations.findPostStockPhotos(userId, query),
+      inputSchema: z.object({
+        workspaceId: z.uuid().optional(),
+        query: z.string().trim().min(3).max(100),
       }),
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
+    },
+    async ({ workspaceId, query }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      return readResult("Found stock photo options.", {
+        workspaceId: selectedId,
+        photos: await operations.findPostStockPhotos(selectedId, query),
+      });
+    },
   );
   server.registerTool(
     "resolve_post_media",
@@ -1996,13 +2195,24 @@ function registerBentoTools(
       title: "Prepare owned post media",
       description:
         "Resolve up to ten owned Brain/Agent image IDs into verified publishing media. Use exact IDs returned by get_content_media or current context.",
-      inputSchema: z.object({ ids: z.array(z.uuid()).min(1).max(10) }),
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-    },
-    async ({ ids }) =>
-      readResult("Verified owned post media.", {
-        media: await operations.resolvePostMedia(userId, ids),
+      inputSchema: z.object({
+        workspaceId: z.uuid().optional(),
+        ids: z.array(z.uuid()).min(1).max(10),
       }),
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
+    },
+    async ({ workspaceId, ids }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      return readResult("Verified owned post media.", {
+        workspaceId: selectedId,
+        media: await operations.resolvePostMedia(selectedId, ids),
+      });
+    },
   );
 
   server.registerTool(
@@ -2010,8 +2220,9 @@ function registerBentoTools(
     {
       title: "Create social post",
       description:
-        "Create or edit a social draft, schedule it, or publish now. For multiple networks use ONE action with all connectionIds and tailored connectionOverrides[id].bodyOverride. Optional stockPhoto imports one selected free photo when executing. providerSettings supports Instagram Trial Reels and scheduled Auto DM (public replies, email, follow gate, link button), X and Facebook scheduledAutoDm, YouTube title, description, visibility and thumbnail, TikTok privacy and interactions, and auto repost.",
+        "Create or edit a social draft, schedule it, or publish now. Pass media objects returned by upload_media or upload completion, not file IDs. For multiple networks in ONE workspace use one action with all connectionIds and tailored connectionOverrides[id].bodyOverride. For multiple workspaces, list_workspaces first and call this tool separately with each workspaceId. Optional stockPhoto imports one selected free photo when executing. For TikTok, pass one video or 1-10 ordered JPEG or WebP images in media and set providerSettings.tiktok.privacyLevel before scheduling or publishing; the first image is the carousel cover. For YouTube Shorts set providerSettings.youtube.youtubeFormat to short; the YouTube API accepts a thumbnail image, not a frame timestamp, and may reject Shorts thumbnails until set in YouTube Studio. providerSettings also supports Instagram Trial Reels and scheduled Auto DM, X and Facebook scheduledAutoDm, YouTube title, description and visibility, TikTok interactions and autoAddMusic for photos, and auto repost.",
       inputSchema: z.object({
+        workspaceId: z.uuid().optional(),
         id: z.uuid().optional(),
         body: z.string().max(25_000),
         title: z.string().max(300).default(""),
@@ -2031,18 +2242,25 @@ function registerBentoTools(
         scheduledAt: z.iso.datetime({ offset: true }).optional(),
         timezone: z.string().min(1).max(100).default("UTC"),
       }),
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
     },
-    async ({ mode, stockPhoto, ...input }) => {
+    async ({ workspaceId, mode, stockPhoto, ...input }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
       if (stockPhoto && input.media.length)
         throw new Error("Choose either your attached media or one stock photo.");
       if (mode === "schedule" && !input.scheduledAt)
         throw new Error("scheduledAt is required in schedule mode.");
       if (stockPhoto)
         input.media = [
-          (await operations.importPostStockPhoto(userId, stockPhoto.id, stockPhoto.provider)).media,
+          (await operations.importPostStockPhoto(selectedId, stockPhoto.id, stockPhoto.provider))
+            .media,
         ];
-      const post = await operations.saveSocialPostForUser(userId, {
+      const post = await operations.saveSocialPostForUser(selectedId, {
         ...input,
         scheduledAt: input.scheduledAt || null,
         asDraft: mode === "draft",
@@ -2054,7 +2272,7 @@ function registerBentoTools(
           : mode === "draft"
             ? "Saved the social draft."
             : "Scheduled the social post.",
-        { post },
+        { workspaceId: selectedId, post },
       );
     },
   );
@@ -2066,7 +2284,12 @@ function registerBentoTools(
       description:
         "List Instagram, Facebook, or X Auto-DM automations and their connected account readiness.",
       inputSchema: z.object({ platform: platformSchema.optional() }),
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
     async ({ platform }) => {
       const automations = await operations.listAutoDmAutomations(userId, platform);
@@ -2081,7 +2304,12 @@ function registerBentoTools(
       description:
         "Read the workspace delay before automated comment replies and DM steps on Instagram, Facebook and X. Default 60 seconds. Includes scheduler-created automations.",
       inputSchema: z.object({}),
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
     async () => readResult("Loaded Auto DM delay.", await operations.readAutoDmDelay(userId)),
   );
@@ -2095,7 +2323,7 @@ function registerBentoTools(
       annotations: {
         readOnlyHint: false,
         openWorldHint: false,
-        destructiveHint: false,
+        destructiveHint: true,
         idempotentHint: true,
       },
     },
@@ -2113,7 +2341,12 @@ function registerBentoTools(
       description:
         "Create or update an Instagram, Facebook, or X keyword/engagement Auto-DM automation.",
       inputSchema: autoDmInputSchema,
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
     },
     async ({ platform, ...input }) => {
       const automation = await operations.saveAutoDmAutomation(userId, platform, input);
@@ -2130,7 +2363,7 @@ function registerBentoTools(
       annotations: {
         readOnlyHint: false,
         openWorldHint: true,
-        destructiveHint: false,
+        destructiveHint: true,
         idempotentHint: true,
       },
     },
@@ -2149,7 +2382,12 @@ function registerBentoTools(
       title: "Delete Auto-DM automation",
       description: "Permanently delete one owned Instagram, Facebook, or X Auto-DM automation.",
       inputSchema: z.object({ platform: platformSchema, id: z.uuid() }),
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
     },
     async ({ platform, id }) => {
       const result = await operations.deleteAutoDmAutomation(userId, platform, id);
@@ -2163,7 +2401,12 @@ function registerBentoTools(
       title: "List Bento pages",
       description: "List the creator's Bento pages and blocks.",
       inputSchema: z.object({}),
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
     async () => readResult("Loaded Bento pages and blocks.", await operations.listPages(userId)),
   );
@@ -2175,7 +2418,12 @@ function registerBentoTools(
       description:
         "List recent products and their publication, pricing, inventory, and sales state.",
       inputSchema: z.object({ limit: z.number().int().min(1).max(100).default(30) }),
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
     async ({ limit }) => {
       const products = await operations.listProducts(userId, limit);
@@ -2189,7 +2437,12 @@ function registerBentoTools(
       title: "List Bento bookings",
       description: "List recent creator bookings and their meeting state.",
       inputSchema: z.object({ limit: z.number().int().min(1).max(100).default(30) }),
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
     async ({ limit }) => {
       const bookings = await operations.listBookings(userId, limit);
@@ -2207,7 +2460,12 @@ function registerBentoTools(
         filter: z.enum(["open", "closed"]).default("open"),
         limit: z.number().int().min(1).max(100).default(50),
       }),
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
     async ({ filter, limit }) => {
       const conversations = await operations.getPriorityDmConversations(userId, filter, limit);
@@ -2227,7 +2485,12 @@ function registerBentoTools(
         requestId: z.uuid(),
         body: z.string().trim().min(1).max(10_000),
       }),
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
     },
     async (input) => {
       const message = await operations.sendPriorityDmMessage(userId, input);
@@ -2247,7 +2510,7 @@ function registerBentoTools(
       annotations: {
         readOnlyHint: false,
         openWorldHint: true,
-        destructiveHint: false,
+        destructiveHint: true,
         idempotentHint: true,
       },
     },
@@ -2268,12 +2531,21 @@ function registerBentoTools(
       title: "Get scheduler workspace",
       description:
         "Load posting times, connected-account readiness, and bounded social-post lifecycle state.",
-      inputSchema: z.object({}),
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      inputSchema: z.object({ workspaceId: z.uuid().optional() }),
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
-    async () => {
-      const scheduler = await operations.getSchedulerWorkspace(userId);
-      return readResult("Loaded social scheduler workspace.", { scheduler });
+    async ({ workspaceId }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      const scheduler = await operations.getSchedulerWorkspace(selectedId);
+      return readResult("Loaded social scheduler workspace.", {
+        workspaceId: selectedId,
+        scheduler,
+      });
     },
   );
 
@@ -2284,11 +2556,20 @@ function registerBentoTools(
       description:
         "Save posting times or reschedule, move to draft, duplicate, cancel, or delete an owned social post.",
       inputSchema: schedulerMutationSchema,
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
     },
-    async (input) => {
-      const scheduler = await operations.manageScheduler(userId, input);
-      return textResult(`Completed scheduler action: ${input.action}.`, { scheduler });
+    async ({ workspaceId, ...input }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      const scheduler = await operations.manageScheduler(selectedId, input);
+      return textResult(`Completed scheduler action: ${input.action}.`, {
+        workspaceId: selectedId,
+        scheduler,
+      });
     },
   );
 
@@ -2299,7 +2580,12 @@ function registerBentoTools(
       description:
         "Create, rename, or delete a secondary Bento page. Deleting also removes its page blocks.",
       inputSchema: pageMutationInputSchema,
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
     },
     async (input) => {
       const result = await operations.mutatePage(creatorContext(), input);
@@ -2314,7 +2600,12 @@ function registerBentoTools(
       description:
         "Create, edit, position, or delete a Bento block, including links, media, email capture, booking, commerce, headings, notes, and social links.",
       inputSchema: blockMutationInputSchema,
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
     },
     async (input) => {
       const result = await operations.mutateBlock(creatorContext(), input);
@@ -2329,7 +2620,12 @@ function registerBentoTools(
       description:
         "Load products, orders, leads, audience contacts, discount codes, order bumps, publications, Posts, audience lists, and campaigns.",
       inputSchema: z.object({ publicationId: z.uuid().optional() }),
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
     async ({ publicationId }) => {
       const store = await operations.getStoreWorkspace(creatorContext(), publicationId);
@@ -2344,7 +2640,12 @@ function registerBentoTools(
       description:
         "Create, update, publish, archive, delete, or add a Bento Store product/session/course/webinar/community/lead form to a page. Product settings are kind-specific.",
       inputSchema: productMutationInputSchema,
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
     },
     async (input) => {
       const result = await operations.mutateProduct(creatorContext(), input);
@@ -2358,7 +2659,12 @@ function registerBentoTools(
       title: "Manage discount code",
       description: "Create, update, activate, deactivate, or delete a Bento Store discount code.",
       inputSchema: discountMutationInputSchema,
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
     },
     async (input) => {
       const result = await operations.mutateDiscount(creatorContext(), input);
@@ -2373,7 +2679,12 @@ function registerBentoTools(
       description:
         "Create, update, activate, deactivate, or delete an order bump between two products.",
       inputSchema: orderBumpMutationInputSchema,
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
     },
     async (input) => {
       const result = await operations.mutateOrderBump(creatorContext(), input);
@@ -2388,7 +2699,12 @@ function registerBentoTools(
       description:
         "Create/delete publication lists, change membership, save/delete Broadcasts, or send to explicitly subscribed recipients. Send only when the user explicitly asks.",
       inputSchema: audienceMutationInputSchema,
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
     },
     async (input) => {
       const result = await operations.mutateAudience(creatorContext(), input);
@@ -2406,7 +2722,12 @@ function registerBentoTools(
       description:
         "Load availability, calendar/Fathom connections, sessions, bookings, reviews, and public-calendar state.",
       inputSchema: z.object({}),
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
     async () => {
       const calendar = await operations.getCalendarWorkspace(creatorContext());
@@ -2421,7 +2742,12 @@ function registerBentoTools(
       description:
         "Save availability, enable/rename the public calendar, publish review visibility, or manage Google Calendar/Fathom connections. Create sessions with manage_product using coaching_call.",
       inputSchema: calendarMutationInputSchema,
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
     },
     async (input) => {
       const result = await operations.mutateCalendar(creatorContext(), input);
@@ -2435,7 +2761,12 @@ function registerBentoTools(
       title: "Get Community workspace",
       description: "Load a paid community or membership, its members, posts, and comments.",
       inputSchema: z.object({ productId: z.uuid().optional() }),
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
     async ({ productId }) => {
       const community = await operations.getCommunityWorkspace(creatorContext(), productId);
@@ -2450,7 +2781,12 @@ function registerBentoTools(
       description:
         "Invite or update members, publish/pin/delete posts, reply, moderate content, update community settings, or delete a community.",
       inputSchema: communityMutationInputSchema,
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
     },
     async (input) => {
       const result = await operations.mutateCommunity(creatorContext(), input);
@@ -2465,7 +2801,13 @@ function registerBentoTools(
       description:
         "Load editable Bento profile settings, plan limits, usage, and safe payment-account readiness.",
       inputSchema: z.object({}),
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      // This handler overwrites the onboarding first-result timestamp.
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
     },
     async () => {
       const profile = await operations.getProfileWorkspace(creatorContext());
@@ -2480,7 +2822,12 @@ function registerBentoTools(
       description:
         "Update creator identity, username, bio, avatar, theme, fonts, Explore visibility/category, header, or pattern.",
       inputSchema: profileUpdateInputSchema,
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
     },
     async (input) => {
       const profile = await operations.updateCreatorProfile(creatorContext(), input);
@@ -2497,7 +2844,12 @@ function registerBentoTools(
       inputSchema: z.object({
         range: z.enum(["today", "3d", "7d", "30d", "90d", "all"]).default("30d"),
       }),
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
     async (input) => {
       const analytics = await operations.getAnalyticsWorkspace(creatorContext(), input);
@@ -2512,7 +2864,12 @@ function registerBentoTools(
       description:
         "Load safe connection state for social profiles, Google Calendar, Fathom, and creator payment providers. Secrets are never returned.",
       inputSchema: z.object({}),
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
     async () => {
       const integrations = await operations.getIntegrationWorkspace(creatorContext());
@@ -2527,7 +2884,13 @@ function registerBentoTools(
       description:
         "Load Bento referral account, link, referrals, commissions, payouts, and reach rewards.",
       inputSchema: z.object({}),
-      annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+      // Loading Earn creates a referral account when one does not exist.
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+      },
     },
     async () => {
       const earn = await operations.getEarnWorkspace(creatorContext());
@@ -2541,7 +2904,12 @@ function registerBentoTools(
       title: "Manage Earn",
       description: "Change the referral code or request a payout in an available currency.",
       inputSchema: earnMutationInputSchema,
-      annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: true },
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: true,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
     },
     async (input) => {
       const result = await operations.mutateEarn(creatorContext(), input);
@@ -2574,7 +2942,8 @@ export function createBentoMcpServer(
     { name: "bento", version: "1.0.0" },
     {
       instructions:
-        "Use stable IDs returned by list tools. Summary counts are not evidence for individual posts. For Scheduler posts, paginate list_social_posts, filter provider/targetStatus and destination published_at date bounds, then use get_social_post for exact stored details and metric freshness. read_workspace_data social_posts contains imported analytics; scheduler_posts contains Scheduler records. Preserve source and fetched_at/published_at timestamps; do not infer five platform posts from five multi-platform Scheduler rows. Before content planning or writing, read get_content_brain, get_content_routines, get_analytics_workspace and get_content_discover as relevant. These expose the creator voice, publishing cadence, performance and current stored signals. For full documents, imported source text, older runs, bookmarks and social history use read_workspace_data, follow nextCursor, and read truncated text by id. Empty or stale stored data is not permission to start paid refreshes. List accounts before posting or creating Auto-DMs. For one piece of content on several networks create ONE social post with all connectionIds, shared media uploaded once, and connectionOverrides[connectionId].bodyOverride for each caption. YouTube titleOverride/description/youtubePrivacy go in providerSettings.youtube. Edit by passing the existing post id; do not split or duplicate drafts for different captions. For local videos over 8 MB use begin_media_upload and its binary chunk instructions, not large base64 JSON or compression. Read skill://bento/bento/references/tools.md for complete examples. Publish now or delete only when the user explicitly requested that external action.",
+        "For social posts across brands, call list_workspaces first. Pass each active workspaceId to account, media, scheduling, and verification tools. Create and verify a separate post in each workspace; account IDs and media keys cannot cross workspaces. Omission uses the original workspace. " +
+        "Use stable IDs returned by list tools. Summary counts are not evidence for individual posts. For Scheduler posts, paginate list_social_posts, filter provider/targetStatus and destination published_at date bounds, then use get_social_post for exact stored details and metric freshness. read_workspace_data social_posts contains imported analytics; scheduler_posts contains Scheduler records. Preserve source and fetched_at/published_at timestamps; do not infer five platform posts from five multi-platform Scheduler rows. Before content planning or writing, read get_content_brain, get_content_routines, get_analytics_workspace and get_content_discover as relevant. These expose the creator voice, publishing cadence, performance and current stored signals. For full documents, imported source text, older runs, bookmarks and social history use read_workspace_data, follow nextCursor, and read truncated text by id. Empty or stale stored data is not permission to start paid refreshes. List accounts before posting or creating Auto-DMs. For one piece of content on several networks create ONE social post with all connectionIds, shared media uploaded once, and connectionOverrides[connectionId].bodyOverride for each caption. Pass the complete media object from upload_media or upload completion; if an older reply is lost, use list_uploaded_media in the same workspace. YouTube titleOverride/description/youtubePrivacy/youtubeFormat go in providerSettings.youtube. Edit by passing the existing post id; do not split or duplicate drafts for different captions. For local videos over 8 MB use begin_media_upload and its binary chunk instructions, not large base64 JSON or compression. Read skill://bento/bento/references/tools.md for complete examples. Publish now or delete only when the user explicitly requested that external action.",
       capabilities: { extensions: { "io.modelcontextprotocol/skills": {} } },
     },
   );
@@ -2582,6 +2951,7 @@ export function createBentoMcpServer(
   installScannerSafeToolSchemas(server);
   advertiseSkillsOnlyWhenRequested(server);
   registerBentoTools(server, authInfo, origin, operations, creatorContext);
+  registerMcpFreeTools(server, authInfo, operations);
 
   server.registerResource(
     "bento-skill",
@@ -2663,13 +3033,9 @@ export function createChatGptMcpServer(
   );
   installScannerSafeToolSchemas(server);
   advertiseSkillsOnlyWhenRequested(server);
-  registerChatGptTools(
-    server,
-    authInfo,
-    origin,
-    operations ?? chatGptOperations(defaultBentoMcpOperations),
-    creatorContext,
-  );
+  const chatGptToolOperations = operations ?? chatGptOperations(defaultBentoMcpOperations);
+  registerChatGptTools(server, authInfo, origin, chatGptToolOperations, creatorContext);
+  registerMcpFreeTools(server, authInfo, chatGptToolOperations);
   return server;
 }
 

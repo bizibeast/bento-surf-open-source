@@ -390,20 +390,15 @@ export function ContentBrain({
               {title} / Back to index
             </button>
           )}
-          {indexing &&
-            (section === "sources" ||
-              ["pending", "running", "error"].includes(indexing.status)) && (
-              <p
-                role="status"
-                className={`mb-5 text-xs leading-5 ${indexing.status === "error" ? "text-red-700" : "text-neutral-500"}`}
-              >
-                {indexing.status === "pending" || indexing.status === "running"
-                  ? "Learning from your connected posts…"
-                  : indexing.status === "error"
-                    ? indexing.error || "Source indexing will retry shortly."
-                    : `${indexing.sourceCount} source posts indexed · ${indexing.mediaCount} reusable assets imported`}
-              </p>
-            )}
+          {indexing && section === "sources" && (
+            <p role="status" className="mb-5 text-xs leading-5 text-neutral-500">
+              {indexing.status === "pending" || indexing.status === "running"
+                ? "Learning from your connected posts…"
+                : indexing.status === "error"
+                  ? "Bento couldn’t finish refreshing your sources. Your saved Brain is still available. Use “Refresh from my posts” to try again."
+                  : `${indexing.sourceCount} source posts indexed · ${indexing.mediaCount} reusable assets imported`}
+            </p>
+          )}
           <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-[28px] font-semibold tracking-tight">
               {selectedItem?.title ||

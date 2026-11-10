@@ -10,13 +10,15 @@ import {
   Scripts,
   redirect,
 } from "@tanstack/react-router";
-import { useEffect, useMemo } from "react";
+import { useEffect, useLayoutEffect, useMemo } from "react";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "sonner";
 
 import appCss from "../styles.css?url";
 import { HoverGuide } from "@/components/HoverGuide";
 import { shouldInvalidateRouterForAuthEvent } from "@/lib/auth-route-refresh";
+import { watchCheckoutExit } from "@/lib/checkout-tracking";
+import { recordFirstLanding } from "@/lib/first-landing";
 import { isReplayableProductPath, isTrackedProductPath } from "@/lib/posthog-paths";
 import { safeWebMcpPathname, useWebMcpTools, webMcpResult } from "@/lib/webmcp";
 
@@ -53,7 +55,7 @@ function NotFoundComponent() {
           >
             {creator ? "Back to creator" : "Go home"}
           </a>
-          <Link to="/explore" search={{ q: "", page: 1 }} className="ml-4 text-sm underline">
+          <Link to="/explore" search={{}} className="ml-4 text-sm underline">
             Explore
           </Link>
           <Link to="/signup" className="ml-4 text-sm underline">
@@ -348,9 +350,23 @@ function AuthSync() {
     void Promise.all([import("@/integrations/supabase/client"), import("@/lib/auth-entry")])
       .then(([{ supabase }, { clearOnboardedCache }]) => {
         if (disposed) return;
-        const identifyProductUser = (userId: string | null) => {
+        type SessionUser = {
+          id: string;
+          email?: string | null;
+          created_at?: string | null;
+          app_metadata?: { provider?: string | null } | null;
+        };
+        const identifyProductUser = (user: SessionUser | null) => {
+          const identity = user
+            ? {
+                id: user.id,
+                email: user.email ?? null,
+                createdAt: user.created_at ?? null,
+                provider: user.app_metadata?.provider ?? null,
+              }
+            : null;
           void import("@/lib/posthog")
-            .then(({ identifyProductUser: identify }) => identify(userId))
+            .then(({ identifyProductUser: identify }) => identify(identity))
             .catch((error) => {
               if (!disposed) console.error("[Analytics] User identity could not load.", error);
             });
@@ -360,7 +376,7 @@ function AuthSync() {
           data: { subscription },
         } = supabase.auth.onAuthStateChange((event, session) => {
           const sessionUserId = session?.user.id ?? null;
-          identifyProductUser(sessionUserId);
+          identifyProductUser(session?.user ?? null);
 
           // Supabase invokes this callback while it is still committing the auth
           // transaction. Invalidating TanStack Router synchronously can make the
@@ -385,7 +401,7 @@ function AuthSync() {
         unsubscribe = () => subscription.unsubscribe();
 
         return supabase.auth.getSession().then(({ data }) => {
-          if (!disposed) identifyProductUser(data.session?.user.id ?? null);
+          if (!disposed) identifyProductUser(data.session?.user ?? null);
         });
       })
       .catch((error) => {
@@ -401,11 +417,23 @@ function AuthSync() {
   return null;
 }
 
+const useBrowserLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
 function ProductAnalyticsSync() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
 
+  // Layout effects run before every passive effect in the tree, so the first check sees Dodo's
+  // return parameters before the onboarding screen removes them from the URL. It does nothing
+  // (and loads no analytics) unless this tab started a checkout. The listeners also cover the
+  // page that starts checkout, which can be restored from the back/forward cache.
+  useBrowserLayoutEffect(() => watchCheckoutExit(), []);
+
   useEffect(() => {
     let disposed = false;
+
+    // First-party cookie only (no SDK, nothing sent): remembers the very first landing
+    // so signup attribution survives marketing-page entries and the OAuth redirect.
+    recordFirstLanding(pathname);
 
     // Comparison and editorial pages do not send product analytics. Keep the
     // analytics SDK off their critical loading path entirely.

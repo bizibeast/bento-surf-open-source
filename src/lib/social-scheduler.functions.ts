@@ -1,3 +1,4 @@
+import { LINKEDIN_COMMENT_SCOPE } from "./scheduler-follow-ups";
 import { normalizeCustomerCopy, normalizeDashes } from "./text/dashes";
 import { getEditorialReviewNotes } from "./content-editorial";
 import {
@@ -83,6 +84,9 @@ function connectionFromRow(row: any): SchedulerConnection {
     status: row.status,
     connectedAt: row.created_at,
     canPublish,
+    ...(row.provider === "linkedin"
+      ? { canFirstComment: canPublish && Boolean(row.scopes?.includes(LINKEDIN_COMMENT_SCOPE)) }
+      : {}),
     publishBlockReason: canPublish
       ? null
       : needsReconnect
@@ -165,10 +169,14 @@ function postFromRow(row: any, insights: Map<string, TargetInsight>): SchedulerP
     targets: (row.targets || [])
       .filter((target: any) => isPublicSocialProvider(target.provider))
       .map((target: any) => {
-        const insight = insights.get(`${target.connection_id}:${target.remote_post_id}`);
+        const insight = target.connection_id
+          ? insights.get(`${target.connection_id}:${target.remote_post_id}`)
+          : undefined;
         return {
           id: target.id,
           connectionId: target.connection_id,
+          accountHandle: target.account_handle_snapshot || null,
+          accountDisplayName: target.account_display_name_snapshot || null,
           provider: target.provider,
           status: target.status,
           remotePostUrl: target.remote_post_url || insight?.remotePostUrl || null,
@@ -237,7 +245,7 @@ async function schedulerData(userId: string, plan?: PlanId) {
     db
       .from("social_posts")
       .select(
-        "*, targets:social_post_targets(id, connection_id, provider, status, remote_post_id, remote_post_url, last_error_message, published_at, next_attempt_at, provider_settings, repost:social_repost_jobs(phase, repost_due_at, remove_due_at, reposted_at, removed_at, last_error_message))",
+        "*, targets:social_post_targets(id, connection_id, account_handle_snapshot, account_display_name_snapshot, provider, status, remote_post_id, remote_post_url, last_error_message, published_at, next_attempt_at, provider_settings, repost:social_repost_jobs(phase, repost_due_at, remove_due_at, reposted_at, removed_at, last_error_message))",
       )
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
@@ -626,9 +634,22 @@ export async function saveSocialPostForUser(
       data.connectionOverrides?.[connection.id]?.xCommunity != null
     )
       throw new Error("Community destinations are only available for X accounts.");
+    const accountSettings = settingsForConnection(connection);
+    if (connection.provider !== "twitter" && accountSettings.threadReplies != null)
+      throw new Error("Threads are only available for X accounts.");
+    if (connection.provider !== "linkedin" && accountSettings.firstComment != null)
+      throw new Error("First comments are only available for LinkedIn accounts.");
+    if (
+      !data.asDraft &&
+      connection.provider === "linkedin" &&
+      typeof accountSettings.firstComment === "string" &&
+      accountSettings.firstComment.trim() &&
+      !connection.scopes?.includes(LINKEDIN_COMMENT_SCOPE)
+    )
+      throw new Error("Reconnect LinkedIn with comment access before scheduling a first comment.");
     const settings = {
       ...data.providerSettings,
-      [connection.provider]: settingsForConnection(connection),
+      [connection.provider]: accountSettings,
     };
     // Validate mention offsets and provider limits against each account's actual
     // text, including two destinations on the same network.

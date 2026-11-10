@@ -8,6 +8,7 @@ import {
   handleInstagramWebhook,
   handleInstagramWebhookVerification,
   isRetryableMetaResponse,
+  metaResponseCode,
   parseMetaRetryAfterSeconds,
   MetaDeliveryError,
   readInstagramRunActionPayload,
@@ -297,6 +298,8 @@ describe("Instagram Auto-DM provider subscription health", () => {
 
   it("retries transport failures and provider-declared transient Graph errors", () => {
     expect(isRetryableMetaResponse(429, {})).toBe(true);
+    expect(metaResponseCode(429, { error: { code: 190 } })).toBe("429");
+    expect(isRetryableMetaResponse(400, { error: { code: 4 } })).toBe(true);
     expect(isRetryableMetaResponse(503, {})).toBe(true);
     expect(
       isRetryableMetaResponse(400, {

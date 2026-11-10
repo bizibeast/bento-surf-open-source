@@ -1704,7 +1704,7 @@ function SettingsPage() {
                       </label>
                       <Link
                         to="/explore"
-                        search={{ q: "", page: 1 }}
+                        search={{}}
                         target="_blank"
                         className={`${micro.btnOutline} h-12`}
                       >

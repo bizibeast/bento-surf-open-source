@@ -13,12 +13,14 @@ export function brainDraftOutcome(
   previousJobStatus: string | null,
   session: Pick<OnboardingSession, "jobStatus" | "candidates" | "generationCount">,
   platform: string,
+  elapsedSeconds?: number,
 ): Outcome | null {
   if (previousJobStatus !== "queued" && previousJobStatus !== "running") return null;
   if (session.jobStatus !== "ready" && session.jobStatus !== "failed") return null;
   const candidates = session.candidates;
   const base = {
     platform,
+    ...(elapsedSeconds === undefined ? {} : { seconds_to_ready: elapsedSeconds }),
     generation: session.generationCount,
     brain_chapters: candidates?.brain.length ?? 0,
   };

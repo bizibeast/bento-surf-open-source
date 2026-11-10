@@ -1,3 +1,8 @@
+import {
+  SchedulerFirstComment,
+  SchedulerThreadReplies,
+} from "@/components/scheduler/SchedulerFollowUps";
+import { splitXThread, xThreadReplies } from "@/lib/scheduler-follow-ups";
 import { AutoDmDelaySettings } from "@/components/AutoDmDelaySettings";
 import { DraftReviewNotice } from "@/components/content/DraftReviewNotice";
 import { SchedulerActionButton } from "@/components/scheduler/SchedulerActionButton";
@@ -35,7 +40,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock3,
-  ExternalLink,
   Film,
   ImagePlus,
   LoaderCircle,
@@ -156,6 +160,7 @@ import {
   type SchedulerConnection,
   type SchedulerMedia,
   type SchedulerPost,
+  type SchedulerTarget,
   type PostingSchedule,
   type SocialProviderSettings,
   type SocialProvider,
@@ -551,7 +556,13 @@ type SchedulerComposeFingerprintInput = {
   providerSettings: SocialProviderSettings;
   connectionOverrides?: Record<
     string,
-    { bodyOverride?: string; mentions?: unknown[]; xCommunity?: XCommunity | null }
+    {
+      bodyOverride?: string;
+      mentions?: unknown[];
+      xCommunity?: XCommunity | null;
+      threadReplies?: string[] | null;
+      firstComment?: string | null;
+    }
   >;
 };
 
@@ -752,6 +763,8 @@ function SchedulerPage() {
   const [redditCommunity, setRedditCommunity] = useState("");
   const [redditKind, setRedditKind] = useState<"self" | "link">("self");
   const [xCommunities, setXCommunities] = useState<Record<string, XCommunity | null>>({});
+  const [threadReplies, setThreadReplies] = useState<Record<string, string[] | null>>({});
+  const [firstComments, setFirstComments] = useState<Record<string, string>>({});
   const [xPostKind, setXPostKind] = useState<"post" | "article">("post");
   const [xArticle, setXArticle] = useState<XArticleDocument>({
     cover: null,
@@ -785,6 +798,7 @@ function SchedulerPage() {
     maxHeight: number;
   } | null>(null);
   const [postingSettingsOpen, setPostingSettingsOpen] = useState(false);
+  const [postListView, setPostListView] = useState<"drafts" | "published">("drafts");
   const [publishingPostId, setPublishingPostId] = useState<string | null>(null);
   const [postPendingDelete, setPostPendingDelete] = useState<SchedulerPost | null>(null);
   const [draftDropActive, setDraftDropActive] = useState(false);
@@ -965,6 +979,8 @@ function SchedulerPage() {
     );
     setRedditKind(preferences.reddit?.kind === "link" ? "link" : "self");
     setXPostKind(preferences.twitter?.kind === "article" ? "article" : "post");
+    setThreadReplies({});
+    setFirstComments({});
     setXArticle({ cover: null, blocks: [{ kind: "text", type: "unstyled", text: "" }] });
     setRedditUrl("");
     setUploadError(null);
@@ -1056,10 +1072,29 @@ function SchedulerPage() {
     setXCommunities(
       Object.fromEntries(
         post.targets
-          .filter((target) => target.provider === "twitter")
+          .filter((target) => target.provider === "twitter" && target.connectionId)
           .map((target) => [
-            target.connectionId,
+            target.connectionId!,
             xCommunityFromSettings(target.providerSettings || {}),
+          ]),
+      ),
+    );
+    setThreadReplies(
+      Object.fromEntries(
+        post.targets
+          .filter((target) => target.connectionId && target.provider === "twitter")
+          .map((target) => [target.connectionId!, xThreadReplies(target.providerSettings || {})]),
+      ),
+    );
+    setFirstComments(
+      Object.fromEntries(
+        post.targets
+          .filter((target) => target.connectionId && target.provider === "linkedin")
+          .map((target) => [
+            target.connectionId!,
+            typeof target.providerSettings?.firstComment === "string"
+              ? target.providerSettings.firstComment
+              : "",
           ]),
       ),
     );
@@ -1067,7 +1102,7 @@ function SchedulerPage() {
     setTitle(post.title || "");
     const savedBodyOverrides = Object.fromEntries(
       post.targets.flatMap((target) =>
-        typeof target.providerSettings?.bodyOverride === "string"
+        target.connectionId && typeof target.providerSettings?.bodyOverride === "string"
           ? [[target.connectionId, target.providerSettings.bodyOverride]]
           : [],
       ),
@@ -1083,16 +1118,26 @@ function SchedulerPage() {
     setBodyOverrides(savedBodyOverrides);
     setAccountMentions(
       Object.fromEntries(
-        post.targets.map((target) => [
-          target.connectionId,
-          Array.isArray(target.providerSettings?.mentions) ? target.providerSettings.mentions : [],
-        ]),
+        post.targets.flatMap((target) =>
+          target.connectionId
+            ? [
+                [
+                  target.connectionId,
+                  Array.isArray(target.providerSettings?.mentions)
+                    ? target.providerSettings.mentions
+                    : [],
+                ],
+              ]
+            : [],
+        ),
       ),
     );
     setEditorConnectionId(post.targets[0]?.connectionId || "");
     setPlatformTitles(savedTitles);
     setMedia(post.media);
-    setSelected(post.targets.map((target) => target.connectionId));
+    setSelected(
+      post.targets.flatMap((target) => (target.connectionId ? [target.connectionId] : [])),
+    );
     setScheduledAt(
       post.scheduledAt
         ? isoToZonedDateTimeInput(post.scheduledAt, schedulerTimeZone)
@@ -1542,6 +1587,7 @@ function SchedulerPage() {
       twitter: {
         ...savedProviderSettings.twitter,
         xCommunity: null,
+        threadReplies: null,
         kind: xPostKind,
         article: xPostKind === "article" ? xArticle : undefined,
         autoRepost: repostSettings(reposts.twitter),
@@ -1559,6 +1605,7 @@ function SchedulerPage() {
       },
       linkedin: {
         ...savedProviderSettings.linkedin,
+        firstComment: null,
         autoRepost: repostSettings(reposts.linkedin),
       },
     };
@@ -1666,7 +1713,12 @@ function SchedulerPage() {
     () =>
       Object.fromEntries(
         selectedConnections
-          .filter((connection) => !sync || connection.provider === "twitter")
+          .filter(
+            (connection) =>
+              !sync ||
+              connection.provider === "twitter" ||
+              (connection.provider === "linkedin" && Boolean(firstComments[connection.id])),
+          )
           .map((connection) => [
             connection.id,
             {
@@ -1676,13 +1728,31 @@ function SchedulerPage() {
                     mentions: accountMentions[connection.id] || [],
                   }
                 : {}),
+              ...(connection.provider === "linkedin" && firstComments[connection.id]
+                ? { firstComment: firstComments[connection.id] || "" }
+                : {}),
               ...(connection.provider === "twitter"
-                ? { xCommunity: xCommunities[connection.id] || null }
+                ? {
+                    xCommunity: xCommunities[connection.id] || null,
+                    ...(xPostKind !== "article" && threadReplies[connection.id] != null
+                      ? { threadReplies: threadReplies[connection.id] }
+                      : {}),
+                  }
                 : {}),
             },
           ]),
       ),
-    [sync, selectedConnections, bodyOverrides, accountMentions, body, xCommunities],
+    [
+      sync,
+      selectedConnections,
+      bodyOverrides,
+      accountMentions,
+      body,
+      xCommunities,
+      threadReplies,
+      firstComments,
+      xPostKind,
+    ],
   );
   const youtubeThumbnailMedia = pendingThumbnailMedia(youtubeThumbnail);
   const instagramCoverMedia = pendingThumbnailMedia(instagramCover);
@@ -1727,23 +1797,29 @@ function SchedulerPage() {
   };
   const accountErrors = selectedConnections.flatMap((connection) => {
     const label = `${SOCIAL_PROVIDER_DEFINITIONS[connection.provider].name} (${connection.displayName || connection.handle})`;
-    const error = !connection.canPublish
-      ? connection.publishBlockReason || "Reconnect this account before posting."
-      : validatePostForProviders(
-          body,
-          media,
-          [connection.provider],
-          title,
-          {
-            ...providerSettings,
-            [connection.provider]: {
-              ...providerSettings[connection.provider],
-              ...connectionOverrides?.[connection.id],
+    const missingCommentAccess =
+      connection.provider === "linkedin" &&
+      firstComments[connection.id]?.trim() &&
+      !connection.canFirstComment;
+    const error = missingCommentAccess
+      ? "Reconnect LinkedIn with comment access before scheduling a first comment."
+      : !connection.canPublish
+        ? connection.publishBlockReason || "Reconnect this account before posting."
+        : validatePostForProviders(
+            body,
+            media,
+            [connection.provider],
+            title,
+            {
+              ...providerSettings,
+              [connection.provider]: {
+                ...providerSettings[connection.provider],
+                ...connectionOverrides?.[connection.id],
+              },
             },
-          },
-          connection.xCapabilities,
-          tiktokDirectPostAudited,
-        )[connection.provider];
+            connection.xCapabilities,
+            tiktokDirectPostAudited,
+          )[connection.provider];
     return error
       ? [
           {
@@ -1760,10 +1836,14 @@ function SchedulerPage() {
   const mediaCompatibility = schedulerMediaCompatibility(connectedProviders);
   const previewConnection = activeConnection || selectedConnections[0] || null;
   const editorUsesCaption = schedulerUsesCaption(activeProviders);
-  const editorCaptionLimit = schedulerCaptionLimit(
-    activeProviders,
-    selectedXConnection?.xCapabilities,
-  );
+  const isXThread =
+    activeProvider === "twitter" &&
+    xPostKind === "post" &&
+    activeConnection &&
+    threadReplies[activeConnection.id] != null;
+  const editorCaptionLimit = isXThread
+    ? 280
+    : schedulerCaptionLimit(activeProviders, selectedXConnection?.xCapabilities);
   const showPostTitle = activeProvider === "youtube" || activeProvider === "reddit" || isXArticle;
 
   const updateEditorBody = (value: string) => {
@@ -2730,7 +2810,13 @@ function SchedulerPage() {
     [data?.posts],
   );
   const draftPosts = sortedPosts.filter((post) => post.status === "draft");
-  const timelinePosts = sortedPosts.filter((post) => post.status !== "draft");
+  const publishedPosts = sortedPosts.filter(
+    (post) => post.status === "published" || post.status === "partially_failed",
+  );
+  const otherPosts = sortedPosts.filter(
+    (post) =>
+      post.status !== "draft" && post.status !== "published" && post.status !== "partially_failed",
+  );
 
   return (
     <main className={`relative overflow-x-clip ${micro.shell}`}>
@@ -2800,116 +2886,176 @@ function SchedulerPage() {
                 onAvatarError={repairAvatar}
               />
 
-              <div
-                role="region"
-                aria-label="Drafts drop area"
-                className={`rounded-[24px] transition-shadow ${draftDropActive ? "ring-2 ring-[#31577f]/60 ring-offset-2" : ""}`}
-                onDragEnter={(event) => {
-                  if (data?.locked || !event.dataTransfer.types.includes(CALENDAR_POST_DRAG_MIME))
-                    return;
-                  draftDragDepth.current += 1;
-                  setDraftDropActive(true);
-                }}
-                onDragOver={(event) => {
-                  if (data?.locked || !event.dataTransfer.types.includes(CALENDAR_POST_DRAG_MIME))
-                    return;
-                  event.preventDefault();
-                  event.dataTransfer.dropEffect = "move";
-                }}
-                onDragLeave={() => {
-                  draftDragDepth.current = Math.max(0, draftDragDepth.current - 1);
-                  if (draftDragDepth.current === 0) setDraftDropActive(false);
-                }}
-                onDrop={handleDraftDrop}
-              >
-                <MicroAppPanel>
-                  <div className="flex min-w-0 items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className={micro.eyebrow}>Saved</p>
-                      <h2 className="mt-1 font-ui-display text-xl sm:text-2xl">Drafts</h2>
-                    </div>
-                    <span
-                      className={`${micro.soft} px-3 py-1.5 text-xs font-semibold tabular-nums`}
-                    >
-                      {draftPosts.length}
+              <div role="group" aria-label="Post lists" className="flex flex-wrap gap-2">
+                {(["drafts", "published"] as const).map((view) => (
+                  <button
+                    key={view}
+                    type="button"
+                    aria-pressed={postListView === view}
+                    aria-label={
+                      view === "drafts"
+                        ? `Drafts (${draftPosts.length})`
+                        : `Published (${publishedPosts.length})`
+                    }
+                    onClick={() => setPostListView(view)}
+                    className={`inline-flex min-h-10 items-center gap-2 rounded-full px-4 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3478f6] focus-visible:ring-offset-2 ${
+                      postListView === view
+                        ? "bg-[#17213a] text-white"
+                        : "border border-[#dce4ef] bg-white text-[#31577f] hover:bg-[#eef2f8]"
+                    }`}
+                  >
+                    {view === "drafts" ? "Drafts" : "Published"}
+                    <span className="text-xs tabular-nums opacity-75">
+                      {view === "drafts" ? draftPosts.length : publishedPosts.length}
                     </span>
-                  </div>
-                  {draftPosts.length > 0 && !data?.locked && (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      Drag a draft onto a calendar slot to schedule it.
-                    </p>
-                  )}
-                  {!data?.locked && (
-                    <p className="mt-4 rounded-xl border border-dashed border-[#31577f]/30 bg-muted/40 px-4 py-3 text-center text-xs font-medium text-[#31577f]">
-                      Drop a calendar post here to move it to Drafts
-                    </p>
-                  )}
-                  <div className="mt-5 space-y-3">
-                    {draftPosts.length ? (
-                      draftPosts.map((post) => (
-                        <PostRow
-                          key={post.id}
-                          post={post}
-                          canEdit={!data?.locked}
-                          canDrag={!data?.locked}
-                          onEdit={() => openPostForEdit(post)}
-                          onCancel={() => cancel.mutate(post.id)}
-                          onDuplicate={() => duplicate.mutate(post.id)}
-                          onRetry={() => retryPost.mutate(post.id)}
-                          retryPending={retryPost.isPending && retryPost.variables === post.id}
-                          onDelete={() => setPostPendingDelete(post)}
-                        />
-                      ))
-                    ) : (
-                      <div className={`${micro.empty} py-8 text-sm text-muted-foreground`}>
-                        Saved drafts will appear here.
-                      </div>
-                    )}
-                  </div>
-                </MicroAppPanel>
+                  </button>
+                ))}
               </div>
 
-              <MicroAppPanel>
-                <div className="flex min-w-0 items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className={micro.eyebrow}>Posts</p>
-                    <h2 className="mt-1 font-ui-display text-xl sm:text-2xl">
-                      Scheduled &amp; published
-                    </h2>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void queryClient.invalidateQueries({ queryKey: ["social-scheduler"] })
-                    }
-                    className={`${micro.btnSoft} size-10 px-0`}
-                    aria-label="Refresh posts"
-                  >
-                    <RefreshCw className="size-4" />
-                  </button>
-                </div>
-                <div className="mt-5 space-y-3">
-                  {timelinePosts.length ? (
-                    timelinePosts.map((post) => (
-                      <PostRow
-                        key={post.id}
-                        post={post}
-                        canEdit={!data?.locked}
-                        onEdit={() => openPostForEdit(post)}
-                        onCancel={() => cancel.mutate(post.id)}
-                        onDuplicate={() => duplicate.mutate(post.id)}
-                        onRetry={() => retryPost.mutate(post.id)}
-                        retryPending={retryPost.isPending && retryPost.variables === post.id}
-                        onDelete={() => setPostPendingDelete(post)}
-                      />
-                    ))
-                  ) : (
-                    <div className={`${micro.empty} py-8 text-sm text-muted-foreground`}>
-                      Tap + on a day to schedule your first post.
+              {postListView === "drafts" && (
+                <div
+                  role="region"
+                  aria-label="Drafts drop area"
+                  className={`rounded-[24px] transition-shadow ${draftDropActive ? "ring-2 ring-[#31577f]/60 ring-offset-2" : ""}`}
+                  onDragEnter={(event) => {
+                    if (data?.locked || !event.dataTransfer.types.includes(CALENDAR_POST_DRAG_MIME))
+                      return;
+                    draftDragDepth.current += 1;
+                    setDraftDropActive(true);
+                  }}
+                  onDragOver={(event) => {
+                    if (data?.locked || !event.dataTransfer.types.includes(CALENDAR_POST_DRAG_MIME))
+                      return;
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                  }}
+                  onDragLeave={() => {
+                    draftDragDepth.current = Math.max(0, draftDragDepth.current - 1);
+                    if (draftDragDepth.current === 0) setDraftDropActive(false);
+                  }}
+                  onDrop={handleDraftDrop}
+                >
+                  <MicroAppPanel>
+                    <div className="flex min-w-0 items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className={micro.eyebrow}>Saved</p>
+                        <h2 className="mt-1 font-ui-display text-xl sm:text-2xl">Drafts</h2>
+                      </div>
+                      <span
+                        className={`${micro.soft} px-3 py-1.5 text-xs font-semibold tabular-nums`}
+                      >
+                        {draftPosts.length}
+                      </span>
                     </div>
-                  )}
+                    {draftPosts.length > 0 && !data?.locked && (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Drag a draft onto a calendar slot to schedule it.
+                      </p>
+                    )}
+                    {!data?.locked && (
+                      <p className="mt-4 rounded-xl border border-dashed border-[#31577f]/30 bg-muted/40 px-4 py-3 text-center text-xs font-medium text-[#31577f]">
+                        Drop a calendar post here to move it to Drafts
+                      </p>
+                    )}
+                    <div className="mt-5 space-y-3">
+                      {draftPosts.length ? (
+                        draftPosts.map((post) => (
+                          <PostRow
+                            key={post.id}
+                            post={post}
+                            canEdit={!data?.locked}
+                            canDrag={!data?.locked}
+                            onEdit={() => openPostForEdit(post)}
+                            onCancel={() => cancel.mutate(post.id)}
+                            onDuplicate={() => duplicate.mutate(post.id)}
+                            onRetry={() => retryPost.mutate(post.id)}
+                            retryPending={retryPost.isPending && retryPost.variables === post.id}
+                            onDelete={() => setPostPendingDelete(post)}
+                          />
+                        ))
+                      ) : (
+                        <div className={`${micro.empty} py-8 text-sm text-muted-foreground`}>
+                          Saved drafts will appear here.
+                        </div>
+                      )}
+                    </div>
+                  </MicroAppPanel>
                 </div>
-              </MicroAppPanel>
+              )}
+
+              {postListView === "published" && (
+                <div role="region" aria-label="Published posts">
+                  <MicroAppPanel>
+                    <div className="flex min-w-0 items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className={micro.eyebrow}>Posts</p>
+                        <h2 className="mt-1 font-ui-display text-xl sm:text-2xl">Published</h2>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void queryClient.invalidateQueries({ queryKey: ["social-scheduler"] })
+                        }
+                        className={`${micro.btnSoft} size-10 px-0`}
+                        aria-label="Refresh posts"
+                      >
+                        <RefreshCw className="size-4" />
+                      </button>
+                    </div>
+                    <div className="mt-5 space-y-3">
+                      {publishedPosts.length ? (
+                        publishedPosts.map((post) => (
+                          <PostRow
+                            key={post.id}
+                            post={post}
+                            canEdit={!data?.locked}
+                            onEdit={() => openPostForEdit(post)}
+                            onCancel={() => cancel.mutate(post.id)}
+                            onDuplicate={() => duplicate.mutate(post.id)}
+                            onRetry={() => retryPost.mutate(post.id)}
+                            retryPending={retryPost.isPending && retryPost.variables === post.id}
+                            onDelete={() => setPostPendingDelete(post)}
+                          />
+                        ))
+                      ) : (
+                        <div className={`${micro.empty} py-8 text-sm text-muted-foreground`}>
+                          Published posts will appear here.
+                        </div>
+                      )}
+                    </div>
+                    {otherPosts.length > 0 && (
+                      <section
+                        className="mt-8 border-t border-[#e7ecf3] pt-6"
+                        aria-label="Scheduled and needs attention"
+                      >
+                        <div className="flex items-baseline justify-between gap-3">
+                          <h3 className="font-ui-display text-lg">
+                            Scheduled &amp; needs attention
+                          </h3>
+                          <span className="text-xs tabular-nums text-muted-foreground">
+                            {otherPosts.length}
+                          </span>
+                        </div>
+                        <div className="mt-4 space-y-3">
+                          {otherPosts.map((post) => (
+                            <PostRow
+                              key={post.id}
+                              post={post}
+                              canEdit={!data?.locked}
+                              onEdit={() => openPostForEdit(post)}
+                              onCancel={() => cancel.mutate(post.id)}
+                              onDuplicate={() => duplicate.mutate(post.id)}
+                              onRetry={() => retryPost.mutate(post.id)}
+                              retryPending={retryPost.isPending && retryPost.variables === post.id}
+                              onDelete={() => setPostPendingDelete(post)}
+                            />
+                          ))}
+                        </div>
+                      </section>
+                    )}
+                  </MicroAppPanel>
+                </div>
+              )}
 
               <Dialog
                 open={composeOpen}
@@ -3081,14 +3227,76 @@ function SchedulerPage() {
                               <p className="text-xs font-semibold text-muted-foreground">
                                 X format
                               </p>
-                              <div className="mt-2 flex gap-2">
+                              <div className="mt-2 flex flex-wrap gap-2">
                                 <button
                                   type="button"
-                                  aria-pressed={xPostKind === "post"}
-                                  onClick={() => setXPostKind("post")}
-                                  className={xPostKind === "post" ? micro.btnInk : micro.btnSoft}
+                                  aria-pressed={xPostKind === "post" && !isXThread}
+                                  onClick={() => {
+                                    setXPostKind("post");
+                                    setThreadReplies((current) => ({
+                                      ...current,
+                                      [selectedXConnection.id]: null,
+                                    }));
+                                  }}
+                                  className={
+                                    xPostKind === "post" && !isXThread
+                                      ? micro.btnInk
+                                      : micro.btnSoft
+                                  }
                                 >
                                   Post
+                                </button>
+                                <button
+                                  type="button"
+                                  aria-pressed={Boolean(isXThread)}
+                                  onClick={() => {
+                                    setXPostKind("post");
+                                    setThreadReplies((current) => ({
+                                      ...current,
+                                      [selectedXConnection.id]: current[selectedXConnection.id] || [
+                                        "",
+                                      ],
+                                    }));
+                                  }}
+                                  className={isXThread ? micro.btnInk : micro.btnSoft}
+                                >
+                                  Thread
+                                </button>
+                                <button
+                                  type="button"
+                                  className={micro.btnSoft}
+                                  disabled={!editorBody.trim()}
+                                  onClick={() => {
+                                    try {
+                                      const parts = splitXThread(editorBody);
+                                      if (parts.length < 2) {
+                                        toast.info("This text already fits in one X post.");
+                                        return;
+                                      }
+                                      setXPostKind("post");
+                                      setSync(false);
+                                      setBodyOverrides((current) => ({
+                                        ...current,
+                                        [selectedXConnection.id]: parts[0],
+                                      }));
+                                      setAccountMentions((current) => ({
+                                        ...current,
+                                        [selectedXConnection.id]: [],
+                                      }));
+                                      setThreadReplies((current) => ({
+                                        ...current,
+                                        [selectedXConnection.id]: parts.slice(1),
+                                      }));
+                                    } catch (error) {
+                                      toast.error(
+                                        error instanceof Error
+                                          ? error.message
+                                          : "This text could not be split.",
+                                      );
+                                    }
+                                  }}
+                                >
+                                  Split into thread
                                 </button>
                                 <button
                                   type="button"
@@ -3447,6 +3655,31 @@ function SchedulerPage() {
                             </div>
                           )}
 
+                          {isXThread && activeConnection && (
+                            <SchedulerThreadReplies
+                              replies={threadReplies[activeConnection.id]!}
+                              onChange={(replies) =>
+                                setThreadReplies((current) => ({
+                                  ...current,
+                                  [activeConnection.id]: replies,
+                                }))
+                              }
+                            />
+                          )}
+                          {activeProvider === "linkedin" && activeConnection && (
+                            <SchedulerFirstComment
+                              key={activeConnection.id}
+                              value={firstComments[activeConnection.id] || ""}
+                              canComment={Boolean(activeConnection.canFirstComment)}
+                              onChange={(value) =>
+                                setFirstComments((current) => ({
+                                  ...current,
+                                  [activeConnection.id]: value,
+                                }))
+                              }
+                            />
+                          )}
+
                           {activeProvider === "reddit" && (
                             <div
                               className={`mt-5 grid gap-4 border border-black/[0.08] p-4 sm:grid-cols-2 ${micro.soft}`}
@@ -3582,9 +3815,11 @@ function SchedulerPage() {
                                   >
                                     {youtubeFormat === "short" && (
                                       <p className="text-xs leading-5 text-muted-foreground">
-                                        YouTube will treat this file as a Short. A custom thumbnail
-                                        still helps on your channel, search, and shares. The Shorts
-                                        feed plays the video instead of this image.
+                                        YouTube will treat this file as a Short. Bento can submit
+                                        the selected image as its thumbnail, but YouTube may require
+                                        you to set it in YouTube Studio on a computer after
+                                        publishing. The Shorts feed plays the video instead of this
+                                        image.
                                       </p>
                                     )}
                                     <input
@@ -3712,7 +3947,11 @@ function SchedulerPage() {
                                   <ProviderComposeCard
                                     provider="tiktok"
                                     title="TikTok"
-                                    hint="TikTok does not accept a custom thumbnail image. Pick a frame from this video."
+                                    hint={
+                                      primaryVideo
+                                        ? "TikTok does not accept a custom thumbnail image. Pick a frame from this video."
+                                        : "Post up to 10 images as a TikTok photo carousel. The first image is the cover."
+                                    }
                                   >
                                     {tiktokCreatorInfo.isPending && (
                                       <p className="text-sm text-muted-foreground">
@@ -3792,34 +4031,38 @@ function SchedulerPage() {
                                           ? " (disabled in TikTok)"
                                           : ""}
                                       </label>
-                                      <label className="flex items-center gap-2 text-sm">
-                                        <input
-                                          type="checkbox"
-                                          checked={tiktokAllowDuet}
-                                          disabled={tiktokInteractionDisabled.duet}
-                                          onChange={(event) =>
-                                            setTiktokAllowDuet(event.target.checked)
-                                          }
-                                        />
-                                        Duet
-                                        {tiktokInteractionDisabled.duet
-                                          ? " (disabled in TikTok)"
-                                          : ""}
-                                      </label>
-                                      <label className="flex items-center gap-2 text-sm">
-                                        <input
-                                          type="checkbox"
-                                          checked={tiktokAllowStitch}
-                                          disabled={tiktokInteractionDisabled.stitch}
-                                          onChange={(event) =>
-                                            setTiktokAllowStitch(event.target.checked)
-                                          }
-                                        />
-                                        Stitch
-                                        {tiktokInteractionDisabled.stitch
-                                          ? " (disabled in TikTok)"
-                                          : ""}
-                                      </label>
+                                      {primaryVideo && (
+                                        <label className="flex items-center gap-2 text-sm">
+                                          <input
+                                            type="checkbox"
+                                            checked={tiktokAllowDuet}
+                                            disabled={tiktokInteractionDisabled.duet}
+                                            onChange={(event) =>
+                                              setTiktokAllowDuet(event.target.checked)
+                                            }
+                                          />
+                                          Duet
+                                          {tiktokInteractionDisabled.duet
+                                            ? " (disabled in TikTok)"
+                                            : ""}
+                                        </label>
+                                      )}
+                                      {primaryVideo && (
+                                        <label className="flex items-center gap-2 text-sm">
+                                          <input
+                                            type="checkbox"
+                                            checked={tiktokAllowStitch}
+                                            disabled={tiktokInteractionDisabled.stitch}
+                                            onChange={(event) =>
+                                              setTiktokAllowStitch(event.target.checked)
+                                            }
+                                          />
+                                          Stitch
+                                          {tiktokInteractionDisabled.stitch
+                                            ? " (disabled in TikTok)"
+                                            : ""}
+                                        </label>
+                                      )}
                                     </fieldset>
                                     <div className="space-y-3">
                                       <label className="flex items-center gap-2 text-sm font-medium">
@@ -3830,7 +4073,7 @@ function SchedulerPage() {
                                             setTiktokAiGenerated(event.target.checked)
                                           }
                                         />
-                                        This video is AI-generated
+                                        This {primaryVideo ? "video" : "post"} is AI-generated
                                       </label>
                                       <label className="flex items-center gap-2 text-sm font-medium">
                                         <input
@@ -5122,7 +5365,8 @@ function CalendarPost({
   const retryable =
     canReschedule &&
     ["failed", "partially_failed", "publishing"].includes(post.status) &&
-    post.targets.some((target) => target.status === "failed");
+    post.targets.some((target) => target.status === "failed" && target.connectionId);
+  const canDuplicate = post.targets.some((target) => target.connectionId);
   const statusColor: Record<SchedulerPost["status"], string> = {
     draft: "bg-zinc-400",
     scheduled: "bg-sky-500",
@@ -5200,9 +5444,11 @@ function CalendarPost({
             <Pencil className="size-3.5" /> Edit post
           </ContextMenuItem>
         )}
-        <ContextMenuItem onSelect={onDuplicate} className="gap-2 rounded-lg px-2.5 py-2">
-          <Repeat2 className="size-3.5" /> Duplicate
-        </ContextMenuItem>
+        {canDuplicate && (
+          <ContextMenuItem onSelect={onDuplicate} className="gap-2 rounded-lg px-2.5 py-2">
+            <Repeat2 className="size-3.5" /> Duplicate
+          </ContextMenuItem>
+        )}
         {retryable && (
           <ContextMenuItem onSelect={onRetry} className="gap-2 rounded-lg px-2.5 py-2">
             <RefreshCw className="size-3.5" /> Retry failed destinations
@@ -5629,6 +5875,16 @@ function SelectedAccountTab({
   );
 }
 
+function publishedPostHref(target: Pick<SchedulerTarget, "status" | "remotePostUrl">) {
+  if (target.status !== "published" || !target.remotePostUrl) return null;
+  try {
+    const url = new URL(target.remotePostUrl);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 function PostRow({
   post,
   canEdit = true,
@@ -5655,12 +5911,9 @@ function PostRow({
   const retryable =
     canEdit &&
     ["failed", "partially_failed", "publishing"].includes(post.status) &&
-    post.targets.some((target) => target.status === "failed");
+    post.targets.some((target) => target.status === "failed" && target.connectionId);
+  const canDuplicate = post.targets.some((target) => target.connectionId);
   const media = post.media[0];
-  const liveTargets = post.targets.filter((target) => target.remotePostUrl);
-  const providerNames = [...new Set(post.targets.map((target) => target.provider))]
-    .map((provider) => SOCIAL_PROVIDER_DEFINITIONS[provider].name)
-    .join(" · ");
   const publishedAt = post.targets
     .flatMap((target) => (target.publishedAt ? [target.publishedAt] : []))
     .sort()[0];
@@ -5714,21 +5967,52 @@ function PostRow({
           </div>
         )}
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-muted-foreground">
-            <span className="flex -space-x-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="flex flex-wrap gap-1.5" role="group" aria-label="Post destinations">
               {post.targets.map((target) => {
                 const Icon = PROVIDER_ICONS[target.provider];
-                return (
+                const providerName = SOCIAL_PROVIDER_DEFINITIONS[target.provider].name;
+                const account = target.accountHandle
+                  ? `@${target.accountHandle.replace(/^@/, "")}`
+                  : target.accountDisplayName?.trim();
+                const destination = account ? `${providerName} ${account}` : providerName;
+                const isPublished = post.status !== "draft" && target.status === "published";
+                const href = isPublished ? publishedPostHref(target) : null;
+                const badgeClass = `inline-flex size-4 shrink-0 items-center justify-center rounded-[5px] ring-1 ring-inset sm:size-[18px] ${
+                  isPublished
+                    ? ACTIVE_PLATFORM_COLORS[target.provider]
+                    : "bg-[#eef2f8] text-[#8793a5] ring-[#dce4ef]"
+                }`;
+                return href ? (
+                  <a
+                    key={target.id}
+                    href={href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`View published ${destination} post`}
+                    title={`View published ${destination} post`}
+                    className={`${badgeClass} transition-transform hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3478f6] focus-visible:ring-offset-2`}
+                  >
+                    <Icon className="size-2.5 sm:size-3" />
+                  </a>
+                ) : (
                   <span
                     key={target.id}
-                    className="flex size-6 items-center justify-center rounded-full border-2 border-white bg-[#eef2f8] text-[#17213a]"
+                    role="img"
+                    aria-label={`${isPublished ? "Published" : post.status === "draft" ? "Draft" : target.status.replace("_", " ")} ${destination}${isPublished ? "; link unavailable" : ""}`}
+                    title={`${isPublished ? "Published" : post.status === "draft" ? "Draft" : target.status.replace("_", " ")} ${destination}${isPublished ? " · link unavailable" : ""}`}
+                    className={badgeClass}
                   >
-                    <Icon className="size-3" />
+                    <Icon className="size-2.5 sm:size-3" />
                   </span>
                 );
               })}
             </span>
-            <span className="truncate">{providerNames || "Social post"}</span>
+            {post.status === "published" && post.targets.length === 0 && (
+              <span className="text-xs text-muted-foreground">
+                Earlier platform links unavailable
+              </span>
+            )}
           </div>
           {post.title && <h3 className="mt-2 line-clamp-1 text-sm font-semibold">{post.title}</h3>}
           <p
@@ -5768,28 +6052,6 @@ function PostRow({
                 {ENGAGEMENT_NUMBER_FORMATTER.format(comments)}
               </span>
             )}
-            {liveTargets.length > 0 && (
-              <span className="ml-auto flex flex-wrap gap-1.5">
-                {liveTargets.map((target) => {
-                  const Icon = PROVIDER_ICONS[target.provider];
-                  return (
-                    <a
-                      key={target.id}
-                      href={target.remotePostUrl!}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex min-h-7 items-center gap-1.5 rounded-lg bg-[#17213a] px-2.5 text-[11px] font-semibold text-white transition-colors hover:bg-[#31577f]"
-                    >
-                      {liveTargets.length > 1 && <Icon className="size-3" />}
-                      {liveTargets.length === 1
-                        ? "View post"
-                        : SOCIAL_PROVIDER_DEFINITIONS[target.provider].name}
-                      <ExternalLink className="size-3" />
-                    </a>
-                  );
-                })}
-              </span>
-            )}
           </div>
           {post.targets
             .filter((target) => target.repost || target.providerSettings?.autoRepost)
@@ -5827,7 +6089,7 @@ function PostRow({
               <Pencil className="size-3.5" />
             </button>
           )}
-          {canEdit && post.status !== "published" && (
+          {canEdit && canDuplicate && post.status !== "published" && (
             <button
               type="button"
               onClick={onDuplicate}

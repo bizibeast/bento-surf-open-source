@@ -4,8 +4,9 @@ import { normalizeEmailRecipient } from "./email-recipient";
  * Small, maintained list of disposable and test inboxes. Subdomains match.
  * Plus-addresses stay deliverable unless the tag is a test marker (`test`,
  * `qa`, `googleoauth`), which is how local and review accounts are named.
+ * `mail.grokbot.com` is the internal review inbox.
  */
-const DISPOSABLE_DOMAINS = new Set([
+export const DISPOSABLE_EMAIL_DOMAINS = [
   "10minutemail.com",
   "10minutemail.net",
   "caps7.com",
@@ -21,6 +22,7 @@ const DISPOSABLE_DOMAINS = new Set([
   "guerrillamail.org",
   "guerrillamailblock.com",
   "maildrop.cc",
+  "mail.grokbot.com",
   "mailinator.com",
   "mailinator.net",
   "mailnesia.com",
@@ -31,7 +33,9 @@ const DISPOSABLE_DOMAINS = new Set([
   "yopmail.com",
   "yopmail.fr",
   "yopmail.net",
-]);
+] as const;
+
+const DISPOSABLE_DOMAINS = new Set<string>(DISPOSABLE_EMAIL_DOMAINS);
 
 const RESERVED_DOMAINS = new Set(["example.com", "example.net", "example.org"]);
 const RESERVED_TLDS = new Set(["example", "invalid", "localhost", "test"]);

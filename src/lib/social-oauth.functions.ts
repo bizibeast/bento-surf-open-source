@@ -72,6 +72,8 @@ export function socialProviderRequestedScopes(provider: GenericProvider) {
   const scopes = [...SOCIAL_PROVIDER_SCOPES[provider]];
   if (provider === "threads" && process.env.THREADS_PROFILE_DISCOVERY_APPROVED === "true")
     scopes.push("threads_profile_discovery");
+  if (provider === "linkedin" && process.env.LINKEDIN_COMMENT_ACCESS_APPROVED === "true")
+    scopes.push("w_member_social_feed");
   return scopes;
 }
 
@@ -220,7 +222,7 @@ export function authorizationUrl(
     },
     linkedin: {
       base: "https://www.linkedin.com/oauth/v2/authorization",
-      scope: SOCIAL_PROVIDER_SCOPES.linkedin.join(" "),
+      scope: socialProviderRequestedScopes("linkedin").join(" "),
     },
     twitter: {
       base: "https://x.com/i/oauth2/authorize",

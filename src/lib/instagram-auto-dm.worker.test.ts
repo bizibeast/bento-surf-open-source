@@ -14,6 +14,9 @@ const mocks = vi.hoisted(() => ({
   captureServerEvent: vi.fn(),
   captureServerException: vi.fn(),
   fetch: vi.fn(),
+  claimMetaDmSend: vi.fn(),
+  handleMetaDmRecipientPreference: vi.fn(),
+  noteMetaDmProviderRejection: vi.fn(),
 }));
 
 function selectChain(data: unknown[]) {
@@ -78,6 +81,12 @@ vi.mock("./secret-crypto.server", () => ({
 vi.mock("./posthog.server", () => ({
   captureServerEvent: mocks.captureServerEvent,
   captureServerException: mocks.captureServerException,
+}));
+
+vi.mock("./meta-auto-dm-safety.server", () => ({
+  claimMetaDmSend: mocks.claimMetaDmSend,
+  handleMetaDmRecipientPreference: mocks.handleMetaDmRecipientPreference,
+  noteMetaDmProviderRejection: mocks.noteMetaDmProviderRejection,
 }));
 
 import {
@@ -174,7 +183,13 @@ describe("Instagram Auto-DM queue worker", () => {
     mocks.updates.length = 0;
     mocks.getPlan.mockResolvedValue("link");
     mocks.decryptServerSecret.mockResolvedValue("meta-token-b");
+    mocks.claimMetaDmSend.mockResolvedValue("allowed");
+    mocks.handleMetaDmRecipientPreference.mockResolvedValue(null);
+    mocks.noteMetaDmProviderRejection.mockResolvedValue(undefined);
     mocks.rpc.mockImplementation(async (name: string) => {
+      if (name === "claim_meta_dm_send") return { data: "allowed", error: null };
+      if (name === "note_meta_dm_provider_rejection") return { data: null, error: null };
+      if (name === "set_meta_dm_recipient_opt_out") return { data: null, error: null };
       if (name === "claim_instagram_delivery_slot") {
         return { data: [{ wait_ms: 0 }], error: null };
       }
@@ -199,6 +214,78 @@ describe("Instagram Auto-DM queue worker", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+  });
+
+  it("does not send when a recipient has opted out", async () => {
+    mocks.handleMetaDmRecipientPreference.mockResolvedValueOnce("opted_out");
+    await expect(
+      processInstagramDmQueueMessage({
+        kind: "instagram_dm_event",
+        event: event({ eventType: "message", eventContext: "dm", text: "guide" }),
+      }),
+    ).resolves.toEqual({ ignored: true });
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.updates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          values: expect.objectContaining({ error_code: "recipient_opted_out" }),
+        }),
+      ]),
+    );
+  });
+
+  it("retries a failed STOP preference write before claiming the webhook", async () => {
+    const stopEvent = event({
+      externalEventId: "message:stop-1",
+      eventType: "message",
+      eventContext: "dm",
+      sourceId: "stop-1",
+      text: "STOP",
+    });
+    mocks.handleMetaDmRecipientPreference
+      .mockRejectedValueOnce(new Error("Preference database unavailable"))
+      .mockResolvedValueOnce("command");
+
+    await expect(
+      processInstagramDmQueueMessage({ kind: "instagram_dm_event", event: stopEvent }),
+    ).rejects.toThrow("Preference database unavailable");
+    expect(mocks.rpc).not.toHaveBeenCalledWith("claim_instagram_dm_event", expect.anything());
+
+    await expect(
+      processInstagramDmQueueMessage({ kind: "instagram_dm_event", event: stopEvent }),
+    ).resolves.toEqual({ ignored: true });
+    expect(mocks.rpc).toHaveBeenCalledWith("claim_instagram_dm_event", expect.anything());
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.updates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          values: expect.objectContaining({ error_code: "recipient_preference_updated" }),
+        }),
+      ]),
+    );
+  });
+
+  it("records a rate-limited public reply after a private reply succeeds", async () => {
+    vi.stubEnv("APP_ENV", "production");
+    mocks.connections.push(connection());
+    mocks.automations.push(
+      automation("automation-b", {
+        public_reply_enabled: true,
+        public_reply_message: "Please check your inbox.",
+      }),
+    );
+    mocks.fetch
+      .mockResolvedValueOnce(Response.json({ id: "private-reply-1" }))
+      .mockResolvedValueOnce(Response.json({ error: { code: 4 } }, { status: 429 }));
+
+    await expect(
+      processInstagramDmQueueMessage({ kind: "instagram_dm_event", event: event() }),
+    ).resolves.toEqual({ sent: true });
+    expect(mocks.noteMetaDmProviderRejection).toHaveBeenCalledWith(
+      "instagram",
+      "instagram-account-b",
+      "429",
+    );
   });
 
   it("normalizes unreadable saved tokens into a reconnect-required Meta error", async () => {
@@ -340,6 +427,8 @@ describe("Instagram Auto-DM queue worker", () => {
       automation("automation-b", {
         opening_message: "I have the guide ready.",
         confirmation_button_label: "Send it",
+        reply_button_label: "Get guide",
+        reply_button_url: "https://example.com/guide",
       }),
     );
     mocks.rpc.mockImplementation(async (name: string) => {
@@ -395,6 +484,8 @@ describe("Instagram Auto-DM queue worker", () => {
       automation("automation-b", {
         opening_message: "I have the guide ready.",
         confirmation_button_label: "Send it",
+        reply_button_label: "Get guide",
+        reply_button_url: "https://example.com/guide",
       }),
     );
     mocks.rpc.mockImplementation(async (name: string) => {
@@ -448,7 +539,16 @@ describe("Instagram Auto-DM queue worker", () => {
     expect(payload).toMatchObject({
       recipient: { id: "visitor-1" },
       messaging_type: "RESPONSE",
-      message: { text: "Here is the guide." },
+      message: {
+        attachment: {
+          type: "template",
+          payload: {
+            template_type: "button",
+            text: "Here is the guide.",
+            buttons: [{ type: "web_url", url: "https://example.com/guide", title: "Get guide" }],
+          },
+        },
+      },
     });
     expect(mocks.updates).toEqual(
       expect.arrayContaining([
@@ -696,7 +796,7 @@ describe("Instagram Auto-DM queue worker", () => {
     );
     expect(failedUpdate?.values).toMatchObject({
       status: "failed",
-      error_code: "4",
+      error_code: "429",
     });
     expect(failedUpdate?.values).not.toHaveProperty("attempt_count");
     expect(mocks.rpc).toHaveBeenCalledWith("defer_instagram_delivery_slot", {
@@ -707,7 +807,7 @@ describe("Instagram Auto-DM queue worker", () => {
       "user-1",
       "instagram_auto_dm_failed",
       expect.objectContaining({
-        provider_error_code: "4",
+        provider_error_code: "429",
         retryable: true,
       }),
     );

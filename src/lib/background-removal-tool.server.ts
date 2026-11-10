@@ -29,6 +29,7 @@ function isProductionLike(env: BackgroundRemovalEnv) {
 export async function handleBackgroundRemovalRequest(
   request: Request,
   env: BackgroundRemovalEnv,
+  options: { trustedMcpWorkspaceId?: string } = {},
 ): Promise<Response | null> {
   const url = new URL(request.url);
   if (url.pathname !== BACKGROUND_REMOVAL_API_PATH) return null;
@@ -63,7 +64,9 @@ export async function handleBackgroundRemovalRequest(
   }
   if (limiter) {
     try {
-      const address = request.headers.get("cf-connecting-ip")?.trim() || "missing-cloudflare-ip";
+      const address = options.trustedMcpWorkspaceId
+        ? `mcp:${options.trustedMcpWorkspaceId}`
+        : request.headers.get("cf-connecting-ip")?.trim() || "missing-cloudflare-ip";
       if (
         !(await limiter.limit({ key: `free-tool-background:${address}`.slice(0, 512) })).success
       ) {
@@ -74,12 +77,14 @@ export async function handleBackgroundRemovalRequest(
     }
   }
 
-  try {
-    await enforceTurnstileRequest(request, env);
-  } catch (error) {
-    return error instanceof RequestHttpError
-      ? jsonError(error.message, error.statusCode)
-      : jsonError("Security verification is temporarily unavailable.", 503);
+  if (!options.trustedMcpWorkspaceId) {
+    try {
+      await enforceTurnstileRequest(request, env);
+    } catch (error) {
+      return error instanceof RequestHttpError
+        ? jsonError(error.message, error.statusCode)
+        : jsonError("Security verification is temporarily unavailable.", 503);
+    }
   }
   if (!env.IMAGES) return jsonError("Background removal is temporarily unavailable", 503);
 

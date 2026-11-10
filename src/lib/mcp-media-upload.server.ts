@@ -1,5 +1,5 @@
 import { z } from "zod-v4";
-import { handleR2StorageRequest, sanitizeFileExtension } from "./r2-storage.server";
+import { handleR2StorageRequest, mediaObjectUrl, sanitizeFileExtension } from "./r2-storage.server";
 import { workspaceCookieSigningKey } from "./workspace-session.server";
 
 export const MCP_MEDIA_UPLOAD_PATH = "/api/mcp-media-upload";
@@ -8,6 +8,41 @@ const UPLOAD_LIFETIME_MS = 2 * 60 * 60 * 1000;
 
 export function mcpMediaOrigin(origin: string) {
   return new URL(process.env.VITE_APP_URL || origin).origin;
+}
+
+export async function listMcpUploadedMedia(
+  userId: string,
+  origin: string,
+  cursor?: string,
+  limit = 50,
+) {
+  const bucket = globalThis.__env__?.MEDIA_BUCKET;
+  if (!bucket) throw new Error("Bento media storage is unavailable.");
+  const prefix = `users/${z.uuid().parse(userId)}/`;
+  const page = await bucket.list({
+    prefix,
+    limit,
+    cursor,
+    include: ["httpMetadata", "customMetadata"],
+  });
+  const media = page.objects.flatMap((object) => {
+    if (!object.key.startsWith(prefix)) return [];
+    const kind = object.key.slice(prefix.length).split("/", 1)[0];
+    if (kind !== "image" && kind !== "video" && kind !== "file") return [];
+    const mimeType = object.httpMetadata?.contentType?.split(";", 1)[0]?.trim().toLowerCase();
+    if (!mimeType || !Number.isSafeInteger(object.size) || object.size <= 0) return [];
+    return [
+      {
+        key: object.key,
+        url: mediaObjectUrl(object.key, mcpMediaOrigin(origin)),
+        name: object.customMetadata?.originalFilename || object.key.split("/").at(-1) || "File",
+        mimeType,
+        size: object.size,
+      },
+    ];
+  });
+  if (page.truncated && !page.cursor) throw new Error("Bento media storage returned no cursor.");
+  return { media, nextCursor: page.truncated ? page.cursor : null };
 }
 
 export const beginMediaUploadSchema = z.object({
@@ -205,7 +240,12 @@ export async function handleMcpMediaUpload(
   );
   if (!response) return json({ error: "Upload route is unavailable." }, 503);
   if (request.method !== "POST" || !response.ok) return response;
-  const result = (await response.json()) as { key: string; publicUrl: string; size: number };
+  const result = (await response.json()) as {
+    key: string;
+    publicUrl: string;
+    size: number;
+    mimeType?: string;
+  };
   return json(
     {
       media: {
@@ -213,7 +253,7 @@ export async function handleMcpMediaUpload(
         url: result.publicUrl,
         size: result.size,
         name: ticket.fileName,
-        mimeType: ticket.mimeType,
+        mimeType: result.mimeType || ticket.mimeType,
       },
     },
     201,

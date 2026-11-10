@@ -24,5 +24,6 @@ describe("disposable and test inboxes", () => {
     expect(isDisposableOrTestEmail("owner+test@gmail.com")).toBe(true);
     expect(isDisposableOrTestEmail("owner+newsletter@gmail.com")).toBe(false);
     expect(isDisposableOrTestEmail("Owner@Gmail.com")).toBe(false);
+    expect(isDisposableOrTestEmail("owner+review@mail.grokbot.com")).toBe(true);
   });
 });

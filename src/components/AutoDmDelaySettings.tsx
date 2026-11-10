@@ -41,7 +41,7 @@ export function AutoDmDelaySettings() {
           Auto DM reply delay
         </label>
         <p className="mt-1 text-xs text-muted-foreground">
-          Applies to comment replies and every message step on Instagram, Facebook, and X.
+          Applies to X Auto-DMs. Instagram and Facebook reply promptly to inbound actions.
         </p>
       </div>
       <select

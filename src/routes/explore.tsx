@@ -7,6 +7,7 @@ import {
   EXPLORE_CATEGORIES,
   exploreCategoryLabel,
   exploreCategorySchema,
+  exploreSearchNeedsNoindex,
   type ExploreCategory,
 } from "@/lib/explore";
 import { configuredPublicOrigin, publicProfileUrl } from "@/lib/application-urls";
@@ -38,7 +39,7 @@ export const Route = createFileRoute("/explore")({
         page: deps.page,
       },
     }),
-  head: () => ({
+  head: ({ match }) => ({
     meta: [
       { title: "Explore creator pages | bento.surf" },
       {
@@ -51,6 +52,10 @@ export const Route = createFileRoute("/explore")({
         property: "og:description",
         content: "Real creator pages, shared for inspiration.",
       },
+      { property: "og:url", content: `${publicOrigin}/explore` },
+      ...(exploreSearchNeedsNoindex(match.search)
+        ? [{ name: "robots", content: "noindex, follow" }]
+        : []),
     ],
     links: [{ rel: "canonical", href: `${publicOrigin}/explore` }],
   }),
@@ -211,7 +216,7 @@ function ExplorePage() {
                   </p>
                   <Link
                     to="/explore"
-                    search={{ q: "", page: 1 }}
+                    search={{}}
                     className="mt-5 rounded-full bg-[#17213a] px-5 py-2.5 text-sm font-semibold text-white"
                   >
                     See every Surf

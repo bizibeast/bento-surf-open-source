@@ -1,6 +1,8 @@
 import { createClientOnlyFn } from "@tanstack/react-start";
 import posthog from "posthog-js";
+import { readFirstLanding } from "./first-landing";
 import { redactSensitivePathname } from "./safe-url";
+import { isFreshOAuthSignup, isTestEmail, resolveFirstTouch } from "./analytics-identity";
 import {
   isHeatmapProductPath,
   isReplayableProductPath,
@@ -10,6 +12,16 @@ import {
 export { isHeatmapProductPath, isReplayableProductPath, isTrackedProductPath };
 
 export type ProductEventName =
+  | "onboarding_crashed"
+  | "onboarding_step_viewed"
+  | "onboarding_step_failed"
+  | "onboarding_left"
+  | "brain_draft_started"
+  | "brain_job_finished"
+  | "signup_account_step_viewed"
+  | "signup_email_submitted"
+  | "signup_failed"
+  | "signup_abandoned"
   | "signup_started"
   | "signup_completed"
   | "login_completed"
@@ -50,7 +62,11 @@ export type ProductEventName =
   | "upgrade_banner_clicked"
   | "upgrade_banner_dismissed"
   | "trial_cta_clicked"
+  | "checkout_recovery_banner_shown"
+  | "checkout_recovery_retry_clicked"
+  | "checkout_recovery_banner_dismissed"
   | "checkout_started"
+  | "checkout_page_left"
   | "onboarding_showcase_viewed"
   | "onboarding_showcase_completed"
   | "onboarding_showcase_skipped"
@@ -61,6 +77,7 @@ export type ProductEventName =
   | "commerce_checkout_started"
   | "commerce_lead_submitted"
   | "commerce_affiliate_clicked"
+  | "free_tool_signup_cta_clicked"
   | "free_tool_started"
   | "free_tool_copied"
   | "free_tool_product_cta_clicked"
@@ -79,6 +96,16 @@ let replayFlagEnabled = false;
 // Stable per tab: avoid recording every paid replay/heatmap session after a broad flag rollout.
 const sampledVisualAnalytics = Math.random() < 0.1;
 let heatmapsEnabled = false;
+// Sessions that reach the onboarding trial or checkout step are always recorded, so the
+// 10% sample cannot hide the moment someone decides to pay. Persisted per tab for the return trip.
+let checkoutReplayForced = false;
+const CHECKOUT_REPLAY_KEY = "bento:checkout-replay:v1";
+/**
+ * Never record card or payment inputs. The Dodo checkout is a hosted page on another origin
+ * and is not captured; this is defense in depth for any card-like field on our side.
+ */
+export const REPLAY_BLOCK_SELECTOR =
+  '[data-private-block], input[autocomplete^="cc-"], input[name*="card" i], input[name*="cvc" i], input[name*="cvv" i]';
 let firstTouch: Record<string, string> = {};
 let outboundTrackingAttached = false;
 
@@ -169,10 +196,27 @@ function attachOutboundLinkTracking() {
   outboundTrackingAttached = true;
 }
 
+function readCheckoutReplayForced() {
+  try {
+    return window.sessionStorage.getItem(CHECKOUT_REPLAY_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 function applySessionRecordingState() {
-  if (replayablePath && replayFlagEnabled && sampledVisualAnalytics)
+  if (!replayablePath || !replayFlagEnabled) {
+    posthog.stopSessionRecording();
+    return;
+  }
+  if (sampledVisualAnalytics) {
     posthog.startSessionRecording();
-  else posthog.stopSessionRecording();
+  } else if (checkoutReplayForced) {
+    // Skip only the sampling gate. The kill-switch flag and input masking still apply.
+    posthog.startSessionRecording({ sampling: true });
+  } else {
+    posthog.stopSessionRecording();
+  }
 }
 
 function applyHeatmapState() {
@@ -228,8 +272,10 @@ function initPostHog(): boolean {
     session_recording: {
       maskAllInputs: true,
       maskTextSelector: "[data-private]",
+      blockSelector: REPLAY_BLOCK_SELECTOR,
     },
   });
+  checkoutReplayForced = checkoutReplayForced || readCheckoutReplayForced();
   firstTouch = getFirstTouchAttribution();
   posthog.register(firstTouch);
   attachOutboundLinkTracking();
@@ -240,24 +286,129 @@ function initPostHog(): boolean {
     applySessionRecordingState();
   });
   initialized = true;
+  if (pendingIdentity !== undefined) {
+    const identity = pendingIdentity;
+    pendingIdentity = undefined;
+    applyIdentity(identity);
+  }
   return true;
 }
 
-export const identifyProductUser = createClientOnlyFn((userId: string | null) => {
-  // Route synchronization initializes PostHog only on the product allowlist.
-  // Auth state also runs on creator pages and /admin, so it must never start
-  // the SDK by itself on an excluded route.
-  if (!initialized) return;
-  if (!userId) {
+export type ProductUser = {
+  id: string;
+  email?: string | null;
+  createdAt?: string | null;
+  provider?: string | null;
+};
+
+// Auth can resolve before route synchronization initializes the SDK. Remember the latest
+// identity so it is applied as soon as an allowlisted route starts PostHog.
+let pendingIdentity: ProductUser | null | undefined;
+
+const SIGNUP_CAPTURED_PREFIX = "bento:signup-captured:";
+
+function signupAlreadyCaptured(userId: string) {
+  try {
+    return window.localStorage.getItem(`${SIGNUP_CAPTURED_PREFIX}${userId}`) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function rememberSignupCaptured(userId: string) {
+  try {
+    window.localStorage.setItem(`${SIGNUP_CAPTURED_PREFIX}${userId}`, "1");
+  } catch {
+    /* Private mode: the 10 minute window still bounds duplicates. */
+  }
+}
+
+/**
+ * Flags this browser's events as test traffic. Only the boolean leaves the browser; the
+ * email itself is never sent to PostHog.
+ */
+function applyTestAccountFlag(email: string | null | undefined) {
+  if (!isTestEmail(email)) return;
+  posthog.register({ is_test_account: true });
+  posthog.people.set({ is_test_account: true, $internal_or_test_user: true });
+}
+
+function firstTouchProperties() {
+  const touch = resolveFirstTouch(
+    posthog.get_property("$initial_person_info"),
+    firstTouch,
+    readFirstLanding(),
+  );
+  if (touch.first_landing_path) {
+    touch.first_landing_path = redactSensitivePathname(touch.first_landing_path);
+  }
+  return touch;
+}
+
+function captureSignupCompletedNow(
+  method: string,
+  properties: Record<string, string | number | boolean | null>,
+  userId: string | null,
+) {
+  const touch = firstTouchProperties();
+  const setOnce = Object.fromEntries(Object.entries(touch).filter(([, value]) => value !== null));
+  // $set_once rides in capture options; it only reaches a person once identified.
+  posthog.capture(
+    "signup_completed",
+    { method, ...properties, ...touch },
+    Object.keys(setOnce).length ? { $set_once: setOnce } : undefined,
+  );
+  if (userId) rememberSignupCaptured(userId);
+}
+
+function applyIdentity(user: ProductUser | null) {
+  if (!user) {
     if (identifiedUserId) posthog.reset();
     identifiedUserId = null;
     return;
   }
-  if (identifiedUserId === userId) return;
-  posthog.identify(userId);
+  if (identifiedUserId === user.id) return;
+  posthog.identify(user.id);
   posthog.people.set_once(firstTouch);
-  identifiedUserId = userId;
+  identifiedUserId = user.id;
+  applyTestAccountFlag(user.email);
+  // Email signups are captured on the signup form. OAuth accounts only become known
+  // here, after the provider redirects back, so capture their signup once.
+  if (
+    !signupAlreadyCaptured(user.id) &&
+    isFreshOAuthSignup({ provider: user.provider, createdAt: user.createdAt })
+  )
+    captureSignupCompletedNow(user.provider ?? "oauth", { source: "oauth_return" }, user.id);
+}
+
+export const identifyProductUser = createClientOnlyFn((user: ProductUser | string | null) => {
+  const normalized = typeof user === "string" ? { id: user } : user;
+  // Route synchronization initializes PostHog only on the product allowlist.
+  // Auth state also runs on creator pages and /admin, so it must never start
+  // the SDK by itself on an excluded route.
+  if (!initialized) {
+    pendingIdentity = normalized;
+    return;
+  }
+  applyIdentity(normalized);
 });
+
+/** Email signup form: flag test traffic first, then capture with first-touch attribution. */
+export const captureSignupCompleted = createClientOnlyFn(
+  (input: {
+    method: string;
+    email?: string | null;
+    userId?: string | null;
+    properties?: Record<string, string | number | boolean | null>;
+  }) => {
+    if (!initPostHog()) return;
+    // Identify now (the Supabase user id is already known) so the first-touch
+    // $set_once lands on the person even before the email is confirmed.
+    if (input.userId) applyIdentity({ id: input.userId, email: input.email, provider: "email" });
+    else applyTestAccountFlag(input.email);
+    captureSignupCompletedNow(input.method, input.properties ?? {}, input.userId ?? null);
+  },
+);
 
 export const captureProductEvent = createClientOnlyFn(
   (event: ProductEventName, properties: Record<string, string | number | boolean | null> = {}) => {
@@ -278,7 +429,17 @@ export const captureProductPageview = createClientOnlyFn((pathname: string) => {
 export const captureProductException = createClientOnlyFn(
   (error: unknown, properties: Record<string, string | number | boolean | null> = {}) => {
     if (!initPostHog()) return;
-    posthog.captureException(error, properties);
+    posthog.captureException(error, {
+      ...properties,
+      ...(error instanceof TypeError &&
+      [
+        "Load failed",
+        "Failed to fetch",
+        "NetworkError when attempting to fetch resource.",
+      ].includes(error.message)
+        ? { network_abort: true }
+        : {}),
+    });
   },
 );
 
@@ -286,6 +447,22 @@ export const setProductSessionRecording = createClientOnlyFn((enabled: boolean) 
   if (!initialized && !enabled) return;
   if (!initPostHog()) return;
   replayablePath = enabled;
+  applySessionRecordingState();
+});
+
+/**
+ * Record this session from now on, regardless of the 10% sample. Call when the buyer reaches the
+ * onboarding trial step or starts checkout. Only applies on replayable routes and while the
+ * session replay flag is on.
+ */
+export const setCheckoutReplayForced = createClientOnlyFn(() => {
+  try {
+    window.sessionStorage.setItem(CHECKOUT_REPLAY_KEY, "1");
+  } catch {
+    /* Private mode: still forced for this page load. */
+  }
+  checkoutReplayForced = true;
+  if (!initPostHog()) return;
   applySessionRecordingState();
 });
 

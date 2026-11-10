@@ -15,6 +15,7 @@ import { ContentMarkdown } from "../content/ContentDocument";
 import { SOCIAL_PROVIDER_DEFINITIONS } from "@/lib/social-scheduler";
 import {
   ONBOARDING_PLATFORMS,
+  onboardingPlatformIsNeutral,
   type OnboardingBrief,
   type OnboardingCandidates,
 } from "@/lib/onboarding/brief";
@@ -159,15 +160,72 @@ export function SocialConnections({
   );
 }
 
+export type PreparationProgress = {
+  /** The current attempt's Brain status, or null before the Brain step starts. */
+  status: "running" | "ready" | "unavailable" | null;
+  done: readonly string[];
+};
+
+type StepState = "done" | "active" | "waiting";
+
+/** Steps tied to the real job stages. Chapters are written at the same time, so they share a state. */
+export function preparationSteps(
+  progress: PreparationProgress | null,
+  jobStatus: string,
+  accountCount: number,
+  strategyTitle: string,
+) {
+  const started = Boolean(progress?.status) && jobStatus !== "queued";
+  const brainDone = progress?.status === "ready" || progress?.status === "unavailable";
+  const done = new Set(progress?.done ?? []);
+  const chapter = (kind: string): StepState =>
+    brainDone || done.has(kind) ? "done" : started ? "active" : "waiting";
+  const chaptersDone = ["profile", "instruction", "strategy"].every(
+    (kind) => brainDone || done.has(kind),
+  );
+  const steps: { id: string; label: string; state: StepState }[] = [
+    {
+      id: "read",
+      label: accountCount
+        ? `Reading your answers and ${accountCount === 1 ? "connected profile" : `${accountCount} connected profiles`}`
+        : "Reading your answers",
+      state: started ? "done" : "active",
+    },
+    { id: "profile", label: "Writing My Human", state: chapter("profile") },
+    { id: "instruction", label: "Writing your voice", state: chapter("instruction") },
+    { id: "strategy", label: `Writing your ${strategyTitle}`, state: chapter("strategy") },
+    {
+      id: "review",
+      label: accountCount
+        ? "Checking facts against your answers and profiles"
+        : "Checking facts against your answers",
+      state: brainDone || done.has("review") ? "done" : chaptersDone ? "active" : "waiting",
+    },
+    {
+      id: "draft",
+      label: "Writing and checking your first draft",
+      state: brainDone ? "active" : "waiting",
+    },
+  ];
+  const finished = steps.filter((step) => step.state === "done").length;
+  return { steps, percent: Math.round(((finished + 0.5) / steps.length) * 100) };
+}
+
 export function PreparationInProgress({
   name,
   accountCount,
   jobStatus,
+  progress = null,
+  strategyTitle = "Content Strategy",
 }: {
   name: string;
   accountCount: number;
   jobStatus: string;
+  progress?: PreparationProgress | null;
+  strategyTitle?: string;
 }) {
+  const { steps, percent } = preparationSteps(progress, jobStatus, accountCount, strategyTitle);
+  const current = steps.find((step) => step.state === "active");
   return (
     <div className="ob-preparing" role="status" aria-live="polite">
       <div className="ob-orbit" aria-hidden="true">
@@ -187,13 +245,50 @@ export function PreparationInProgress({
           ? `Your ${accountCount === 1 ? "connected profile" : `${accountCount} connected profiles`}, available posts, and your answers are the starting point.`
           : "Your answers are becoming the starting point for your Brain."}
       </p>
-      <div className="ob-preparing-status">
-        <Loader2 className="motion-safe:animate-spin" />
-        {jobStatus === "queued"
-          ? "Your preparation is in the queue"
-          : "Preparing your Brain and checking your first draft"}
-      </div>
-      <span className="ob-small">You can leave and come back. Your progress is saved.</span>
+      {jobStatus === "queued" && !progress?.status ? (
+        <div className="ob-preparing-status">
+          <Loader2 className="motion-safe:animate-spin" />
+          Your preparation is in the queue
+        </div>
+      ) : (
+        <div className="ob-progress">
+          <div
+            className="ob-progress-bar"
+            role="progressbar"
+            aria-label="Preparation progress"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={percent}
+            aria-valuetext={current?.label}
+          >
+            <span style={{ width: `${percent}%` }} />
+          </div>
+          <ol className="ob-progress-steps">
+            {steps.map((step) => (
+              <li key={step.id} className={`ob-progress-step is-${step.state}`}>
+                {step.state === "done" ? (
+                  <Check aria-hidden="true" />
+                ) : step.state === "active" ? (
+                  <Loader2 className="motion-safe:animate-spin" aria-hidden="true" />
+                ) : (
+                  <span className="ob-progress-dot" aria-hidden="true" />
+                )}
+                <span>{step.label}</span>
+                <span className="sr-only">
+                  {step.state === "done"
+                    ? " (done)"
+                    : step.state === "active"
+                      ? " (in progress)"
+                      : ""}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+      <span className="ob-small">
+        This usually takes under a minute. You can leave and come back. Your progress is saved.
+      </span>
     </div>
   );
 }
@@ -361,7 +456,9 @@ export function FirstDraft({
   brief: OnboardingBrief;
 }) {
   const platform = draft.platform || brief.platform;
-  const Icon = onboardingIcons[platform];
+  // Nothing connected and no platform named: this is a plain text post, not a network-specific one.
+  const neutral = onboardingPlatformIsNeutral(brief);
+  const Icon = neutral ? Feather : onboardingIcons[platform];
   return (
     <article className="ob-first-draft">
       <div className="ob-draft-ribbon">
@@ -371,7 +468,10 @@ export function FirstDraft({
         <PersonAvatar url={brief.avatarUrl} name={brief.displayName} />
         <span>
           <strong>{brief.displayName}</strong>
-          <small>{providerName(platform)} · ready for your review</small>
+          <small>
+            {neutral ? "Text post for the platform you choose" : providerName(platform)} · ready for
+            your review
+          </small>
         </span>
         <Icon />
       </div>

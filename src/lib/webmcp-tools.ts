@@ -581,6 +581,16 @@ export function createAuthenticatedWebMcpTools(refresh: () => Promise<void>): We
       objectSchema({ provider: platform }),
     ),
     readTool(
+      "list_uploaded_media",
+      "Uploaded post media",
+      "Recovers existing public image, video, and file media objects from this Bento workspace without uploading them again. Follow nextCursor until null and pass a returned media object to create_social_post.media.",
+      "list_uploaded_media",
+      objectSchema({
+        cursor: string("nextCursor from the previous page.", { minLength: 1, maxLength: 2_000 }),
+        limit: number("Maximum upload objects per page.", { minimum: 1, maximum: 100 }),
+      }),
+    ),
+    readTool(
       "list_social_posts",
       "Social posts",
       "Lists stored Scheduler posts with full text/media and pagination. Parent status and targetStatus are distinct; date bounds default to destination published_at. Follow pagination.nextCursor. Use get_social_post for all destinations, stored metrics and attempts.",
@@ -720,7 +730,7 @@ export function createAuthenticatedWebMcpTools(refresh: () => Promise<void>): We
     writeTool(
       "upload_media",
       "Upload media to Bento",
-      "Imports one public media URL within plan/storage limits or inline base64 for files up to 128 KiB. For larger local files use begin_media_upload and binary chunks. Reuse returned media in ONE multi-platform post.",
+      "Imports one public media URL within plan/storage limits or inline base64 for files up to 128 KiB. For larger local files use begin_media_upload and binary chunks. Read the returned media object from JSON text and pass it in ONE multi-platform post.",
       "upload_media",
       {
         sourceUrl: string("Public HTTP or HTTPS media URL."),
@@ -742,7 +752,7 @@ export function createAuthenticatedWebMcpTools(refresh: () => Promise<void>): We
     writeTool(
       "begin_media_upload",
       "Start a large media upload",
-      "Checks plan and remaining storage and returns private, two-hour HTTP upload instructions. PUT original binary 8 MiB chunks, then POST their ETags to complete and receive media. No compression or full-file base64 is required. Never expose the returned credential. Requires file and HTTP access in the client; otherwise use Bento's attachment picker.",
+      "Checks plan and remaining storage and returns private, two-hour HTTP upload instructions in JSON text. PUT original binary 8 MiB chunks, then POST their ETags to complete and receive the media object. No compression or full-file base64 is required. Never expose the returned credential. Requires file and HTTP access in the client; otherwise use Bento's attachment picker.",
       "begin_media_upload",
       {
         fileName: string("Original filename including extension.", {
@@ -763,7 +773,7 @@ export function createAuthenticatedWebMcpTools(refresh: () => Promise<void>): We
     writeTool(
       "create_social_post",
       "Save social post",
-      "Creates or edits ONE draft for all selected accounts. Upload media once. Use connectionOverrides[connectionId].bodyOverride for each platform's caption; providerSettings.youtube holds title/description. Pass id to edit the same draft, not duplicate it.",
+      "Creates or edits ONE post for all selected accounts as a draft, schedule, or immediate publish. Pass uploaded media objects, not file IDs. TikTok accepts one video or up to 10 ordered JPEG or WebP images; set providerSettings.tiktok.privacyLevel before scheduling or publishing. For YouTube Shorts set providerSettings.youtube.youtubeFormat to short; YouTube may require the thumbnail to be set in Studio. Use connectionOverrides[connectionId].bodyOverride for each platform's caption; providerSettings.youtube holds title and description. Pass id to edit the same post, not duplicate it.",
       "create_social_post",
       {
         id: id("Existing post ID when updating."),
@@ -778,7 +788,7 @@ export function createAuthenticatedWebMcpTools(refresh: () => Promise<void>): We
         },
         media: {
           ...array(
-            "Previously uploaded Bento media items.",
+            "Previously uploaded Bento media items, in order. For a TikTok photo carousel use 1-10 JPEG or WebP images; the first is the cover. Do not mix video and images for TikTok.",
             objectSchema(
               {
                 key: string("Bento media storage key.", { minLength: 1, maxLength: 500 }),
@@ -806,6 +816,58 @@ export function createAuthenticatedWebMcpTools(refresh: () => Promise<void>): We
                 graduationStrategy: string("Trial Reel graduation strategy.", {
                   enum: ["MANUAL", "SS_PERFORMANCE"],
                   default: "MANUAL",
+                }),
+              },
+              [],
+              true,
+            ),
+            youtube: objectSchema(
+              {
+                youtubeFormat: string("YouTube video format; use short for Shorts.", {
+                  enum: ["short", "video"],
+                }),
+                youtubePrivacy: string("YouTube video visibility.", {
+                  enum: ["private", "unlisted", "public"],
+                }),
+                titleOverride: string("YouTube title for this post.", { maxLength: 100 }),
+                description: string("YouTube video description.", { maxLength: 5_000 }),
+                thumbnail: objectSchema(
+                  {
+                    key: string("Uploaded thumbnail storage key.", {
+                      minLength: 1,
+                      maxLength: 500,
+                    }),
+                    url: string("Uploaded thumbnail URL.", { format: "uri", maxLength: 2_000 }),
+                    name: string("Thumbnail filename.", { minLength: 1, maxLength: 255 }),
+                    mimeType: string("Thumbnail MIME type.", { minLength: 1, maxLength: 100 }),
+                    size: number("Thumbnail size in bytes.", {
+                      minimum: 1,
+                      maximum: 5 * 1024 * 1024 * 1024,
+                      multipleOf: 1,
+                    }),
+                  },
+                  ["key", "url", "name", "mimeType", "size"],
+                ),
+              },
+              [],
+              true,
+            ),
+            tiktok: objectSchema(
+              {
+                privacyLevel: string(
+                  "TikTok privacy level, required when scheduling or publishing. Use a level allowed for the connected account.",
+                ),
+                disableComment: boolean("Disable comments on this TikTok post."),
+                disableDuet: boolean("Disable duets on a TikTok video."),
+                disableStitch: boolean("Disable stitches on a TikTok video."),
+                commercialContent: boolean("This TikTok post includes commercial content."),
+                brandOrganicToggle: boolean("This TikTok post promotes your own brand."),
+                brandContentToggle: boolean("This TikTok post promotes another brand."),
+                isAigc: boolean("Mark TikTok content as AI generated."),
+                autoAddMusic: boolean("Add recommended music to a TikTok photo carousel."),
+                videoCoverTimestampMs: number("Video cover time in milliseconds.", {
+                  minimum: 0,
+                  multipleOf: 1,
                 }),
               },
               [],

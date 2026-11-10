@@ -7,6 +7,10 @@ description: Operate a creator's Bento workspace through MCP, including Content 
 
 Use the connected Bento MCP server for Bento data and actions. Do not invent IDs: list the relevant accounts or records first.
 
+## Free tools
+
+Call `list_free_tools` to find the exact slug, runner, and input fields. All 59 public free tools run through MCP: `run_free_text_tool` for text and link utilities, `run_free_ai_tool` for writing, `run_free_media_tool` for public media URLs, `run_free_image_tool` for images, and `transcribe_free_audio` for audio. Pass `workspaceId` from `list_workspaces` when the user names a brand; usage limits and owned `mediaKey` access follow that workspace. Set `rightsConfirmed: true` for public media only when the user confirms ownership or permission. Media download URLs expire quickly. Image results arrive as MCP image content; save them separately if the user wants to reuse them.
+
 ## Read the creator's context
 
 Before planning, drafting, or analysing content, use the relevant stored context:
@@ -33,11 +37,13 @@ the user's plan. Never invent a missing metric or treat an unavailable metric as
 
 ## Create a social post
 
-1. Call `list_social_accounts` and select only accounts the user named.
-2. Upload media once. For a local video over 8 MB, call `begin_media_upload` with its original filename, MIME type, kind and exact byte size, then use your file/HTTP tools to send binary chunks and complete the upload. Keep the returned credential private. Do not compress the video to fit MCP JSON. `upload_media` supports public URLs and remote MCP inline base64 up to 25 MiB. Browser WebMCP inline uploads are limited to 128 KiB; use `begin_media_upload` for larger local files. Every path enforces plan and remaining storage limits.
+When the user names more than one Bento workspace, call `list_workspaces` first and match each requested brand to an active workspace ID. Pass that ID as `workspaceId` on every social account, upload, scheduling, and verification tool call. Without `workspaceId`, MCP uses the original workspace for compatibility. Never infer a workspace from a social handle alone, and never mix connection IDs or media keys from different workspaces in one post. Create one post per workspace and verify each result separately; if one fails, report which workspace failed rather than retrying a successful post.
+
+1. Call `list_social_accounts` for the selected workspace and select only accounts the user named.
+2. Upload media once per workspace. For a local video over 8 MB, call `begin_media_upload` with its original filename, MIME type, kind and exact byte size, then use your file/HTTP tools to send binary chunks and complete the upload. Keep the returned credential private. Do not compress the video to fit MCP JSON. `upload_media` supports public URLs and remote MCP inline base64 up to 25 MiB. Browser WebMCP inline uploads are limited to 128 KiB; use `begin_media_upload` for larger local files. Every path enforces plan and remaining storage limits.
 3. Create **ONE** `create_social_post` for one piece of content across all requested networks: include every selected `connectionId`, shared `media`, and `connectionOverrides[connectionId].bodyOverride` for the different captions. YouTube `titleOverride`, `description` and `youtubePrivacy` go in `providerSettings.youtube`. Different captions are not a reason to create separate drafts.
 4. Use `draft`, `schedule`, or `publish_now` mode as requested. A draft is not scheduled or published. Scheduling requires an ISO timestamp with offset and the creator's IANA timezone. Use `publish_now` only when the user explicitly asked to publish now.
-5. Verify the returned post ID, targets, captions and media with `list_social_posts`. Edit that same post by passing its `id` to `create_social_post`; retain the full intended account/media/settings selection. Never delete or duplicate posts to change a caption.
+5. Verify the returned post ID, targets, captions and media with `list_social_posts` in the same workspace. Edit that same post by passing its `id` and `workspaceId` to `create_social_post`; retain the full intended account/media/settings selection. Never delete or duplicate posts to change a caption.
 
 Read [references/tools.md](references/tools.md) for the exact upload protocol and a multi-network draft example. If the client cannot read the attached file or send HTTP, explain that limitation and ask the user to upload it in Bento, then reuse its real media key. Never fabricate a URL/key or claim success before upload completion.
 

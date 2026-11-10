@@ -1,3 +1,9 @@
+import {
+  xThreadRepliesSchema,
+  linkedInFirstCommentSchema,
+  xThreadError,
+  linkedInFirstCommentError,
+} from "./scheduler-follow-ups";
 import { scheduledPostAutoDmSchemas } from "./scheduled-post-auto-dm";
 import { z } from "zod";
 import { socialMediaSizeError } from "./social-media-limits";
@@ -60,6 +66,7 @@ export type SchedulerConnection = {
   status: "active" | "expired" | "revoked" | "error";
   connectedAt: string;
   canPublish: boolean;
+  canFirstComment?: boolean;
   publishBlockReason: string | null;
   autoDmBlockReason?: string | null;
   xCapabilities?: XAccountCapabilities | null;
@@ -125,7 +132,9 @@ export function socialRetryDelaySeconds(
 
 export type SchedulerTarget = {
   id: string;
-  connectionId: string;
+  connectionId: string | null;
+  accountHandle?: string | null;
+  accountDisplayName?: string | null;
   provider: SocialProvider;
   status:
     | "pending"
@@ -966,11 +975,12 @@ export const SOCIAL_PROVIDER_DEFINITIONS: Record<SocialProvider, SocialProviderD
     name: "TikTok",
     color: "#111111",
     maxText: 2_200,
-    media: "video-required",
-    supportsImages: false,
+    media: "required",
+    supportsImages: true,
     supportsVideo: true,
+    imageMimeTypes: ["image/jpeg", "image/webp"],
     videoMimeTypes: ["video/mp4", "video/quicktime", "video/webm"],
-    maxMedia: 1,
+    maxMedia: 10,
     videoCover: "timestamp",
     setupNote:
       "TikTok Login Kit and Content Posting are live; public Direct Posts still require TikTok's separate audit.",
@@ -1063,6 +1073,8 @@ export const socialPostInputSchema = z
             bodyOverride: z.string().max(X_LONG_POST_LIMIT).optional(),
             mentions: z.array(z.unknown()).max(20).optional(),
             xCommunity: xCommunityDraftSchema.nullable().optional(),
+            threadReplies: xThreadRepliesSchema.nullable().optional(),
+            firstComment: linkedInFirstCommentSchema.nullable().optional(),
           })
           .strict(),
       )
@@ -1079,6 +1091,21 @@ export const socialPostInputSchema = z
         message: "Choose the destination before customizing its text.",
       });
     for (const [provider, settings] of Object.entries(value.providerSettings)) {
+      for (const [key, schema] of [
+        ["threadReplies", xThreadRepliesSchema],
+        ["firstComment", linkedInFirstCommentSchema],
+      ] as const) {
+        if (settings[key] != null && !schema.safeParse(settings[key]).success)
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message:
+              key === "threadReplies"
+                ? "X threads support up to 25 posts."
+                : "LinkedIn first comments allow 1,250 characters.",
+            path: ["providerSettings", provider, key],
+          });
+      }
+
       if (settings.mentions !== undefined) {
         const mentionBody =
           provider === "youtube" && typeof settings.description === "string"
@@ -1308,10 +1335,34 @@ export function validatePostForProviders(
   for (const provider of providers) {
     const definition = SOCIAL_PROVIDER_DEFINITIONS[provider];
     const settings = providerSettings[provider] || {};
+    const followUpError =
+      provider === "twitter"
+        ? xThreadError(
+            typeof settings.bodyOverride === "string" ? settings.bodyOverride : body,
+            settings,
+          )
+        : provider === "linkedin"
+          ? linkedInFirstCommentError(settings)
+          : null;
+    if (followUpError) {
+      errors[provider] = followUpError;
+      continue;
+    }
+
     if (provider === "twitter") {
       const communityError = xCommunityError(settings);
       if (communityError) {
         errors.twitter = communityError;
+        continue;
+      }
+    }
+    if (provider === "tiktok") {
+      const videos = media.filter((item) => item.mimeType.startsWith("video/"));
+      if (videos.length && media.length !== 1) {
+        errors.tiktok =
+          videos.length > 1
+            ? "TikTok accepts one video per post."
+            : "TikTok cannot mix images and video in one post.";
         continue;
       }
     }
@@ -1362,7 +1413,9 @@ export function validatePostForProviders(
     const textForLimit =
       provider === "youtube" ? youtubeDescriptionFrom(providerBody, settings) : providerBody;
     const maxText =
-      provider === "twitter" && (xCapabilities?.canPostLong || validationStage === "draft_handoff")
+      provider === "twitter" &&
+      settings.threadReplies == null &&
+      (xCapabilities?.canPostLong || validationStage === "draft_handoff")
         ? X_LONG_POST_LIMIT
         : definition.maxText;
     const textLength =
@@ -1535,6 +1588,7 @@ export function validatePostForProviders(
       const duration = Number(settings.videoDurationSeconds);
       const maximum = Number(settings.maxVideoPostDurationSec);
       if (
+        media.some((item) => item.mimeType.startsWith("video/")) &&
         Number.isFinite(duration) &&
         Number.isFinite(maximum) &&
         maximum > 0 &&

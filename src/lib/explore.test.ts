@@ -5,6 +5,7 @@ import {
   exploreCategorySchema,
   exploreOptInStatusCopy,
   explorePreviewUrl,
+  exploreSearchNeedsNoindex,
   exploreReviewStatusAfterOptIn,
   isLiveOnExplore,
   isReadyForExploreReview,
@@ -23,6 +24,16 @@ describe("Explore directory configuration", () => {
     expect(
       identifiers.every((identifier) => exploreCategorySchema.safeParse(identifier).success),
     ).toBe(true);
+  });
+
+  it("noindexes any filtered or paged explore variant", () => {
+    expect(exploreSearchNeedsNoindex({})).toBe(false);
+    expect(exploreSearchNeedsNoindex({ category: undefined, q: undefined, page: undefined })).toBe(
+      false,
+    );
+    expect(exploreSearchNeedsNoindex({ q: "" })).toBe(true);
+    expect(exploreSearchNeedsNoindex({ page: 1 })).toBe(true);
+    expect(exploreSearchNeedsNoindex({ category: "creator" })).toBe(true);
   });
 
   it("normalizes public search text before it reaches the directory query", () => {

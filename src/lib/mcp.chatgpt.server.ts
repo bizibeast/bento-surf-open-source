@@ -3,6 +3,7 @@ import type { AuthInfo } from "@modelcontextprotocol/server";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod-v4";
 import type { CreatorMcpContext } from "./mcp.creator-ops.server";
+import type { McpFreeToolOperations } from "./mcp-free-tools.server";
 import { reorderPagesForCreator } from "./pages.functions";
 import { schedulerReadFiltersShape } from "./mcp-scheduler-read";
 import type { listSchedulerPosts } from "./mcp-scheduler-read.server";
@@ -11,6 +12,7 @@ import { postingScheduleSchema } from "./social-scheduler";
 
 export const CHATGPT_MCP_PATH = "/chatgpt/mcp";
 export const CHATGPT_MCP_INSTRUCTIONS =
+  "For social posts across brands, call list_workspaces, then pass each active workspaceId to account, media, scheduling, and verification tools. Create and verify a separate post in each workspace; connection IDs and media keys cannot cross workspaces. Omission uses the original workspace. " +
   "Use list tools to read IDs before creating or updating. Counts are summaries, not proof of individual posts; paginate list_social_posts and retain publication and metric timestamps. Page tools edit the creator's public link-in-bio. Social tools save a draft or a scheduled post in Bento. Create Auto-DM starts paused unless enabled is true. This server has no store, product, discount, checkout, payment, booking, or referral tools.";
 
 /** Checkout, paid booking, and tip blocks stay on the full MCP server. */
@@ -63,6 +65,48 @@ const mediaSchema = z.object({
   mimeType: z.string(),
   size: z.number().int().positive(),
 });
+const tiktokPostSettingsSchema = z
+  .object({
+    privacyLevel: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Required when scheduling a TikTok post. Use a privacy level allowed for the connected account.",
+      ),
+    disableComment: z.boolean().optional(),
+    disableDuet: z.boolean().optional(),
+    disableStitch: z.boolean().optional(),
+    commercialContent: z.boolean().optional(),
+    brandOrganicToggle: z.boolean().optional(),
+    brandContentToggle: z.boolean().optional(),
+    isAigc: z.boolean().optional(),
+    autoAddMusic: z
+      .boolean()
+      .optional()
+      .describe("Add recommended music to a TikTok photo carousel."),
+    videoCoverTimestampMs: z.number().int().min(0).optional(),
+  })
+  .strict();
+const youtubePostSettingsSchema = z
+  .object({
+    youtubeFormat: z.enum(["short", "video"]).optional(),
+    youtubePrivacy: z.enum(["private", "unlisted", "public"]).optional(),
+    description: z.string().max(5_000).optional(),
+    titleOverride: z.string().max(100).optional(),
+    thumbnail: mediaSchema
+      .optional()
+      .describe(
+        "Custom thumbnail image. YouTube may require Shorts thumbnails to be set in Studio.",
+      ),
+  })
+  .strict();
+const socialPostSettingsSchema = z
+  .object({
+    tiktok: tiktokPostSettingsSchema.optional(),
+    youtube: youtubePostSettingsSchema.optional(),
+  })
+  .strict();
 const captionSchema = z.object({
   connectionId: z.uuid(),
   bodyOverride: z.string().max(25_000),
@@ -90,7 +134,9 @@ const READ: ChatGptAnnotations = {
   openWorldHint: false,
 };
 
-export type ChatGptToolOperations = {
+export type ChatGptToolOperations = McpFreeToolOperations & {
+  listMcpWorkspaces: (authUserId: string) => Promise<any>;
+  resolveMcpWorkspaceId: (authUserId: string, requestedId?: string) => Promise<string>;
   getBentoOverview: (userId: string, origin: string) => Promise<any>;
   getProfileWorkspace: (context: CreatorMcpContext) => Promise<any>;
   listPages: (userId: string) => Promise<{ pages: any[]; blocks: any[] }>;
@@ -106,6 +152,12 @@ export type ChatGptToolOperations = {
   getMcpContentMedia: (userId: string, input: any) => Promise<any>;
   uploadMedia: (authInfo: AuthInfo, origin: string, input: any) => Promise<any>;
   beginMcpMediaUpload: (userId: string, origin: string, input: any) => Promise<any>;
+  listMcpUploadedMedia: (
+    userId: string,
+    origin: string,
+    cursor?: string,
+    limit?: number,
+  ) => Promise<any>;
   getAnalyticsWorkspace: (context: CreatorMcpContext, input: any) => Promise<any>;
   listAutoDmAutomations: (
     userId: string,
@@ -212,6 +264,8 @@ export function registerChatGptTools(
   creatorContext: () => CreatorMcpContext,
 ) {
   const userId = userIdFrom(authInfo);
+  const socialWorkspaceId = (workspaceId?: string) =>
+    operations.resolveMcpWorkspaceId(userId, workspaceId);
   const register = (
     name: string,
     title: string,
@@ -248,6 +302,18 @@ export function registerChatGptTools(
     async () =>
       textResult("Loaded the Bento workspace overview.", {
         overview: publicOverview(await operations.getBentoOverview(userId, origin)),
+      }),
+  );
+
+  register(
+    "list_workspaces",
+    "List Bento workspaces",
+    "List workspaces owned by this login. Use an active workspace ID when scheduling for another brand.",
+    READ,
+    z.object({}),
+    async () =>
+      textResult("Loaded owned Bento workspaces.", {
+        workspaces: await operations.listMcpWorkspaces(userId),
       }),
   );
 
@@ -298,7 +364,7 @@ export function registerChatGptTools(
     "Create a secondary Bento page with a name and an optional public URL.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
       openWorldHint: true,
     },
@@ -318,7 +384,7 @@ export function registerChatGptTools(
     "Rename one Bento page the creator owns.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: true,
     },
@@ -335,7 +401,7 @@ export function registerChatGptTools(
     "Set the order of the creator's visible pages. Pass every visible page ID once.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: true,
     },
@@ -395,7 +461,7 @@ export function registerChatGptTools(
     "Add a link, image, video, audio, file, heading, note, quote, map, Spotify, email-capture, contact, divider, or section block to a page. Omit pageId to place it on the home page.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
       openWorldHint: true,
     },
@@ -421,7 +487,7 @@ export function registerChatGptTools(
     "Change the content, cover, or size of one existing link, media, text, or layout block.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: true,
     },
@@ -446,7 +512,7 @@ export function registerChatGptTools(
     "Move blocks on the creator's page grid. Pass the new x, y, width, height, and position for each block you want to place.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: true,
     },
@@ -481,12 +547,16 @@ export function registerChatGptTools(
   register(
     "list_social_accounts",
     "List social accounts",
-    "List connected social profiles and whether each one can publish or run Auto-DMs.",
+    "List connected social profiles in one workspace and whether each one can publish or run Auto-DMs. Use list_workspaces before selecting another brand.",
     READ,
-    z.object({ provider: socialProviderSchema.optional() }),
-    async ({ provider }) => {
-      const accounts = await operations.listSocialAccounts(userId, provider);
-      return textResult(`Found ${accounts.length} connected social account(s).`, { accounts });
+    z.object({ workspaceId: z.uuid().optional(), provider: socialProviderSchema.optional() }),
+    async ({ workspaceId, provider }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      const accounts = await operations.listSocialAccounts(selectedId, provider);
+      return textResult(`Found ${accounts.length} connected social account(s).`, {
+        workspaceId: selectedId,
+        accounts,
+      });
     },
   );
 
@@ -496,15 +566,17 @@ export function registerChatGptTools(
     "List stored Scheduler posts with full captions and destination settings. Follow pagination.nextCursor using cursor. status is parent state; targetStatus is platform state; date bounds default to destination published_at. No provider refresh.",
     READ,
     z.object({
+      workspaceId: z.uuid().optional(),
       status: socialPostStatusSchema.optional(),
       ...schedulerReadFiltersShape,
       limit: z.number().int().min(1).max(100).default(30),
     }),
-    async ({ status, limit, ...filters }) => {
-      const result = await operations.listSocialPosts(userId, status, limit, filters);
+    async ({ workspaceId, status, limit, ...filters }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      const result = await operations.listSocialPosts(selectedId, status, limit, filters);
       return textResult(
         `Found ${result.posts.length} social post(s) on this page.`,
-        sanitizeMcpReadData(result),
+        sanitizeMcpReadData({ workspaceId: selectedId, ...result }),
       );
     },
   );
@@ -512,7 +584,7 @@ export function registerChatGptTools(
   register(
     "draft_social_post",
     "Draft social post",
-    "Save a new social post as a draft in Bento. This does not publish or schedule it.",
+    "Save a new social post as a draft in Bento. Pass uploaded media objects in media. TikTok accepts one video or up to 10 ordered JPEG or WebP images; set providerSettings.tiktok.privacyLevel before scheduling. For YouTube Shorts set providerSettings.youtube.youtubeFormat to short. This does not publish or schedule it.",
     {
       readOnlyHint: false,
       destructiveHint: false,
@@ -520,86 +592,104 @@ export function registerChatGptTools(
       openWorldHint: false,
     },
     z.object({
+      workspaceId: z.uuid().optional(),
       body: z.string().max(25_000),
       title: z.string().max(300).default(""),
       connectionIds: z.array(z.uuid()).max(20).default([]),
       media: z.array(mediaSchema).max(10).default([]),
+      providerSettings: socialPostSettingsSchema.optional(),
       captions: z.array(captionSchema).max(20).optional(),
       timezone: z.string().min(1).max(100).default("UTC"),
     }),
-    async ({ captions, ...input }) =>
-      textResult("Saved the social draft.", {
-        post: await operations.saveSocialPostForUser(userId, {
+    async ({ workspaceId, captions, ...input }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      return textResult("Saved the social draft.", {
+        workspaceId: selectedId,
+        post: await operations.saveSocialPostForUser(selectedId, {
           ...input,
           connectionOverrides: connectionOverrides(captions),
           scheduledAt: null,
           asDraft: true,
           publishNow: false,
         }),
-      }),
+      });
+    },
   );
 
   register(
     "schedule_social_post",
     "Schedule social post",
-    "Create a social post, or schedule an existing draft when id is set, for a future time on the selected accounts. This does not publish immediately.",
+    "Create a social post, or schedule an existing draft when id is set, for a future time on the selected accounts. Pass uploaded media objects in media. For TikTok pass one video or up to 10 ordered JPEG or WebP images and set providerSettings.tiktok.privacyLevel. For YouTube Shorts set providerSettings.youtube.youtubeFormat to short; YouTube may require setting the thumbnail in Studio. This does not publish immediately.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
       openWorldHint: true,
     },
     z.object({
+      workspaceId: z.uuid().optional(),
       id: z.uuid().optional(),
       body: z.string().max(25_000),
       title: z.string().max(300).default(""),
       connectionIds: z.array(z.uuid()).min(1).max(20),
       media: z.array(mediaSchema).max(10).default([]),
+      providerSettings: socialPostSettingsSchema.optional(),
       captions: z.array(captionSchema).max(20).optional(),
       scheduledAt: z.iso.datetime({ offset: true }),
       timezone: z.string().min(1).max(100).default("UTC"),
     }),
-    async ({ captions, ...input }) =>
-      textResult("Scheduled the social post.", {
-        post: await operations.saveSocialPostForUser(userId, {
+    async ({ workspaceId, captions, ...input }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      return textResult("Scheduled the social post.", {
+        workspaceId: selectedId,
+        post: await operations.saveSocialPostForUser(selectedId, {
           ...input,
           connectionOverrides: connectionOverrides(captions),
           asDraft: false,
           publishNow: false,
         }),
-      }),
+      });
+    },
   );
 
   register(
     "update_social_post",
     "Update social post",
-    "Replace the caption, title, destinations, and media of one existing social post. Pass scheduledAt to keep or set a future publish time. Omit scheduledAt to store it as a draft. This does not publish immediately.",
+    "Replace the caption, title, destinations, media, and provider settings of one existing social post. Pass scheduledAt to keep or set a future publish time. For TikTok photo carousels pass up to 10 ordered JPEG or WebP images and providerSettings.tiktok.privacyLevel. For YouTube Shorts set providerSettings.youtube.youtubeFormat to short. Omit scheduledAt to store it as a draft. This does not publish immediately.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: true,
     },
     z.object({
+      workspaceId: z.uuid().optional(),
       id: z.uuid(),
       body: z.string().max(25_000),
       title: z.string().max(300).default(""),
       connectionIds: z.array(z.uuid()).max(20),
       media: z.array(mediaSchema).max(10),
+      providerSettings: socialPostSettingsSchema.optional(),
       captions: z.array(captionSchema).max(20).optional(),
       scheduledAt: z.iso.datetime({ offset: true }).optional(),
       timezone: z.string().min(1).max(100).default("UTC"),
     }),
-    async ({ captions, scheduledAt, ...input }) =>
-      textResult(scheduledAt ? "Updated the scheduled social post." : "Updated the social draft.", {
-        post: await operations.saveSocialPostForUser(userId, {
-          ...input,
-          connectionOverrides: connectionOverrides(captions),
-          scheduledAt: scheduledAt ?? null,
-          asDraft: !scheduledAt,
-          publishNow: false,
-        }),
-      }),
+    async ({ workspaceId, captions, scheduledAt, ...input }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      return textResult(
+        scheduledAt ? "Updated the scheduled social post." : "Updated the social draft.",
+        {
+          workspaceId: selectedId,
+          post: await operations.saveSocialPostForUser(selectedId, {
+            ...input,
+            connectionOverrides: connectionOverrides(captions),
+            scheduledAt: scheduledAt ?? null,
+            asDraft: !scheduledAt,
+            publishNow: false,
+          }),
+        },
+      );
+    },
   );
 
   register(
@@ -612,11 +702,14 @@ export function registerChatGptTools(
       idempotentHint: true,
       openWorldHint: false,
     },
-    z.object({ id: z.uuid() }),
-    async ({ id }) =>
-      textResult("Cancelled the social post.", {
-        scheduler: await operations.manageScheduler(userId, { action: "cancel_post", id }),
-      }),
+    z.object({ workspaceId: z.uuid().optional(), id: z.uuid() }),
+    async ({ workspaceId, id }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      return textResult("Cancelled the social post.", {
+        workspaceId: selectedId,
+        scheduler: await operations.manageScheduler(selectedId, { action: "cancel_post", id }),
+      });
+    },
   );
 
   register(
@@ -624,11 +717,13 @@ export function registerChatGptTools(
     "Get content calendar",
     "Read saved posting times and the posts currently scheduled in Bento.",
     READ,
-    z.object({}),
-    async () => {
-      const scheduler = await operations.getSchedulerWorkspace(userId);
+    z.object({ workspaceId: z.uuid().optional() }),
+    async ({ workspaceId }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      const scheduler = await operations.getSchedulerWorkspace(selectedId);
       const posts = Array.isArray(scheduler?.posts) ? scheduler.posts : [];
       return textResult("Loaded the content calendar.", {
+        workspaceId: selectedId,
         calendar: {
           postingSchedule: scheduler?.postingSchedule ?? null,
           scheduledPosts: posts.filter((post: { status?: string }) => post?.status === "scheduled"),
@@ -643,18 +738,21 @@ export function registerChatGptTools(
     "Save the creator's weekly posting times and timezone. This does not publish a post.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: false,
     },
-    z.object({ schedule: postingScheduleSchema }),
-    async ({ schedule }) =>
-      textResult("Saved posting times.", {
-        scheduler: await operations.manageScheduler(userId, {
+    z.object({ workspaceId: z.uuid().optional(), schedule: postingScheduleSchema }),
+    async ({ workspaceId, schedule }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      return textResult("Saved posting times.", {
+        workspaceId: selectedId,
+        scheduler: await operations.manageScheduler(selectedId, {
           action: "save_posting_schedule",
           schedule,
         }),
-      }),
+      });
+    },
   );
 
   register(
@@ -694,16 +792,24 @@ export function registerChatGptTools(
       openWorldHint: true,
     },
     z.object({
+      workspaceId: z.uuid().optional(),
       sourceUrl: z.url().optional(),
       base64: z.string().optional(),
       fileName: z.string().min(1).max(255),
       mimeType: z.string().min(1).max(100),
       kind: z.enum(["image", "video", "audio", "file"]),
     }),
-    async (input) =>
-      textResult("Uploaded media to Bento.", {
-        media: await operations.uploadMedia(authInfo, origin, input),
-      }),
+    async ({ workspaceId, ...input }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      return textResult("Uploaded media to Bento.", {
+        workspaceId: selectedId,
+        media: await operations.uploadMedia(
+          { ...authInfo, extra: { ...authInfo.extra, userId: selectedId } },
+          origin,
+          input,
+        ),
+      });
+    },
   );
 
   register(
@@ -717,6 +823,7 @@ export function registerChatGptTools(
       openWorldHint: false,
     },
     z.object({
+      workspaceId: z.uuid().optional(),
       fileName: z.string().min(1).max(255),
       mimeType: z.string().min(1).max(100),
       kind: z.enum(["image", "video", "audio", "file"]),
@@ -726,10 +833,37 @@ export function registerChatGptTools(
         .positive()
         .max(5 * 1024 * 1024 * 1024),
     }),
-    async (input) =>
-      textResult("Prepared the media upload.", {
-        upload: await operations.beginMcpMediaUpload(userId, origin, input),
-      }),
+    async ({ workspaceId, ...input }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      return textResult("Prepared the media upload.", {
+        workspaceId: selectedId,
+        upload: await operations.beginMcpMediaUpload(selectedId, origin, input),
+      });
+    },
+  );
+
+  register(
+    "list_uploaded_media",
+    "List uploaded media",
+    "Recover existing public image, video, and file media objects from the creator's Bento workspace without uploading them again. Follow nextCursor until null. Pass a returned media object directly to a social post; private product files are excluded.",
+    {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+    z.object({
+      workspaceId: z.uuid().optional(),
+      cursor: z.string().min(1).max(2_000).optional(),
+      limit: z.number().int().min(1).max(100).default(50),
+    }),
+    async ({ workspaceId, cursor, limit }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      return textResult("Loaded previously uploaded post media.", {
+        workspaceId: selectedId,
+        ...(await operations.listMcpUploadedMedia(selectedId, origin, cursor, limit)),
+      });
+    },
   );
 
   register(
@@ -789,7 +923,7 @@ export function registerChatGptTools(
     "Create an Instagram, Facebook, or X Auto-DM automation. It stays paused unless enabled is true. Use set_auto_dm_enabled to turn a paused automation on.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
       openWorldHint: true,
     },
@@ -807,7 +941,7 @@ export function registerChatGptTools(
     "Change fields on one existing Instagram, Facebook, or X Auto-DM automation. Omitted fields stay as they are.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: true,
     },
@@ -851,7 +985,7 @@ export function registerChatGptTools(
     "Enable or pause one Instagram, Facebook, or X Auto-DM automation. Enabling lets that automation message people on the connected account.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: true,
     },

@@ -475,9 +475,25 @@ describe("social scheduler validation", () => {
     ).toEqual({});
   });
 
-  it("requires media for Instagram and video for YouTube and TikTok", () => {
+  it("requires media for Instagram and TikTok, and video for YouTube", () => {
     expect(validatePostForProviders("hello", [], ["instagram"]).instagram).toContain("image");
+    expect(validatePostForProviders("hello", [], ["tiktok"]).tiktok).toContain("image or video");
     expect(validatePostForProviders("hello", [image], ["youtube"]).youtube).toContain("video");
+    expect(
+      validatePostForProviders("hello", [image, image], ["tiktok"], "", {
+        tiktok: { privacyLevel: "SELF_ONLY" },
+      }),
+    ).toEqual({});
+    expect(
+      validatePostForProviders("hello", [image, video], ["tiktok"], "", {
+        tiktok: { privacyLevel: "SELF_ONLY" },
+      }).tiktok,
+    ).toContain("cannot mix");
+    expect(
+      validatePostForProviders("hello", [video, video], ["tiktok"], "", {
+        tiktok: { privacyLevel: "SELF_ONLY" },
+      }).tiktok,
+    ).toContain("one video");
     expect(
       validatePostForProviders("hello", [video], ["youtube", "tiktok"], "A video title", {
         tiktok: { privacyLevel: "SELF_ONLY" },
@@ -683,6 +699,11 @@ describe("social scheduler validation", () => {
     expect(schedulerMediaCompatibility(["tiktok", "youtube"])).toMatchObject({
       allowedKinds: ["video"],
       maxMedia: 1,
+      disabled: false,
+    });
+    expect(schedulerMediaCompatibility(["tiktok"])).toMatchObject({
+      allowedKinds: ["image", "video"],
+      maxMedia: 10,
       disabled: false,
     });
     expect(schedulerMediaCompatibility(["instagram", "twitter"])).toMatchObject({

@@ -86,6 +86,17 @@ describe("Instagram OAuth callback safety", () => {
     expect(connectionSource).toContain('if (error.code === "23505")');
   });
 
+  it("clears missed-comment backoff when saving reconnected credentials", () => {
+    const credentialWrite = connectionSource.slice(
+      connectionSource.indexOf("access_token: encryptedAccessToken"),
+      connectionSource.indexOf("token_expires_at: longToken.expires_in"),
+    );
+    expect(credentialWrite).toContain("comment_reconcile_permanent_failures: 0");
+    expect(credentialWrite).toContain("comment_reconcile_next_check_at: null");
+    expect(credentialWrite).toContain("comment_reconcile_paused_at: null");
+    expect(credentialWrite).toContain("comment_reconcile_last_provider_code: null");
+  });
+
   it("verifies the scopes Meta granted before marking a connection healthy", () => {
     const grantedScopesRead = connectionSource.indexOf(
       "const grantedScopes = shortToken.permissions ?? []",

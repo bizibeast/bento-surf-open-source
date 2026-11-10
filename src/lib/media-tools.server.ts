@@ -24,6 +24,7 @@ import {
   readResponseText,
 } from "./request-security.server";
 import { parsePublicHttpUrl } from "./safe-url";
+import { ProviderBudgetError, reserveProviderUsage } from "./provider-budget.server";
 import { socialEmbedSourceUrl, tiktokPhotoSourceUrl } from "./social-embeds";
 import {
   canonicalAudioContentType,
@@ -70,6 +71,8 @@ export type MediaToolsDependencies = {
   providerTimeoutMs?: number;
   transcriptDownloadTimeoutMs?: number;
   transcribeAudio?: MediaTranscriber;
+  /** Set only after the remote MCP bearer and workspace membership are verified. */
+  trustedMcpWorkspaceId?: string;
 };
 
 export type ParsedMediaToolRequest = MediaToolRequest & {
@@ -260,6 +263,7 @@ async function enforceMediaToolRateLimit(
   request: Request,
   env: MediaToolsEnv,
   operation: MediaToolOperation,
+  trustedMcpWorkspaceId?: string,
 ) {
   const limiter =
     operation === "transcript"
@@ -267,7 +271,9 @@ async function enforceMediaToolRateLimit(
       : env.FREE_TOOLS_MEDIA_RATE_LIMITER;
   if (!limiter) return !isProductionLike(env);
 
-  const clientAddress = request.headers.get("cf-connecting-ip")?.trim() || "missing-cloudflare-ip";
+  const clientAddress = trustedMcpWorkspaceId
+    ? `mcp:${trustedMcpWorkspaceId}`
+    : request.headers.get("cf-connecting-ip")?.trim() || "missing-cloudflare-ip";
   const scope = operation === "transcript" ? "free-tool-transcription" : "free-tool-media";
   const result = await limiter.limit({ key: `${scope}:${clientAddress}`.slice(0, 512) });
   return result.success;
@@ -693,7 +699,12 @@ export async function handleFreeToolMediaRequest(
 
     let rateLimitAllowed = false;
     try {
-      rateLimitAllowed = await enforceMediaToolRateLimit(request, env, parsed.operation);
+      rateLimitAllowed = await enforceMediaToolRateLimit(
+        request,
+        env,
+        parsed.operation,
+        dependencies.trustedMcpWorkspaceId,
+      );
     } catch {
       throw new MediaToolHttpError(503, "Media tools are temporarily unavailable");
     }
@@ -708,13 +719,26 @@ export async function handleFreeToolMediaRequest(
       throw new MediaToolHttpError(429, "Too many media requests. Please wait a minute.");
     }
 
-    try {
-      await enforceTurnstileRequest(request, env);
-    } catch (error) {
-      if (error instanceof RequestHttpError) {
-        throw new MediaToolHttpError(error.statusCode, error.message);
+    if (dependencies.trustedMcpWorkspaceId) {
+      try {
+        await reserveProviderUsage(
+          "mcp_media_resolutions",
+          parsed.operation === "transcript" ? 2 : 1,
+          { workspaceId: dependencies.trustedMcpWorkspaceId },
+        );
+      } catch (error) {
+        if (error instanceof ProviderBudgetError) throw new MediaToolHttpError(429, error.message);
+        throw error;
       }
-      throw error;
+    } else {
+      try {
+        await enforceTurnstileRequest(request, env);
+      } catch (error) {
+        if (error instanceof RequestHttpError) {
+          throw new MediaToolHttpError(error.statusCode, error.message);
+        }
+        throw error;
+      }
     }
 
     const cobaltPayload = await requestCobaltMedia(

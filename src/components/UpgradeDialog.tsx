@@ -1,3 +1,11 @@
+import { CheckoutRecoveryBanner } from "./CheckoutRecoveryBanner";
+import {
+  rememberCheckoutForRecovery,
+  readRecoverableCheckout,
+  dismissCheckoutRecovery,
+  checkoutRecoveryProperties,
+  type CheckoutRecovery,
+} from "@/lib/checkout-recovery";
 import { useEffect, useState } from "react";
 import { Check, Sparkles } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
@@ -25,6 +33,7 @@ import { safeNavigationHref } from "@/lib/safe-url";
 import { OPEN_SOURCE_REPOSITORY_URL } from "@/lib/open-source";
 import { motionTokens } from "@/lib/motion";
 import { captureProductEvent } from "@/lib/posthog";
+import { beginCheckoutTracking, forceCheckoutReplay } from "@/lib/checkout-tracking";
 
 export function UpgradeDialog({
   trigger,
@@ -48,6 +57,7 @@ export function UpgradeDialog({
   );
   const [period, setPeriod] = useState<BillingPeriod>("monthly");
   const [offer, setOffer] = useState<{ trialEligible: boolean; active: boolean } | null>(null);
+  const [recoverable, setRecoverable] = useState<CheckoutRecovery | null>(null);
   const [loading, setLoading] = useState(false);
   const [offerError, setOfferError] = useState(false);
   const reduced = useReducedMotion();
@@ -61,17 +71,31 @@ export function UpgradeDialog({
       plan,
       billing_interval: period,
     });
+    forceCheckoutReplay();
     // Count each opening once; plan and period changes inside the dialog are not new opens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      setOffer(null);
+      setRecoverable(null);
+      return;
+    }
     let live = true;
     setOffer(null);
+    setRecoverable(null);
     setOfferError(false);
     void getCheckoutOffer()
       .then((value) => {
-        if (live) setOffer(value);
+        if (live) {
+          setOffer(value);
+          const record = readRecoverableCheckout({ hasAccess: value.active });
+          setRecoverable(record);
+          if (record) {
+            setPlan(record.plan);
+            setPeriod(record.period);
+          }
+        }
       })
       .catch(() => {
         if (live) setOfferError(true);
@@ -80,7 +104,8 @@ export function UpgradeDialog({
       live = false;
     };
   }, [isOpen]);
-  async function startCheckout() {
+  async function startCheckout(selection = { plan, period }) {
+    const { plan, period } = selection;
     if (!offer) return;
     if (offer.active) {
       window.location.href = "/settings?section=plan";
@@ -102,6 +127,13 @@ export function UpgradeDialog({
       const destination = safeNavigationHref(url);
       if (!destination) throw new Error("Checkout returned an invalid destination.");
       captureProductEvent("checkout_started", properties);
+      beginCheckoutTracking({ plan, trial: offer.trialEligible, surface: "upgrade_dialog" });
+      rememberCheckoutForRecovery({
+        plan,
+        period,
+        trial: offer.trialEligible,
+        surface: "upgrade_dialog",
+      });
       window.location.href = destination;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not start checkout.");
@@ -149,6 +181,30 @@ export function UpgradeDialog({
               </button>
             ))}
           </div>
+          {offer && !offer.active && recoverable && (
+            <CheckoutRecoveryBanner
+              record={recoverable}
+              busy={loading}
+              variant="dialog"
+              onRetry={() => {
+                captureProductEvent(
+                  "checkout_recovery_retry_clicked",
+                  checkoutRecoveryProperties(recoverable, "upgrade_dialog"),
+                );
+                setPlan(recoverable.plan);
+                setPeriod(recoverable.period);
+                void startCheckout(recoverable);
+              }}
+              onDismiss={() => {
+                dismissCheckoutRecovery();
+                captureProductEvent(
+                  "checkout_recovery_banner_dismissed",
+                  checkoutRecoveryProperties(recoverable, "upgrade_dialog"),
+                );
+                setRecoverable(null);
+              }}
+            />
+          )}
           <div className="grid gap-3 sm:grid-cols-3">
             {PAID_PLAN_IDS.map((value) => (
               <button
