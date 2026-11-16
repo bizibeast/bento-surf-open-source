@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 vi.stubGlobal(
   "ResizeObserver",
@@ -224,9 +224,52 @@ it("keeps a video post visible when its provider thumbnail expires", () => {
   );
 
   fireEvent.error(screen.getByAltText("video post thumbnail"));
-  expect(screen.getByText("Preview unavailable")).toBeVisible();
-  expect(screen.getByRole("link", { name: "Repost" })).toHaveAttribute(
+  fireEvent.click(screen.getByRole("button", { name: /View insights for Instagram video/ }));
+  expect(screen.getByRole("heading", { name: "Video insights" })).toBeVisible();
+  expect(screen.getByRole("link", { name: "Open on Instagram" })).toHaveAttribute(
     "href",
     "https://www.instagram.com/reel/example/",
   );
+});
+
+it("filters the ranking and follower activity by period, and opens posts beyond the first page", () => {
+  const uploads = Array.from({ length: 14 }, (_, index) => ({
+    ...content[0],
+    remotePostId: `reel-${index}`,
+    contentType: "video" as const,
+    caption: `Reel ${index}`,
+    publishedAt: new Date(Date.now() - (index === 13 ? 45 : 1) * 86_400_000).toISOString(),
+    views: 1_000 - index,
+    detailMetrics: { skipRate: 34.75, reposts: 0 },
+  }));
+  render(
+    <InsightsDashboard
+      accounts={[
+        {
+          ...accounts[0],
+          periodMetrics: { 30: { follows: 30, unfollows: 5 }, 90: { follows: 100, unfollows: 20 } },
+        },
+      ]}
+      content={uploads}
+      history={[]}
+      selectedId="instagram"
+      onSelect={() => {}}
+      displayPeriodDays={30}
+      savingDisplayPeriod={false}
+      onDisplayPeriodChange={() => {}}
+    />,
+  );
+  expect(screen.getByText("+25")).toBeVisible();
+  expect(screen.getByText(/13 posts published in this period/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  fireEvent.click(screen.getByRole("button", { name: "View insights for Reel 12" }));
+  const dialog = screen.getByRole("dialog");
+  expect(within(dialog).getByText("34.75%")).toBeVisible();
+  expect(within(dialog).getByText("Skip rate (first 3 seconds)")).toBeVisible();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+  fireEvent.change(screen.getByLabelText("Insights reporting period"), { target: { value: "90" } });
+  expect(screen.getByText("+80")).toBeVisible();
+  expect(screen.getByText(/14 posts published in this period/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  expect(screen.getByRole("button", { name: "View insights for Reel 13" })).toBeVisible();
 });

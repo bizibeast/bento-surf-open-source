@@ -829,6 +829,8 @@ export function providerSettingsMedia(settings: SocialProviderSettings): Schedul
       }
     }
   }
+  const reelAudio = instagramReelAudioSchema.safeParse(settings.instagram?.reelAudio);
+  if (reelAudio.success) media.push(reelAudio.data.video);
   return media;
 }
 
@@ -1055,6 +1057,54 @@ export const schedulerMediaSchema = z.object({
     .max(5 * 1024 * 1024 * 1024),
 });
 
+export const instagramReelAudioSchema = z.object({
+  sourceKey: z.string().min(1).max(500),
+  video: schedulerMediaSchema.extend({ mimeType: z.literal("video/mp4") }),
+  trackName: z.string().trim().min(1).max(255).nullable(),
+  originalVolume: z.number().int().min(0).max(100),
+  trackVolume: z.number().int().min(0).max(100),
+});
+export type InstagramReelAudio = z.infer<typeof instagramReelAudioSchema>;
+
+export function instagramReelAudioFor(
+  media: SchedulerMedia[],
+  value: unknown,
+): InstagramReelAudio | null {
+  const parsed = instagramReelAudioSchema.safeParse(value);
+  return parsed.success &&
+    media.length === 1 &&
+    media[0].mimeType.startsWith("video/") &&
+    media[0].key === parsed.data.sourceKey
+    ? parsed.data
+    : null;
+}
+
+export const instagramCatalogAudioSchema = z.object({
+  sourceKey: z.string().min(1).max(500),
+  connectionId: z.string().uuid(),
+  audioId: z.string().regex(/^\d{1,30}$/),
+  title: z.string().trim().min(1).max(255),
+  creator: z.string().max(255).nullable(),
+  originalVolume: z.number().int().min(1).max(100),
+  trackVolume: z.number().int().min(1).max(100),
+});
+export type InstagramCatalogAudio = z.infer<typeof instagramCatalogAudioSchema>;
+
+export function instagramCatalogAudioFor(
+  media: SchedulerMedia[],
+  connectionId: string | undefined,
+  value: unknown,
+): InstagramCatalogAudio | null {
+  const parsed = instagramCatalogAudioSchema.safeParse(value);
+  return parsed.success &&
+    connectionId === parsed.data.connectionId &&
+    media.length === 1 &&
+    media[0].mimeType.startsWith("video/") &&
+    media[0].key === parsed.data.sourceKey
+    ? parsed.data
+    : null;
+}
+
 export const socialPostInputSchema = z
   .object({
     id: z.string().uuid().optional(),
@@ -1223,6 +1273,27 @@ export const socialPostInputSchema = z
           message: "X Article text is out of sync.",
           path: ["body"],
         });
+    }
+    if (instagram.catalogAudio != null) {
+      const catalog = instagramCatalogAudioSchema.safeParse(instagram.catalogAudio);
+      if (
+        !catalog.success ||
+        !value.connectionIds.includes(catalog.data.connectionId) ||
+        !instagramCatalogAudioFor(value.media, catalog.data.connectionId, instagram.catalogAudio) ||
+        instagram.reelAudio != null
+      )
+        context.addIssue({
+          code: "custom",
+          message: "Choose Instagram audio for the selected Reel and account.",
+          path: ["providerSettings", "instagram", "catalogAudio"],
+        });
+    }
+    if (instagram.reelAudio != null && !instagramReelAudioFor(value.media, instagram.reelAudio)) {
+      context.addIssue({
+        code: "custom",
+        message: "Apply your audio mix to the selected Instagram Reel video.",
+        path: ["providerSettings", "instagram", "reelAudio"],
+      });
     }
     if (instagram.trialReel != null && typeof instagram.trialReel !== "boolean") {
       context.addIssue({

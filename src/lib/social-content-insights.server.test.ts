@@ -333,9 +333,11 @@ describe("Social content insights", () => {
           { status: 200 },
         );
       }
-      const metric = url.searchParams.get("metric");
-      return new Response(JSON.stringify({ data: [{ name: metric, total_value: { value: 1 } }] }), {
-        status: 200,
+      return Response.json({
+        data: url.searchParams
+          .get("metric")
+          ?.split(",")
+          .map((name) => ({ name, total_value: { value: 1 } })),
       });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -351,7 +353,7 @@ describe("Social content insights", () => {
     );
 
     expect(page.content).toHaveLength(6);
-    expect(fetchMock).toHaveBeenCalledTimes(31);
+    expect(fetchMock).toHaveBeenCalledTimes(19);
     expect(page.nextCursor).toBeTruthy();
     expect(page.nextCursor).not.toContain("secret-access-token");
     expect(page.nextCursor).not.toContain("graph.instagram.com");
@@ -748,20 +750,88 @@ it("keeps supported Threads metrics when shares is rejected", async () => {
   });
 });
 
-it("caps a first import even when the provider always offers another page", async () => {
-  const fetcher = vi.fn(async () =>
-    Response.json({
-      data: [],
-      paging: { cursors: { after: "more" }, next: "https://graph.facebook.com/next" },
+it("carries the archive cursor across bounded refresh jobs", async () => {
+  const fetcher = vi.fn(async (input: string | URL) => {
+    const page = Number(new URL(String(input)).searchParams.get("after") || "0");
+    return Response.json({
+      data: [{ id: `post-${page}`, created_time: "2026-10-01T12:00:00Z" }],
+      paging: { cursors: { after: String(page + 1) } },
+    });
+  });
+  vi.stubGlobal("fetch", fetcher);
+  const connection = { id: "conn", provider: "facebook", provider_user_id: "page" };
+  let page = await fetchSocialContentInsightsPage(
+    { ...connection, initialImportComplete: true },
+    "token",
+    null,
+    true,
+  );
+  expect(page.nextCursor).toBeNull();
+  let cursor = page.archiveCursor;
+  for (let index = 1; index < 5; index++) {
+    page = await fetchSocialContentInsightsPage(connection, "token", cursor, true);
+    expect(page.content[0].remotePostId).toBe(`post-${index}`);
+    cursor = page.nextCursor;
+  }
+  expect(page.nextCursor).toBeNull();
+  expect(fetcher).toHaveBeenCalledTimes(5);
+  const resumed = await fetchSocialContentInsightsPage(
+    connection,
+    "token",
+    page.archiveCursor,
+    true,
+  );
+  expect(resumed.content[0].remotePostId).toBe("post-5");
+});
+
+it("keeps measured zeroes and fractional Reel skip rate and watch time", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: string | URL) => {
+      const url = new URL(String(input));
+      const requested = url.searchParams.get("metric");
+      if (!requested)
+        return Response.json({
+          data: [
+            {
+              id: "reel",
+              media_type: "VIDEO",
+              media_product_type: "REELS",
+              timestamp: "2026-10-01T12:00:00Z",
+              like_count: 0,
+              comments_count: 0,
+              media_url: "https://scontent.cdninstagram.com/reel.mp4",
+            },
+          ],
+        });
+      const values: Record<string, number> = {
+        reels_skip_rate: 36.45,
+        ig_reels_avg_watch_time: 2_450,
+        ig_reels_video_view_total_time: 20_000,
+        reposts: 0,
+      };
+      return Response.json({
+        data: requested.split(",").map((name) => ({
+          name,
+          values: [{ value: values[name] ?? 0 }],
+        })),
+      });
     }),
   );
-  vi.stubGlobal("fetch", fetcher);
-  await fetchSocialContentInsights(
-    { id: "conn", provider: "facebook", provider_user_id: "page" },
+  const { content } = await fetchSocialContentInsightsPage(
+    { id: "ig", provider: "instagram", provider_user_id: "account" },
     "token",
   );
-  expect(fetcher).toHaveBeenCalledTimes(5);
+  expect(content[0]).toMatchObject({
+    thumbnailUrl: null,
+    likes: 0,
+    comments: 0,
+    shares: 0,
+    detailMetrics: { skipRate: 36.45, averageWatchSeconds: 2.45, watchSeconds: 20, reposts: 0 },
+  });
+  expect(content[0].detailMetrics?.follows).toBeUndefined();
 });
+
 it("refreshes only the recent page after the first import", async () => {
   const fetcher = vi.fn(async () =>
     Response.json({

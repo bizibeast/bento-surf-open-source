@@ -135,9 +135,26 @@ export async function settleProviderUsage(
   actualUnits: number | null,
   options: { client?: BudgetClient } = {},
 ) {
-  if (!reservation || actualUnits === null) return false;
-  if (!Number.isSafeInteger(actualUnits) || actualUnits < 0 || actualUnits > reservation.units)
+  if (!reservation) return false;
+  if (
+    actualUnits === null ||
+    !Number.isSafeInteger(actualUnits) ||
+    actualUnits < 0 ||
+    actualUnits > reservation.units
+  ) {
+    console.warn("ai_usage_settlement_rejected", {
+      reservationId: reservation.id,
+      reason:
+        actualUnits === null
+          ? "missing_cost"
+          : Number.isSafeInteger(actualUnits) && actualUnits > reservation.units
+            ? "above_reservation"
+            : "invalid",
+      reservedUnits: reservation.units,
+      actualUnits,
+    });
     return false;
+  }
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     const client =

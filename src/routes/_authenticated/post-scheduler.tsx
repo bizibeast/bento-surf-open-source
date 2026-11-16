@@ -67,6 +67,7 @@ import { FaLinkedinIn } from "react-icons/fa";
 import { toast } from "sonner";
 import { UpgradeDialog } from "@/components/UpgradeDialog";
 import { DecodedImage } from "@/components/DecodedImage";
+import { InstagramReelAudioEditor } from "@/components/scheduler/InstagramReelAudioEditor";
 import { PreviewAvatar, ProviderPostPreview } from "@/components/scheduler/ProviderPostPreview";
 import { XArticleEditor, XArticlePreview } from "@/components/scheduler/XArticleEditor";
 import { PostingTimesDialog } from "@/components/scheduler/PostingTimesDialog";
@@ -134,6 +135,11 @@ import {
 } from "@/lib/social-mentions";
 import {
   SOCIAL_PROVIDER_DEFINITIONS,
+  instagramReelAudioFor,
+  instagramCatalogAudioFor,
+  instagramCatalogAudioSchema,
+  type InstagramCatalogAudio,
+  type InstagramReelAudio,
   prepareSchedulerMediaFiles,
   schedulerCaptionLabel,
   schedulerCaptionLimit,
@@ -698,7 +704,9 @@ function SchedulerPage() {
   const [scheduledAt, setScheduledAt] = useState(defaultScheduleTime);
   const [selected, setSelected] = useState<string[]>([]);
   const [media, setMedia] = useState<SchedulerMedia[]>([]);
-  const [uploading, setUploading] = useState(false);
+  const [mediaUploading, setUploading] = useState(false);
+  const [mixingReelAudio, setMixingReelAudio] = useState(false);
+  const uploading = mediaUploading || mixingReelAudio;
   const [mediaProgress, setMediaProgress] = useState<{
     label: string;
     name: string;
@@ -719,6 +727,10 @@ function SchedulerPage() {
   const [youtubeThumbnail, setYoutubeThumbnail] = useState<PendingThumbnail | null>(null);
   const [youtubeFrameMs, setYoutubeFrameMs] = useState(1_000);
   const [videoMeta, setVideoMeta] = useState<YouTubeVideoMeta | null>(null);
+  const [instagramCatalogAudio, setInstagramCatalogAudio] = useState<InstagramCatalogAudio | null>(
+    null,
+  );
+  const [instagramReelAudio, setInstagramReelAudio] = useState<InstagramReelAudio | null>(null);
   const [instagramCover, setInstagramCover] = useState<PendingThumbnail | null>(null);
   const [instagramFrameMs, setInstagramFrameMs] = useState(1_000);
   const coverCaptureSequence = useRef(0);
@@ -890,6 +902,8 @@ function SchedulerPage() {
     setBodyOverrides({});
     setPlatformTitles({});
     setMedia([]);
+    setInstagramReelAudio(null);
+    setInstagramCatalogAudio(null);
     setMediaPickerOpen(false);
     setEditorConnectionId("");
     setAccountMentions({});
@@ -1135,6 +1149,9 @@ function SchedulerPage() {
     setEditorConnectionId(post.targets[0]?.connectionId || "");
     setPlatformTitles(savedTitles);
     setMedia(post.media);
+    setInstagramReelAudio(instagramReelAudioFor(post.media, instagram.reelAudio));
+    const catalogAudio = instagramCatalogAudioSchema.safeParse(instagram.catalogAudio);
+    setInstagramCatalogAudio(catalogAudio.success ? catalogAudio.data : null);
     setSelected(
       post.targets.flatMap((target) => (target.connectionId ? [target.connectionId] : [])),
     );
@@ -1464,6 +1481,18 @@ function SchedulerPage() {
   const youtubeFormat = needsYouTubeTitle ? youtubeDetectedFormat(videoMeta) : null;
   const instagramReelCover =
     connectedProviders.includes("instagram") && hasVideo && media.length === 1;
+  const catalogConnectionId =
+    connectedProviders.filter((provider) => provider === "instagram").length === 1
+      ? selectedConnections.find((connection) => connection.provider === "instagram")?.id || null
+      : null;
+  const activeInstagramCatalogAudio = useMemo(
+    () => instagramCatalogAudioFor(media, catalogConnectionId ?? undefined, instagramCatalogAudio),
+    [media, catalogConnectionId, instagramCatalogAudio],
+  );
+  const activeInstagramReelAudio = useMemo(
+    () => (instagramReelCover ? instagramReelAudioFor(media, instagramReelAudio) : null),
+    [instagramReelCover, media, instagramReelAudio],
+  );
   const videoDurationMs =
     videoMeta && Number.isFinite(videoMeta.durationSeconds) && videoMeta.durationSeconds > 0
       ? Math.floor(videoMeta.durationSeconds * 1_000)
@@ -1546,6 +1575,8 @@ function SchedulerPage() {
       instagram: {
         ...savedProviderSettings.instagram,
         trialReel: instagramReelCover && instagramTrialReel,
+        reelAudio: activeInstagramReelAudio,
+        catalogAudio: activeInstagramCatalogAudio,
         graduationStrategy: instagramGraduationStrategy,
         scheduledAutoDm:
           autoDmEnabled && instagramSelected
@@ -1648,6 +1679,8 @@ function SchedulerPage() {
     autoDmLinkUrl,
     reposts,
     hasVideo,
+    activeInstagramCatalogAudio,
+    activeInstagramReelAudio,
     instagramSelected,
     instagramCover,
     instagramGraduationStrategy,
@@ -3876,7 +3909,7 @@ function SchedulerPage() {
                                   <ProviderComposeCard
                                     provider="instagram"
                                     title="Instagram"
-                                    hint="Choose Trial Reel delivery and a custom thumbnail"
+                                    hint="Choose Trial Reel delivery, audio, and a custom thumbnail"
                                   >
                                     <label className="flex items-center gap-2 text-sm font-medium">
                                       <input
@@ -3910,6 +3943,42 @@ function SchedulerPage() {
                                           </option>
                                         </select>
                                       </label>
+                                    )}
+                                    {primaryVideo && (
+                                      <InstagramReelAudioEditor
+                                        key={primaryVideo.key}
+                                        video={primaryVideo}
+                                        saved={activeInstagramReelAudio}
+                                        catalogAudio={activeInstagramCatalogAudio}
+                                        catalogConnectionId={catalogConnectionId}
+                                        postId={editingPostId}
+                                        onCatalogChange={(audio) => {
+                                          setInstagramCatalogAudio(audio);
+                                          if (audio) setInstagramReelAudio(null);
+                                        }}
+                                        busy={uploading || save.isPending}
+                                        onChange={(audio) => {
+                                          setInstagramReelAudio(audio);
+                                          if (audio) setInstagramCatalogAudio(null);
+                                        }}
+                                        onProcessing={setMixingReelAudio}
+                                        maxBytes={schedulerVideoByteLimit(
+                                          ["instagram"],
+                                          uploadLimitMb("video", data?.plan || "creator") *
+                                            1024 ** 2,
+                                        )}
+                                        upload={async (file, signal) => {
+                                          const uploaded = await uploadFileResult(file, "video", {
+                                            optimize: false,
+                                            signal,
+                                          });
+                                          if (!uploaded.publicUrl)
+                                            throw new Error(
+                                              "The mixed Reel upload could not finish.",
+                                            );
+                                          return { ...uploaded, url: uploaded.publicUrl };
+                                        }}
+                                      />
                                     )}
                                     <input
                                       ref={instagramCoverInputRef}
@@ -4448,7 +4517,11 @@ function SchedulerPage() {
                           xCommunity={
                             previewConnection ? xCommunities[previewConnection.id] || null : null
                           }
-                          media={media}
+                          media={
+                            activeProvider === "instagram" && activeInstagramReelAudio
+                              ? [activeInstagramReelAudio.video]
+                              : media
+                          }
                           youtubeThumbnail={youtubeThumbnailMedia}
                           youtubeFormat={youtubeFormat}
                           instagramCover={instagramReelCover ? instagramCoverMedia : null}

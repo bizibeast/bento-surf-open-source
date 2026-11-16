@@ -17,7 +17,8 @@ import {
   Eye,
   ExternalLink,
   Heart,
-  ImageOff,
+  Play,
+  Repeat2,
   LoaderCircle,
   MessageCircle,
   Plus,
@@ -43,6 +44,13 @@ import { AppHeader } from "@/components/AppHeader";
 import { DecodedImage } from "@/components/DecodedImage";
 import { MicroAppPanel, MicroAppStatCard } from "@/components/MicroAppPanel";
 import { UpgradeDialog } from "@/components/UpgradeDialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import {
   Tooltip as HoverTooltip,
@@ -54,6 +62,8 @@ import { micro } from "@/lib/micro-app-ui";
 import { safeMediaUrl } from "@/lib/safe-url";
 import {
   getSocialAnalytics,
+  getSocialInsightMedia,
+  getTikTokInsightCovers,
   refreshSocialAnalytics,
   setPublicSocialInsightsPeriod,
   SOCIAL_INSIGHTS_DISPLAY_PERIODS,
@@ -71,6 +81,9 @@ import {
   followerGrowthSeries,
   selectedSocialAnalyticsAccount,
   socialContentExposureMetric,
+  socialAccountActivity,
+  socialContentForRange,
+  socialPostMetric,
   socialEngagementSeries,
   socialGrowthMetricsFor,
   socialImpressionSeries,
@@ -81,6 +94,13 @@ import {
   socialMilestones,
   type SocialGrowthMetric,
 } from "@/lib/social-insights-dashboard";
+import {
+  SOCIAL_DETAIL_METRICS,
+  SOCIAL_INSIGHTS_RANGES,
+  type SocialDetailMetric,
+  type SocialDetailMetrics,
+  type SocialInsightsRange,
+} from "@/lib/social-insights-metrics";
 import { SOCIAL_PROVIDER_DEFINITIONS, type SocialProvider } from "@/lib/social-scheduler";
 
 export const Route = createFileRoute("/_authenticated/social-insights")({
@@ -221,8 +241,8 @@ function HistoricalImporting({ account }: { account: SocialAnalyticsAccount }) {
       </span>
       <h2 className="mt-5 font-ui-display text-2xl">We’re importing your data</h2>
       <p className="mt-2 max-w-lg text-sm leading-6 text-muted-foreground">
-        Historical charts and content for {platform} @{account.handle} will be available in 10–15
-        minutes.
+        Historical charts and content for {platform} @{account.handle} will appear as each batch
+        finishes.
       </p>
       <p className="mt-5 rounded-lg border border-[#3478f6]/20 bg-[#eef5ff] px-3 py-2 text-xs text-[#285fbf]">
         You can leave this page. The import continues safely in the background.
@@ -254,6 +274,7 @@ export function InsightsDashboard({
   savingDisplayPeriod: boolean;
   onDisplayPeriodChange: (days: SocialInsightsDisplayPeriodDays) => void;
 }) {
+  const [range, setRange] = useState<SocialInsightsRange>(30);
   const selected = selectedSocialAnalyticsAccount(accounts, selectedId, content);
   const totals = useMemo(() => summarizeSocialAnalytics(accounts), [accounts]);
   const selectedContent = content.filter((item) => item.connectionId === selected?.connectionId);
@@ -279,6 +300,16 @@ export function InsightsDashboard({
   }
 
   const all = selectedId === "all";
+  const now = new Date();
+  const scopedContent = all ? content : selectedContent;
+  const periodContent = socialContentForRange(scopedContent, range, now);
+  const periodActivity = socialAccountActivity(
+    all ? accounts : [selected],
+    history,
+    periodContent,
+    range,
+    now,
+  );
   return (
     <div className="space-y-5">
       <MicroAppPanel>
@@ -397,6 +428,30 @@ export function InsightsDashboard({
         </div>
       </section>
 
+      <MicroAppPanel className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="font-ui-display text-xl">Reporting period</h2>
+        <select
+          className={micro.input}
+          aria-label="Insights reporting period"
+          value={range}
+          onChange={(event) => {
+            const value = event.target.value;
+            setRange(value === "all" ? value : (Number(value) as SocialInsightsRange));
+          }}
+        >
+          {SOCIAL_INSIGHTS_RANGES.map((days) => (
+            <option key={days} value={days}>
+              {days === "all" ? "All time" : days === 366 ? "1 year" : `${days} days`}
+            </option>
+          ))}
+        </select>
+      </MicroAppPanel>
+      {(all || selected.provider !== "linkedin") && <PeriodActivity {...periodActivity} />}
+      {(all ? accounts.some((account) => account.archivePending) : selected.archivePending) && (
+        <p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+          <RefreshCw className="size-3.5" /> Older posts are imported in batches with each refresh.
+        </p>
+      )}
       {!all && selected.provider === "linkedin" ? (
         <LinkedInAnalyticsComingSoon account={selected} />
       ) : all ? (
@@ -407,8 +462,12 @@ export function InsightsDashboard({
               <AccountOverview key={account.connectionId} account={account} />
             ))}
           </div>
-          <ContentPerformancePanel content={content} provider={selected.provider} />
-          <BestContentPanel content={content} provider={selected.provider} />
+          <ContentPerformancePanel content={periodContent} provider={selected.provider} />
+          <BestContentPanel
+            key={`all:${range}`}
+            content={periodContent}
+            provider={selected.provider}
+          />
         </>
       ) : (
         <>
@@ -419,13 +478,22 @@ export function InsightsDashboard({
             <ActivityHeatmap account={selected} content={selectedContent} />
           )}
           {(!selected.initialImportActive || selectedHistory.length > 0) && (
-            <GrowthPanel account={selected} history={history} content={selectedContent} />
+            <GrowthPanel
+              account={selected}
+              history={history}
+              content={selectedContent}
+              range={range === "all" ? 366 : range}
+            />
           )}
           <MilestonesPanel account={selected} content={selectedContent} />
           {(!selected.initialImportActive || selectedContent.length > 0) && (
             <>
-              <ContentPerformancePanel content={selectedContent} provider={selected.provider} />
-              <BestContentPanel content={selectedContent} provider={selected.provider} />
+              <ContentPerformancePanel content={periodContent} provider={selected.provider} />
+              <BestContentPanel
+                key={`${selected.connectionId}:${range}`}
+                content={periodContent}
+                provider={selected.provider}
+              />
             </>
           )}
         </>
@@ -587,17 +655,18 @@ function GrowthPanel({
   account,
   history,
   content,
+  range,
 }: {
   account: SocialAnalyticsAccount;
   history: SocialAnalyticsHistoryPoint[];
   content: SocialContentInsight[];
+  range: 7 | 30 | 90 | 366;
 }) {
   const availableMetrics = useMemo(
     () => socialGrowthMetricsFor(account.provider),
     [account.provider],
   );
   const [metric, setMetric] = useState<SocialGrowthMetric>(availableMetrics[0]);
-  const [range, setRange] = useState<7 | 30 | 90 | 366>(30);
   const [cumulative, setCumulative] = useState(false);
   const followerStart = useMemo(
     () => followerGrowthSeries(history, account.connectionId)[0]?.date || null,
@@ -693,23 +762,6 @@ function GrowthPanel({
             <span>Cumulative</span>
           </label>
         </div>
-      </div>
-
-      <div className="mt-4 flex flex-wrap justify-end gap-1.5">
-        {([7, 30, 90, 366] as const).map((days) => (
-          <button
-            key={days}
-            type="button"
-            onClick={() => setRange(days)}
-            className={`rounded-lg border px-3 py-2 text-xs font-semibold ${
-              days === range
-                ? "border-primary/35 bg-primary/10 text-primary"
-                : "border-border bg-white text-muted-foreground"
-            }`}
-          >
-            {days === 366 ? "1y" : `${days}d`}
-          </button>
-        ))}
       </div>
 
       {points.length >= 2 && hasMetricData ? (
@@ -1009,29 +1061,268 @@ function ContentPerformancePanel({
   );
 }
 
-function BestContentThumbnail({ src, contentType }: { src: string | null; contentType: string }) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [src]);
+function formatDetailMetric(key: SocialDetailMetric, value: number) {
+  if (key === "skipRate" || key === "averageViewedPercent") return `${Number(value.toFixed(2))}%`;
+  if (["averageWatchSeconds", "watchSeconds", "durationSeconds"].includes(key))
+    return value < 60 ? `${Number(value.toFixed(1))}s` : `${compactMetric(value / 60)} min`;
+  return compactMetric(value);
+}
 
-  if (!src || failed) {
+function MetricTiles({
+  metrics,
+  provider,
+}: {
+  metrics: SocialDetailMetrics;
+  provider?: SocialProvider;
+}) {
+  return (
+    <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      {(Object.keys(SOCIAL_DETAIL_METRICS) as SocialDetailMetric[]).map((key) => {
+        const value = metrics[key];
+        if (value === undefined) return null;
+        const label =
+          key === "comments" && (provider === "threads" || provider === "twitter")
+            ? "Replies"
+            : key === "saves" && provider === "twitter"
+              ? "Bookmarks"
+              : SOCIAL_DETAIL_METRICS[key];
+        return (
+          <div key={key} className="rounded-lg border border-border bg-muted/30 p-3">
+            <dt className="text-xs text-muted-foreground">{label}</dt>
+            <dd className="mt-1 text-lg font-semibold tabular-nums" title={String(value)}>
+              {formatDetailMetric(key, value)}
+            </dd>
+          </div>
+        );
+      })}
+    </dl>
+  );
+}
+
+function PeriodActivity({
+  accountMetrics,
+  postMetrics,
+  followerChange,
+  partialFollowerHistory,
+}: ReturnType<typeof socialAccountActivity>) {
+  return (
+    <MicroAppPanel className="space-y-4">
+      <div>
+        <h2 className="font-ui-display text-2xl">Account activity</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Reported activity through the latest available day.
+        </p>
+      </div>
+      <div className="rounded-lg border border-border bg-muted/30 p-3">
+        <p className="text-xs text-muted-foreground">Net follower change</p>
+        <p className="mt-1 text-lg font-semibold tabular-nums">
+          {followerChange === null
+            ? "Awaiting follower history"
+            : `${followerChange > 0 ? "+" : ""}${compactMetric(followerChange)}`}
+        </p>
+        {partialFollowerHistory && followerChange !== null && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Based on the follower history available for this period.
+          </p>
+        )}
+      </div>
+      <MetricTiles metrics={accountMetrics} />
+      {Object.keys(postMetrics).length > 0 && (
+        <details className="space-y-3">
+          <summary className="cursor-pointer text-sm font-semibold">
+            Lifetime totals for posts published in this period
+          </summary>
+          <MetricTiles metrics={postMetrics} />
+        </details>
+      )}
+    </MicroAppPanel>
+  );
+}
+
+function InsightThumbnail({ item, cover }: { item: SocialContentInsight; cover?: string }) {
+  const [failed, setFailed] = useState<string[]>([]);
+  const primary = safeMediaUrl(cover || item.thumbnailUrl);
+  const alternate =
+    item.provider === "youtube" && /^[\w-]{11}$/.test(item.remotePostId)
+      ? `https://i.ytimg.com/vi/${item.remotePostId}/hqdefault.jpg`
+      : null;
+  const src = [primary, alternate].find((url) => url && !failed.includes(url));
+  const platform = SOCIAL_PROVIDER_DEFINITIONS[item.provider].name;
+  const Icon = PROVIDER_ICONS[item.provider];
+  if (!src) {
     return (
-      <div className="mt-4 flex h-40 w-full flex-col items-center justify-center gap-2 rounded-lg bg-[#f2f5fb] text-xs font-medium text-muted-foreground">
-        <ImageOff className="size-5" aria-hidden="true" />
-        <span>Preview unavailable</span>
+      <div className="mt-3 flex aspect-video flex-col items-center justify-center gap-2 rounded-lg bg-muted text-xs font-medium text-muted-foreground">
+        {item.contentType === "video" ? <Play className="size-5" /> : <Icon className="size-5" />}
+        <span className="sr-only">
+          {platform} {item.contentType === "video" ? "video" : "post"}
+        </span>
       </div>
     );
   }
-
   return (
     <DecodedImage
       src={src}
-      alt={`${contentType} post thumbnail`}
+      alt={`${item.contentType} post thumbnail`}
       loading="lazy"
-      className="mt-4 max-h-80 w-full rounded-lg object-cover"
-      onError={() => setFailed(true)}
+      className="mt-3 aspect-video w-full rounded-lg bg-muted object-cover"
+      onError={() => setFailed((current) => [...current, src])}
     />
   );
 }
+
+function PostInsightsDialog({
+  item,
+  cover,
+  onClose,
+}: {
+  item: SocialContentInsight | null;
+  cover?: string;
+  onClose: () => void;
+}) {
+  const [play, setPlay] = useState(false);
+  const [media, setMedia] = useState<{ image: string | null; video: string | null } | null>(null);
+  const [videoFailed, setVideoFailed] = useState(false);
+  const platform = item && SOCIAL_PROVIDER_DEFINITIONS[item.provider].name;
+  const id = item?.remotePostId || "";
+  const embed =
+    item?.provider === "youtube" && /^[\w-]{11}$/.test(id)
+      ? `https://www.youtube-nocookie.com/embed/${id}?autoplay=1`
+      : item?.provider === "tiktok" && /^\d{1,30}$/.test(id)
+        ? `https://www.tiktok.com/player/v1/${id}?autoplay=1`
+        : null;
+  const connectionId = item?.connectionId;
+  const contentType = item?.contentType;
+  useEffect(() => {
+    if (
+      !connectionId ||
+      !id ||
+      embed ||
+      contentType === "text" ||
+      !/^[a-f\d-]{36}$/i.test(connectionId)
+    )
+      return;
+    let active = true;
+    void getSocialInsightMedia({ data: { connectionId, postId: id } })
+      .then((sources) => {
+        if (!active) return;
+        setMedia({
+          image: safeMediaUrl(sources.find((source) => source.type !== "video")?.url),
+          video: safeMediaUrl(sources.find((source) => source.type === "video")?.url),
+        });
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [connectionId, contentType, embed, id]);
+  const metrics: SocialDetailMetrics = {};
+  if (item) {
+    for (const key of Object.keys(SOCIAL_DETAIL_METRICS) as SocialDetailMetric[]) {
+      const value = socialPostMetric(item, key);
+      if (value !== undefined) metrics[key] = value;
+    }
+  }
+  return (
+    <Dialog
+      open={Boolean(item)}
+      onOpenChange={(open) => {
+        if (!open) {
+          setPlay(false);
+          setMedia(null);
+          setVideoFailed(false);
+          onClose();
+        }
+      }}
+    >
+      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
+        {item && (
+          <>
+            <DialogHeader>
+              <DialogTitle>
+                {item.contentType === "video" ? "Video insights" : "Post insights"}
+              </DialogTitle>
+              <DialogDescription>
+                {platform} · Published {formatDateTime(item.publishedAt)} · Lifetime metrics
+              </DialogDescription>
+            </DialogHeader>
+            {play && embed ? (
+              <iframe
+                className="aspect-video w-full rounded-lg"
+                src={embed}
+                title={`${platform} video`}
+                allow="autoplay; fullscreen"
+                allowFullScreen
+              />
+            ) : play && media?.video && !videoFailed ? (
+              <video
+                src={media.video}
+                poster={safeMediaUrl(cover || item.thumbnailUrl) || undefined}
+                className="max-h-[50dvh] w-full rounded-lg bg-black"
+                controls
+                autoPlay
+                playsInline
+                aria-label={`${platform} video`}
+                onError={() => {
+                  setVideoFailed(true);
+                  setPlay(false);
+                }}
+              />
+            ) : (
+              item.contentType !== "text" &&
+              (embed || (media?.video && !videoFailed) ? (
+                <button
+                  type="button"
+                  className="relative w-full"
+                  aria-label="Play video"
+                  onClick={() => setPlay(true)}
+                >
+                  <InsightThumbnail
+                    item={item}
+                    cover={cover || item.thumbnailUrl || media?.image || undefined}
+                  />
+                  <span className="absolute inset-0 grid place-items-center">
+                    <Play className="size-10 rounded-full bg-foreground/85 p-2.5 text-background" />
+                  </span>
+                </button>
+              ) : (
+                <InsightThumbnail
+                  item={item}
+                  cover={cover || item.thumbnailUrl || media?.image || undefined}
+                />
+              ))
+            )}
+            {item.caption && (
+              <p className="whitespace-pre-line break-words text-sm">{item.caption}</p>
+            )}
+            {Object.keys(metrics).length ? (
+              <MetricTiles metrics={metrics} provider={item.provider} />
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                This platform has yet to report metrics for this post.
+              </p>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Last refreshed {formatDateTime(item.fetchedAt)}. Available metrics vary by platform
+              and post type.
+            </p>
+            {safeMediaUrl(item.remotePostUrl) && (
+              <a
+                href={item.remotePostUrl!}
+                target="_blank"
+                rel="noreferrer"
+                className={micro.btnSoft}
+              >
+                Open on {platform} <ExternalLink className="size-3.5" />
+              </a>
+            )}
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+const CONTENT_PAGE_SIZE = 12;
 
 function BestContentPanel({
   content,
@@ -1042,108 +1333,210 @@ function BestContentPanel({
 }) {
   const exposureMetric: BestContentMetric = socialContentExposureMetric(content);
   const [chosenMetric, setChosenMetric] = useState<BestContentMetric>(exposureMetric);
+  const [page, setPage] = useState(0);
+  const [selectedPost, setSelectedPost] = useState<string | null>(null);
+  const [covers, setCovers] = useState<Record<string, string>>({});
   const options = useMemo(
     () =>
       (
         [
           exposureMetric,
+          "views",
+          "impressions",
+          "reach",
           "engagements",
           "likes",
           "comments",
           "shares",
           "saves",
+          "reposts",
+          "quotes",
+          "follows",
+          "watchSeconds",
         ] as BestContentMetric[]
       ).filter(
         (option, index, all) =>
-          all.indexOf(option) === index && content.some((item) => item[option] !== null),
+          all.indexOf(option) === index &&
+          content.some((item) => socialPostMetric(item, option) !== undefined),
       ),
     [content, exposureMetric],
   );
   const metric = options.includes(chosenMetric) ? chosenMetric : options[0] || exposureMetric;
-  const best = bestSocialContent(content, 9, metric);
+  const ranked = useMemo(() => bestSocialContent(content, Infinity, metric), [content, metric]);
+  const pageCount = Math.ceil(ranked.length / CONTENT_PAGE_SIZE);
+  const activePage = Math.min(page, Math.max(0, pageCount - 1));
+  const visible = useMemo(
+    () => ranked.slice(activePage * CONTENT_PAGE_SIZE, (activePage + 1) * CONTENT_PAGE_SIZE),
+    [ranked, activePage],
+  );
+  const postKey = (item: SocialContentInsight) => `${item.connectionId}:${item.remotePostId}`;
+  const item = visible.find((post) => postKey(post) === selectedPost);
+
+  useEffect(() => {
+    const expired = new Map<string, string[]>();
+    for (const post of visible) {
+      if (
+        post.provider !== "tiktok" ||
+        !/^\d{1,30}$/.test(post.remotePostId) ||
+        (post.thumbnailUrl && Date.now() - Date.parse(post.fetchedAt) < 5 * 60 * 60_000)
+      )
+        continue;
+      expired.set(post.connectionId, [
+        ...(expired.get(post.connectionId) || []),
+        post.remotePostId,
+      ]);
+    }
+    let active = true;
+    for (const [connectionId, postIds] of expired) {
+      void getTikTokInsightCovers({ data: { connectionId, postIds } })
+        .then((next) => {
+          if (!active) return;
+          setCovers((current) => ({
+            ...current,
+            ...Object.fromEntries(
+              Object.entries(next).map(([id, url]) => [`${connectionId}:${id}`, url]),
+            ),
+          }));
+        })
+        .catch(() => {});
+    }
+    return () => {
+      active = false;
+    };
+  }, [visible]);
+
   return (
     <section>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h2 className="font-ui-display text-2xl">Repost your best performing content</h2>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="font-ui-display text-2xl">Best-performing content</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {content.length} posts published in this period · Ranked by lifetime metrics
+          </p>
+        </div>
         {options.length > 1 && (
-          <div className="flex flex-wrap gap-1.5" aria-label="Rank content by">
-            {options.map((option) => (
-              <button
-                key={option}
-                type="button"
-                onClick={() => setChosenMetric(option)}
-                className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold capitalize ${
-                  metric === option
-                    ? "border-primary/35 bg-primary/10 text-primary"
-                    : "border-border bg-white text-muted-foreground"
-                }`}
-              >
-                {option}
-              </button>
-            ))}
-          </div>
+          <label className="text-xs font-medium text-muted-foreground">
+            Rank by
+            <select
+              className="ml-2 rounded-lg border border-border bg-background px-2 py-1.5 text-foreground"
+              value={metric}
+              onChange={(event) => {
+                setChosenMetric(event.target.value as BestContentMetric);
+                setPage(0);
+              }}
+            >
+              {options.map((option) => (
+                <option key={option} value={option}>
+                  {SOCIAL_DETAIL_METRICS[option]}
+                </option>
+              ))}
+            </select>
+          </label>
         )}
       </div>
-      {best.length ? (
-        <div className="mt-4 columns-1 gap-4 sm:columns-2 lg:columns-3">
-          {best.map((item) => {
-            const thumbnail = safeMediaUrl(item.thumbnailUrl);
-            return (
-              <article
-                key={`${item.connectionId}:${item.remotePostId}`}
-                className="mb-4 break-inside-avoid overflow-hidden rounded-xl border border-border bg-white p-4 shadow-sm"
+      {visible.length ? (
+        <>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {visible.map((post) => {
+              const platform = SOCIAL_PROVIDER_DEFINITIONS[post.provider].name;
+              const matched = socialPostMetric(post, metric);
+              const Icon = PROVIDER_ICONS[post.provider];
+              return (
+                <article
+                  key={postKey(post)}
+                  className="overflow-hidden rounded-xl border border-border bg-white shadow-sm"
+                >
+                  <button
+                    type="button"
+                    aria-label={`View insights for ${post.caption || `${platform} ${post.contentType}`}`}
+                    onClick={() => setSelectedPost(postKey(post))}
+                    className="block h-full w-full p-4 text-left transition hover:bg-muted/40 focus-visible:outline focus-visible:outline-primary"
+                  >
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Icon className="size-3.5" aria-hidden />
+                      <span>
+                        {platform} · {shortDate(post.publishedAt)}
+                      </span>
+                    </div>
+                    {post.contentType !== "text" && (
+                      <InsightThumbnail item={post} cover={covers[postKey(post)]} />
+                    )}
+                    <p className="mt-3 line-clamp-2 break-words text-sm font-medium">
+                      {post.caption || `${platform} ${post.contentType}`}
+                    </p>
+                    <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+                      <span>
+                        {matched === undefined ? "N/A" : formatDetailMetric(metric, matched)}{" "}
+                        {SOCIAL_DETAIL_METRICS[metric].toLowerCase()}
+                      </span>
+                      {metric !== "likes" && post.likes !== null && (
+                        <span className="flex items-center gap-1">
+                          <Heart className="size-3.5" /> {compactMetric(post.likes)}
+                        </span>
+                      )}
+                      {metric !== "reposts" && post.detailMetrics?.reposts !== undefined && (
+                        <span className="flex items-center gap-1">
+                          <Repeat2 className="size-3.5" />{" "}
+                          {compactMetric(post.detailMetrics.reposts)}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                </article>
+              );
+            })}
+          </div>
+          {pageCount > 1 && (
+            <div className="mt-4 flex items-center justify-center gap-4" aria-label="Content pages">
+              <button
+                type="button"
+                className={micro.btnSoft}
+                onClick={() => setPage(activePage - 1)}
+                disabled={activePage === 0}
               >
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <span className="font-semibold text-foreground capitalize">
-                    {item.contentType}
-                  </span>
-                  <span>·</span>
-                  <span>{shortDate(item.publishedAt)}</span>
-                </div>
-                {item.caption && (
-                  <p className="mt-3 line-clamp-5 whitespace-pre-line text-sm leading-6">
-                    {item.caption}
-                  </p>
-                )}
-                {(thumbnail || item.contentType !== "text") && (
-                  <BestContentThumbnail src={thumbnail} contentType={item.contentType} />
-                )}
-                <div className="mt-4 flex items-center gap-4 text-xs text-muted-foreground">
-                  <span className="flex items-center gap-1">
-                    <Heart className="size-3.5" /> {compactMetric(item.likes)}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Eye className="size-3.5" /> {compactMetric(item[exposureMetric])}
-                  </span>
-                  {item.remotePostUrl && (
-                    <a
-                      href={item.remotePostUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="ml-auto inline-flex items-center gap-1 rounded-lg bg-primary/10 px-2.5 py-1.5 font-semibold text-primary"
-                    >
-                      Repost <ExternalLink className="size-3" />
-                    </a>
-                  )}
-                </div>
-              </article>
-            );
-          })}
-        </div>
+                Previous
+              </button>
+              <span className="text-sm text-muted-foreground">
+                Page {activePage + 1} of {pageCount}
+              </span>
+              <button
+                type="button"
+                className={micro.btnSoft}
+                onClick={() => setPage(activePage + 1)}
+                disabled={activePage + 1 === pageCount}
+              >
+                Next
+              </button>
+            </div>
+          )}
+        </>
       ) : (
         <MicroAppPanel className="mt-4">
-          <ProviderDataEmpty provider={provider} />
+          <ProviderDataEmpty provider={provider} period />
         </MicroAppPanel>
       )}
+      <PostInsightsDialog
+        item={item || null}
+        cover={item && covers[postKey(item)]}
+        onClose={() => setSelectedPost(null)}
+      />
     </section>
   );
 }
 
-function ProviderDataEmpty({ provider }: { provider: SocialProvider }) {
+function ProviderDataEmpty({
+  provider,
+  period = false,
+}: {
+  provider: SocialProvider;
+  period?: boolean;
+}) {
   return (
     <div className="mt-5 rounded-xl border border-dashed border-border bg-[#fafbfe] p-6 text-center">
       <BarChart3 className="mx-auto size-6 text-muted-foreground" />
-      <p className="mt-3 text-sm font-semibold">Historical content is not available yet</p>
+      <p className="mt-3 text-sm font-semibold">
+        {period ? "No posts in this period" : "Historical content is not available yet"}
+      </p>
       <p className="mx-auto mt-1 max-w-lg text-xs leading-5 text-muted-foreground">
         {socialProviderEmptyStateMessage(provider)}
       </p>

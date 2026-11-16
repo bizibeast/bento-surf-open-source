@@ -8,6 +8,11 @@ import { encryptServerSecret, isServerSecretEncryptionKeyValid } from "./secret-
 import { enforceRequestRateLimit, readResponseText } from "./request-security.server";
 import { socialApiErrorMessage, socialApiPayloadHasError } from "./social-provider-response";
 import { requirePlanEntitlement } from "./plan.server";
+import {
+  INSTAGRAM_AUDIO_PERMISSIONS,
+  requireInstagramAudioDestination,
+  saveInstagramAudioAuthorization,
+} from "./instagram-audio.server";
 import { durableSocialAvatarUrl } from "./social-avatar.server";
 import { queueInitialSocialInsightsImport } from "./social-analytics.functions";
 import { SOCIAL_CONNECTION_LIST_LIMIT } from "./large-table-columns";
@@ -201,6 +206,7 @@ export function authorizationUrl(
   clientId: string,
   state: string,
   challenge: string,
+  instagramAudio = false,
 ) {
   const redirect = socialProviderRedirectUri(provider);
   const definitions: Record<
@@ -209,7 +215,10 @@ export function authorizationUrl(
   > = {
     facebook: {
       base: "https://www.facebook.com/v25.0/dialog/oauth",
-      scope: SOCIAL_PROVIDER_SCOPES.facebook.join(","),
+      scope: (instagramAudio ? INSTAGRAM_AUDIO_PERMISSIONS : SOCIAL_PROVIDER_SCOPES.facebook).join(
+        ",",
+      ),
+      params: instagramAudio ? { auth_type: "rerequest" } : undefined,
     },
     threads: {
       base: "https://www.threads.net/oauth/authorize",
@@ -256,11 +265,25 @@ export const beginSocialConnection = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) =>
     z
-      .object({ provider: z.enum(genericProviders as [GenericProvider, ...GenericProvider[]]) })
+      .object({
+        provider: z.enum(genericProviders as [GenericProvider, ...GenericProvider[]]),
+        instagramAudioConnectionId: z.string().uuid().optional(),
+        postId: z.string().uuid().optional(),
+      })
+      .refine((input) => !input.instagramAudioConnectionId || input.provider === "facebook")
       .parse(input),
   )
   .handler(async ({ context, data }) => {
-    await requireCreatorSocialConnection(context.userId, data.provider);
+    if (data.instagramAudioConnectionId) {
+      await requirePlanEntitlement(
+        context.userId,
+        "postScheduler",
+        "Upgrade to schedule Instagram Reels.",
+      );
+      await requireInstagramAudioDestination(context.userId, data.instagramAudioConnectionId);
+    } else {
+      await requireCreatorSocialConnection(context.userId, data.provider);
+    }
     await enforceRequestRateLimit(
       "EXPENSIVE_API_RATE_LIMITER",
       "social-oauth-start",
@@ -281,9 +304,23 @@ export const beginSocialConnection = createServerFn({ method: "POST" })
       provider: data.provider,
       code_verifier: verifier,
       redirect_uri: socialProviderRedirectUri(data.provider),
+      ...(data.instagramAudioConnectionId && {
+        metadata: {
+          instagramAudioConnectionId: data.instagramAudioConnectionId,
+          postId: data.postId,
+        },
+      }),
     });
     if (error) throw new Error("The connection could not be started.");
-    return { url: authorizationUrl(data.provider, clientId, state, challenge) };
+    return {
+      url: authorizationUrl(
+        data.provider,
+        clientId,
+        state,
+        challenge,
+        Boolean(data.instagramAudioConnectionId),
+      ),
+    };
   });
 
 async function fetchJson(url: string, init: RequestInit = {}, timeoutMs = 30_000) {
@@ -553,6 +590,27 @@ export const completeSocialConnection = createServerFn({ method: "POST" })
     const tokens = await durableConnectionTokens(data.provider, exchangedTokens);
     const accessToken = tokens.access_token;
     if (!accessToken) throw new Error("The social network did not return an access token.");
+    const audioConnection =
+      data.provider === "facebook" && state.metadata?.instagramAudioConnectionId;
+    if (typeof audioConnection === "string") {
+      await requirePlanEntitlement(
+        context.userId,
+        "postScheduler",
+        "Upgrade to schedule Instagram Reels.",
+      );
+      await saveInstagramAudioAuthorization({
+        userId: context.userId,
+        connectionId: audioConnection,
+        token: accessToken,
+        expiresIn: Number(tokens.expires_in || 0),
+      });
+      return {
+        connected: 1,
+        skipped: 0,
+        instagramAudio: true as const,
+        postId: state.metadata?.postId as string | undefined,
+      };
+    }
     const discoveredAccounts = await socialAccountProfiles(data.provider, accessToken);
     if (!discoveredAccounts.length) throw new Error("No publishable account was found.");
     const { data: existingConnections, error: existingError } = await db
@@ -663,7 +721,11 @@ export const completeSocialConnection = createServerFn({ method: "POST" })
           }),
       );
     }
-    return { connected: accounts.length, skipped: discoveredAccounts.length - accounts.length };
+    return {
+      connected: accounts.length,
+      skipped: discoveredAccounts.length - accounts.length,
+      instagramAudio: false as const,
+    };
   });
 
 export const disconnectSocialConnection = createServerFn({ method: "POST" })

@@ -1,5 +1,13 @@
 # Verification status
 
+## Draft shared-app sync through f7ae24a1
+
+Shared source: `f7ae24a1ba69a35fb2142e35a679a430ad8de8de`. Adds the editor-matched public page layout and Instagram Reel audio with expanded Social Insights. Apply migration `20261115120000_expand_social_insights` before deploying this code.
+
+Public-edition differences kept: configured instance origins instead of hosted hosts, and the existing public cache and OAuth adaptations. Hosted SEO pipeline files, help center, marketing, admin, deploy workflows, secrets, and the complimentary workspace fixture stay out.
+
+Checked on this draft: public boundary scan, TypeScript, and 262 focused tests across the layout, cache, budget, scheduler, insights, and publisher files. The full suite and production build were not rerun locally.
+
 ## Current shared-app parity release
 
 Shared source: `25b2bcb4f8de2cffc4a6a9d2900df55919ff91a5`. Adds polling backoff (hidden tabs stop polling, idle tabs back off, cached founder web analytics), one shared daily and monthly Resend send budget with the weekly digest split into Monday and Tuesday cohorts, and trial cancellation that ends the trial and access immediately with no charge (paid cancellations still run to the end of the paid period). Includes migration `20261023060000_resend_shared_daily_budget`; apply it before deploying this code.

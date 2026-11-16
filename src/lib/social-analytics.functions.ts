@@ -23,6 +23,7 @@ import { socialApiErrorMessage, socialApiPayloadHasError } from "./social-provid
 import {
   buildYouTubeChannelUrl,
   fetchSocialContentInsightsPage,
+  fetchTikTokInsightCovers,
   type SocialContentInsight,
 } from "./social-content-insights.server";
 import { accessTokenForConnection, ProviderError } from "./social-publisher.server";
@@ -31,7 +32,14 @@ import {
   SOCIAL_CONNECTION_LIST_LIMIT,
   SOCIAL_INSIGHT_COLUMNS,
 } from "./large-table-columns";
+import {
+  socialDetailMetrics,
+  type SocialAccountPeriods,
+  type SocialDetailMetric,
+  type SocialDetailMetrics,
+} from "./social-insights-metrics";
 import type { SocialProvider } from "./social-scheduler";
+import { contentMediaSources } from "./content-media";
 import { nextLocalRefreshAt } from "./timezones";
 import {
   durableSocialInsightThumbnailUrl,
@@ -58,6 +66,7 @@ export function socialInsightsDisplayPeriodLabel(value: unknown) {
 
 export type SocialAnalyticsAccount = {
   connectionId: string;
+  periodMetrics?: SocialAccountPeriods;
   provider: SocialProvider;
   handle: string;
   displayName: string;
@@ -74,6 +83,7 @@ export type SocialAnalyticsAccount = {
   lastUpdatedAt?: string;
   nextRefreshAt?: string | null;
   initialImportActive?: boolean;
+  archivePending?: boolean;
   refreshing: boolean;
   refreshStartedAt: string | null;
 };
@@ -214,6 +224,7 @@ export type SocialAnalyticsHistoryPoint = Pick<
   "connectionId" | "followers" | "posts" | "views" | "reach" | "engagements" | "status"
 > & {
   capturedAt: string;
+  detailMetrics?: SocialDetailMetrics;
 };
 
 type ProviderAnalytics = Pick<
@@ -226,6 +237,12 @@ const FACEBOOK_PAGE_INSIGHT_METRICS = [
   "page_total_media_view_unique",
   "page_post_engagements",
 ] as const;
+const FACEBOOK_PAGE_DETAIL_METRICS = {
+  page_follows: "followers",
+  page_daily_follows_unique: "follows",
+  page_daily_unfollows_unique: "unfollows",
+  page_total_actions: "clicks",
+} as const;
 const LINKEDIN_DAILY_METRICS = ["IMPRESSION", "REACTION", "COMMENT", "RESHARE"] as const;
 type LinkedInDailyMetric = (typeof LINKEDIN_DAILY_METRICS)[number];
 
@@ -284,6 +301,7 @@ export function normalizeFacebookPageInsights(payload: unknown) {
 
 type DailyPerformancePoint = {
   capturedAt: string;
+  detailMetrics?: SocialDetailMetrics;
   followers?: number | null;
   views: number | null;
   reach: number | null;
@@ -312,8 +330,10 @@ export const INSTAGRAM_DAILY_INSIGHT_METRICS = ["reach"] as const;
 export function normalizeMetaDailyHistory(payload: any): DailyPerformancePoint[] {
   const byDate = new Map<string, DailyPerformancePoint>();
   for (const metric of Array.isArray(payload?.data) ? payload.data : []) {
-    const kind = META_DAILY_METRIC_KIND[String(metric?.name || "")];
-    if (!kind) continue;
+    const name = String(metric?.name || "");
+    const detail = FACEBOOK_PAGE_DETAIL_METRICS[name as keyof typeof FACEBOOK_PAGE_DETAIL_METRICS];
+    const kind = META_DAILY_METRIC_KIND[name] || (detail === "followers" ? "followers" : undefined);
+    if (!kind && !detail) continue;
     for (const value of Array.isArray(metric?.values) ? metric.values : []) {
       const intervalEnd = new Date(value?.end_time);
       if (!Number.isFinite(intervalEnd.getTime())) continue;
@@ -330,7 +350,9 @@ export function normalizeMetaDailyHistory(payload: any): DailyPerformancePoint[]
       const count = socialAnalyticsNumber(value?.value);
       if (kind === "engagements" && count !== null)
         point.engagements = (point.engagements || 0) + count;
-      else point[kind] = count;
+      else if (kind) point[kind] = count;
+      else if (detail && detail !== "followers" && count !== null)
+        point.detailMetrics = { ...point.detailMetrics, [detail]: count };
       byDate.set(capturedAt, point);
     }
   }
@@ -350,6 +372,7 @@ export function buildYouTubeAnalyticsUrl(start: Date, end: Date) {
   url.searchParams.set("endDate", isoDate(end));
   url.searchParams.set("dimensions", "day");
   url.searchParams.set("sort", "day");
+  url.searchParams.set("maxResults", "400");
   url.searchParams.set(
     "metrics",
     "views,likes,comments,shares,estimatedMinutesWatched,averageViewDuration,subscribersGained,subscribersLost",
@@ -383,6 +406,17 @@ export function normalizeYouTubeAnalyticsHistory(
         {
           capturedAt: timestamp.toISOString(),
           followerChange: gained === null && lost === null ? null : (gained || 0) - (lost || 0),
+          detailMetrics: socialDetailMetrics({
+            likes,
+            comments,
+            shares,
+            follows: gained,
+            unfollows: lost,
+            watchSeconds:
+              at(row, "estimatedMinutesWatched") == null
+                ? undefined
+                : at(row, "estimatedMinutesWatched")! * 60,
+          }),
           views: at(row, "views"),
           reach: null,
           engagements:
@@ -548,8 +582,12 @@ async function fetchFacebookPageInsightMetrics(
   options: { period: "day" | "days_28"; start?: Date; end?: Date },
 ) {
   const apiVersion = process.env.META_GRAPH_API_VERSION?.trim() || "v25.0";
+  const metrics =
+    options.period === "day"
+      ? [...FACEBOOK_PAGE_INSIGHT_METRICS, ...Object.keys(FACEBOOK_PAGE_DETAIL_METRICS)]
+      : FACEBOOK_PAGE_INSIGHT_METRICS;
   const payloads = await Promise.all(
-    FACEBOOK_PAGE_INSIGHT_METRICS.map(async (metric) => {
+    metrics.map(async (metric) => {
       const url = new URL(
         `https://graph.facebook.com/${apiVersion}/${encodeURIComponent(pageId)}/insights`,
       );
@@ -869,6 +907,7 @@ export function snapshotRow(row: any, connectionAvatarUrl?: string | null): Soci
   const refreshing = socialInsightsLeaseIsActive(row);
   return {
     connectionId: row.connection_id,
+    ...(row.period_metrics && { periodMetrics: row.period_metrics }),
     provider: row.provider,
     handle: String(row.provider_handle || "").replace(/^@+/, ""),
     displayName: row.provider_display_name,
@@ -885,6 +924,7 @@ export function snapshotRow(row: any, connectionAvatarUrl?: string | null): Soci
     lastUpdatedAt: row.fetched_at,
     nextRefreshAt: row.next_refresh_at || null,
     initialImportActive: refreshing && !row.history_imported_at,
+    ...(row.content_archive_cursor && { archivePending: true }),
     refreshing,
     refreshStartedAt: refreshing ? row.refresh_started_at : null,
   };
@@ -900,6 +940,7 @@ function historyRow(row: any): SocialAnalyticsHistoryPoint {
     engagements: socialAnalyticsNumber(row.engagements),
     status: row.status,
     capturedAt: row.captured_at,
+    detailMetrics: socialDetailMetrics(row.detail_metrics || {}),
   };
 }
 
@@ -912,6 +953,7 @@ function contentRow(row: any): SocialContentInsight {
     contentType: row.content_type,
     caption: row.caption || null,
     thumbnailUrl: row.thumbnail_url || null,
+    ...(row.detail_metrics && { detailMetrics: socialDetailMetrics(row.detail_metrics) }),
     publishedAt: row.published_at,
     views: socialAnalyticsNumber(row.views),
     impressions: socialAnalyticsNumber(row.impressions),
@@ -932,6 +974,110 @@ export function uniqueStorableSocialContent(content: SocialContentInsight[]) {
       byPost.set(item.remotePostId, item);
   }
   return [...byPost.values()];
+}
+
+function metaPeriodMetrics(
+  payload: any,
+  fields: Record<string, SocialDetailMetric>,
+): SocialDetailMetrics {
+  const values: Partial<Record<SocialDetailMetric, unknown>> = {};
+  for (const entry of Array.isArray(payload?.data) ? payload.data : []) {
+    const key = fields[entry.name];
+    if (key) values[key] = entry.total_value?.value ?? entry.values?.at(-1)?.value;
+    if (entry.name !== "follows_and_unfollows") continue;
+    for (const breakdown of entry.total_value?.breakdowns || []) {
+      if (breakdown.dimension_keys?.[0] !== "follow_type") continue;
+      for (const row of breakdown.results || []) {
+        const kind = String(row.dimension_values?.[0]).toUpperCase();
+        if (["FOLLOWER", "FOLLOW", "FOLLOWS"].includes(kind)) values.follows = row.value;
+        if (["NON_FOLLOWER", "NONFOLLOWER", "UNFOLLOW", "UNFOLLOWS"].includes(kind))
+          values.unfollows = row.value;
+      }
+    }
+  }
+  return socialDetailMetrics(values);
+}
+
+async function fetchProviderPeriodMetrics(
+  connection: any,
+  token: string,
+): Promise<SocialAccountPeriods> {
+  const scopes = new Set<string>(connection.scopes || []);
+  const instagram =
+    connection.provider === "instagram" && scopes.has("instagram_business_manage_insights");
+  const threads = connection.provider === "threads" && scopes.has("threads_manage_insights");
+  if (!instagram && !threads) return {};
+  const accountId = encodeURIComponent(connection.provider_user_id);
+  const version = process.env.META_GRAPH_API_VERSION?.trim() || "v25.0";
+  const endpoint = instagram
+    ? `https://graph.instagram.com/${version}/${accountId}/insights`
+    : `https://graph.threads.net/v1.0/${accountId}/threads_insights`;
+  const end = new Date();
+  end.setUTCHours(0, 0, 0, 0);
+  const instagramFields = {
+    views: "views",
+    reach: "reach",
+    accounts_engaged: "engagedAccounts",
+    total_interactions: "engagements",
+    likes: "likes",
+    comments: "comments",
+    shares: "shares",
+    saves: "saves",
+    profile_links_taps: "clicks",
+    reposts: "reposts",
+  } as const;
+  const threadsFields = {
+    likes: "likes",
+    replies: "comments",
+    reposts: "reposts",
+    quotes: "quotes",
+    clicks: "clicks",
+  } as const;
+  const fields = instagram ? instagramFields : threadsFields;
+  const fetchRange = async (days: number, offset = 0) => {
+    const until = Math.floor(end.getTime() / 1000) - offset * 86400;
+    const read = (metric: string, breakdown?: string) => {
+      const url = new URL(endpoint);
+      url.searchParams.set("metric", metric);
+      url.searchParams.set("since", String(until - days * 86400));
+      url.searchParams.set("until", String(until));
+      if (instagram) {
+        url.searchParams.set("period", "day");
+        url.searchParams.set("metric_type", "total_value");
+      }
+      if (breakdown) url.searchParams.set("breakdown", breakdown);
+      return providerJson(url, token).catch(optionalProviderAnalytics);
+    };
+    const [activity, follows, reposts] = await Promise.all([
+      read(
+        Object.keys(fields)
+          .filter((key) => !instagram || key !== "reposts")
+          .join(","),
+      ),
+      instagram ? read("follows_and_unfollows", "follow_type") : null,
+      instagram ? read("reposts") : null,
+    ]);
+    return {
+      ...metaPeriodMetrics(activity, fields),
+      ...metaPeriodMetrics(follows, fields),
+      ...metaPeriodMetrics(reposts, fields),
+    };
+  };
+  const [week, month, quarterOrPreviousMonth, yearOrOlderMonth] = await Promise.all([
+    fetchRange(7),
+    fetchRange(30),
+    instagram ? fetchRange(30, 30) : fetchRange(90),
+    instagram ? fetchRange(30, 60) : fetchRange(366),
+  ]);
+  if (!instagram) return { 7: week, 30: month, 90: quarterOrPreviousMonth, 366: yearOrOlderMonth };
+  const quarter: SocialDetailMetrics = {};
+  for (const key of Object.keys(month) as SocialDetailMetric[]) {
+    if (key === "reach" || key === "engagedAccounts") continue;
+    const values = [month[key], quarterOrPreviousMonth[key], yearOrOlderMonth[key]];
+    if (values.every((value) => value !== undefined))
+      quarter[key] = values.reduce<number>((total, value) => total + (value ?? 0), 0);
+  }
+  return { 7: week, 30: month, 90: quarter };
 }
 
 async function fetchProviderDailyHistory(
@@ -1256,7 +1402,7 @@ async function persistSocialInsightsContentPage(connection: any, content: Social
       item,
       thumbnailUrl:
         storedThumbnails.get(item.remotePostId) ||
-        (["instagram", "threads"].includes(connection.provider)
+        (["instagram", "facebook", "threads"].includes(connection.provider)
           ? await durableSocialInsightThumbnailUrl({
               userId: connection.user_id,
               connectionId: connection.id,
@@ -1278,6 +1424,7 @@ async function persistSocialInsightsContentPage(connection: any, content: Social
       caption: item.caption,
       thumbnail_url: thumbnailUrl,
       media_sources: item.mediaSources || [],
+      detail_metrics: item.detailMetrics || {},
       published_at: item.publishedAt,
       views: item.views,
       impressions: item.impressions,
@@ -1319,10 +1466,17 @@ async function processSocialInsightsAccountStage(
       error instanceof Error ? error.message : "Historical account analytics could not import.",
     );
   }
+  const periodMetrics = await fetchProviderPeriodMetrics(connection, token).catch((error) => {
+    warnings.push(
+      error instanceof Error ? error.message : "Account period totals could not import.",
+    );
+    return null;
+  });
   let snapshotQuery = db
     .from("social_analytics_snapshots")
     .update({
       ...analytics,
+      ...(periodMetrics && { period_metrics: periodMetrics }),
       ...(warnings.length
         ? {
             status: analytics.status === "available" ? "partial" : analytics.status,
@@ -1370,6 +1524,7 @@ async function processSocialInsightsAccountStage(
         views: point.views,
         reach: point.reach,
         engagements: point.engagements,
+        detail_metrics: point.detailMetrics || {},
         status: "available",
         captured_at: point.capturedAt,
       })),
@@ -1389,6 +1544,7 @@ async function processSocialInsightsContentStage(
   queue?: SocialInsightsQueue,
 ) {
   const db = supabaseAdmin as any;
+  let resetArchiveCursor = false;
   let latestIndexedPostId: string | null = null;
   if (connection.provider === "twitter" && !message.cursor) {
     const latest = await db
@@ -1401,14 +1557,39 @@ async function processSocialInsightsContentStage(
     if (latest.error) throw new Error("Latest X insight could not be loaded.");
     latestIndexedPostId = latest.data?.remote_post_id || null;
   }
+  const archivedAt = Date.parse(connection.contentArchiveCompletedAt || "");
+  const trackArchive = ["instagram", "facebook", "threads", "tiktok", "youtube"].includes(
+    connection.provider,
+  );
+  const archiveDue =
+    trackArchive &&
+    (!Number.isFinite(archivedAt) ||
+      Date.now() - archivedAt >= 30 * SOCIAL_INSIGHTS_REFRESH_INTERVAL_MS);
   const page = await fetchSocialContentInsightsPage(
-    connection.provider === "twitter" ? { ...connection, latestIndexedPostId } : connection,
+    trackArchive
+      ? { ...connection, initialImportComplete: !message.cursor }
+      : { ...connection, latestIndexedPostId },
     await accessTokenForConnection(connection),
     message.cursor,
-  );
+    trackArchive,
+  ).catch((error) => {
+    if (
+      !trackArchive ||
+      !message.cursor ||
+      !(error instanceof ProviderError) ||
+      error.status !== 400 ||
+      !/cursor|paging|pagination|page token/i.test(error.message)
+    )
+      throw error;
+    resetArchiveCursor = true;
+    return { content: [], nextCursor: null, archiveCursor: null };
+  });
   await persistSocialInsightsContentPage(connection, page.content);
-  if (page.nextCursor) {
-    const successor = { ...message, cursor: page.nextCursor };
+  const nextCursor =
+    page.nextCursor ||
+    (archiveDue && !message.cursor ? connection.contentArchiveCursor || page.archiveCursor : null);
+  if (nextCursor && nextCursor !== message.cursor) {
+    const successor = { ...message, cursor: nextCursor };
     if (!(await advanceSocialInsightsCheckpoint(message, processingAt, successor))) return;
     await dispatchSocialInsightsSuccessor(successor, queue);
     return;
@@ -1429,6 +1610,14 @@ async function processSocialInsightsContentStage(
       refresh_processing_at: null,
       refresh_started_at: null,
       history_imported_at: completedAt.toISOString(),
+      ...(archiveDue && {
+        content_archive_cursor:
+          page.archiveCursor === message.cursor ? null : (page.archiveCursor ?? null),
+        content_archive_completed_at:
+          resetArchiveCursor || (page.archiveCursor && page.archiveCursor !== message.cursor)
+            ? null
+            : completedAt.toISOString(),
+      }),
       next_refresh_at: nextLocalRefreshAt(profile?.account_timezone || "UTC", completedAt),
     })
     .eq("connection_id", connection.id)
@@ -1590,7 +1779,7 @@ export async function processSocialInsightsBackfillMessage(
       db
         .from("social_analytics_snapshots")
         .select(
-          "refresh_job_id,refresh_stage,refresh_cursor,refresh_processing_at,history_imported_at",
+          "refresh_job_id,refresh_stage,refresh_cursor,refresh_processing_at,history_imported_at,content_archive_cursor,content_archive_completed_at",
         )
         .eq("connection_id", message.connectionId)
         .eq("user_id", message.userId)
@@ -1670,7 +1859,12 @@ export async function processSocialInsightsBackfillMessage(
       await processSocialInsightsAccountStage(connection, message, processingAt, queue);
     else
       await processSocialInsightsContentStage(
-        { ...connection, initialImportComplete: Boolean(initialSnapshot.history_imported_at) },
+        {
+          ...connection,
+          initialImportComplete: Boolean(initialSnapshot.history_imported_at),
+          contentArchiveCursor: initialSnapshot.content_archive_cursor,
+          contentArchiveCompletedAt: initialSnapshot.content_archive_completed_at,
+        },
         message,
         processingAt,
         queue,
@@ -1854,14 +2048,12 @@ export async function loadSocialAnalyticsPages(
   fetchPage: (from: number, to: number) => PromiseLike<{ data: any[] | null; error: unknown }>,
 ) {
   const rows: any[] = [];
-  // ponytail: 10 pages. A year of stored posts fits; raise if a creator exceeds 10k insights.
-  for (let from = 0; from < 10_000; from += 1000) {
+  for (let from = 0; ; from += 1000) {
     const page = await fetchPage(from, from + 999);
     if (page.error) throw new Error("Historical social analytics could not be loaded.");
     rows.push(...(page.data || []));
     if (!page.data || page.data.length < 1000) return rows;
   }
-  return rows;
 }
 
 async function loadSocialAnalytics(userId: string, allContent = false) {
@@ -1908,7 +2100,9 @@ async function loadSocialAnalytics(userId: string, allContent = false) {
     loadSocialAnalyticsPages((from, to) =>
       db
         .from("social_analytics_history")
-        .select("connection_id,followers,posts,views,reach,engagements,status,captured_at")
+        .select(
+          "connection_id,followers,posts,views,reach,engagements,status,captured_at,detail_metrics",
+        )
         .eq("user_id", userId)
         .gte("captured_at", cutoff)
         .order("captured_at", { ascending: true })
@@ -1918,7 +2112,7 @@ async function loadSocialAnalytics(userId: string, allContent = false) {
     loadSocialAnalyticsPages((from, to) => {
       let query = db
         .from("social_content_insights")
-        .select(SOCIAL_INSIGHT_COLUMNS)
+        .select(`${SOCIAL_INSIGHT_COLUMNS},detail_metrics`)
         .eq("user_id", userId);
       if (!allContent) query = query.gte("published_at", cutoff);
       return query
@@ -1975,7 +2169,9 @@ export async function loadPublicSocialAnalytics(userId: string) {
   const [snapshotResult, connectionResult, contentResult] = await Promise.all([
     db
       .from("social_analytics_snapshots")
-      .select("*")
+      .select(
+        "connection_id,provider,provider_handle,provider_display_name,provider_avatar_url,followers,following,posts,views,reach,engagements,status,note,fetched_at,refresh_started_at,history_imported_at,next_refresh_at",
+      )
       .eq("user_id", userId)
       .order("provider", { ascending: true }),
     db
@@ -2049,6 +2245,78 @@ export const refreshSocialAnalytics = createServerFn({ method: "POST" })
     );
     await queueSocialInsightsBackfill(context.userId, true);
     return loadSocialAnalytics(context.userId, true);
+  });
+
+export const getSocialInsightMedia = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .validator((input) =>
+    z
+      .object({
+        connectionId: z.string().uuid(),
+        postId: z.string().min(1).max(512),
+      })
+      .parse(input),
+  )
+  .handler(async ({ context, data }) => {
+    if (!planHasEntitlement(await getPlan(context.userId), "socialAnalytics")) return [];
+    await enforceRequestRateLimit(
+      "EXPENSIVE_API_RATE_LIMITER",
+      "social-insight-media",
+      context.userId,
+    );
+    const { data: post, error } = await (supabaseAdmin as any)
+      .from("social_content_insights")
+      .select("media_sources")
+      .eq("connection_id", data.connectionId)
+      .eq("remote_post_id", data.postId)
+      .eq("user_id", context.userId)
+      .maybeSingle();
+    if (error) throw new Error("This post’s media could not load.");
+    return contentMediaSources(post?.media_sources);
+  });
+
+export const getTikTokInsightCovers = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input) =>
+    z
+      .object({
+        connectionId: z.string().uuid(),
+        postIds: z
+          .array(z.string().regex(/^\d{1,30}$/))
+          .min(1)
+          .max(20),
+      })
+      .parse(input),
+  )
+  .handler(async ({ context, data }) => {
+    if (!planHasEntitlement(await getPlan(context.userId), "socialAnalytics")) return {};
+    await enforceRequestRateLimit(
+      "EXPENSIVE_API_RATE_LIMITER",
+      "tiktok-insight-covers",
+      context.userId,
+    );
+    const db = supabaseAdmin as any;
+    const [connection, posts] = await Promise.all([
+      db
+        .from("social_connections")
+        .select(SOCIAL_CONNECTION_COLUMNS)
+        .eq("id", data.connectionId)
+        .eq("user_id", context.userId)
+        .eq("provider", "tiktok")
+        .eq("status", "active")
+        .maybeSingle(),
+      db
+        .from("social_content_insights")
+        .select("remote_post_id")
+        .eq("connection_id", data.connectionId)
+        .eq("user_id", context.userId)
+        .in("remote_post_id", data.postIds)
+        .limit(data.postIds.length),
+    ]);
+    if (connection.error || posts.error) throw new Error("TikTok previews could not load.");
+    const ids = (posts.data || []).map((post: any) => String(post.remote_post_id));
+    if (!connection.data || !ids.length) return {};
+    return fetchTikTokInsightCovers(await accessTokenForConnection(connection.data), ids);
   });
 
 export const setPublicSocialInsights = createServerFn({ method: "POST" })

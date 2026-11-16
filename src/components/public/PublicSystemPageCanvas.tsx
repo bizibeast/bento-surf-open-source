@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { collides } from "react-grid-layout/core";
 import {
   BlockRenderer,
   isCompletePublicBlock,
@@ -11,45 +10,17 @@ import {
   type SystemPageItem,
   type SystemItemLayout,
 } from "@/lib/page-system-layout";
-import { roundedGridRect } from "@/lib/grid-geometry";
+import {
+  GRID_COLS_DESKTOP,
+  GRID_COLS_PHONE,
+  GRID_MARGIN,
+  GRID_PHONE_BREAKPOINT,
+  mobileGridLayout,
+  resolveGridOverlaps,
+  roundedGridRect,
+} from "@/lib/grid-geometry";
 
-// --- Grid identical to editor (read-only) ---
-const GRID_MARGIN = 12;
-const GRID_COLS_DESKTOP = 8;
-const GRID_COLS_PHONE = 4;
 const PREVIEW_GRID_WIDTH = 680;
-
-type PackItem = { i: string; x: number; y: number; w: number; h: number };
-
-function packLayout(items: Array<{ i: string; w: number; h: number }>, cols: number): PackItem[] {
-  const occupied = new Set<string>();
-  const key = (x: number, y: number) => `${x},${y}`;
-  const isFree = (x: number, y: number, w: number, h: number) => {
-    for (let dy = 0; dy < h; dy++)
-      for (let dx = 0; dx < w; dx++) if (occupied.has(key(x + dx, y + dy))) return false;
-    return true;
-  };
-  const occupy = (x: number, y: number, w: number, h: number) => {
-    for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) occupied.add(key(x + dx, y + dy));
-  };
-  const placed: PackItem[] = [];
-  for (const it of items) {
-    const w = Math.min(Math.max(it.w, 1), cols);
-    const h = Math.max(it.h, 1);
-    let done = false;
-    for (let y = 0; !done; y++) {
-      for (let x = 0; x <= cols - w; x++) {
-        if (isFree(x, y, w, h)) {
-          placed.push({ i: it.i, x, y, w, h });
-          occupy(x, y, w, h);
-          done = true;
-          break;
-        }
-      }
-    }
-  }
-  return placed;
-}
 
 export function PublicSystemPageCanvas({
   blocks,
@@ -75,21 +46,17 @@ export function PublicSystemPageCanvas({
   liveSocialEnabled?: boolean;
   previewMode?: boolean;
 }) {
-  const publicBlocks = blocks.filter((block) =>
-    isCompletePublicBlock({
-      ...block,
-      content:
-        block.content && typeof block.content === "object" && !Array.isArray(block.content)
-          ? block.content
-          : {},
-    } as Block),
-  );
-  const hasHiddenBlocks = publicBlocks.length !== blocks.length;
   const tiles = [
-    ...publicBlocks.map((block) => ({
+    ...blocks.map((block) => ({
       ...block,
-      block,
-      systemItem: undefined as SystemPageItem | undefined,
+      block: {
+        ...block,
+        content:
+          block.content && typeof block.content === "object" && !Array.isArray(block.content)
+            ? (block.content as Block["content"])
+            : {},
+      },
+      systemItem: undefined,
     })),
     ...mergeSystemItemLayout(systemItems, systemLayout).flatMap(({ itemKey, ...geometry }) => {
       const systemItem = systemItems.find((item) => item.key === itemKey);
@@ -106,10 +73,7 @@ export function PublicSystemPageCanvas({
         : [];
     }),
   ].sort((a, b) => a.y - b.y || a.x - b.x || a.id.localeCompare(b.id));
-  // System canvases use the same combined visual order as the editor.
-  const orderedTiles = systemItems.length
-    ? tiles.map((tile, position) => ({ ...tile, position }))
-    : tiles;
+  const visibleTiles = tiles.filter((tile) => !tile.block || isCompletePublicBlock(tile.block));
   const ref = useRef<HTMLDivElement>(null);
   // Browser Rendering can capture the server-rendered shell before hydration.
   // The preview route always uses the 1200 px OG viewport, whose desktop grid
@@ -117,16 +81,22 @@ export function PublicSystemPageCanvas({
   // Explore card and social share image complete even when JavaScript is slow.
   const [width, setWidth] = useState(previewMode ? PREVIEW_GRID_WIDTH : 0);
   const [captureReady, setCaptureReady] = useState(false);
+  const [isPhone, setIsPhone] = useState(false);
 
   useEffect(() => {
     if (!ref.current) return;
     const update = () => {
       if (ref.current) setWidth(ref.current.clientWidth);
+      setIsPhone(window.innerWidth < GRID_PHONE_BREAKPOINT);
     };
     update();
     const ro = new ResizeObserver(update);
     ro.observe(ref.current);
-    return () => ro.disconnect();
+    window.addEventListener("resize", update);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", update);
+    };
   }, []);
 
   useEffect(() => {
@@ -157,7 +127,7 @@ export function PublicSystemPageCanvas({
 
       const items = Array.from(root.querySelectorAll<HTMLElement>("[data-bento-public-grid-item]"));
       const allItemsVisible =
-        items.length === orderedTiles.length &&
+        items.length === visibleTiles.length &&
         items.every((item) => {
           const rect = item.getBoundingClientRect();
           const style = getComputedStyle(item);
@@ -179,49 +149,20 @@ export function PublicSystemPageCanvas({
     return () => {
       cancelled = true;
     };
-  }, [blocks, systemItems, systemLayout, orderedTiles.length, previewMode, width]);
+  }, [blocks, systemItems, systemLayout, visibleTiles.length, isPhone, previewMode, width]);
 
-  const isPhone = width > 0 && width < 640;
   const cols = isPhone ? GRID_COLS_PHONE : GRID_COLS_DESKTOP;
   const cellW = width > 0 ? Math.max(40, (width - GRID_MARGIN * (cols + 1)) / cols) : 0;
-  const hasUnplacedBlocks = orderedTiles.some(
-    (block) => !Number.isFinite(block.y) || block.y >= 9_999,
+  const desktopLayout = resolveGridOverlaps(
+    tiles.map(({ id, x, y, w, h }) => ({ i: id, x, y, w, h })),
+    GRID_COLS_DESKTOP,
   );
-  const hasOverlaps = orderedTiles.some((tile, index) =>
-    orderedTiles
-      .slice(index + 1)
-      .some((other) =>
-        collides(
-          { i: tile.id, x: tile.x, y: tile.y, w: tile.w, h: tile.h },
-          { i: other.id, x: other.x, y: other.y, w: other.w, h: other.h },
-        ),
-      ),
-  );
-
-  const layout: PackItem[] =
-    isPhone || hasHiddenBlocks || hasUnplacedBlocks || hasOverlaps
-      ? packLayout(
-          [...orderedTiles]
-            .sort(
-              (a, b) =>
-                (a.position ?? 0) - (b.position ?? 0) ||
-                a.y - b.y ||
-                a.x - b.x ||
-                a.id.localeCompare(b.id),
-            )
-            .map((b) => ({ i: b.id, w: Math.min(b.w, cols), h: b.h })),
-          cols,
-        )
-      : orderedTiles.map((b) => ({
-          i: b.id,
-          x: Math.min(b.x, Math.max(0, cols - Math.min(b.w, cols))),
-          y: b.y,
-          w: Math.min(b.w, cols),
-          h: b.h,
-        }));
-
-  const posById = new Map(layout.map((l) => [l.i, l]));
-  const maxRow = layout.reduce((m, l) => Math.max(m, l.y + l.h), 0);
+  const layout = isPhone ? mobileGridLayout(desktopLayout) : desktopLayout;
+  const posById = new Map(layout.map((item) => [item.i, item]));
+  const maxRow = visibleTiles.reduce((max, { id }) => {
+    const item = posById.get(id);
+    return item ? Math.max(max, item.y + item.h) : max;
+  }, 0);
   const totalH = maxRow * cellW + (maxRow + 1) * GRID_MARGIN;
 
   return (
@@ -230,11 +171,11 @@ export function PublicSystemPageCanvas({
       data-bento-public-block-grid-ready={
         previewMode ? (captureReady ? "true" : "false") : width > 0 ? "true" : "false"
       }
-      data-bento-public-block-count={orderedTiles.length}
+      data-bento-public-block-count={visibleTiles.length}
       className={width > 0 ? "relative w-full" : "grid w-full gap-3 sm:grid-cols-2"}
       style={{ height: width > 0 ? totalH : undefined }}
     >
-      {orderedTiles.map((b) => {
+      {visibleTiles.map((b) => {
         const l = posById.get(b.id);
         if (!l) return null;
         const rect = roundedGridRect({
@@ -257,25 +198,13 @@ export function PublicSystemPageCanvas({
           >
             {b.systemItem ? (
               <SystemPageTile item={b.systemItem} publicUsername={username} w={l.w} h={l.h} />
-            ) : (
+            ) : b.block ? (
               <BlockRenderer
-                block={
-                  {
-                    ...b.block,
-                    content:
-                      b.block?.content &&
-                      typeof b.block.content === "object" &&
-                      !Array.isArray(b.block.content)
-                        ? b.block.content
-                        : {},
-                    w: l.w,
-                    h: l.h,
-                  } as Block
-                }
+                block={{ ...b.block, w: l.w, h: l.h }}
                 liveSocialEnabled={liveSocialEnabled}
                 emailCaptureInteractive={!previewMode}
               />
-            )}
+            ) : null}
           </div>
         );
       })}

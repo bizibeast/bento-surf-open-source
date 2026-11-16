@@ -3,6 +3,12 @@ import type {
   SocialAnalyticsHistoryPoint,
 } from "./social-analytics.functions";
 import type { SocialContentInsight } from "./social-content-insights.server";
+import {
+  socialInsightsCutoff,
+  type SocialDetailMetric,
+  type SocialDetailMetrics,
+  type SocialInsightsRange,
+} from "./social-insights-metrics";
 import type { SocialProvider } from "./social-scheduler";
 
 export type SocialGrowthMetric = "views" | "impressions" | "reach" | "engagements" | "followers";
@@ -236,7 +242,18 @@ export function socialContentTypePerformance(content: SocialContentInsight[]) {
 }
 
 export type BestContentMetric =
-  "views" | "impressions" | "engagements" | "likes" | "comments" | "shares" | "saves";
+  | "views"
+  | "impressions"
+  | "reach"
+  | "engagements"
+  | "likes"
+  | "comments"
+  | "shares"
+  | "saves"
+  | "reposts"
+  | "quotes"
+  | "follows"
+  | "watchSeconds";
 
 export function socialContentExposureMetric(
   content: SocialContentInsight[],
@@ -251,12 +268,131 @@ export function socialContentExposureMetric(
 
 export function bestSocialContent(
   content: SocialContentInsight[],
-  limit = 9,
+  limit = Infinity,
   metric: BestContentMetric = "engagements",
 ) {
   return [...content]
-    .sort((left, right) => (right[metric] || 0) - (left[metric] || 0))
+    .sort(
+      (left, right) =>
+        (socialPostMetric(right, metric) ?? -1) - (socialPostMetric(left, metric) ?? -1) ||
+        right.publishedAt.localeCompare(left.publishedAt),
+    )
     .slice(0, limit);
+}
+
+export const SOCIAL_POST_METRICS = [
+  "views",
+  "impressions",
+  "reach",
+  "engagements",
+  "likes",
+  "comments",
+  "shares",
+  "saves",
+] as const;
+
+export function socialPostMetric(item: SocialContentInsight, metric: SocialDetailMetric) {
+  if (metric === "shares" && ["threads", "twitter"].includes(item.provider)) return undefined;
+  if (SOCIAL_POST_METRICS.some((key) => key === metric))
+    return item[metric as (typeof SOCIAL_POST_METRICS)[number]] ?? undefined;
+  return item.detailMetrics?.[metric];
+}
+
+export function socialContentForRange(
+  content: SocialContentInsight[],
+  range: SocialInsightsRange,
+  now: Date,
+) {
+  if (range === "all") return content;
+  const cutoff = socialInsightsCutoff(range, now);
+  return content.filter((item) => {
+    const published = Date.parse(item.publishedAt);
+    return published >= cutoff && published <= now.getTime();
+  });
+}
+
+export function socialAccountActivity(
+  accounts: SocialAnalyticsAccount[],
+  history: SocialAnalyticsHistoryPoint[],
+  content: SocialContentInsight[],
+  range: SocialInsightsRange,
+  now: Date,
+) {
+  const cutoff = socialInsightsCutoff(range, now);
+  const accountMetrics: SocialDetailMetrics = {};
+  const postMetrics: SocialDetailMetrics = {};
+  const postMetricKeys = [...SOCIAL_POST_METRICS, "reposts", "quotes"] as const;
+  let followerChange: number | null = null;
+  let partialFollowerHistory = false;
+  for (const account of accounts) {
+    const accountHistory = history.filter((point) => point.connectionId === account.connectionId);
+    const metrics: SocialDetailMetrics =
+      range === "all" ? {} : { ...account.periodMetrics?.[range] };
+    const dailyKeys = [
+      "views",
+      "engagements",
+      "likes",
+      "comments",
+      "shares",
+      "follows",
+      "unfollows",
+      "watchSeconds",
+      "clicks",
+    ] as const;
+    for (const key of dailyKeys) {
+      if (metrics[key] !== undefined) continue;
+      const byDay = new Map<string, number>();
+      for (const point of accountHistory) {
+        const timestamp = Date.parse(point.capturedAt);
+        // Threads' daily history contains profile views. X history uses impressions.
+        const value =
+          key === "views"
+            ? ["facebook", "instagram", "youtube", "tiktok"].includes(account.provider)
+              ? point.views
+              : null
+            : key === "engagements"
+              ? point.engagements
+              : point.detailMetrics?.[key];
+        if (value != null && timestamp >= cutoff && timestamp <= now.getTime())
+          byDay.set(point.capturedAt.slice(0, 10), value);
+      }
+      if (byDay.size) metrics[key] = [...byDay.values()].reduce((total, value) => total + value, 0);
+    }
+    for (const key of Object.keys(metrics) as SocialDetailMetric[]) {
+      const value = metrics[key];
+      // Unique audiences cannot be deduplicated across accounts.
+      if (
+        value !== undefined &&
+        (accounts.length === 1 || (key !== "reach" && key !== "engagedAccounts"))
+      )
+        accountMetrics[key] = (accountMetrics[key] ?? 0) + value;
+    }
+    if (metrics.follows !== undefined && metrics.unfollows !== undefined) {
+      followerChange = (followerChange ?? 0) + metrics.follows - metrics.unfollows;
+      continue;
+    }
+    const series = followerGrowthSeries(accountHistory, account.connectionId).filter(
+      (point) => Date.parse(point.date) <= now.getTime(),
+    );
+    const latest = series.at(-1);
+    const baselineAt = Number.isFinite(cutoff) ? cutoff : -Infinity;
+    const baseline =
+      [...series].reverse().find((point) => Date.parse(point.date) <= baselineAt) || series[0];
+    if (baseline && latest && baseline.date !== latest.date && Date.parse(latest.date) >= cutoff) {
+      followerChange = (followerChange ?? 0) + latest.value - baseline.value;
+      if (range !== "all" && Date.parse(baseline.date) > cutoff) partialFollowerHistory = true;
+    } else {
+      partialFollowerHistory = true;
+    }
+  }
+  for (const item of content) {
+    for (const key of postMetricKeys) {
+      if (key === "reach") continue;
+      const value = socialPostMetric(item, key);
+      if (value !== undefined) postMetrics[key] = (postMetrics[key] ?? 0) + value;
+    }
+  }
+  return { accountMetrics, postMetrics, followerChange, partialFollowerHistory };
 }
 
 export function socialMilestones(account: SocialAnalyticsAccount, content: SocialContentInsight[]) {

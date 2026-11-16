@@ -89,6 +89,7 @@ export function isPublicPageRequest(request: Request, env?: CacheEnvironment) {
   if (accept && !accept.includes("text/html") && !accept.includes("*/*")) return false;
 
   const url = new URL(request.url);
+  if (url.searchParams.has("__bento_preview")) return false;
   const segments = pathSegments(url.pathname);
 
   if (!isApplicationOrigin(url, env)) {
@@ -134,10 +135,35 @@ export function isPublicBlogPage(request: Request) {
   );
 }
 
+function isCreatorCanvasRequest(request: Request) {
+  const url = new URL(request.url);
+  const segments = pathSegments(url.pathname);
+  return isApplicationOrigin(url, undefined)
+    ? Boolean(segments[0]?.startsWith("@") && segments.length <= 2)
+    : segments.length <= 1;
+}
+
+function withCreatorCacheControl(response: Response) {
+  const headers = new Headers(response.headers);
+  headers.set("cache-control", "public, max-age=0, must-revalidate");
+  return new Response(response.body, { status: response.status, headers });
+}
+
 function cacheRequestFor(request: Request, generation = PUBLIC_PAGE_CACHE_VERSION) {
   const key = new URL(request.url);
-  key.search = `?__bento_public_page_cache=${generation}`;
+  const version = isCreatorCanvasRequest(request) ? "creator-v3" : generation;
+  key.search = `?__bento_public_page_cache=${version}`;
   return new Request(key.toString(), { method: "GET" });
+}
+
+export async function clearPublicPageCache(urls: string[]) {
+  const cache = defaultCache();
+  if (!cache) return;
+  try {
+    await Promise.all(urls.map((url) => cache.delete(cacheRequestFor(new Request(url)))));
+  } catch (error) {
+    console.warn("[public-page-cache] clear failed", error);
+  }
 }
 
 function lastGoodRequestFor(request: Request) {
@@ -172,7 +198,7 @@ export async function readPublicPageCache(request: Request, env?: CacheEnvironme
     const cached = await cache.match(cacheRequestFor(request));
     if (!cached) return null;
     const hit = withCacheStatus(cached, "HIT");
-    return hit;
+    return isCreatorCanvasRequest(request) ? withCreatorCacheControl(hit) : hit;
   } catch (error) {
     // Edge cache availability must never decide whether a public profile is
     // available. A cache miss is slower but still correct.
@@ -198,10 +224,11 @@ export async function storePublicPageCache(
   if (response.headers.has("set-cookie")) return withCacheStatus(response, "BYPASS");
 
   const blog = isPublicBlogPage(request);
+  const creatorCanvas = !blog && isCreatorCanvasRequest(request);
   const ttl = cacheTtlSeconds(env);
   const cacheControl = blog
     ? `public, max-age=${BLOG_FRESH_SECONDS}`
-    : `public, max-age=${ttl}, stale-while-revalidate=86400`;
+    : `public, max-age=${ttl}${creatorCanvas ? "" : ", stale-while-revalidate=86400"}`;
   const cacheHeaders = new Headers(response.headers);
   cacheHeaders.set("cache-control", cacheControl);
   cacheHeaders.set("x-bento-cache", "HIT");
@@ -240,11 +267,12 @@ export async function storePublicPageCache(
   const missHeaders = new Headers(response.headers);
   missHeaders.set("cache-control", blog ? PUBLIC_BLOG_CACHE_CONTROL : cacheControl);
   missHeaders.set("x-bento-cache", "MISS");
-  return new Response(response.body, {
+  const miss = new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
     headers: missHeaders,
   });
+  return creatorCanvas ? withCreatorCacheControl(miss) : miss;
 }
 
 export async function publicBlogFailureFallback(request: Request, response: Response) {

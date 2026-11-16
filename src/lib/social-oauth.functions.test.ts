@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   assertSocialOAuthRedirectMatchesEnvironment,
+  authorizationUrl,
   normalizedSocialConnectionScopes,
   socialProviderCredentialsConfigured,
   socialProviderReadiness,
@@ -138,6 +139,19 @@ describe("social provider credential readiness", () => {
       "video.list",
       "video.publish",
     ]);
+  });
+
+  it("requests Instagram audio permissions only for the dedicated Facebook grant", () => {
+    const regular = new URL(authorizationUrl("facebook", "app", "state", "challenge"));
+    const audio = new URL(authorizationUrl("facebook", "app", "state", "challenge", true));
+    expect(regular.searchParams.get("scope")).not.toContain("instagram_content_publish");
+    expect(audio.searchParams.get("scope")?.split(",")).toEqual([
+      "pages_show_list",
+      "pages_read_engagement",
+      "instagram_basic",
+      "instagram_content_publish",
+    ]);
+    expect(audio.searchParams.get("auth_type")).toBe("rerequest");
   });
 
   it("requests Facebook Page publishing and Messenger scopes together", () => {

@@ -1,5 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
-import { isHomepageNewsletterSignup, reconcileNewsletterPageVisibility } from "./pages.functions";
+import {
+  invalidateCreatorPageCaches,
+  isHomepageNewsletterSignup,
+  reconcileNewsletterPageVisibility,
+} from "./pages.functions";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getPlan } from "./plan.server";
@@ -179,6 +183,7 @@ export const createBlock = createServerFn({ method: "POST" })
       .single();
     if (error) throw new Error(error.message);
     if (isHomepageNewsletterSignup(row)) await reconcileNewsletterPageVisibility(supabase, userId);
+    await invalidateCreatorPageCaches(supabase, userId);
     return row;
   });
 
@@ -224,6 +229,7 @@ export const updateBlock = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     if (isHomepageNewsletterSignup(existing) || isHomepageNewsletterSignup(row))
       await reconcileNewsletterPageVisibility(supabase, userId);
+    await invalidateCreatorPageCaches(supabase, userId);
     return row;
   });
 
@@ -249,7 +255,7 @@ export const updateBlockLayout = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    await Promise.all(
+    const updates = await Promise.all(
       data.items.map((item) =>
         supabase
           .from("blocks")
@@ -258,6 +264,9 @@ export const updateBlockLayout = createServerFn({ method: "POST" })
           .eq("user_id", userId),
       ),
     );
+    await invalidateCreatorPageCaches(supabase, userId);
+    const failedUpdate = updates.find(({ error }) => error);
+    if (failedUpdate?.error) throw new Error(failedUpdate.error.message);
     return { ok: true };
   });
 
@@ -276,5 +285,6 @@ export const deleteBlock = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     if (deleted && isHomepageNewsletterSignup(deleted))
       await reconcileNewsletterPageVisibility(supabase, userId);
+    if (deleted) await invalidateCreatorPageCaches(supabase, userId);
     return { ok: true };
   });

@@ -1,4 +1,5 @@
 import { LINKEDIN_COMMENT_SCOPE } from "./scheduler-follow-ups";
+import { instagramAudioAuthorization } from "./instagram-audio.server";
 import { normalizeCustomerCopy, normalizeDashes } from "./text/dashes";
 import { getEditorialReviewNotes } from "./content-editorial";
 import {
@@ -26,6 +27,7 @@ import {
   type SocialProvider,
   socialConnectionCanPublish,
   providerSettingsMedia,
+  instagramCatalogAudioSchema,
   postingScheduleSchema,
   scheduledInstagramAutoDmSchema,
   type PostingSchedule,
@@ -623,6 +625,21 @@ export async function saveSocialPostForUser(
         );
       }
     }
+  }
+  const catalogAudio = instagramCatalogAudioSchema.safeParse(
+    data.providerSettings.instagram?.catalogAudio,
+  );
+  if (catalogAudio.success) {
+    const instagram = checkedConnections.filter(
+      (connection: any) => connection.provider === "instagram",
+    );
+    if (instagram.length !== 1 || instagram[0].id !== catalogAudio.data.connectionId)
+      throw new Error("Choose one Instagram account when adding a catalog track.");
+    if (
+      !data.asDraft &&
+      !(await instagramAudioAuthorization(userId, catalogAudio.data.connectionId))
+    )
+      throw new Error("Connect Instagram audio through Facebook before scheduling this Reel.");
   }
   const settingsForConnection = (connection: { id: string; provider: SocialProvider }) => ({
     ...data.providerSettings[connection.provider],

@@ -145,6 +145,32 @@ describe("provider queue routing", () => {
 });
 
 describe("Instagram Reels publishing", () => {
+  it("attaches a catalog track and both volume levels to a Reel container", () => {
+    const media = { url: "https://example.com/reel.mp4", mimeType: "video/mp4" };
+    const settings = {
+      catalogAudio: {
+        sourceKey: "reel",
+        connectionId: "a1c4043d-e6d1-4d90-a08c-6eca3fa2a4b7",
+        audioId: "587784541076604",
+        title: "Music",
+        creator: "Artist",
+        trackVolume: 65,
+        originalVolume: 20,
+      },
+    };
+    const reel = buildInstagramMediaParams("Caption", media, settings);
+    expect(JSON.parse(reel.get("audio_configuration")!)).toEqual({
+      audio_id: "587784541076604",
+      audio_volume: 65,
+      video_volume: 20,
+    });
+    expect(
+      buildInstagramMediaParams("Caption", { ...media, mimeType: "image/jpeg" }, settings).has(
+        "audio_configuration",
+      ),
+    ).toBe(false);
+  });
+
   it("adds Trial Reel parameters without changing standard Reels", () => {
     expect(buildInstagramMediaParams).toBeTypeOf("function");
     const media = { url: "https://example.com/reel.mp4", mimeType: "video/mp4" };

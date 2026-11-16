@@ -3,12 +3,11 @@ import { clearPublicProfileCache, publicProfileCacheKey } from "./public-profile
 
 afterEach(() => vi.unstubAllGlobals());
 
-it("clears the creator shell across hosted pages, system routes, and custom domains", async () => {
+it("clears both profile data and rendered documents for a creator's pages", async () => {
   const remove = vi.fn().mockResolvedValue(true);
   vi.stubGlobal("caches", { default: { delete: remove } });
   await clearPublicProfileCache("Creator", ["about"], ["creator.example"]);
   const urls = remove.mock.calls.map(([request]) => request.url);
-  expect(urls).toHaveLength(16);
   for (const slug of [
     "",
     "calendar",
@@ -20,7 +19,11 @@ it("clears the creator shell across hosted pages, system routes, and custom doma
     "about",
   ]) {
     const suffix = slug ? [slug] : [];
-    expect(urls).toContain(publicProfileCacheKey(null, ["Creator", ...suffix]));
+    expect(urls).toContain(publicProfileCacheKey("localhost:8080", ["Creator", ...suffix]));
     expect(urls).toContain(publicProfileCacheKey("creator.example", suffix));
+    expect(urls).toContain(
+      `http://localhost:8080/@creator${slug ? `/${slug}` : ""}?__bento_public_page_cache=creator-v3`,
+    );
+    expect(urls).toContain(`https://creator.example/${slug}?__bento_public_page_cache=creator-v3`);
   }
 });

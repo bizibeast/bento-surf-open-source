@@ -54,8 +54,26 @@ function SocialCallback() {
       return;
     }
     void completeSocialConnection({ data: { provider, code: search.code, state: search.state } })
-      .then(({ connected }) => {
+      .then((result) => {
         setStatus("success");
+        if (result.instagramAudio) {
+          setMessage("Instagram audio connected.");
+          if (typeof BroadcastChannel !== "undefined") {
+            const channel = new BroadcastChannel("bento-instagram-audio");
+            channel.postMessage("connected");
+            channel.close();
+          }
+          window.setTimeout(() => {
+            window.close();
+            void navigate({
+              to: "/post-scheduler",
+              search: { postId: result.postId },
+              replace: true,
+            });
+          }, 800);
+          return;
+        }
+        const { connected } = result;
         setMessage(
           `${connected} ${definition.name} account${connected === 1 ? "" : "s"} connected.`,
         );

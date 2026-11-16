@@ -1243,6 +1243,14 @@ describe("scheduler compose close protection", () => {
     expect(
       within(compose).queryByText(/Reading this video|Custom thumbnail and visibility/),
     ).not.toBeInTheDocument();
+    fireEvent.click(within(compose).getByRole("button", { name: /Reel audio/ }));
+    const editor = await screen.findByRole("dialog", { name: "Reel audio" });
+    fireEvent.click(within(editor).getByRole("button", { name: "Upload" }));
+    const originalVolume = within(editor).getByRole("slider", { name: "Original audio volume" });
+    expect(originalVolume).toHaveValue("100");
+    expect(within(editor).getByRole("button", { name: "Apply to Reel" })).toBeDisabled();
+    fireEvent.change(originalVolume, { target: { value: 30 } });
+    expect(within(editor).getByRole("button", { name: "Apply to Reel" })).toBeEnabled();
   });
 
   it("syncs Instagram caption into the YouTube title and keeps one separate description", async () => {

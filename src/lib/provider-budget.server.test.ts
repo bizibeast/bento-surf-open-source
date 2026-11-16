@@ -90,10 +90,23 @@ describe("provider cost reservations", () => {
 
   it("settles only a valid receipt and never credits missing or oversized usage", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: true, error: null });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
     const reservation = { id: reservationId, units: 100 };
     for (const units of [null, -1, 101, Infinity, NaN, 0.1]) {
       expect(await settleProviderUsage(reservation, units, { client: { rpc } })).toBe(false);
     }
+    expect(warning).toHaveBeenCalledWith("ai_usage_settlement_rejected", {
+      reservationId,
+      reason: "missing_cost",
+      reservedUnits: 100,
+      actualUnits: null,
+    });
+    expect(warning).toHaveBeenCalledWith("ai_usage_settlement_rejected", {
+      reservationId,
+      reason: "above_reservation",
+      reservedUnits: 100,
+      actualUnits: 101,
+    });
     expect(rpc).not.toHaveBeenCalled();
     expect(await settleProviderUsage(reservation, 20, { client: { rpc } })).toBe(true);
     expect(rpc).toHaveBeenCalledExactlyOnceWith("settle_ai_provider_usage", {

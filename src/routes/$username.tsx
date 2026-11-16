@@ -12,7 +12,6 @@ import { normalizePlan, planHasEntitlement } from "@/lib/plans";
 import {
   normalizePublicUsername,
   publicNewslettersPath,
-  publicProductPath,
   publicProfilePath,
 } from "@/lib/application-urls";
 import { openPublicCreatorPageFromWebMcp, useWebMcpTools, webMcpResult } from "@/lib/webmcp";
@@ -256,23 +255,6 @@ export function PublicProfileView({
           }).catch(() => {});
         }}
       />
-      {!data.activePageId && data.productLinks.length ? (
-        <section className="mt-8" aria-label="Products">
-          <h2 className="font-display text-xl text-foreground">Products</h2>
-          <ul className="mt-3 space-y-2 text-sm">
-            {data.productLinks.map((product) => (
-              <li key={product.slug}>
-                <a
-                  href={publicProductPath(profile.username, product.slug)}
-                  className="underline underline-offset-4"
-                >
-                  {product.title}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
     </PublicCreatorShell>
   );
 }

@@ -1,3 +1,4 @@
+import { INSTAGRAM_AUDIO_GRAPH_URL, instagramAudioAuthorization } from "./instagram-audio.server";
 import {
   runSocialPublishSequence,
   type SocialPublishProgress,
@@ -28,6 +29,9 @@ import {
   socialRetryDelaySeconds,
   SOCIAL_PROVIDER_DEFINITIONS,
   parseSchedulerMediaSetting,
+  instagramReelAudioFor,
+  instagramCatalogAudioFor,
+  instagramCatalogAudioSchema,
   resolvedYouTubeFormat,
   tiktokCoverTimestampMs,
   youtubeDescriptionForUpload,
@@ -270,6 +274,17 @@ export function buildInstagramMediaParams(
     params.set("video_url", media.url);
     const cover = parseSchedulerMediaSetting(settings.cover);
     if (cover?.url) params.set("cover_url", cover.url);
+    const audio = instagramCatalogAudioSchema.safeParse(settings.catalogAudio);
+    if (audio.success) {
+      params.set(
+        "audio_configuration",
+        JSON.stringify({
+          audio_id: audio.data.audioId,
+          audio_volume: audio.data.trackVolume,
+          video_volume: audio.data.originalVolume,
+        }),
+      );
+    }
     if (settings.trialReel === true) {
       const graduationStrategy: InstagramTrialGraduationStrategy =
         settings.graduationStrategy === "SS_PERFORMANCE" ? "SS_PERFORMANCE" : "MANUAL";
@@ -287,6 +302,7 @@ async function publishInstagram(
   body: string,
   media: SchedulerMedia[],
   settings: Record<string, unknown> = {},
+  graphUrl = "https://graph.instagram.com/v25.0",
 ) {
   if (!media.length)
     throw new ProviderError("Instagram needs an image or video.", "media_required", false);
@@ -320,7 +336,7 @@ async function publishInstagram(
     const params = buildInstagramMediaParams(body, first, settings);
     params.set("access_token", token);
     const created = await providerJson(
-      `https://graph.instagram.com/v25.0/${userId}/media`,
+      `${graphUrl}/${userId}/media`,
       {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -347,7 +363,7 @@ async function publishInstagram(
       childParams.set("image_url", item.url);
     }
     const child = await providerJson(
-      `https://graph.instagram.com/v25.0/${userId}/media`,
+      `${graphUrl}/${userId}/media`,
       {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -367,7 +383,7 @@ async function publishInstagram(
   }
 
   const created = await providerJson(
-    `https://graph.instagram.com/v25.0/${userId}/media`,
+    `${graphUrl}/${userId}/media`,
     {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -386,9 +402,14 @@ async function publishInstagram(
   return { id: containerId, pending: true };
 }
 
-async function finishInstagram(userId: string, containerId: string, token: string) {
+async function finishInstagram(
+  userId: string,
+  containerId: string,
+  token: string,
+  graphUrl = "https://graph.instagram.com/v25.0",
+) {
   const statusResult = await providerJson(
-    `https://graph.instagram.com/v25.0/${containerId}?fields=status_code,status&access_token=${encodeURIComponent(token)}`,
+    `${graphUrl}/${containerId}?fields=status_code,status&access_token=${encodeURIComponent(token)}`,
     { method: "GET" },
     "instagram",
   );
@@ -415,7 +436,7 @@ async function finishInstagram(userId: string, containerId: string, token: strin
     return { id: containerId, pending: true };
   }
   const published = await providerJson(
-    `https://graph.instagram.com/v25.0/${userId}/media_publish`,
+    `${graphUrl}/${userId}/media_publish`,
     {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -2207,9 +2228,18 @@ async function publish(
   if (socialProviderUsesMock(provider)) {
     return { id: `staging-${target.id}` };
   }
-  const token = await accessTokenForConnection(connection);
   let media = (Array.isArray(post.media) ? post.media : []) as SchedulerMedia[];
   let settings = target.provider_settings || {};
+  if (provider === "instagram" && settings.reelAudio != null) {
+    const reelAudio = instagramReelAudioFor(media, settings.reelAudio);
+    if (!reelAudio)
+      throw new ProviderError(
+        "Apply the audio mix to the selected Reel video.",
+        "invalid_reel_audio",
+        false,
+      );
+    media = [reelAudio.video];
+  }
   if (["instagram", "facebook", "threads", "tiktok"].includes(provider)) {
     try {
       // Prepare sequentially so carousels never buffer several originals at once.
@@ -2236,6 +2266,24 @@ async function publish(
     }
   }
   const { body, title } = targetPostCopy(post, target.provider_settings || {}, provider, media);
+  if (provider === "instagram" && settings.catalogAudio != null) {
+    if (!instagramCatalogAudioFor(media, connection.id, settings.catalogAudio))
+      throw new ProviderError(
+        "Choose audio for this Reel again.",
+        "invalid_instagram_audio",
+        false,
+      );
+    const audio = await publishingInstagramAudioAuthorization(connection);
+    return publishInstagram(
+      audio.userId,
+      audio.token,
+      body,
+      media,
+      settings,
+      INSTAGRAM_AUDIO_GRAPH_URL,
+    );
+  }
+  const token = await accessTokenForConnection(connection);
   if (provider === "threads")
     return publishThreads(connection.provider_user_id, token, body, media);
   if (provider === "instagram")
@@ -2274,15 +2322,30 @@ export function targetPostCopy(
   };
 }
 
+async function publishingInstagramAudioAuthorization(connection: { id: string; user_id: string }) {
+  const authorization = await instagramAudioAuthorization(connection.user_id, connection.id);
+  if (!authorization)
+    throw new ProviderError(
+      "Reconnect Instagram audio through Facebook and retry this Reel.",
+      "instagram_audio_grant_expired",
+      false,
+    );
+  return authorization;
+}
+
 async function finishPendingPublish(
   provider: SocialProvider,
   connection: any,
   target: any,
 ): Promise<PublishResult> {
-  const token = await accessTokenForConnection(connection);
   const remoteId = String(target.remote_post_id || "");
   if (!remoteId)
     throw new ProviderError("The provider processing ID is missing.", "missing_remote_id", false);
+  if (provider === "instagram" && target.provider_settings?.catalogAudio != null) {
+    const audio = await publishingInstagramAudioAuthorization(connection);
+    return finishInstagram(audio.userId, remoteId, audio.token, INSTAGRAM_AUDIO_GRAPH_URL);
+  }
+  const token = await accessTokenForConnection(connection);
   if (provider === "instagram")
     return finishInstagram(connection.provider_user_id, remoteId, token);
   if (provider === "threads") return finishThreads(connection.provider_user_id, remoteId, token);
@@ -2452,6 +2515,17 @@ export async function processSocialPublishMessage(message: SocialPublishMessage)
             )
           : new ProviderError("Publishing failed unexpectedly.", "unexpected", true);
 
+    if (
+      target.provider === "instagram" &&
+      target.provider_settings?.catalogAudio != null &&
+      (providerError.status === 401 || needsSocialReconnect(providerError))
+    ) {
+      providerError = new ProviderError(
+        "Reconnect Instagram audio through Facebook and retry this Reel.",
+        "instagram_audio_grant_expired",
+        false,
+      );
+    }
     // A rejected request is safe to retry after renewing access. Never repeat an unknown-outcome write.
     if (providerError.status === 401 && !needsSocialReconnect(providerError)) {
       try {
