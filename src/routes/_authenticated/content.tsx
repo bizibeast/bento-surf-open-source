@@ -4,7 +4,7 @@ import type { AgentDraftEdit } from "@/lib/content-carousel";
 import { ProactiveMessageFeedback } from "@/components/content/ProactiveMessageFeedback";
 import { DiscoverPreferences } from "@/components/content/DiscoverPreferences";
 import { STRATEGY_PLATFORMS, type StrategyPlatform } from "@/lib/content-brain";
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import {
   useInfiniteQuery,
   useMutation,
@@ -12,10 +12,11 @@ import {
   useQueryClient,
   type InfiniteData,
 } from "@tanstack/react-query";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { z } from "zod";
 import "@/components/content/content-workspace.css";
+import "@/components/content-studio/content-studio.css";
 import { AppHeader } from "@/components/AppHeader";
 import {
   ContentAgent,
@@ -23,6 +24,16 @@ import {
   type ContentAgentThread,
 } from "@/components/content/ContentAgent";
 import { ContentAgentSettings } from "@/components/content/ContentAgentSettings";
+import { BennyProviderSettings } from "@/components/content/BennyProviderSettings";
+import { getBennyAiSettings } from "@/lib/benny-byok.functions";
+import { bennyWebSearchQuerySchema } from "@/lib/benny-byok";
+import {
+  analyticsHandoffSchema,
+  type AnalyticsHandoff,
+  type DiscoverPostContextInput,
+} from "@/lib/content-discover-post-context";
+import { getAnalyticsPostHandoff } from "@/lib/content-analytics-handoff.functions";
+import { getContentStudioAccess } from "@/lib/content-studio-access.functions";
 import { createContentAgentWebMcpTools } from "@/lib/content-agent-webmcp";
 import { useWebMcpTools } from "@/lib/webmcp";
 import type {
@@ -40,7 +51,7 @@ import { DiscoverLoading } from "@/components/content/DiscoverLoading";
 import { useDiscoverFeed } from "@/hooks/use-discover-feed";
 import { usePageActivity } from "@/hooks/use-page-activity";
 import { pagePollInterval } from "@/lib/page-poll";
-import { discoverAgentPrompt, type DiscoverBoostAction } from "@/components/content/discover-utils";
+import { discoverAgentSeed, type DiscoverBoostAction } from "@/components/content/discover-utils";
 import { ContentRoutines, type ContentRoutineView } from "@/components/content/ContentRoutines";
 import { MicroAppPanel } from "@/components/MicroAppPanel";
 import {
@@ -102,10 +113,17 @@ import {
   previewOldContentMedia,
 } from "@/lib/content-media.functions";
 
-type ContentTab = "discover" | "agent" | "brain";
+type ContentTab = "discover" | "agent" | "brain" | "studio";
+const ContentStudio = lazy(() =>
+  import("@/components/content-studio/content-studio").then((module) => ({
+    default: module.ContentStudio,
+  })),
+);
+type StudioSeed = { format: "carousel" | "reel"; title: string; text: string; url: string | null };
+const allowanceDollars = (amount: number) => (amount / 1_000_000).toFixed(2);
 
 const contentSearchSchema = z.object({
-  tab: z.enum(["discover", "agent", "brain"]).optional().catch("discover"),
+  tab: z.enum(["discover", "agent", "brain", "studio"]).optional().catch("discover"),
   section: z
     .enum([
       "profile",
@@ -122,6 +140,7 @@ const contentSearchSchema = z.object({
     .optional(),
   item: z.string().uuid().optional(),
   thread: z.string().uuid().optional(),
+  analyticsPost: analyticsHandoffSchema.optional().catch(undefined),
   chat: z.literal("new").optional(),
   platform: z.enum(STRATEGY_PLATFORMS).optional(),
   routines: z
@@ -135,7 +154,7 @@ export const Route = createFileRoute("/_authenticated/content")({
   validateSearch: contentSearchSchema,
   loaderDeps: ({ search }) => ({ tab: search.tab }),
   loader: ({ context, deps }) =>
-    deps.tab && deps.tab !== "discover"
+    deps.tab === "brain" || deps.tab === "agent"
       ? context.queryClient.prefetchQuery({
           queryKey: ["content-brain"],
           queryFn: () => getContentBrain(),
@@ -154,6 +173,7 @@ function ContentRoutePage() {
     item,
     platform,
     thread: requestedThread,
+    analyticsPost,
     chat,
   } = Route.useSearch();
   const navigate = useNavigate();
@@ -168,6 +188,7 @@ function ContentRoutePage() {
     <ContentPage
       initialThread={requestedThread}
       initialNewChat={chat === "new"}
+      initialAnalyticsPost={analyticsPost}
       initialTab={tab}
       initialRoutines={routines}
       initialBrainSection={section}
@@ -198,6 +219,7 @@ function ContentRoutePage() {
 
 export function ContentPage({
   initialThread,
+  initialAnalyticsPost,
   initialNewChat = false,
   initialTab = "discover",
   initialRoutines = false,
@@ -213,6 +235,7 @@ export function ContentPage({
   initialNewChat?: boolean;
   initialTab?: ContentTab;
   initialRoutines?: boolean;
+  initialAnalyticsPost?: AnalyticsHandoff;
   initialBrainSection?: ContentBrainSection;
   initialBrainItem?: string;
   initialBrainPlatform?: StrategyPlatform;
@@ -236,14 +259,96 @@ export function ContentPage({
     return () => clearTimeout(timer);
   }, [mediaSearch]);
   const [agentSeed, setAgentSeed] = useState("");
+  const [discoverPost, setDiscoverPost] = useState<DiscoverPostContextInput & { title: string }>();
+  const [studioSeed, setStudioSeed] = useState<StudioSeed>();
+  const analyticsSource = useQuery({
+    queryKey: [
+      "content-analytics-handoff",
+      initialAnalyticsPost?.connectionId,
+      initialAnalyticsPost?.remotePostId,
+    ],
+    enabled: Boolean(initialAnalyticsPost),
+    retry: false,
+    queryFn: () => {
+      if (!initialAnalyticsPost) throw new Error("Choose an Analytics post.");
+      const { connectionId, remotePostId } = initialAnalyticsPost;
+      return getAnalyticsPostHandoff({ data: { connectionId, remotePostId } });
+    },
+  });
+  const usedAnalyticsSource = useRef<string | undefined>(undefined);
+  const analyticsStudioFormat =
+    initialAnalyticsPost?.intent === "carousel" || initialAnalyticsPost?.intent === "reel"
+      ? initialAnalyticsPost.intent
+      : null;
+  const analyticsStudioSeed =
+    analyticsStudioFormat && analyticsSource.data
+      ? {
+          format: analyticsStudioFormat,
+          title: analyticsSource.data.title,
+          text: analyticsSource.data.summary,
+          url: analyticsSource.data.url,
+        }
+      : undefined;
+  useEffect(() => {
+    if (!initialAnalyticsPost || !analyticsSource.data) return;
+    const { intent, connectionId, remotePostId } = initialAnalyticsPost;
+    if (intent === "carousel" || intent === "reel") return;
+    const key = JSON.stringify([intent, connectionId, remotePostId]);
+    if (usedAnalyticsSource.current === key) return;
+    usedAnalyticsSource.current = key;
+    const { title } = analyticsSource.data;
+    setAgentSeed(discoverAgentSeed(intent));
+    setDiscoverPost({ analyticsPost: { connectionId, remotePostId }, action: intent, title });
+  }, [analyticsSource.data, initialAnalyticsPost]);
+  useEffect(() => {
+    if (analyticsSource.error) toast.error("This Analytics post could not be opened.");
+  }, [analyticsSource.error]);
+  const [webSearchOpen, setWebSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchPayer, setSearchPayer] = useState<"own" | "managed">();
   const [activeThreadId, setActiveThreadId] = useState<string | null | undefined>(
     initialNewChat ? null : initialThread,
   );
   const [agentSettingsOpen, setAgentSettingsOpen] = useState(false);
+  const [providerSettingsOpen, setProviderSettingsOpen] = useState(false);
+  const [aiOverride, setAiOverride] = useState<string>();
   useEffect(() => {
     setActiveThreadId(initialNewChat ? null : initialThread);
   }, [initialNewChat, initialThread]);
   const [showRoutines, setShowRoutines] = useState(initialRoutines);
+  const bennySettings = useQuery({
+    queryKey: ["benny-ai-settings"],
+    queryFn: () => getBennyAiSettings(),
+    enabled: tab === "agent" && !showRoutines,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  const aiSettings = bennySettings.data;
+  const byokOnly = Boolean(aiSettings && !aiSettings.managedAvailable);
+  const modelChoice =
+    aiOverride ?? aiSettings?.defaultProviderId ?? (aiSettings?.managedAvailable ? "bento" : "");
+  const [selectedProviderId, selectedModel] = modelChoice.split("|", 2);
+  const selectedProvider = aiSettings?.providers.find(
+    (provider) =>
+      provider.id === selectedProviderId &&
+      (!selectedModel || provider.additional_models?.includes(selectedModel)),
+  );
+  const mayUseManagedSearch = Boolean(aiSettings?.managedSearch && !selectedProvider);
+  const searchBilling = searchPayer ?? (mayUseManagedSearch ? "managed" : "own");
+  const searchAvailable = Boolean(aiSettings?.searchConnected || mayUseManagedSearch);
+  const searchValid =
+    webSearchOpen &&
+    bennyWebSearchQuerySchema.safeParse(searchQuery).success &&
+    (searchBilling === "managed" ? mayUseManagedSearch : aiSettings?.searchConnected);
+  const studioAccess = useQuery({
+    queryKey: ["content-studio-access"],
+    queryFn: () => getContentStudioAccess(),
+    enabled: !showRoutines,
+    staleTime: 60_000,
+    retry: false,
+  });
+  const chosenBento = modelChoice === "bento" && aiSettings?.managedAvailable;
+
   const queryClient = useQueryClient();
   const activity = usePageActivity();
 
@@ -258,7 +363,7 @@ export function ContentPage({
   const brain = useQuery({
     queryKey: ["content-brain"],
     queryFn: () => getContentBrain(),
-    enabled: tab !== "discover",
+    enabled: tab === "brain" || (tab === "agent" && !byokOnly),
     refetchInterval: (query) =>
       tab === "brain" && ["pending", "running"].includes(query.state.data?.indexing?.status || "")
         ? pagePollInterval(30_000, activity)
@@ -292,7 +397,7 @@ export function ContentPage({
   const previewAccounts = useQuery({
     queryKey: ["agent-preview-accounts"],
     queryFn: () => getAgentPreviewAccounts(),
-    enabled: tab === "agent",
+    enabled: tab === "agent" && !byokOnly,
     staleTime: 5 * 60_000,
     retry: false,
   });
@@ -492,12 +597,35 @@ export function ContentPage({
           threadId: resolvedThreadId,
           text,
           attachmentIds: attachments.map((item) => item.id),
+          ...(selectedProvider
+            ? {
+                aiProviderId: selectedProvider.id,
+                ...(selectedModel ? { aiModel: selectedModel } : {}),
+              }
+            : {}),
+          ...(discoverPost
+            ? {
+                discoverPost: {
+                  ...("analyticsPost" in discoverPost
+                    ? { analyticsPost: discoverPost.analyticsPost }
+                    : { recommendationId: discoverPost.recommendationId }),
+                  action: discoverPost.action,
+                },
+              }
+            : {}),
+          ...(searchValid
+            ? { webSearch: { query: searchQuery.trim(), billing: searchBilling } }
+            : {}),
         },
       }),
     onSuccess: async (result) => {
       setActiveThreadId(result.threadId);
       onThreadChange?.(result.threadId);
       setAgentSeed("");
+      setDiscoverPost(undefined);
+      setSearchQuery("");
+      setWebSearchOpen(false);
+      if (aiSettings?.managedUsage) void bennySettings.refetch();
       if (result.memoriesSaved) toast.success("Memory saved to My Human.");
       if (result.memoryWarning) toast.error(result.memoryWarning);
       await Promise.all([
@@ -564,7 +692,13 @@ export function ContentPage({
   const changeTab = (next: ContentTab) => {
     setTab(next);
     setShowRoutines(false);
+    if (next !== "studio") setStudioSeed(undefined);
     onTabChange?.(next);
+  };
+
+  const openStudio = (source: StudioSeed) => {
+    setStudioSeed(source);
+    changeTab("studio");
   };
 
   const changeRoutines = (open: boolean) => {
@@ -574,7 +708,8 @@ export function ContentPage({
 
   const openAgent = (item: DiscoverRecommendation, action: DiscoverBoostAction) => {
     setActiveThreadId(null);
-    setAgentSeed(discoverAgentPrompt(item, action));
+    setAgentSeed(discoverAgentSeed(action));
+    setDiscoverPost({ recommendationId: item.id, action, title: item.title });
     changeTab("agent");
     onThreadChange?.(null);
   };
@@ -640,12 +775,19 @@ export function ContentPage({
           ? "discover-shell"
           : tab === "agent" && !showRoutines
             ? "content-workspace agent-route"
-            : "content-workspace min-h-[calc(100dvh-3.5rem)] lg:min-h-screen"
+            : `content-workspace min-h-[calc(100dvh-3.5rem)] lg:min-h-screen ${tab === "studio" ? "studio-workspace" : ""}`
       }
     >
       {(tab !== "agent" || showRoutines) && (
         <AppHeader
           fullWidth={tab === "brain" || showRoutines}
+          actions={
+            tab === "brain" && typeof studioAccess.data === "string" ? (
+              <Link to="/content" search={{ tab: "studio" }} className={micro.btnOutline}>
+                Open Studio
+              </Link>
+            ) : undefined
+          }
           title={
             tab === "brain"
               ? "Brain"
@@ -653,7 +795,9 @@ export function ContentPage({
                 ? showRoutines
                   ? "Routines"
                   : "Agent"
-                : "Content"
+                : tab === "studio"
+                  ? "Content Studio"
+                  : "Content"
           }
         />
       )}
@@ -667,6 +811,54 @@ export function ContentPage({
         }
       >
         <div className={tab === "agent" && !showRoutines ? "agent-route-body" : undefined}>
+          {tab === "discover" && typeof studioAccess.data === "string" && (
+            <div className="mx-auto flex max-w-6xl justify-end px-4 pb-3">
+              <Link to="/content" search={{ tab: "studio" }} className={micro.btnOutline}>
+                Open Studio
+              </Link>
+            </div>
+          )}
+          {tab === "studio" &&
+            (studioAccess.isPending || (analyticsStudioFormat && analyticsSource.isPending) ? (
+              <p role="status" className="studio-shell text-sm text-muted-foreground">
+                Loading Content Studio…
+              </p>
+            ) : studioAccess.isError ? (
+              <div className="studio-shell">
+                <EmptyWorkspace
+                  eyebrow="Studio"
+                  title="Studio could not load."
+                  description="Try again to open your projects."
+                  onRetry={() => void studioAccess.refetch()}
+                />
+              </div>
+            ) : typeof studioAccess.data === "string" ? (
+              <Suspense
+                fallback={
+                  <p role="status" className="studio-shell">
+                    Loading Studio…
+                  </p>
+                }
+              >
+                <ContentStudio
+                  key={analyticsStudioFormat ? JSON.stringify(initialAnalyticsPost) : undefined}
+                  workspaceId={studioAccess.data}
+                  initialSource={analyticsStudioSeed ?? studioSeed}
+                />
+              </Suspense>
+            ) : (
+              <div className="studio-shell">
+                <div className="studio-surface space-y-4">
+                  <h2>Studio is unavailable for this workspace</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Studio access is included on eligible Creator plans.
+                  </p>
+                  <Link to="/settings" search={{ section: "plan" }} className={micro.btnOutline}>
+                    View workspace plan
+                  </Link>
+                </div>
+              </div>
+            ))}
           {tab === "discover" && <DiscoverPreferences onSaved={() => researchDiscover(true)} />}
           {tab === "discover" &&
             (discover.isError && !discover.data ? (
@@ -713,6 +905,7 @@ export function ContentPage({
                 }}
                 onAskAgent={(item, action = "chat") => openAgent(item, action)}
                 onCreateDraft={(item) => openAgent(item, "replicate")}
+                onCreateStudio={typeof studioAccess.data === "string" ? openStudio : undefined}
               />
             ) : (
               <DiscoverLoading status={discoverLoadingStatus} />
@@ -750,8 +943,128 @@ export function ContentPage({
                   deleteChat.mutateAsync(threadId).then(() => undefined)
                 }
                 onMarkRead={onMarkRead}
-                readEnabled={!agentSettingsOpen}
-                onOpenSettings={() => setAgentSettingsOpen(true)}
+                readEnabled={!agentSettingsOpen && !providerSettingsOpen}
+                onOpenSettings={() =>
+                  byokOnly && aiSettings?.connectAvailable !== false
+                    ? setProviderSettingsOpen(true)
+                    : setAgentSettingsOpen(true)
+                }
+                textOnly={byokOnly || Boolean(selectedProvider)}
+                sendDisabled={
+                  Boolean(aiSettings && !selectedProvider && !chosenBento) ||
+                  Boolean(aiOverride && aiOverride !== "bento" && !selectedProvider) ||
+                  (webSearchOpen && !searchValid)
+                }
+                draftTools={!byokOnly}
+                modelControls={
+                  (aiSettings || discoverPost) && (
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                      {discoverPost && (
+                        <button
+                          type="button"
+                          title="Remove Discover source"
+                          aria-label="Remove Discover source"
+                          onClick={() => setDiscoverPost(undefined)}
+                          className="max-w-full truncate rounded-md border border-border px-2 py-1 text-xs"
+                        >
+                          {discoverPost.title} ×
+                        </button>
+                      )}
+                      {aiSettings && (
+                        <>
+                          <select
+                            aria-label="Benny model"
+                            className="h-8 min-w-0 max-w-full rounded-md border border-border bg-background px-2 text-xs"
+                            value={selectedProvider ? modelChoice : chosenBento ? "bento" : ""}
+                            onChange={(event) => setAiOverride(event.target.value)}
+                            disabled={sendAgentMessage.isPending}
+                          >
+                            {!selectedProvider && !chosenBento && (
+                              <option value="">Choose a model</option>
+                            )}
+                            {aiSettings.managedAvailable && (
+                              <option value="bento">Bento model</option>
+                            )}
+                            {aiSettings.providers.flatMap((provider) => [
+                              <option key={provider.id} value={provider.id}>
+                                {provider.name} · {provider.model}
+                              </option>,
+                              ...(provider.additional_models ?? []).map((model) => (
+                                <option
+                                  key={`${provider.id}|${model}`}
+                                  value={`${provider.id}|${model}`}
+                                >
+                                  {provider.name} · {model}
+                                </option>
+                              )),
+                            ])}
+                          </select>
+                          {aiSettings.connectAvailable !== false && (
+                            <button
+                              type="button"
+                              onClick={() => setProviderSettingsOpen(true)}
+                              className="rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted"
+                            >
+                              {aiSettings.providers.length
+                                ? "Manage AI providers"
+                                : "Connect a model"}
+                            </button>
+                          )}
+                          {searchAvailable && (
+                            <button
+                              type="button"
+                              aria-expanded={webSearchOpen}
+                              onClick={() => setWebSearchOpen(!webSearchOpen)}
+                              className="rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted"
+                            >
+                              Web search
+                            </button>
+                          )}
+                          {aiSettings.managedUsage?.eligible && (
+                            <span className="text-xs text-muted-foreground" role="status">
+                              ${allowanceDollars(aiSettings.managedUsage.weekly.remainingMicrousd)}{" "}
+                              this week · $
+                              {allowanceDollars(aiSettings.managedUsage.monthly.remainingMicrousd)}{" "}
+                              this month
+                              {(aiSettings.managedUsage.weekly.remainingMicrousd <=
+                                aiSettings.managedUsage.weekly.limitMicrousd / 5 ||
+                                aiSettings.managedUsage.monthly.remainingMicrousd <=
+                                  aiSettings.managedUsage.monthly.limitMicrousd / 5) &&
+                                " · Allowance running low"}
+                            </span>
+                          )}
+                          {webSearchOpen && (
+                            <div className="flex w-full flex-wrap items-center gap-2">
+                              <input
+                                aria-label="Public web search query"
+                                value={searchQuery}
+                                maxLength={450}
+                                onChange={(event) => setSearchQuery(event.target.value)}
+                                placeholder="Public topic to search"
+                                className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-xs"
+                              />
+                              <select
+                                aria-label="Web search billing"
+                                value={searchBilling}
+                                onChange={(event) =>
+                                  setSearchPayer(event.target.value as "own" | "managed")
+                                }
+                                className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+                              >
+                                <option value="own" disabled={!aiSettings.searchConnected}>
+                                  My Brave key
+                                </option>
+                                <option value="managed" disabled={!mayUseManagedSearch}>
+                                  Included allowance
+                                </option>
+                              </select>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )
+                }
                 identityUnavailable={
                   activeThreadId !== undefined && agentIdentity.isError && !agentIdentity.data
                 }
@@ -796,22 +1109,29 @@ export function ContentPage({
                   />
                 )}
                 seed={agentSeed}
-                brainEmpty={!brain.data?.items.length}
+                brainEmpty={!byokOnly && !brain.data?.items.length}
                 sending={sendAgentMessage.isPending}
                 onNewThread={() => {
                   setActiveThreadId(null);
                   setAgentSeed("");
+                  setDiscoverPost(undefined);
+                  setWebSearchOpen(false);
+                  setSearchQuery("");
                   onThreadChange?.(null);
                 }}
                 onSelectThread={(id) => {
                   setActiveThreadId(id);
                   setAgentSeed("");
+                  setDiscoverPost(undefined);
+                  setWebSearchOpen(false);
+                  setSearchQuery("");
                   onThreadChange?.(id);
                 }}
                 onSend={async (text, attachments = []) => {
                   await sendAgentMessage.mutateAsync({ text, attachments });
                 }}
                 onDraftChanged={refreshAgent}
+                onStudioDraft={typeof studioAccess.data === "string" ? openStudio : undefined}
                 onSaveDraft={async (messageId, cardId, edit) => {
                   await saveDraft.mutateAsync({ messageId, cardId, ...edit });
                 }}
@@ -830,6 +1150,18 @@ export function ContentPage({
                 }
               />
             ))}
+          {tab === "agent" && providerSettingsOpen && aiSettings && (
+            <BennyProviderSettings
+              preferences={aiSettings}
+              searchConnected={aiSettings.searchConnected}
+              compatibleAvailable={aiSettings.compatibleAvailable}
+              onClose={() => setProviderSettingsOpen(false)}
+              onChange={async (defaultChanged) => {
+                await bennySettings.refetch();
+                if (defaultChanged) setAiOverride(undefined);
+              }}
+            />
+          )}
           {tab === "agent" && agentSettingsOpen && agentIdentity.data && (
             <ContentAgentSettings
               preferences={agentIdentity.data.preferences}

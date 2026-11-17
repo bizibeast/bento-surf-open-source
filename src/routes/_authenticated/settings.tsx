@@ -36,6 +36,8 @@ import { toast } from "sonner";
 import { SiRazorpay, SiStripe } from "react-icons/si";
 import { UpgradeDialog } from "@/components/UpgradeDialog";
 import { AppHeader } from "@/components/AppHeader";
+import { BennyProviderForm } from "@/components/content/BennyProviderSettings";
+import { getBennyAiSettings } from "@/lib/benny-byok.functions";
 import { MicroAppTabMotion } from "@/components/MicroAppPanel";
 import { CustomDomainDialog } from "@/components/CustomDomainDialog";
 import { StripeRestrictedKeyDialog } from "@/components/StripeRestrictedKeyDialog";
@@ -67,9 +69,11 @@ import {
   CONTACT_TIER_PRICING,
   isPaidPlan,
   normalizePlan,
+  FULLY_MANAGED_BILLING_CATALOG,
+  newPlanPrice,
+  newPlanHighlights,
   PLAN_CONFIG,
   PLAN_ORDER,
-  PLAN_PRICING,
   planLimits,
   planHasEntitlement,
   CONNECT_PAYMENTS_BANNER_BODY,
@@ -162,6 +166,7 @@ export const Route = createFileRoute("/_authenticated/settings")({
         "usage",
         "plan",
         "integrations",
+        "ai-providers",
         "payments",
         "storage",
         "email",
@@ -198,6 +203,7 @@ export const Route = createFileRoute("/_authenticated/settings")({
 
 const sections = [
   { id: "integrations", label: "Integrations", icon: PlugZap },
+  { id: "ai-providers", label: "AI providers", icon: KeyRound },
   { id: "storage", label: "Storage", icon: HardDrive },
   { id: "domain", label: "Domain", icon: Globe2 },
   { id: "embed", label: "Embed", icon: Layers3 },
@@ -246,6 +252,13 @@ function SettingsPage() {
     requestedSection === "usage"
       ? "integrations"
       : (requestedSection ?? "integrations");
+  const aiSettings = useQuery({
+    queryKey: ["benny-ai-settings"],
+    queryFn: () => getBennyAiSettings(),
+    enabled: active === "ai-providers",
+    staleTime: 60_000,
+    retry: false,
+  });
   const integrationTarget = requestedSection === "payments" ? "payments" : requestedIntegration;
   const sectionTitleRef = useRef<HTMLHeadingElement>(null);
   const [customDomainOpen, setCustomDomainOpen] = useState(false);
@@ -278,7 +291,7 @@ function SettingsPage() {
   });
   const plan = normalizePlan(profile?.plan_id, profile?.is_pro);
   const isPro = isPaidPlan(plan);
-  const planLabel = planName(plan);
+  const planLabel = planName(plan, billing?.billingCatalog ?? "2026-10");
   // Subscribed plan (from the Dodo product) for Billing. Trials grant exactly this plan.
   const summary = billingSummary(billing, plan);
   const username = profile?.username ?? "username";
@@ -884,7 +897,13 @@ function SettingsPage() {
                 </BentoCard>
 
                 <div className="mt-4 grid gap-4 lg:grid-cols-3">
-                  {PLAN_ORDER.filter((plan) => plan !== "free").map((targetPlan) => (
+                  {PLAN_ORDER.filter(
+                    (plan) =>
+                      plan !== "free" &&
+                      (plan !== "creator_plus" ||
+                        billing?.fullyManagedCheckoutAvailable === true ||
+                        billing?.billingCatalog === FULLY_MANAGED_BILLING_CATALOG),
+                  ).map((targetPlan) => (
                     <PlanOptionCard
                       key={targetPlan}
                       plan={targetPlan}
@@ -956,7 +975,7 @@ function SettingsPage() {
                               ? `Your trial ends ${formatBillingDate(billing.currentPeriodEnd)} and you won't be charged.`
                               : `Your trial runs through ${formatBillingDate(billing.currentPeriodEnd)}. Cancelling during the trial ends it and your access immediately, and you won't be charged.`
                             : billing.cancelAtPeriodEnd
-                              ? `Your ${planName(summary.plan)} access stays active until ${formatBillingDate(billing.currentPeriodEnd)}, then hosted access pauses.`
+                              ? `Your ${planName(summary.plan, billing?.billingCatalog ?? "2026-10")} access stays active until ${formatBillingDate(billing.currentPeriodEnd)}, then hosted access pauses.`
                               : `Your current billing period runs through ${formatBillingDate(billing.currentPeriodEnd)}. Cancelling stops the next charge without removing access early.`}
                         </p>
                       </div>
@@ -981,6 +1000,55 @@ function SettingsPage() {
                     </div>
                   </BentoCard>
                 )}
+              </SettingsSection>
+            )}
+
+            {active === "ai-providers" && (
+              <SettingsSection
+                id="ai-providers"
+                eyebrow="Settings"
+                title="AI providers"
+                titleRef={sectionTitleRef}
+              >
+                <BentoCard className="max-w-2xl">
+                  {aiSettings.isPending ? (
+                    <p role="status" className={micro.muted}>
+                      Loading AI providers…
+                    </p>
+                  ) : aiSettings.isError ? (
+                    <div className="space-y-3">
+                      <p role="alert">AI providers could not load.</p>
+                      <button
+                        type="button"
+                        className={micro.btnOutline}
+                        onClick={() => void aiSettings.refetch()}
+                      >
+                        Try again
+                      </button>
+                    </div>
+                  ) : aiSettings.data?.connectAvailable ? (
+                    <BennyProviderForm
+                      preferences={aiSettings.data}
+                      searchConnected={aiSettings.data.searchConnected}
+                      compatibleAvailable={aiSettings.data.compatibleAvailable}
+                      onChange={() => aiSettings.refetch()}
+                    />
+                  ) : (
+                    <div className="space-y-3">
+                      <p className={micro.muted}>
+                        Personal API keys are unavailable for this workspace. Creator and eligible
+                        workspaces can connect a model for Benny and Studio.
+                      </p>
+                      <Link
+                        to="/settings"
+                        search={{ section: "plan" }}
+                        className={micro.btnOutline}
+                      >
+                        View workspace plan
+                      </Link>
+                    </div>
+                  )}
+                </BentoCard>
               </SettingsSection>
             )}
 
@@ -1774,8 +1842,8 @@ function SettingsPage() {
             </DialogTitle>
             <DialogDescription className="leading-6">
               {billing?.status === "trialing"
-                ? `Your trial continues without a charge today. ${planName(planChangeTarget ?? "store")} renews at ${PLAN_PRICING[planChangeTarget ?? "store"][billing?.billingPeriod ?? "monthly"].label}${PLAN_PRICING[planChangeTarget ?? "store"][billing?.billingPeriod ?? "monthly"].cadence} after your trial, plus applicable tax.`
-                : `Switch to ${planName(planChangeTarget ?? "store")} at ${PLAN_PRICING[planChangeTarget ?? "store"][billing?.billingPeriod ?? "monthly"].label}${PLAN_PRICING[planChangeTarget ?? "store"][billing?.billingPeriod ?? "monthly"].cadence}, plus applicable tax. Upgrades take effect after a prorated charge to your saved card; downgrades start at the end of your current billing period. Existing annual contracts require support to change catalogs.`}
+                ? `Your trial continues without a charge today. ${planName(planChangeTarget ?? "store")} renews at ${newPlanPrice(planChangeTarget ?? "store", billing?.billingPeriod ?? "monthly").label}${newPlanPrice(planChangeTarget ?? "store", billing?.billingPeriod ?? "monthly").cadence} after your trial, plus applicable tax.`
+                : `Switch to ${planName(planChangeTarget ?? "store")} at ${newPlanPrice(planChangeTarget ?? "store", billing?.billingPeriod ?? "monthly").label}${newPlanPrice(planChangeTarget ?? "store", billing?.billingPeriod ?? "monthly").cadence}, plus applicable tax. Upgrades take effect after a prorated charge to your saved card; downgrades start at the end of your current billing period. Existing annual contracts require support to change catalogs.`}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:space-x-0">
@@ -2088,14 +2156,21 @@ function PlanOptionCard({
   const ended = billing?.status === "canceled" || billing?.status === "incomplete";
   // A cancelled or never-started subscription is not the current plan, even
   // while the workspace keeps its last plan id for retention.
-  const current = plan === currentPlan && !ended;
-  const legacyAnnual = billing?.billingPeriod === "yearly" && billing.billingCatalog !== "2026-10";
+  const legacyPlus =
+    plan === "creator_plus" &&
+    currentPlan === "creator_plus" &&
+    billing?.hasSubscription &&
+    billing.billingCatalog !== FULLY_MANAGED_BILLING_CATALOG;
+  const current = plan === currentPlan && !ended && !legacyPlus;
+  const legacyAnnual = billing?.billingPeriod === "yearly" && billing.billingCatalog === "legacy";
+  const annualToManaged = plan === "creator_plus" && billing?.billingPeriod === "yearly";
   const displayPrice =
     plan === "free" || (current && legacyAnnual)
       ? null
-      : PLAN_PRICING[plan][
-          billing?.billingPeriod === "yearly" && !legacyAnnual ? "yearly" : "monthly"
-        ];
+      : newPlanPrice(
+          plan,
+          billing?.billingPeriod === "yearly" && !legacyAnnual ? "yearly" : "monthly",
+        );
   const buttonClass =
     "mt-auto inline-flex min-h-11 w-full items-center justify-center rounded-2xl px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-45";
 
@@ -2146,8 +2221,8 @@ function PlanOptionCard({
       />
     );
   } else {
-    const upgrade = PLAN_ORDER.indexOf(plan) > PLAN_ORDER.indexOf(currentPlan);
-    action = legacyAnnual ? (
+    const upgrade = legacyPlus || PLAN_ORDER.indexOf(plan) > PLAN_ORDER.indexOf(currentPlan);
+    action = legacyAnnual || annualToManaged ? (
       <a
         href="mailto:support@example.com?subject=Legacy%20annual%20plan%20change"
         className={`${buttonClass} ${micro.btnOutline}`}
@@ -2176,7 +2251,7 @@ function PlanOptionCard({
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h3 className="font-ui-display text-2xl">{definition.name}</h3>
+          <h3 className="font-ui-display text-2xl">{planName(plan)}</h3>
           <p className="mt-1 text-sm text-[#17213a]/52">{definition.description}</p>
         </div>
         {current && (
@@ -2192,12 +2267,14 @@ function PlanOptionCard({
         {displayPrice && <span className="text-sm text-[#17213a]/52">{displayPrice.cadence}</span>}
       </div>
       <ul className="my-5 grid gap-2.5 text-sm text-[#17213a]/52">
-        {definition.highlights.slice(0, 5).map((highlight) => (
-          <li key={highlight} className="flex items-start gap-2">
-            <Check className="mt-0.5 size-4 shrink-0 text-[#3478f6]" />
-            <span>{highlight}</span>
-          </li>
-        ))}
+        {(plan === "free" ? definition.highlights : newPlanHighlights(plan))
+          .slice(0, 6)
+          .map((highlight) => (
+            <li key={highlight} className="flex items-start gap-2">
+              <Check className="mt-0.5 size-4 shrink-0 text-[#3478f6]" />
+              <span>{highlight}</span>
+            </li>
+          ))}
       </ul>
       {action}
     </div>

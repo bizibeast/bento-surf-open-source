@@ -1,4 +1,10 @@
-import { PAID_PLAN_IDS, type PaidPlanId, type BillingPeriod } from "./plans";
+import {
+  FULLY_MANAGED_BILLING_CATALOG,
+  PAID_PLAN_IDS,
+  newCheckoutCatalog,
+  type PaidPlanId,
+  type BillingPeriod,
+} from "./plans";
 import { readCheckoutReturn } from "./checkout-return";
 
 export const CHECKOUT_RECOVERY_KEY = "bento:checkout-recovery:v1";
@@ -33,7 +39,7 @@ export function rememberCheckoutForRecovery(
   try {
     window.localStorage.setItem(
       CHECKOUT_RECOVERY_KEY,
-      JSON.stringify({ ...input, startedAt: now }),
+      JSON.stringify({ ...input, billingCatalog: newCheckoutCatalog(input.plan), startedAt: now }),
     );
   } catch {
     /* Checkout can proceed without storage. */
@@ -64,6 +70,8 @@ export function readRecoverableCheckout({
       !value ||
       !PAID_PLAN_IDS.includes(value.plan) ||
       !["monthly", "yearly"].includes(value.period) ||
+      (value.plan === "creator_plus" &&
+        (value.period !== "monthly" || value.billingCatalog !== FULLY_MANAGED_BILLING_CATALOG)) ||
       typeof value.trial !== "boolean" ||
       !["onboarding_trial_step", "upgrade_dialog"].includes(value.surface) ||
       typeof value.startedAt !== "number" ||

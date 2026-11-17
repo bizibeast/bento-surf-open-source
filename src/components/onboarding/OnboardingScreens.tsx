@@ -23,7 +23,7 @@ import type { OnboardingEvidence } from "@/lib/onboarding/evidence";
 import { safeMediaUrl } from "@/lib/safe-url";
 import {
   PAID_PLAN_IDS,
-  PLAN_PRICING,
+  newPlanPrice,
   planName,
   type BillingPeriod,
   type PaidPlanId,
@@ -536,11 +536,13 @@ export function RelatedInspiration({ items }: { items: OnboardingEvidence["inspi
 export function OnboardingPlanChoices({
   plan,
   period,
+  managedAvailable = false,
   onPlan,
   onPeriod,
 }: {
   plan: PaidPlanId;
   period: BillingPeriod;
+  managedAvailable?: boolean;
   onPlan: (plan: PaidPlanId) => void;
   onPeriod: (period: BillingPeriod) => void;
 }) {
@@ -583,12 +585,12 @@ export function OnboardingPlanChoices({
         </div>
       </div>
       <div className="ob-plan-choices" aria-label="All Bento plans">
-        {PAID_PLAN_IDS.map((value) => (
+        {PAID_PLAN_IDS.filter((value) => managedAvailable || value !== "creator_plus").map((value) => (
           <button
             key={value}
             type="button"
             className={`ob-plan-choice ob-plan-${value}`}
-            aria-label={`${planName(value)} ${PLAN_PRICING[value][period].label}${PLAN_PRICING[value][period].cadence}`}
+            aria-label={`${planName(value)} ${newPlanPrice(value, period).label}${newPlanPrice(value, period).cadence}`}
             aria-pressed={plan === value}
             onClick={() => onPlan(value)}
           >
@@ -597,8 +599,8 @@ export function OnboardingPlanChoices({
               {plan === value && <CheckCircle2 />}
             </span>
             <span className="ob-plan-price">
-              <strong>{PLAN_PRICING[value][period].label}</strong>
-              <small>{PLAN_PRICING[value][period].cadence}</small>
+              <strong>{newPlanPrice(value, period).label}</strong>
+              <small>{newPlanPrice(value, period).cadence}</small>
             </span>
             <span className="ob-plan-tagline">
               {value === "store"

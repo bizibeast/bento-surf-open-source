@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 vi.stubGlobal(
   "ResizeObserver",
@@ -11,7 +12,19 @@ vi.stubGlobal(
 );
 vi.mock("@tanstack/react-router", () => ({
   createFileRoute: () => () => ({}),
-  Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a>,
+  Link: ({
+    children,
+    to,
+    search,
+    ...props
+  }: React.ComponentProps<"a"> & {
+    to?: string;
+    search?: unknown;
+  }) => (
+    <a {...props} href={to} data-search={JSON.stringify(search)}>
+      {children}
+    </a>
+  ),
 }));
 import { InsightsDashboard } from "./social-insights";
 import type { SocialAnalyticsAccount } from "@/lib/social-analytics.functions";
@@ -232,9 +245,13 @@ it("keeps a video post visible when its provider thumbnail expires", () => {
   );
 });
 
-it("filters the ranking and follower activity by period, and opens posts beyond the first page", () => {
+it("filters rankings and opens insights and actions beyond the first page", async () => {
+  const user = userEvent.setup();
+  const onSaveResearch = vi.fn();
+  const connectionId = "11111111-1111-4111-8111-111111111111";
   const uploads = Array.from({ length: 14 }, (_, index) => ({
     ...content[0],
+    connectionId,
     remotePostId: `reel-${index}`,
     contentType: "video" as const,
     caption: `Reel ${index}`,
@@ -247,16 +264,18 @@ it("filters the ranking and follower activity by period, and opens posts beyond 
       accounts={[
         {
           ...accounts[0],
+          connectionId,
           periodMetrics: { 30: { follows: 30, unfollows: 5 }, 90: { follows: 100, unfollows: 20 } },
         },
       ]}
       content={uploads}
       history={[]}
-      selectedId="instagram"
+      selectedId={connectionId}
       onSelect={() => {}}
       displayPeriodDays={30}
       savingDisplayPeriod={false}
       onDisplayPeriodChange={() => {}}
+      onSaveResearch={onSaveResearch}
     />,
   );
   expect(screen.getByText("+25")).toBeVisible();
@@ -267,6 +286,20 @@ it("filters the ranking and follower activity by period, and opens posts beyond 
   expect(within(dialog).getByText("34.75%")).toBeVisible();
   expect(within(dialog).getByText("Skip rate (first 3 seconds)")).toBeVisible();
   fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+  const reel = screen.getByRole("button", { name: "View insights for Reel 12" }).closest("article");
+  expect(reel).toBeInTheDocument();
+  await user.click(within(reel!).getByRole("button", { name: "Post actions" }));
+  const brief = screen.getByRole("menuitem", { name: "Create content brief" });
+  expect(brief).toHaveAttribute("href", "/content");
+  expect(JSON.parse(brief.getAttribute("data-search") || "{}")).toEqual({
+    tab: "agent",
+    chat: "new",
+    analyticsPost: { connectionId, remotePostId: "reel-12", intent: "brief" },
+  });
+  await user.keyboard("{Escape}");
+  await user.click(within(reel!).getByRole("button", { name: "Post actions" }));
+  await user.click(screen.getByRole("menuitem", { name: "Save to research" }));
+  expect(onSaveResearch).toHaveBeenCalledWith({ connectionId, remotePostId: "reel-12" });
   fireEvent.change(screen.getByLabelText("Insights reporting period"), { target: { value: "90" } });
   expect(screen.getByText("+80")).toBeVisible();
   expect(screen.getByText(/14 posts published in this period/)).toBeVisible();

@@ -1,6 +1,6 @@
 {
   "source": "Bento shared application",
-  "syncedAt": "2026-11-16T04:30:56Z",
+  "syncedAt": "2026-11-17T04:19:00Z",
   "features": [
     "proactive content agent",
     "Brain and Discover editorial context",
@@ -24,7 +24,8 @@
     "mixed personal and trend routine drafts with explicit outcomes",
     "browser-safe server primitives and first-run setup",
     "editor-matched public page layout",
-    "Instagram Reel audio and expanded social insights"
+    "Instagram Reel audio and expanded social insights",
+    "Bento Studio, Benny connections, and creator intelligence"
   ],
   "editionDifferences": [
     "Configurable instance URLs and self-hosted setup",
@@ -32,5 +33,5 @@
     "No hosted credentials or customer data",
     "AGPL license and public release tooling retained"
   ],
-  "sharedSourceCommit": "f7ae24a1ba69a35fb2142e35a679a430ad8de8de"
+  "sharedSourceCommit": "0b3b5c13349138087c1506e9cddef540cdfcc006"
 }

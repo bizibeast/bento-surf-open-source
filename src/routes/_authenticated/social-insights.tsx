@@ -13,6 +13,7 @@ import {
 } from "recharts";
 import {
   Award,
+  Zap,
   BarChart3,
   Eye,
   ExternalLink,
@@ -52,6 +53,19 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  analyticsPostReferenceSchema,
+  type AnalyticsHandoff,
+  type AnalyticsPostReference,
+} from "@/lib/content-discover-post-context";
+import { saveAnalyticsPostToResearch } from "@/lib/content-analytics-handoff.functions";
+import { publicDiscoverEvidenceUrl } from "@/lib/content-discover-identity";
 import {
   Tooltip as HoverTooltip,
   TooltipContent as HoverTooltipContent,
@@ -169,6 +183,15 @@ function SocialInsightsPage() {
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Insights period could not update"),
   });
+  const saveResearch = useMutation({
+    mutationFn: (data: AnalyticsPostReference) => saveAnalyticsPostToResearch({ data }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["content-discover"] });
+      toast.success("Post saved to Discover.");
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "The post could not be saved."),
+  });
 
   return (
     <main className={`relative overflow-x-clip ${micro.shell}`}>
@@ -225,6 +248,8 @@ function SocialInsightsPage() {
             onDisplayPeriodChange={(days) => displayPeriod.mutate(days)}
             refreshing={refresh.isPending}
             onRefresh={() => refresh.mutate()}
+            onSaveResearch={saveResearch.mutate}
+            savingResearch={saveResearch.isPending}
           />
         )}
       </div>
@@ -262,6 +287,8 @@ export function InsightsDashboard({
   onDisplayPeriodChange,
   refreshing = false,
   onRefresh,
+  onSaveResearch,
+  savingResearch,
 }: {
   accounts: SocialAnalyticsAccount[];
   history: SocialAnalyticsHistoryPoint[];
@@ -270,6 +297,8 @@ export function InsightsDashboard({
   onSelect: (id: string) => void;
   refreshing?: boolean;
   onRefresh?: () => void;
+  onSaveResearch?: (post: AnalyticsPostReference) => void;
+  savingResearch?: boolean;
   displayPeriodDays: SocialInsightsDisplayPeriodDays;
   savingDisplayPeriod: boolean;
   onDisplayPeriodChange: (days: SocialInsightsDisplayPeriodDays) => void;
@@ -467,6 +496,8 @@ export function InsightsDashboard({
             key={`all:${range}`}
             content={periodContent}
             provider={selected.provider}
+            onSaveResearch={onSaveResearch}
+            savingResearch={savingResearch}
           />
         </>
       ) : (
@@ -493,6 +524,8 @@ export function InsightsDashboard({
                 key={`${selected.connectionId}:${range}`}
                 content={periodContent}
                 provider={selected.provider}
+                onSaveResearch={onSaveResearch}
+                savingResearch={savingResearch}
               />
             </>
           )}
@@ -1327,9 +1360,13 @@ const CONTENT_PAGE_SIZE = 12;
 function BestContentPanel({
   content,
   provider,
+  onSaveResearch,
+  savingResearch,
 }: {
   content: SocialContentInsight[];
   provider: SocialProvider;
+  onSaveResearch?: (post: AnalyticsPostReference) => void;
+  savingResearch?: boolean;
 }) {
   const exposureMetric: BestContentMetric = socialContentExposureMetric(content);
   const [chosenMetric, setChosenMetric] = useState<BestContentMetric>(exposureMetric);
@@ -1444,13 +1481,13 @@ function BestContentPanel({
               return (
                 <article
                   key={postKey(post)}
-                  className="overflow-hidden rounded-xl border border-border bg-white shadow-sm"
+                  className="flex flex-col overflow-hidden rounded-xl border border-border bg-white shadow-sm"
                 >
                   <button
                     type="button"
                     aria-label={`View insights for ${post.caption || `${platform} ${post.contentType}`}`}
                     onClick={() => setSelectedPost(postKey(post))}
-                    className="block h-full w-full p-4 text-left transition hover:bg-muted/40 focus-visible:outline focus-visible:outline-primary"
+                    className="block w-full flex-1 p-4 text-left transition hover:bg-muted/40 focus-visible:outline focus-visible:outline-primary"
                   >
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       <Icon className="size-3.5" aria-hidden />
@@ -1482,6 +1519,11 @@ function BestContentPanel({
                       )}
                     </div>
                   </button>
+                  <AnalyticsPostActions
+                    item={post}
+                    onSaveResearch={onSaveResearch}
+                    savingResearch={savingResearch}
+                  />
                 </article>
               );
             })}
@@ -1521,6 +1563,90 @@ function BestContentPanel({
         onClose={() => setSelectedPost(null)}
       />
     </section>
+  );
+}
+
+const analyticsPostActions: ReadonlyArray<{ label: string; intent: AnalyticsHandoff["intent"] }> = [
+  { label: "Send to Benny", intent: "chat" },
+  { label: "Generate stronger hooks", intent: "hooks" },
+  { label: "Analyze this post", intent: "reverse-engineer" },
+  { label: "Remix in my voice", intent: "replicate" },
+  { label: "Create content brief", intent: "brief" },
+  { label: "Create carousel", intent: "carousel" },
+  { label: "Create Reel", intent: "reel" },
+];
+
+function AnalyticsPostActions({
+  item,
+  onSaveResearch,
+  savingResearch,
+}: {
+  item: SocialContentInsight;
+  onSaveResearch?: (post: AnalyticsPostReference) => void;
+  savingResearch?: boolean;
+}) {
+  const reference = analyticsPostReferenceSchema.safeParse({
+    connectionId: item.connectionId,
+    remotePostId: item.remotePostId,
+  });
+  if (!reference.success) return null;
+  return (
+    <div className="px-4 pb-4">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium"
+          >
+            <Zap className="size-3.5" /> Post actions
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          {onSaveResearch && (
+            <DropdownMenuItem
+              disabled={savingResearch}
+              onSelect={() => onSaveResearch(reference.data)}
+            >
+              Save to research
+            </DropdownMenuItem>
+          )}
+          {analyticsPostActions.map(({ label, intent }) => {
+            const studio = intent === "carousel" || intent === "reel";
+            return (
+              <DropdownMenuItem key={intent} asChild>
+                <Link
+                  to="/content"
+                  search={{
+                    tab: studio ? "studio" : "agent",
+                    chat: studio ? undefined : "new",
+                    analyticsPost: { ...reference.data, intent },
+                  }}
+                >
+                  {label}
+                </Link>
+              </DropdownMenuItem>
+            );
+          })}
+          <DropdownMenuItem
+            onSelect={() => {
+              const url = publicDiscoverEvidenceUrl(item.remotePostUrl);
+              const prompt = [
+                "Analyze this published post using Bento MCP, with observed metrics and their retrieval dates.",
+                "Use list_workspaces, then read_workspace_data for the social_posts source in the right workspace.",
+                `Platform: ${item.provider}. Connection: ${item.connectionId}. Post ID: ${item.remotePostId}.`,
+                ...(url ? [`Source: ${url}`] : []),
+              ].join("\n");
+              void navigator.clipboard.writeText(prompt).then(
+                () => toast.success("Agent prompt copied."),
+                () => toast.error("Agent prompt could not be copied."),
+              );
+            }}
+          >
+            Copy Agent prompt
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   );
 }
 

@@ -139,7 +139,7 @@ describe("ContentDiscover", () => {
     await waitFor(() => expect(screen.queryByRole("article")).not.toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: "Discover" }));
     await user.click(screen.getByRole("button", { name: "Save" }));
-    await user.click(screen.getByRole("menuitem", { name: /Save to Brain/ }));
+    await user.click(screen.getByRole("menuitem", { name: /Save evidence/ }));
     expect(onSave).toHaveBeenCalledWith(trend.id);
     expect(await screen.findByRole("button", { name: "Unsave" })).toBeVisible();
   });
@@ -329,21 +329,41 @@ function setup(overrides: Partial<React.ComponentProps<typeof ContentDiscover>> 
 }
 
 describe("Discover interactions", () => {
-  it("opens the Boost menu without opening a post and routes each intent", async () => {
+  it("opens the post actions menu without opening a post and routes each intent", async () => {
     const { user, onAskAgent, onCreateDraft } = setup();
     const card = within(screen.getByRole("article", { name: trend.title }));
     for (const [label, action] of [
       ["Variations", "variations"],
       ["Reverse Engineer", "reverse-engineer"],
     ]) {
-      await user.click(card.getByRole("button", { name: "Boost in chat" }));
+      await user.click(card.getByRole("button", { name: "Post actions" }));
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
       await user.click(screen.getByRole("menuitem", { name: new RegExp(label) }));
       expect(onAskAgent).toHaveBeenLastCalledWith(expect.objectContaining(trend), action);
     }
-    await user.click(card.getByRole("button", { name: "Boost in chat" }));
-    await user.click(screen.getByRole("menuitem", { name: /Replicate/ }));
+    await user.click(card.getByRole("button", { name: "Post actions" }));
+    await user.click(screen.getByRole("menuitem", { name: /Remix/ }));
     expect(onCreateDraft).toHaveBeenCalledWith(expect.objectContaining(trend));
+  });
+
+  it("hands the selected post to Benny and both Studio formats", async () => {
+    const onCreateStudio = vi.fn();
+    const { user, onAskAgent } = setup({ onCreateStudio });
+    const card = within(screen.getByRole("article", { name: trend.title }));
+    await user.click(card.getByRole("button", { name: "Post actions" }));
+    await user.click(screen.getByRole("menuitem", { name: /Send to Benny/ }));
+    expect(onAskAgent).toHaveBeenCalledWith(expect.objectContaining({ id: trend.id }), "chat");
+
+    for (const format of ["carousel", "reel"] as const) {
+      await user.click(card.getByRole("button", { name: "Post actions" }));
+      await user.click(screen.getByRole("menuitem", { name: `Create ${format}` }));
+      expect(onCreateStudio).toHaveBeenLastCalledWith({
+        format,
+        title: trend.title,
+        text: trend.summary,
+        url: trend.sourceUrl,
+      });
+    }
   });
 
   it("saves from the picker and shows the result in Saved", async () => {
@@ -351,7 +371,7 @@ describe("Discover interactions", () => {
     const card = within(screen.getByRole("article", { name: trend.title }));
     await user.click(card.getByRole("button", { name: "Save" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("menuitem", { name: /Save to Brain/ }));
+    await user.click(screen.getByRole("menuitem", { name: /Save evidence/ }));
     expect(onSave).toHaveBeenCalledWith(trend.id);
     expect(await card.findByRole("button", { name: "Saved" })).toBeVisible();
     await user.click(
@@ -370,7 +390,7 @@ describe("Discover interactions", () => {
     });
     const card = within(screen.getByRole("article", { name: trend.title }));
     await user.click(card.getByRole("button", { name: "Save" }));
-    await user.click(screen.getByRole("menuitem", { name: /Save to Brain/ }));
+    await user.click(screen.getByRole("menuitem", { name: /Save evidence/ }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Save failed");
     expect(card.getByRole("button", { name: "Save" })).toBeVisible();
     await user.click(card.getByRole("button", { name: "Less like this" }));
@@ -554,7 +574,7 @@ it("keeps a saved post in Saved after liking and clearing a preference", async (
   const { user } = setup({ onClearFeedback: vi.fn() });
   const card = within(screen.getByRole("article", { name: trend.title }));
   await user.click(card.getByRole("button", { name: "Save" }));
-  await user.click(screen.getByRole("menuitem", { name: /Save to Brain/ }));
+  await user.click(screen.getByRole("menuitem", { name: /Save evidence/ }));
   await user.click(card.getByRole("button", { name: "More like this" }));
   expect(card.getByRole("button", { name: "Saved" })).toBeVisible();
   await user.click(card.getByRole("button", { name: "More like this" }));
@@ -807,7 +827,9 @@ it("keeps saved posts from a previous Brain direction out of Discover but availa
     saved: true,
     savedOnly: true,
   };
-  const { user } = setup({ data: { ...data, trends: [trend, unrelatedSaved], ideas: [] } });
+  const { user, onAskAgent } = setup({
+    data: { ...data, trends: [trend, unrelatedSaved], ideas: [] },
+  });
   expect(screen.getByRole("article", { name: trend.title })).toBeVisible();
   expect(screen.queryByRole("article", { name: unrelatedSaved.title })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /^Instagram$/ })).not.toBeInTheDocument();
@@ -825,6 +847,16 @@ it("keeps saved posts from a previous Brain direction out of Discover but availa
   );
   expect(screen.getByRole("article", { name: unrelatedSaved.title })).toBeVisible();
   expect(screen.queryByRole("article", { name: trend.title })).not.toBeInTheDocument();
+  await user.click(
+    within(screen.getByRole("article", { name: unrelatedSaved.title })).getByRole("button", {
+      name: "Post actions",
+    }),
+  );
+  await user.click(screen.getByRole("menuitem", { name: /Create content brief/ }));
+  expect(onAskAgent).toHaveBeenCalledWith(
+    expect.objectContaining({ id: unrelatedSaved.id }),
+    "brief",
+  );
 });
 
 it("resets creator, search and feed filters when the Brain direction or locale changes", async () => {

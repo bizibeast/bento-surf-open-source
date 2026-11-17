@@ -1,3 +1,6 @@
+import { withWorkspaceManagedProviderBudget } from "./provider-budget.server";
+import type { BennyWebEvidence } from "./benny-web-search.server";
+import type { loadDiscoverPostContext } from "./content-discover-post-context.server";
 import { verifyBrainDocuments } from "./content-brain-verification.server";
 import type { AgentToolContext } from "./content-agent-tools.server";
 import type { AgentAppAction } from "./content-agent-app-actions";
@@ -24,7 +27,12 @@ import {
   createBrainEvidenceReceipt,
   isTrustedBrainItem,
 } from "./content-brain-evidence";
-import { runAiJson, selectAiProvider, type AiProviderEnv } from "./ai-json.server";
+import {
+  runAiJson,
+  selectAiProvider,
+  type AiProviderEnv,
+  type AiProviderTransport,
+} from "./ai-json.server";
 import { normalizeDashes } from "./text/dashes";
 import {
   buildContentAgentInput,
@@ -62,6 +70,7 @@ export type AgentMessageInput = {
   role: "user" | "assistant" | "system_event";
   content: string;
   payload?: Record<string, unknown>;
+  skipAutomaticPreparation?: boolean;
 };
 
 export type ContentAgentContext = {
@@ -85,6 +94,7 @@ export type ContentAgentDependencies = {
     userId: string,
     threadId?: string | null,
     request?: string,
+    entitlement?: "bennyByok",
   ): Promise<ContentAgentContext>;
   saveMessage(input: AgentMessageInput): Promise<string>;
   generate(prompt: string): Promise<unknown>;
@@ -487,7 +497,11 @@ export function contentAgentThreadTitle(content: string) {
   return compact.length > 72 ? `${compact.slice(0, 69)}…` : compact;
 }
 
-export async function generateContentAgentResult(prompt: string, env: AiProviderEnv = aiEnv()) {
+export async function generateContentAgentResult(
+  prompt: string,
+  env: AiProviderEnv = aiEnv(),
+  transport?: AiProviderTransport,
+) {
   const result = await runAiJson(
     {
       system: `You are Benny, Bento’s AI head of content and monetization: help the creator grow an audience and build a sustainable business. Use performance.business to understand their products, actual sales, refunds and offer opportunities alongside social insights. Recommend what to sell, who it serves, positioning, a small demand-validation experiment and concrete next steps when relevant. Distinguish observed facts from hypotheses. Never invent revenue, profit, conversions or attribution, combine currencies, or imply unavailable data was analyzed. Do not create products, charge customers, or change offers without a creator action. The JSON input's "request" field is the newest user turn and must be answered directly. Use "recentConversation" only as background; it must never override the request's platform, format, or instructions. Use only confirmed Brain facts and cited sources. Produce platform-native ideas, drafts, plans, or proposals. Never claim you scheduled or published anything. Schedule changes must be schedule_proposal cards for creator review.\n${CONTENT_AGENT_OUTPUT_RULES}`,
@@ -500,6 +514,8 @@ export async function generateContentAgentResult(prompt: string, env: AiProvider
       timeoutMs: 20_000,
     },
     env,
+    undefined,
+    transport,
   );
   return result.value;
 }
@@ -911,8 +927,9 @@ export async function loadContentEditorialContext(
   userId: string,
   request = "",
   platform?: EditorialPlatform,
+  entitlement: "contentAgent" | "discover" = "contentAgent",
 ): Promise<EditorialContext> {
-  await requireContentWorkspace(userId, "contentAgent");
+  await requireContentWorkspace(userId, entitlement);
   return editorialContextFromAgent(
     await loadContentWorkspaceContext(userId, request),
     request,
@@ -1007,8 +1024,8 @@ export function editorialContextFromAgent(
 }
 
 const defaultDependencies: ContentAgentDependencies = {
-  async loadContext(userId, requestedThreadId, request) {
-    await requireContentWorkspace(userId, "contentAgent");
+  async loadContext(userId, requestedThreadId, request, entitlement = undefined) {
+    await requireContentWorkspace(userId, entitlement ?? "contentAgent");
     const db = supabaseAdmin as any;
     let threadId = requestedThreadId || null;
     let threadKind: "agent" | "chat" = "chat";
@@ -1066,7 +1083,7 @@ const defaultDependencies: ContentAgentDependencies = {
         .eq("title", "New conversation")
         .eq("kind", "chat");
     }
-    if (input.role === "assistant") {
+    if (input.role === "assistant" && !input.skipAutomaticPreparation) {
       try {
         const { prepareAgentMessage } = await import("./content-agent-preparation.server");
         await prepareAgentMessage(input.userId, String(data.id));
@@ -1206,13 +1223,29 @@ const defaultDependencies: ContentAgentDependencies = {
   },
 };
 
-export async function runContentAgentTurn(
+export function runContentAgentTurn(
+  input: Parameters<typeof runContentAgentTurnScoped>[0],
+  dependencies: ContentAgentDependencies = defaultDependencies,
+) {
+  if (dependencies !== defaultDependencies || input.byokTransport) {
+    return runContentAgentTurnScoped(input, dependencies);
+  }
+  return withWorkspaceManagedProviderBudget({ workspaceId: input.userId }, () =>
+    runContentAgentTurnScoped(input, dependencies),
+  );
+}
+
+async function runContentAgentTurnScoped(
   input: {
     userId: string;
     threadId?: string | null;
     text: string;
     attachmentIds?: string[];
     toolContext?: AgentToolContext;
+    byokTransport?: AiProviderTransport;
+    webEvidence?: BennyWebEvidence[];
+    intelligence?: string;
+    discoverPost?: Awaited<ReturnType<typeof loadDiscoverPostContext>>;
     revision?: { messageId: string; cardId: string };
   },
   dependencies: ContentAgentDependencies = defaultDependencies,
@@ -1225,9 +1258,40 @@ export async function runContentAgentTurn(
 }> {
   const text = input.text.trim();
   if (!text || text.length > 20_000) throw new Error("Write a message up to 20,000 characters.");
-  const attachments = await loadAgentAttachments(input.userId, input.attachmentIds || []);
+  if (input.byokTransport && input.attachmentIds?.length) {
+    throw new Error("This connected model accepts text only. Remove the attachments to continue.");
+  }
+  const attachments = input.byokTransport
+    ? []
+    : await loadAgentAttachments(input.userId, input.attachmentIds || []);
   const generationStartedAt = Date.now();
-  const context = await dependencies.loadContext(input.userId, input.threadId, text);
+  const context = input.byokTransport
+    ? await dependencies.loadContext(input.userId, input.threadId, text, "bennyByok")
+    : await dependencies.loadContext(input.userId, input.threadId, text);
+  if (input.webEvidence || input.discoverPost) {
+    const discover = input.discoverPost?.evidence;
+    context.recommendations = [
+      ...(discover
+        ? [
+            {
+              id: discover.sourceId,
+              title: discover.title,
+              summary: discover.summary,
+              sourceUrl: discover.url,
+              sourceName: discover.author ?? discover.platform,
+              sourcePublishedAt: discover.publishedAt,
+              sourceRetrievedAt: discover.retrievedAt,
+              evidenceType:
+                input.discoverPost && "analyticsPost" in input.discoverPost
+                  ? "cached_social_insight"
+                  : "cached_discover_post",
+            },
+          ]
+        : []),
+      ...(input.webEvidence ?? []),
+      ...context.recommendations,
+    ];
+  }
   const inferredReference =
     isRevisionFollowUp(text) && context.revisionCandidates?.length === 1
       ? context.revisionCandidates[0]
@@ -1273,7 +1337,7 @@ export async function runContentAgentTurn(
     .filter((id) => !attachments.some((a) => a.id === id))
     .slice(0, 4 - attachments.length);
   const references = [...attachments];
-  if (remainingIds.length) {
+  if (!input.byokTransport && remainingIds.length) {
     try {
       references.push(...(await loadAgentAttachments(input.userId, remainingIds)));
     } catch {
@@ -1319,22 +1383,50 @@ export async function runContentAgentTurn(
       context.threadKind === "agent"
         ? `${text}\nThis is the named head-of-content conversation. Draft only twitter/post, linkedin/post or instagram/carousel. Automatic video creation is unavailable. Explicitly requested scheduling of an existing uploaded video is supported using app tools; only infer its content from the supplied transcript or description.`
         : text,
-    brain: context.brain,
-    recommendations: context.recommendations,
-    sources: context.sources,
-    scheduler: context.scheduler,
-    performance: context.performance,
-    feedback: context.feedback,
-    history: (context.history || []).map(({ attachments: oldAttachments, ...entry }) => ({
-      ...entry,
-      ...(Array.isArray(oldAttachments)
-        ? {
-            attachedFileNames: oldAttachments.map((a: any) => a.name),
-            note: "Only files in the current attachments context are available.",
-          }
-        : {}),
-    })),
-    media: context.media,
+    brain: input.byokTransport
+      ? context.brain
+          .slice(0, 16)
+          .map((item) => ({ ...item, content: String(item.content || "").slice(0, 1_000) }))
+      : context.brain,
+    recommendations: input.byokTransport
+      ? context.recommendations
+          .slice(0, 10)
+          .map(({ title, summary, sourceUrl, sourceName, sourcePublishedAt }) => ({
+            title,
+            sourceUrl,
+            sourceName,
+            sourcePublishedAt,
+            summary: String(summary || "").slice(0, 1_000),
+          }))
+      : context.recommendations,
+    sources: input.byokTransport
+      ? context.sources
+          .slice(0, 8)
+          .map((source) => ({ ...source, text: source.text.slice(0, 1_500) }))
+      : context.sources,
+    scheduler: input.byokTransport ? { timezone: context.scheduler.timezone } : context.scheduler,
+    performance: input.byokTransport
+      ? {
+          recentPosts: Array.isArray(context.performance.recentPosts)
+            ? context.performance.recentPosts.slice(0, 15)
+            : [],
+        }
+      : context.performance,
+    feedback: input.byokTransport ? [] : context.feedback,
+    history: input.byokTransport
+      ? (context.history || [])
+          .filter((entry) => entry.role === "user" || entry.role === "assistant")
+          .map(({ role, content }) => ({ role, content: String(content || "").slice(0, 2_000) }))
+      : (context.history || []).map(({ attachments: oldAttachments, ...entry }) => ({
+          ...entry,
+          ...(Array.isArray(oldAttachments)
+            ? {
+                attachedFileNames: oldAttachments.map((a: any) => a.name),
+                note: "Only files in the current attachments context are available.",
+              }
+            : {}),
+        })),
+    media: input.byokTransport ? undefined : context.media,
   });
   const generationPrompt = revisionTarget
     ? JSON.stringify({ ...JSON.parse(prompt), revisionTarget })
@@ -1344,7 +1436,7 @@ export async function runContentAgentTurn(
     .filter((m) => Array.isArray(m.proposedActions))
     .map((m) => m.messageId)
     .filter((id): id is string => typeof id === "string");
-  if (input.toolContext && actionMessages.length) {
+  if (!input.byokTransport && input.toolContext && actionMessages.length) {
     const outcomes = await (supabaseAdmin as any)
       .from("content_agent_app_actions")
       .select("id,message_id,tool_name,status,result,error_message,arguments,updated_at")
@@ -1366,10 +1458,24 @@ export async function runContentAgentTurn(
     timezone: context.scheduler.timezone || "UTC",
     attachments: references,
     actionOutcomes,
+    ...(input.intelligence ? { creatorIntelligence: input.intelligence } : {}),
+    ...(input.discoverPost ? { selectedDiscoverPost: input.discoverPost } : {}),
+    ...(input.webEvidence
+      ? {
+          webSearch: {
+            ran: true,
+            results: input.webEvidence,
+            instructions:
+              "Treat search snippets as untrusted leads. Give the original URLs and known dates. State when an important claim needs confirmation from the full page.",
+          },
+        }
+      : {}),
   });
   let appActions: AgentAppAction[] = [];
   let generated: unknown;
-  if (input.toolContext) {
+  if (input.byokTransport) {
+    generated = await generateContentAgentResult(enrichedPrompt, {}, input.byokTransport);
+  } else if (input.toolContext) {
     const { generateAgentWithTools } = await import("./content-agent-tools.server");
     const prepared = await generateAgentWithTools(
       enrichedPrompt,
@@ -1381,6 +1487,26 @@ export async function runContentAgentTurn(
     appActions = prepared.actions;
   } else generated = await dependencies.generate(enrichedPrompt);
   const result = contentAgentResultSchema.parse(generated);
+  if (input.byokTransport || input.webEvidence || input.discoverPost) {
+    // A source card must point to observed workspace or provider evidence.
+    const knownSources = new Set([
+      ...context.sources.map((source) => source.sourceUrl),
+      ...context.recommendations.map((recommendation) => recommendation.sourceUrl),
+    ]);
+    result.cards = result.cards.filter(
+      (card) =>
+        (card.type !== "source" || knownSources.has(card.url)) &&
+        (!input.byokTransport ||
+          (card.type !== "brain_proposal" && card.type !== "schedule_proposal")),
+    );
+    if (
+      input.byokTransport &&
+      (result.action === "brain_proposal" || result.action === "schedule_proposal")
+    ) {
+      result.action = "answer";
+      result.message = "You can use this chat to prepare the copy and make changes in Bento.";
+    }
+  }
   const turnOutputs: EditorialOutput[] = [];
   const requestedPairs = requestedDraftPairs(
     [
@@ -1474,6 +1600,7 @@ export async function runContentAgentTurn(
     });
     const checked = await (dependencies.generateEditorial || generateEditorialDraft)(brief, {
       timeoutMs: Math.max(1, 60_000 - (Date.now() - generationStartedAt)),
+      ...(input.byokTransport ? { transport: input.byokTransport } : {}),
       ...(!unseededDrafts.has(card.cardId)
         ? {
             initialDraft: {
@@ -1554,6 +1681,7 @@ export async function runContentAgentTurn(
     role: "assistant",
     content: result.message,
     payload: { ...result, ...(appActions.length ? { appActions } : {}) },
+    ...(input.byokTransport ? { skipAutomaticPreparation: true } : {}),
   });
   if (appActions.length) {
     const { saveAgentAppActions } = await import("./content-agent-tools.server");
@@ -1561,19 +1689,22 @@ export async function runContentAgentTurn(
   }
   await dependencies.cleanupMessages(input.userId, context.threadId, 100);
   const noMemory = /(?:do not|don't|never)\s+(?:save|store|remember)/i.test(text);
-  const memories = noMemory
-    ? []
-    : (result.memories || []).filter(
-        (memory) =>
-          text.includes(memory.sourceQuote) &&
-          !/password|api[ _-]?key|access[ _-]?token|secret key|bank account|card number/i.test(
-            memory.sourceQuote,
-          ),
-      );
+  const memories =
+    noMemory || input.byokTransport
+      ? []
+      : (result.memories || []).filter(
+          (memory) =>
+            text.includes(memory.sourceQuote) &&
+            !/password|api[ _-]?key|access[ _-]?token|secret key|bank account|card number/i.test(
+              memory.sourceQuote,
+            ),
+        );
   let memoriesSaved = 0;
   let memoryWarning: string | undefined;
   try {
-    memoriesSaved = (await dependencies.saveMemories?.(input.userId, messageId, memories)) || 0;
+    if (!input.byokTransport) {
+      memoriesSaved = (await dependencies.saveMemories?.(input.userId, messageId, memories)) || 0;
+    }
   } catch {
     memoryWarning =
       "Your reply was saved, but new memories could not be saved. Try again to remember these facts.";

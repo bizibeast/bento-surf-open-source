@@ -106,8 +106,12 @@ import {
 } from "./mcp.content-ops.server";
 
 import { readWorkspaceData } from "./mcp-workspace-data.server";
+import { withProviderBudgetWorkspace } from "./provider-budget.server";
 import { defaultMcpFreeToolOperations, registerMcpFreeTools } from "./mcp-free-tools.server";
 import { listMcpWorkspaces, resolveMcpWorkspaceId } from "./mcp-workspace.server";
+import { registerExternalMcpTools } from "./external-tools-mcp.server";
+import { registerContentStudioMcpTools } from "./content-studio-mcp.server";
+import { registerCreatorIntelligenceMcpTool } from "./creator-intelligence-mcp.server";
 import { sanitizeMcpReadData } from "./mcp-read-results";
 import { getSchedulerPost, listSchedulerPosts } from "./mcp-scheduler-read.server";
 import {
@@ -1794,10 +1798,16 @@ function registerBentoTools(
         idempotentHint: true,
       },
     },
-    async (input) =>
-      readResult("Loaded stored workspace data.", {
-        data: await operations.readWorkspaceData(creatorContext(), input),
-      }),
+    async (input) => {
+      const workspaceId = await socialWorkspaceId(input.workspaceId);
+      return readResult("Loaded stored workspace data.", {
+        data: await operations.readWorkspaceData(
+          { ...creatorContext(), userId: workspaceId },
+          input,
+        ),
+        ...(input.workspaceId ? { workspaceId } : {}),
+      });
+    },
   );
 
   server.registerTool(
@@ -1966,7 +1976,7 @@ function registerBentoTools(
       title: "Get Content Discover",
       description:
         "Load stored Discover recommendations, tracked creators, preferences and freshness. No refresh or scraping. Use read_workspace_data (discover_items, optionally savedOnly) for all recommendations and bookmarks.",
-      inputSchema: z.object({ creatorId: z.uuid().optional() }),
+      inputSchema: z.object({ creatorId: z.uuid().optional(), workspaceId: z.uuid().optional() }),
       annotations: {
         readOnlyHint: true,
         openWorldHint: false,
@@ -1974,10 +1984,13 @@ function registerBentoTools(
         idempotentHint: true,
       },
     },
-    async ({ creatorId }) =>
-      readResult("Loaded Content Discover.", {
-        discover: await operations.getMcpContentDiscover(userId, creatorId),
-      }),
+    async ({ creatorId, workspaceId }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      return readResult("Loaded Content Discover.", {
+        discover: await operations.getMcpContentDiscover(selectedId, creatorId),
+        ...(workspaceId ? { workspaceId: selectedId } : {}),
+      });
+    },
   );
 
   server.registerTool(
@@ -1994,10 +2007,20 @@ function registerBentoTools(
         idempotentHint: false,
       },
     },
-    async (input) =>
-      textResult(`Completed Discover action: ${input.action}.`, {
-        result: await operations.manageMcpContentDiscover(userId, input),
-      }),
+    async ({ workspaceId, ...input }) => {
+      const selectedId = await socialWorkspaceId(workspaceId);
+      const mutation =
+        input.action === "track_creator"
+          ? { ...input, profileUrl: input.profileUrl.profileUrl }
+          : input;
+      const result = await withProviderBudgetWorkspace(selectedId, () =>
+        operations.manageMcpContentDiscover(selectedId, mutation),
+      );
+      return textResult(`Completed Discover action: ${input.action}.`, {
+        result,
+        ...(workspaceId ? { workspaceId: selectedId } : {}),
+      });
+    },
   );
 
   server.registerTool(
@@ -2952,6 +2975,9 @@ export function createBentoMcpServer(
   advertiseSkillsOnlyWhenRequested(server);
   registerBentoTools(server, authInfo, origin, operations, creatorContext);
   registerMcpFreeTools(server, authInfo, operations);
+  registerExternalMcpTools(server, authInfo, operations.resolveMcpWorkspaceId);
+  registerContentStudioMcpTools(server, authInfo, operations.resolveMcpWorkspaceId);
+  registerCreatorIntelligenceMcpTool(server, authInfo, operations.resolveMcpWorkspaceId);
 
   server.registerResource(
     "bento-skill",

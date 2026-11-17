@@ -18,10 +18,10 @@ it("shows the five capabilities with honest plan labels and trial copy", () => {
   ])
     expect(screen.getByText(title)).toBeVisible();
   expect(screen.getByText(/chapters you just reviewed/)).toBeVisible();
-  // Brain and AI are Creator Plus only; never implied for Store or Creator.
-  expect(screen.getAllByText("Included with Creator Plus only")).toHaveLength(2);
-  expect(screen.getByText("Included with Store, Creator and Creator Plus")).toBeVisible();
-  expect(screen.getAllByText("Included with Creator and Creator Plus")).toHaveLength(2);
+  // Brain and AI are Fully Managed only; never implied for Store or Creator.
+  expect(screen.getAllByText("Included with Fully Managed only")).toHaveLength(2);
+  expect(screen.getByText("Included with Store, Creator and Fully Managed")).toBeVisible();
+  expect(screen.getAllByText("Included with Creator and Fully Managed")).toHaveLength(2);
   expect(screen.getByText(/Your trial includes only the plan you pick/)).toHaveTextContent(
     "Card, UPI or wallet required.",
   );

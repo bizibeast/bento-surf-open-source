@@ -240,7 +240,7 @@ const FAQS = [
   },
 ] as const;
 
-export function McpSetupPage() {
+export function McpSetupPage({ externalTools }: { externalTools?: ReactNode } = {}) {
   const [activeClientId, setActiveClientId] = useState<(typeof CLIENTS)[number]["id"]>("chatgpt");
   const [activeCapabilityId, setActiveCapabilityId] =
     useState<(typeof CAPABILITIES)[number]["id"]>("pages");
@@ -276,6 +276,8 @@ export function McpSetupPage() {
             <CopyButton value={MCP_URL} label="Copy MCP URL" primary />
           </div>
         </section>
+
+        {externalTools}
 
         <section aria-label="Connect your AI agent" className="mx-auto mt-9 max-w-6xl sm:mt-11">
           <MobileTabSelect

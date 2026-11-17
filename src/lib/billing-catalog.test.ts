@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { resolveBillingProduct, trialExtensionEnd, verifiedTrialEnd } from "./billing-catalog";
+import { newCheckoutDodoProductKey, newPlanPrice, PLAN_PRICING, planName } from "./plans";
 
 describe("versioned billing catalog", () => {
   const env = {
     DODO_STORE_MONTHLY_PRODUCT_ID: "old-store",
     DODO_STORE_19_MONTHLY_PRODUCT_ID: "new-store",
     DODO_CREATOR_PLUS_MONTHLY_PRODUCT_ID: "plus",
+    DODO_FULLY_MANAGED_99_MONTHLY_PRODUCT_ID: "managed",
     DODO_STORE_190_YEARLY_PRODUCT_ID: "new-store-yearly",
     DODO_CREATOR_390_YEARLY_PRODUCT_ID: "new-creator-yearly",
     DODO_CREATOR_PLUS_490_YEARLY_PRODUCT_ID: "new-plus-yearly",
@@ -38,6 +40,29 @@ describe("versioned billing catalog", () => {
       catalog: "2026-10",
     });
     expect(resolveBillingProduct("unknown", env)).toBeNull();
+  });
+  it("shows Fully Managed at $99 for new monthly checkout while recognizing Creator Plus history", () => {
+    expect(resolveBillingProduct("managed", env)).toEqual({
+      plan: "creator_plus",
+      period: "monthly",
+      catalog: "2026-11-managed",
+    });
+    expect(resolveBillingProduct("plus", env)).toEqual({
+      plan: "creator_plus",
+      period: "monthly",
+      catalog: "2026-10",
+    });
+    expect(newCheckoutDodoProductKey("creator_plus", "monthly")).toBe(
+      "DODO_FULLY_MANAGED_99_MONTHLY_PRODUCT_ID",
+    );
+    expect(newCheckoutDodoProductKey("creator_plus", "yearly")).toBeNull();
+    expect(newPlanPrice("creator_plus", "monthly").amount).toBe(99);
+    expect(PLAN_PRICING.creator_plus.monthly.amount).toBe(49);
+    expect(planName("creator_plus", "2026-10")).toBe("Creator Plus");
+    expect(planName("creator_plus", "2026-11-managed")).toBe("Fully Managed");
+    expect(
+      resolveBillingProduct("plus", { ...env, DODO_FULLY_MANAGED_99_MONTHLY_PRODUCT_ID: "plus" }),
+    ).toBeNull();
   });
   it("rejects product IDs reused between contract catalogs", () => {
     expect(

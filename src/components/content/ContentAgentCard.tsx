@@ -32,8 +32,10 @@ export function ContentAgentCard({
   onRejectDraft,
   onApproveSchedule,
   onSaveDraft,
+  onStudioDraft,
   draftState,
   onDraftChanged,
+  draftTools = true,
 }: {
   messageId: string;
   card: Card;
@@ -44,8 +46,15 @@ export function ContentAgentCard({
   onRejectDraft: (cardId: string, reason: string) => void | Promise<void>;
   onRegenerateDraft: (cardId: string, reason: string) => void | Promise<void>;
   onApproveSchedule: (draftCardId: string, scheduleCardId: string) => void | Promise<void>;
+  onStudioDraft?: (source: {
+    format: "carousel" | "reel";
+    title: string;
+    text: string;
+    url: string | null;
+  }) => void;
   onSaveDraft?: (cardId: string, edit: AgentDraftEdit) => void | Promise<void>;
   draftState?: AgentDraftState;
+  draftTools?: boolean;
   onDraftChanged?: () => void | Promise<unknown>;
 }) {
   const [schedulePending, setSchedulePending] = useState(false);
@@ -97,6 +106,22 @@ export function ContentAgentCard({
         onDraftChanged={onDraftChanged}
         mediaAssets={mediaAssets}
         onSave={onSaveDraft ? (edit) => onSaveDraft(card.cardId, edit) : undefined}
+        draftTools={draftTools}
+        onStudio={
+          onStudioDraft
+            ? (format) =>
+                onStudioDraft({
+                  format,
+                  title: card.title,
+                  text: card.slides?.length
+                    ? card.slides
+                        .map((slide) => [slide.heading, slide.body].filter(Boolean).join("\n"))
+                        .join("\n\n")
+                    : card.body,
+                  url: card.sourceUrls?.find((url) => /^https?:\/\//i.test(url)) ?? null,
+                })
+            : undefined
+        }
         onReject={(reason) => onRejectDraft(card.cardId, reason)}
       />
     );
@@ -203,19 +228,23 @@ function DraftCard({
   card,
   previewAccount,
   onSchedule,
+  onStudio,
   messageId,
   draftState,
   onDraftChanged,
   onReject,
+  draftTools,
   onSave,
   mediaAssets,
 }: {
   card: Extract<Card, { type: "draft" }>;
   previewAccount?: SchedulerConnection;
+  onStudio?: (format: "carousel" | "reel") => void;
   onSchedule?: () => void | Promise<void>;
   messageId: string;
   draftState?: AgentDraftState;
   onDraftChanged?: () => void | Promise<unknown>;
+  draftTools: boolean;
   onReject: (reason: string) => void | Promise<void>;
   onSave?: (edit: AgentDraftEdit) => void | Promise<void>;
   mediaAssets: ContentMediaAsset[];
@@ -264,7 +293,7 @@ function DraftCard({
       </p>
 
       <DraftReviewNotice notes={getEditorialReviewNotes(card.editorial)} />
-      {(carousel || photoRequired) && (
+      {draftTools && (carousel || photoRequired) && (
         <p className="mt-2 text-xs font-medium" role="status">
           {ready
             ? "Images attached · ready for review"
@@ -310,7 +339,7 @@ function DraftCard({
           disabled={Boolean(pending)}
         />
       )}
-      {!editing && imageControlsSupported && (
+      {draftTools && !editing && imageControlsSupported && (
         <ContentDraftImages
           draftRef={{ messageId, cardId: card.cardId, revision }}
           slideCount={carousel ? card.slides?.length || 0 : 0}
@@ -397,7 +426,7 @@ function DraftCard({
                 {pending === "schedule" ? "Scheduling…" : "Approve & schedule"}
               </button>
             )}
-            {["post", "carousel"].includes(card.format) && (
+            {draftTools && ["post", "carousel"].includes(card.format) && (
               <button
                 type="button"
                 className="content-action content-action-primary"
@@ -421,20 +450,42 @@ function DraftCard({
                     : "Open in scheduler"}
               </button>
             )}
-            <button
-              type="button"
-              className="content-action agent-reject-action"
-              disabled={Boolean(pending)}
-              onClick={() =>
-                void run("reject", async () => {
-                  await onReject("Not a fit for me");
-                  setRejected(true);
-                })
-              }
-            >
-              <X className="size-3.5" aria-hidden="true" />{" "}
-              {pending === "reject" ? "Rejecting…" : "Reject draft"}
-            </button>
+            {onStudio && (
+              <>
+                <button
+                  type="button"
+                  className="content-action"
+                  disabled={Boolean(pending)}
+                  onClick={() => onStudio("carousel")}
+                >
+                  Create carousel
+                </button>
+                <button
+                  type="button"
+                  className="content-action"
+                  disabled={Boolean(pending)}
+                  onClick={() => onStudio("reel")}
+                >
+                  Create Reel
+                </button>
+              </>
+            )}
+            {draftTools && (
+              <button
+                type="button"
+                className="content-action agent-reject-action"
+                disabled={Boolean(pending)}
+                onClick={() =>
+                  void run("reject", async () => {
+                    await onReject("Not a fit for me");
+                    setRejected(true);
+                  })
+                }
+              >
+                <X className="size-3.5" aria-hidden="true" />{" "}
+                {pending === "reject" ? "Rejecting…" : "Reject draft"}
+              </button>
+            )}
           </>
         )}
       </div>

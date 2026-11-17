@@ -92,6 +92,10 @@ export function ContentAgent({
   onDeleteThread,
   onMarkRead,
   onOpenSettings,
+  modelControls,
+  textOnly = false,
+  sendDisabled = false,
+  draftTools = true,
   identityUnavailable = false,
   onRetryIdentity,
   hasMoreThreads = false,
@@ -121,6 +125,7 @@ export function ContentAgent({
   onRegenerateDraft,
   onApproveSchedule,
   onSaveDraft,
+  onStudioDraft,
   onDraftChanged,
 }: {
   threads: ContentAgentThread[];
@@ -132,6 +137,10 @@ export function ContentAgent({
   onDeleteThread: (threadId: string) => Promise<void>;
   onMarkRead: (threadId: string, throughMessageId: string) => void | Promise<void>;
   onOpenSettings: () => void;
+  modelControls?: ReactNode;
+  textOnly?: boolean;
+  sendDisabled?: boolean;
+  draftTools?: boolean;
   identityUnavailable?: boolean;
   onRetryIdentity?: () => void;
   hasMoreThreads?: boolean;
@@ -153,6 +162,12 @@ export function ContentAgent({
   brainEmpty: boolean;
   sending: boolean;
   onDraftChanged?: () => void | Promise<unknown>;
+  onStudioDraft?: (source: {
+    format: "carousel" | "reel";
+    title: string;
+    text: string;
+    url: string | null;
+  }) => void;
   onSaveDraft?: (messageId: string, cardId: string, edit: AgentDraftEdit) => void | Promise<void>;
   onNewThread: () => void;
   onSelectThread: (threadId: string) => void;
@@ -516,7 +531,11 @@ export function ContentAgent({
       (attachments.length
         ? "Use these attached files as references. Ask me what I would like to create or schedule."
         : "");
-    if (!message || sending || loading || loadError || attachmentBusy) return;
+    if (!message || sending || loading || loadError || attachmentBusy || sendDisabled) return;
+    if (textOnly && attachments.length) {
+      setSendError("Remove attachments or choose the Bento model to send them.");
+      return;
+    }
     setSendError("");
     setPendingText(message);
     try {
@@ -541,7 +560,7 @@ export function ContentAgent({
       onDrop={(event) => {
         if (event.dataTransfer.files.length) {
           event.preventDefault();
-          void addFiles(Array.from(event.dataTransfer.files));
+          if (!textOnly) void addFiles(Array.from(event.dataTransfer.files));
         }
       }}
       onSubmit={(event) => {
@@ -549,6 +568,7 @@ export function ContentAgent({
         send();
       }}
     >
+      {modelControls}
       {attachments.length > 0 && (
         <div
           className="mb-2 flex max-h-36 flex-wrap gap-2 overflow-y-auto"
@@ -617,7 +637,12 @@ export function ContentAgent({
               type="button"
               aria-label="Add attachments"
               title="Attach files or choose media"
-              disabled={sending || attachmentBusy || attachments.length >= AGENT_ATTACHMENT_LIMIT}
+              disabled={
+                textOnly ||
+                sending ||
+                attachmentBusy ||
+                attachments.length >= AGENT_ATTACHMENT_LIMIT
+              }
               className="flex size-11 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-background disabled:opacity-40"
             >
               <Paperclip className="size-5" />
@@ -643,7 +668,7 @@ export function ContentAgent({
             const files = Array.from(event.clipboardData.files);
             if (files.length) {
               event.preventDefault();
-              void addFiles(files);
+              if (!textOnly) void addFiles(files);
             }
           }}
           onKeyDown={(event) => {
@@ -661,6 +686,7 @@ export function ContentAgent({
           aria-label="Send message"
           disabled={
             (!text.trim() && !attachments.length) ||
+            sendDisabled ||
             sending ||
             attachmentBusy ||
             loading ||
@@ -926,6 +952,8 @@ export function ContentAgent({
                             key={card.cardId}
                             messageId={message.id}
                             card={card}
+                            draftTools={draftTools}
+                            onStudioDraft={onStudioDraft}
                             previewAccounts={previewAccounts}
                             draftState={
                               parsed.data.draftStates?.[
@@ -958,7 +986,7 @@ export function ContentAgent({
                           />
                         ),
                       )}
-                    {parsed.success && !!parsed.data.appActions?.length && (
+                    {draftTools && parsed.success && !!parsed.data.appActions?.length && (
                       <ContentAgentAppActions
                         messageId={message.id}
                         actions={parsed.data.appActions}

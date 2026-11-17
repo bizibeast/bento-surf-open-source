@@ -4,6 +4,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { requireContentWorkspace } from "./content-access.server";
+import { requireBennyChatAccess } from "./benny-byok.server";
 import { SOCIAL_CONNECTION_LIST_LIMIT } from "./large-table-columns";
 import { agentBrandingSchema } from "./content-agent-branding";
 import {
@@ -50,7 +51,7 @@ export type ContentAgentPreferencesInput = z.infer<typeof contentAgentPreference
 export const getOrCreateNamedAgentThread = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    await requireContentWorkspace(context.userId);
+    await requireBennyChatAccess(context.userId);
     return getOrCreateNamedAgentThreadForWorkspace(context.userId);
   });
 export const getContentAgentPreferences = createServerFn({ method: "GET" })

@@ -8,6 +8,8 @@ import { reorderPagesForCreator } from "./pages.functions";
 import { schedulerReadFiltersShape } from "./mcp-scheduler-read";
 import type { listSchedulerPosts } from "./mcp-scheduler-read.server";
 import { sanitizeMcpReadData } from "./mcp-read-results";
+import { readCreatorIntelligenceForMcp } from "./creator-intelligence-mcp.server";
+import { creatorIntelligenceEnabled } from "./creator-intelligence.server";
 import { postingScheduleSchema } from "./social-scheduler";
 
 export const CHATGPT_MCP_PATH = "/chatgpt/mcp";
@@ -755,14 +757,38 @@ export function registerChatGptTools(
     },
   );
 
+  const intelligenceAvailable = creatorIntelligenceEnabled();
   register(
     "get_content_brain",
     "Get Content Brain",
-    "Read the creator's content profile, voice, Brain document previews, connected sources, and indexing status.",
+    intelligenceAvailable
+      ? "Read the creator's Content Brain or set view to creator_intelligence for the selected workspace's saved preferences, confirmed Brain context, brand settings, and recent stored social data. The creator_intelligence view is available on Creator plans."
+      : "Read the creator's content profile, voice, Brain document previews, connected sources, and indexing status.",
     READ,
-    z.object({}),
-    async () =>
-      textResult("Loaded Content Brain.", { brain: await operations.getMcpContentBrain(userId) }),
+    intelligenceAvailable
+      ? z
+          .object({
+            view: z.literal("creator_intelligence").optional(),
+            workspaceId: z.uuid().optional(),
+            query: z.string().trim().min(1).max(1_000).optional(),
+          })
+          .strict()
+      : z.object({}),
+    async ({ view, workspaceId, query }) => {
+      if (intelligenceAvailable && view === "creator_intelligence") {
+        return textResult(
+          "Loaded creator intelligence.",
+          await readCreatorIntelligenceForMcp(
+            userId,
+            { workspaceId, query },
+            operations.resolveMcpWorkspaceId,
+          ),
+        );
+      }
+      return textResult("Loaded Content Brain.", {
+        brain: await operations.getMcpContentBrain(userId),
+      });
+    },
   );
 
   register(

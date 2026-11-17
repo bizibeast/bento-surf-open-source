@@ -21,8 +21,9 @@ import { createCheckout, getCheckoutOffer } from "@/lib/billing.functions";
 import {
   minimumPlanForEntitlement,
   PAID_PLAN_IDS,
-  PLAN_HIGHLIGHTS,
-  PLAN_PRICING,
+  newPlanHighlights,
+  newPlanBillingPeriod,
+  newPlanPrice,
   planName,
   TRIAL_DAYS,
   type EntitlementKey,
@@ -52,16 +53,18 @@ export function UpgradeDialog({
 }) {
   const [internalOpen, setInternalOpen] = useState(false);
   const isOpen = open ?? internalOpen;
-  const [plan, setPlan] = useState<PaidPlanId>(() =>
+  const [selectedPlan, setPlan] = useState<PaidPlanId>(() =>
     feature ? minimumPlanForEntitlement(feature) : "store",
   );
   const [period, setPeriod] = useState<BillingPeriod>("monthly");
-  const [offer, setOffer] = useState<{ trialEligible: boolean; active: boolean } | null>(null);
+  const [offer, setOffer] = useState<Awaited<ReturnType<typeof getCheckoutOffer>> | null>(null);
   const [recoverable, setRecoverable] = useState<CheckoutRecovery | null>(null);
   const [loading, setLoading] = useState(false);
   const [offerError, setOfferError] = useState(false);
   const reduced = useReducedMotion();
-  const price = PLAN_PRICING[plan][period];
+  const managedAvailable = offer?.fullyManagedCheckoutAvailable === true;
+  const plan = !managedAvailable && selectedPlan === "creator_plus" ? "creator" : selectedPlan;
+  const price = newPlanPrice(plan, period);
   const analyticsSource = source ?? (feature ? `feature:${feature}` : "upgrade_button");
   useEffect(() => {
     if (!isOpen) return;
@@ -105,7 +108,9 @@ export function UpgradeDialog({
     };
   }, [isOpen]);
   async function startCheckout(selection = { plan, period }) {
-    const { plan, period } = selection;
+    const { plan } = selection;
+    if (plan === "creator_plus" && !managedAvailable) return;
+    const period = newPlanBillingPeriod(plan, selection.period);
     if (!offer) return;
     if (offer.active) {
       window.location.href = "/settings?section=plan";
@@ -181,47 +186,52 @@ export function UpgradeDialog({
               </button>
             ))}
           </div>
-          {offer && !offer.active && recoverable && (
-            <CheckoutRecoveryBanner
-              record={recoverable}
-              busy={loading}
-              variant="dialog"
-              onRetry={() => {
-                captureProductEvent(
-                  "checkout_recovery_retry_clicked",
-                  checkoutRecoveryProperties(recoverable, "upgrade_dialog"),
-                );
-                setPlan(recoverable.plan);
-                setPeriod(recoverable.period);
-                void startCheckout(recoverable);
-              }}
-              onDismiss={() => {
-                dismissCheckoutRecovery();
-                captureProductEvent(
-                  "checkout_recovery_banner_dismissed",
-                  checkoutRecoveryProperties(recoverable, "upgrade_dialog"),
-                );
-                setRecoverable(null);
-              }}
-            />
-          )}
+          {offer &&
+            !offer.active &&
+            recoverable &&
+            (managedAvailable || recoverable.plan !== "creator_plus") && (
+              <CheckoutRecoveryBanner
+                record={recoverable}
+                busy={loading}
+                variant="dialog"
+                onRetry={() => {
+                  captureProductEvent(
+                    "checkout_recovery_retry_clicked",
+                    checkoutRecoveryProperties(recoverable, "upgrade_dialog"),
+                  );
+                  setPlan(recoverable.plan);
+                  setPeriod(recoverable.period);
+                  void startCheckout(recoverable);
+                }}
+                onDismiss={() => {
+                  dismissCheckoutRecovery();
+                  captureProductEvent(
+                    "checkout_recovery_banner_dismissed",
+                    checkoutRecoveryProperties(recoverable, "upgrade_dialog"),
+                  );
+                  setRecoverable(null);
+                }}
+              />
+            )}
           <div className="grid gap-3 sm:grid-cols-3">
-            {PAID_PLAN_IDS.map((value) => (
-              <button
-                key={value}
-                aria-pressed={plan === value}
-                onClick={() => setPlan(value)}
-                className={`rounded-2xl border p-4 text-left transition-colors focus-visible:ring-2 focus-visible:ring-primary ${value === plan ? "border-primary bg-primary/5" : "border-border"}`}
-              >
-                <span className="block text-sm font-semibold">{planName(value)}</span>
-                <span className="mt-3 block text-3xl font-semibold">
-                  {PLAN_PRICING[value][period].label}
-                  <span className="text-xs font-normal text-muted-foreground">
-                    {PLAN_PRICING[value][period].cadence}
+            {PAID_PLAN_IDS.filter((value) => managedAvailable || value !== "creator_plus").map(
+              (value) => (
+                <button
+                  key={value}
+                  aria-pressed={plan === value}
+                  onClick={() => setPlan(value)}
+                  className={`rounded-2xl border p-4 text-left transition-colors focus-visible:ring-2 focus-visible:ring-primary ${value === plan ? "border-primary bg-primary/5" : "border-border"}`}
+                >
+                  <span className="block text-sm font-semibold">{planName(value)}</span>
+                  <span className="mt-3 block text-3xl font-semibold">
+                    {newPlanPrice(value, period).label}
+                    <span className="text-xs font-normal text-muted-foreground">
+                      {newPlanPrice(value, period).cadence}
+                    </span>
                   </span>
-                </span>
-              </button>
-            ))}
+                </button>
+              ),
+            )}
           </div>
           <AnimatePresence mode="wait" initial={false}>
             <motion.ul
@@ -232,7 +242,7 @@ export function UpgradeDialog({
               transition={{ duration: reduced ? 0 : motionTokens.duration.fast }}
               className="my-6 grid gap-3 sm:grid-cols-2"
             >
-              {PLAN_HIGHLIGHTS[plan].map((item) => (
+              {newPlanHighlights(plan).map((item) => (
                 <li key={item} className="flex gap-2 text-sm">
                   <Check className="mt-0.5 size-4 shrink-0 text-primary" />
                   {item}

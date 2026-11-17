@@ -528,6 +528,7 @@ export type Database = {
           fingerprint: string;
           id: string;
           kind: string;
+          metadata: Json;
           metric_name: string | null;
           metric_value: number | null;
           outlier_score: number | null;
@@ -550,6 +551,7 @@ export type Database = {
           fingerprint: string;
           id?: string;
           kind: string;
+          metadata?: Json;
           metric_name?: string | null;
           metric_value?: number | null;
           outlier_score?: number | null;
@@ -572,6 +574,7 @@ export type Database = {
           fingerprint?: string;
           id?: string;
           kind?: string;
+          metadata?: Json;
           metric_name?: string | null;
           metric_value?: number | null;
           outlier_score?: number | null;
@@ -706,6 +709,105 @@ export type Database = {
             columns: ["publication_id"];
             isOneToOne: false;
             referencedRelation: "newsletter_publications";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      benny_ai_provider_defaults: {
+        Row: {
+          owner_id: string;
+          provider_id: string;
+          workspace_id: string;
+        };
+        Insert: {
+          owner_id: string;
+          provider_id: string;
+          workspace_id: string;
+        };
+        Update: {
+          owner_id?: string;
+          provider_id?: string;
+          workspace_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "benny_ai_provider_defaults_workspace_id_owner_id_provider_id_fkey";
+            columns: ["workspace_id", "owner_id", "provider_id"];
+            isOneToOne: false;
+            referencedRelation: "benny_ai_providers";
+            referencedColumns: ["workspace_id", "owner_id", "id"];
+          },
+        ];
+      };
+      benny_ai_providers: {
+        Row: {
+          additional_models: string[];
+          base_url: string | null;
+          provider_kind: "openrouter" | "openai" | "compatible";
+          created_at: string;
+          encrypted_api_key: string;
+          id: string;
+          model: string;
+          name: string;
+          owner_id: string;
+          workspace_id: string;
+        };
+        Insert: {
+          additional_models?: string[];
+          base_url?: string | null;
+          provider_kind?: "openrouter" | "openai" | "compatible";
+          created_at?: string;
+          encrypted_api_key: string;
+          id?: string;
+          model: string;
+          name: string;
+          owner_id: string;
+          workspace_id: string;
+        };
+        Update: {
+          additional_models?: string[];
+          base_url?: string | null;
+          provider_kind?: "openrouter" | "openai" | "compatible";
+          created_at?: string;
+          encrypted_api_key?: string;
+          id?: string;
+          model?: string;
+          name?: string;
+          owner_id?: string;
+          workspace_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "benny_ai_providers_workspace_id_fkey";
+            columns: ["workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      benny_search_credentials: {
+        Row: {
+          encrypted_api_key: string;
+          owner_id: string;
+          workspace_id: string;
+        };
+        Insert: {
+          encrypted_api_key: string;
+          owner_id: string;
+          workspace_id: string;
+        };
+        Update: {
+          encrypted_api_key?: string;
+          owner_id?: string;
+          workspace_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "benny_search_credentials_workspace_id_fkey";
+            columns: ["workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
             referencedColumns: ["id"];
           },
         ];
@@ -1848,6 +1950,9 @@ export type Database = {
       };
       payments: {
         Row: {
+          settlement_tax: number | null;
+          dodo_charge_type: string | null;
+          billing_contract_catalog: string | null;
           checkout_session_id: string | null;
           created_at: string;
           currency: string;
@@ -1867,6 +1972,9 @@ export type Database = {
           user_id: string | null;
         };
         Insert: {
+          settlement_tax?: number | null;
+          dodo_charge_type?: string | null;
+          billing_contract_catalog?: string | null;
           checkout_session_id?: string | null;
           created_at?: string;
           currency: string;
@@ -1886,6 +1994,9 @@ export type Database = {
           user_id?: string | null;
         };
         Update: {
+          settlement_tax?: number | null;
+          dodo_charge_type?: string | null;
+          billing_contract_catalog?: string | null;
           checkout_session_id?: string | null;
           created_at?: string;
           currency?: string;
@@ -2650,6 +2761,41 @@ export type Database = {
         };
         Relationships: [];
       };
+      workspace_recovery_checkouts: {
+        Row: {
+          billing_product_id: string | null;
+          checkout_url: string | null;
+          created_at: string;
+          id: string;
+          session_id: string | null;
+          workspace_id: string;
+        };
+        Insert: {
+          billing_product_id?: string | null;
+          checkout_url?: string | null;
+          created_at?: string;
+          id?: string;
+          session_id?: string | null;
+          workspace_id: string;
+        };
+        Update: {
+          billing_product_id?: string | null;
+          checkout_url?: string | null;
+          created_at?: string;
+          id?: string;
+          session_id?: string | null;
+          workspace_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "workspace_recovery_checkouts_workspace_id_fkey";
+            columns: ["workspace_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
     };
     Views: {
       sitemap_products: {
@@ -2690,6 +2836,10 @@ export type Database = {
       };
     };
     Functions: {
+      reserve_workspace_checkout_for_product: {
+        Args: { p_workspace_id: string; p_product_id: string };
+        Returns: Json;
+      };
       claim_telegram_action: {
         Args: { p_action_id: string; p_chat_id: string; p_now?: string };
         Returns: Database["public"]["Tables"]["telegram_actions"]["Row"][];

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AiProviderRequestError } from "./ai-json.server";
+import { AiProviderRequestError, type AiProviderTransport } from "./ai-json.server";
 import { ProviderBudgetError } from "./provider-budget.server";
 import { contentAgentCardSchema } from "./content-agent";
 import { buildEditorialBrief } from "./content-editorial";
@@ -37,6 +37,27 @@ const good = {
   claims: [],
 };
 const clean = { issues: [] };
+it("runs both drafting and independent review using the supplied inference transport", async () => {
+  const external = vi.fn<AiProviderTransport>().mockImplementation(async (request) => ({
+    provider: "openrouter",
+    response: {
+      choices: [
+        {
+          message: {
+            content: JSON.stringify(
+              request.messages[0].content.includes("independent critical reviewer") ? clean : good,
+            ),
+          },
+        },
+      ],
+    },
+  }));
+  const result = await generateEditorialDraft(brief(), { transport: external });
+  expect(result.status).toBe("ready");
+  expect(result.card).toMatchObject({ body: good.body });
+  expect(external).toHaveBeenCalledTimes(2);
+});
+
 it("makes X's character budget explicit and gives the editor measured length feedback", async () => {
   expect(editorialSystemPrompt(brief())).toContain("at most 280 X-weighted characters");
   const d = deps();

@@ -5,7 +5,7 @@ import type { ContentSourceStats } from "./content-sources.server";
 export function discoverInspirationScore(
   source: { publishedAt: string | null; stats?: ContentSourceStats },
   relevance: number,
-  affinity: { followed?: boolean; established?: boolean } = {},
+  affinity: { followed?: boolean; established?: boolean; baselineRatio?: number } = {},
   now = Date.now(),
 ) {
   const fit = Number.isFinite(relevance) ? Math.max(0, Math.min(70, relevance)) : 0;
@@ -25,10 +25,14 @@ export function discoverInspirationScore(
   const evidence = Math.min(16, Math.log10(1 + observed / Math.max(1, ageDays || 1)) * 4);
   const fresh = ageDays === null ? 0 : 30 * Math.exp(-ageDays / 10);
   const creator = affinity.followed ? 10 : affinity.established ? 6 : 0;
+  const performance =
+    typeof affinity.baselineRatio === "number" && Number.isFinite(affinity.baselineRatio)
+      ? Math.min(12, 4 * Math.log2(Math.max(1, affinity.baselineRatio)))
+      : 0;
   // Popularity and creator affinity support the Brain match; they cannot supply it.
   // Audience size is only an admission gate, never a reason to outrank a better fit.
   const fitWeight = Math.min(1, fit / 20);
-  return Math.round((fit * 2 + (fresh + evidence + creator) * fitWeight) * 10) / 10;
+  return Math.round((fit * 2 + (fresh + evidence + creator + performance) * fitWeight) * 10) / 10;
 }
 
 /** Stored feeds cannot let an old cache score turn an archive into today's inspiration. */

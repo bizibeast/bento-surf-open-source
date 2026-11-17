@@ -98,6 +98,7 @@ beforeEach(() => {
     trialEndsAt: null,
     currentUsername: "my_studio",
     selfHosted: false,
+    fullyManagedCheckoutAvailable: true,
     trialEligible: true,
   }));
   api.username.mockResolvedValue({ available: true });
@@ -240,7 +241,7 @@ it("shows personal proof before payment, then activates only after verified chec
   expect(await screen.findByRole("button", { name: "Start my 3-day trial" })).toBeVisible();
   // Reaching the trial step always records the session, even when it was not sampled.
   expect(forceCheckoutReplay).toHaveBeenCalled();
-  expect(screen.getByText(/Then \$49\/month after 3 days/)).toBeVisible();
+  expect(screen.getByText(/Then \$99\/month after 3 days/)).toBeVisible();
   expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "Your Bento is ready." })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Already checked out? Verify access" }));

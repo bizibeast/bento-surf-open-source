@@ -5,6 +5,8 @@ import {
   ProviderBudgetError,
   reserveProviderUsage,
   reserveAiProviderUsage,
+  getManagedSpendStatus,
+  withManagedProviderBudget,
   settleProviderUsage,
   reserveXRead,
   withProviderBudgetWorkspace,
@@ -67,6 +69,99 @@ describe("provider cost reservations", () => {
       p_model: "@cf/openai/gpt-oss-20b",
       p_public_tool: true,
     });
+  });
+
+  it("atomically reserves and settles managed AI using the trusted request scope", async () => {
+    vi.stubEnv("DODO_FULLY_MANAGED_99_MONTHLY_PRODUCT_ID", "managed-product");
+    vi.stubEnv("BENTO_FULLY_MANAGED_CHECKOUT_ENABLED", "false");
+    const rpc = vi
+      .fn()
+      .mockResolvedValueOnce({
+        data: { allowed: true, reservation_id: reservationId },
+        error: null,
+      })
+      .mockResolvedValueOnce({ data: true, error: null });
+    const receipt = await withManagedProviderBudget(
+      { workspaceId: "workspace-a", authUserId: "owner-a" },
+      () =>
+        withProviderBudgetWorkspace("workspace-a", () =>
+          reserveAiProviderUsage(200, {
+            client: { rpc },
+            provider: "openrouter",
+            model: "approved-model",
+            attemptId: "attempt",
+          }),
+        ),
+    );
+    expect(receipt).toEqual({ id: reservationId, units: 200, managed: true });
+    expect(rpc).toHaveBeenNthCalledWith(1, "reserve_managed_provider_usage", {
+      p_workspace_id: "workspace-a",
+      p_auth_user_id: "owner-a",
+      p_product_id: "managed-product",
+      p_attempt_id: "attempt",
+      p_resource: "ai_microusd",
+      p_provider_units: 200,
+      p_microusd: 200,
+      p_provider: "openrouter",
+      p_model: "approved-model",
+    });
+    expect(await settleProviderUsage(receipt, 100, { client: { rpc } })).toBe(true);
+    expect(rpc).toHaveBeenNthCalledWith(2, "settle_managed_provider_usage", {
+      p_reservation_id: reservationId,
+      p_actual_units: 100,
+    });
+  });
+
+  it("blocks managed spend outside its trusted workspace and without a priced resource", async () => {
+    vi.stubEnv("DODO_FULLY_MANAGED_99_MONTHLY_PRODUCT_ID", "managed-product");
+    const rpc = vi.fn();
+    await withManagedProviderBudget({ workspaceId: "workspace-a" }, async () => {
+      await expect(
+        reserveAiProviderUsage(100, {
+          client: { rpc },
+          workspaceId: "workspace-b",
+          provider: "openrouter",
+          model: "approved-model",
+        }),
+      ).rejects.toMatchObject({ reason: "ineligible" });
+      await expect(
+        reserveProviderUsage("brave_search_requests", 1, { client: { rpc } }),
+      ).rejects.toMatchObject({ reason: "unavailable" });
+    });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("exposes weekly managed resets and blocks self-hosted before any RPC", async () => {
+    vi.stubEnv("DODO_FULLY_MANAGED_99_MONTHLY_PRODUCT_ID", "managed-product");
+    vi.stubEnv("BENTO_EDITION", "");
+    const rpc = vi.fn().mockResolvedValue({
+      data: { allowed: false, reason: "managed_week", retry_at: "2026-11-16T00:00:00Z" },
+      error: null,
+    });
+    await expect(
+      withManagedProviderBudget({ workspaceId: "workspace-a" }, () =>
+        reserveProviderUsage("brave_search_requests", 1, {
+          client: { rpc },
+          managedCostMicrousd: 5000,
+        }),
+      ),
+    ).rejects.toMatchObject({ reason: "managed_week", message: expect.stringContaining("weekly") });
+    expect(rpc).toHaveBeenCalledExactlyOnceWith(
+      "reserve_managed_provider_usage",
+      expect.objectContaining({
+        p_workspace_id: "workspace-a",
+        p_resource: "brave_search_requests",
+        p_provider_units: 1,
+        p_microusd: 5000,
+      }),
+    );
+    vi.stubEnv("BENTO_EDITION", "self_hosted");
+    rpc.mockClear();
+    expect(await getManagedSpendStatus("workspace-a", { client: { rpc } })).toEqual({
+      eligible: false,
+      reason: "self_hosted",
+    });
+    expect(rpc).not.toHaveBeenCalled();
   });
 
   it("keeps the actual reset deadline on denied AI reservations", async () => {

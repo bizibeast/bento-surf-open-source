@@ -138,6 +138,46 @@ describe("checkout after preparation", () => {
       "https://checkout.dodopayments.com/one",
     );
   });
+  it("starts a managed trial against a verified $99 monthly product only when enabled", async () => {
+    vi.stubEnv("DODO_FULLY_MANAGED_99_MONTHLY_PRODUCT_ID", "fully-managed-99");
+    vi.stubEnv("BENTO_FULLY_MANAGED_CHECKOUT_ENABLED", "false");
+    const managed = { ...input, plan: "creator_plus" } as const;
+    await expect(createCheckout({ data: managed })).rejects.toThrow("currently unavailable");
+    expect(mocks.product).not.toHaveBeenCalled();
+    expect(mocks.create).not.toHaveBeenCalled();
+
+    vi.stubEnv("BENTO_FULLY_MANAGED_CHECKOUT_ENABLED", "true");
+    mocks.product.mockResolvedValueOnce({
+      product_id: "fully-managed-99",
+      is_recurring: true,
+      price: {
+        type: "recurring_price",
+        currency: "USD",
+        price: 9900,
+        payment_frequency_count: 1,
+        payment_frequency_interval: "Month",
+        subscription_period_count: 1,
+        subscription_period_interval: "Month",
+        discount: 0,
+      },
+    });
+    await createCheckout({ data: managed });
+    expect(mocks.create).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        product_cart: [{ product_id: "fully-managed-99", quantity: 1 }],
+        metadata: expect.objectContaining({
+          billing_catalog: "2026-11-managed",
+          period: "monthly",
+        }),
+        subscription_data: { trial_period_days: 3 },
+      }),
+    );
+
+    await expect(createCheckout({ data: { ...managed, period: "yearly" } })).rejects.toThrow(
+      "available with monthly billing",
+    );
+    expect(mocks.create).toHaveBeenCalledTimes(1);
+  });
   it("uses the current yearly product and records the yearly period", async () => {
     mocks.product.mockResolvedValueOnce({
       product_id: "creator-390",

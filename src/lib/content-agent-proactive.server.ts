@@ -1,4 +1,7 @@
-import { withProviderBudgetWorkspace } from "./provider-budget.server";
+import {
+  withProviderBudgetWorkspace,
+  withWorkspaceManagedProviderBudget,
+} from "./provider-budget.server";
 import { proactiveDeliveryAvailable, proactiveWorkspaceIds } from "./content-agent-config.server";
 import { recordContentEvent } from "./content-workspace-analytics.server";
 /* eslint-disable @typescript-eslint/no-explicit-any -- New durable RPCs are server-only and owner-scoped. */
@@ -735,9 +738,11 @@ export async function processDueContentAgentSignals(
         continue;
       }
       await dependencies.authorize(signal.user_id);
-      const payload = await withProviderBudgetWorkspace(signal.user_id, () =>
-        dependencies.prepare(signal),
-      );
+      const prepare = () => dependencies.prepare(signal);
+      const payload =
+        dependencies === production
+          ? await withWorkspaceManagedProviderBudget({ workspaceId: signal.user_id }, prepare)
+          : await withProviderBudgetWorkspace(signal.user_id, prepare);
       if (!payload) {
         await dependencies.release(signal, "skipped");
         skipped++;

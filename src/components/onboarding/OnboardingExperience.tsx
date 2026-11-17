@@ -40,7 +40,8 @@ import { beginSocialConnection } from "@/lib/social-oauth.functions";
 import { createCheckout } from "@/lib/billing.functions";
 import {
   PAID_PLAN_IDS,
-  PLAN_PRICING,
+  newPlanBillingPeriod,
+  newPlanPrice,
   TRIAL_DAYS,
   planName,
   type BillingPeriod,
@@ -149,6 +150,7 @@ export function OnboardingExperience() {
         ? 3000
         : false,
   });
+  const managedAvailable = query.data?.fullyManagedCheckoutAvailable === true;
   const connections = (query.data?.connections || []) as OnboardingConnection[];
   const hasHostedAccess = Boolean(
     query.data?.selfHosted || (query.data?.plan && query.data.plan !== "free"),
@@ -530,8 +532,16 @@ export function OnboardingExperience() {
     });
     await action(async () => {
       await saveQueue.current;
+      const billingPeriod = newPlanBillingPeriod(plan, period);
+      if (plan === "creator_plus" && !managedAvailable) return;
       const result = await createCheckout({
-        data: { plan, period, returnTo: "onboarding", contactTier: 500, storageUnits: 0 },
+        data: {
+          plan,
+          period: billingPeriod,
+          returnTo: "onboarding",
+          contactTier: 500,
+          storageUnits: 0,
+        },
       });
       const href = safeNavigationHref(result.url);
       if (!href) throw new Error("The checkout link was invalid.");
@@ -566,7 +576,7 @@ export function OnboardingExperience() {
   ].filter(Boolean) as string[];
   const currentReveal = reveals[Math.min(reveal, reveals.length - 1)];
   const question = questions[contextField];
-  const price = PLAN_PRICING[plan][period];
+  const price = newPlanPrice(plan, period);
   const headings: Record<string, [string, string, string]> = {
     standout: [
       "A little proof of your potential",
@@ -937,6 +947,7 @@ export function OnboardingExperience() {
                   </div>
                   <OnboardingPlanChoices
                     plan={plan}
+                    managedAvailable={managedAvailable}
                     period={period}
                     onPlan={setPlan}
                     onPeriod={setPeriod}

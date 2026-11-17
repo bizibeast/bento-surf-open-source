@@ -1,18 +1,54 @@
-import { discoverPostKey } from "@/lib/content-discover-identity";
+import {
+  discoverEvidenceId,
+  discoverPostKey,
+  publicDiscoverEvidenceUrl,
+} from "@/lib/content-discover-identity";
 import { sourceCreator, sourcePostEmbed, sourceThumbnail } from "@/lib/content-source-media";
 import type { DiscoverRecommendation } from "@/lib/content-discovery.functions";
 
-export type DiscoverBoostAction = "chat" | "variations" | "reverse-engineer" | "replicate";
+import type { DiscoverPostContextInput } from "@/lib/content-discover-post-context";
 
-export function discoverAgentPrompt(item: DiscoverRecommendation, action: DiscoverBoostAction) {
+export type DiscoverBoostAction = DiscoverPostContextInput["action"];
+
+export type DiscoverStudioSource = {
+  format: "carousel" | "reel";
+  title: string;
+  text: string;
+  url: string | null;
+};
+
+export function discoverAgentSeed(action: DiscoverBoostAction) {
   const instructions = {
-    chat: "Help me explore this idea",
+    chat: "Help me explore the selected Discover post",
     variations: "Generate fresh angles and original variations inspired by this post, in my voice",
+    hooks:
+      "Write five original hooks for my audience in my voice. For each, explain what makes it relevant to my audience. Use the selected post as inspiration and avoid copying its wording or inventing performance claims",
+    brief:
+      "Create an original content brief for my audience. Include the objective, a distinct angle, the suggested format, hook options, an outline, and a call to action. Cite source evidence and identify claims that need verification. Use my brand voice and only experiences I have shared",
     "reverse-engineer":
       "Reverse engineer why this post works: break down its hook, structure, pacing, and audience appeal. Distinguish evidence from assumptions",
     replicate:
       "Create an original draft with my own perspective and wording. Use only X single text post, LinkedIn text post, or Instagram static carousel. Choose a supported platform from my strategy, or ask me to choose. Treat video/source platforms and any suggested legacy format below as source context only. Use the editorial evidence, novelty and provenance checks; never invent my experience",
   };
+  return instructions[action];
+}
+
+/** A portable prompt for external agents. The in-app Agent loads the evidence by ID. */
+export function discoverAgentPrompt(item: DiscoverRecommendation, action: DiscoverBoostAction) {
+  const sourceUrl = publicDiscoverEvidenceUrl(item.sourceUrl);
+  const baseline = item.performanceBaseline;
+  const observations = visibleStats(item).map(([label, value]) => `${label} = ${value}`);
+  const evidence = [
+    `Source ID: ${discoverEvidenceId(sourceUrl, item.id)}`,
+    item.sourcePublishedAt && `Published: ${item.sourcePublishedAt}`,
+    item.sourceRetrievedAt && `Retrieved: ${item.sourceRetrievedAt}`,
+    item.author && `Creator: ${item.author}`,
+    observations.length > 0 && `Observed metrics: ${observations.join(", ")}`,
+    baseline &&
+      `Creator baseline: ${baseline.ratio.toFixed(2)}× median ${baseline.metric} (${baseline.median}) across ${baseline.sampleSize} comparable ${baseline.format} posts published ${baseline.sampleFrom.slice(0, 10)} to ${baseline.sampleThrough.slice(0, 10)} and observed within ${baseline.ageWindow.minDays}–${baseline.ageWindow.maxDays} days of publication.`,
+  ]
+    .filter(Boolean)
+    .join("\n");
   const ideaContext =
     item.kind === "idea"
       ? [
@@ -29,7 +65,15 @@ export function discoverAgentPrompt(item: DiscoverRecommendation, action: Discov
           .filter(Boolean)
           .join("\n\n")
       : "";
-  return `${instructions[action]}: ${item.title}\n${item.sourceUrl || ""}\n${item.summary || ""}\n${ideaContext}`.trim();
+  return [
+    discoverAgentSeed(action),
+    "Use the following cached material as reference evidence. Cite the original source, keep unknown metrics unknown, and label your interpretations.",
+    [item.title, sourceUrl, item.summary].filter(Boolean).join("\n"),
+    evidence,
+    ideaContext,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 export function platformName(item: DiscoverRecommendation) {
@@ -72,7 +116,7 @@ export function visibleStats(item: DiscoverRecommendation) {
     ] as const
   ).filter(
     (entry): entry is [(typeof entry)[0], number] =>
-      typeof entry[1] === "number" && Number.isFinite(entry[1]),
+      typeof entry[1] === "number" && Number.isFinite(entry[1]) && entry[1] >= 0,
   );
 }
 

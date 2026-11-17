@@ -1,4 +1,11 @@
-export type McpTool = { name: string; description?: string; inputSchema?: unknown };
+import { readResponseText } from "./request-security.server";
+
+export type McpTool = {
+  name: string;
+  description?: string;
+  inputSchema?: unknown;
+  annotations?: { readOnlyHint?: boolean };
+};
 
 type JsonRpcResponse = {
   jsonrpc?: string;
@@ -18,9 +25,11 @@ function parseEventStream(body: string) {
   return responses.at(-1) || null;
 }
 
-async function parseMcpResponse(response: Response) {
+async function parseMcpResponse(response: Response, maximumResponseBytes?: number) {
   if (response.status === 202 || response.status === 204) return null;
-  const text = await response.text();
+  const text = maximumResponseBytes
+    ? await readResponseText(response, maximumResponseBytes)
+    : await response.text();
   if (!text) return null;
   const contentType = response.headers.get("content-type") || "";
   return contentType.includes("text/event-stream")
@@ -32,17 +41,24 @@ export class McpHttpClient {
   private readonly endpoint: string;
   private readonly accessToken: string;
   private readonly fetcher: typeof fetch;
+  private readonly maximumResponseBytes?: number;
   private sessionId: string | null = null;
   private initialized = false;
   private requestId = 0;
   private readonly protocolVersion = "2025-06-18";
 
-  constructor(input: { endpoint: string; accessToken: string; fetch?: typeof fetch }) {
+  constructor(input: {
+    endpoint: string;
+    accessToken: string;
+    fetch?: typeof fetch;
+    maximumResponseBytes?: number;
+  }) {
     const endpoint = new URL(input.endpoint);
     if (endpoint.protocol !== "https:") throw new Error("MCP endpoints must use HTTPS.");
     this.endpoint = endpoint.toString();
     this.accessToken = input.accessToken;
     this.fetcher = input.fetch || fetch;
+    this.maximumResponseBytes = input.maximumResponseBytes;
   }
 
   private async post(payload: Record<string, unknown>) {
@@ -56,6 +72,7 @@ export class McpHttpClient {
         ...(this.sessionId ? { "mcp-session-id": this.sessionId } : {}),
       },
       body: JSON.stringify(payload),
+      redirect: "error",
       signal: AbortSignal.timeout(20_000),
     });
     if (response.status === 401 || response.status === 403) {
@@ -64,7 +81,7 @@ export class McpHttpClient {
     if (!response.ok) throw new Error(`MCP request failed (${response.status}).`);
     const sessionId = response.headers.get("mcp-session-id");
     if (sessionId) this.sessionId = sessionId;
-    const message = await parseMcpResponse(response);
+    const message = await parseMcpResponse(response, this.maximumResponseBytes);
     if (message?.error) throw new Error(message.error.message || "MCP tool failed.");
     return message?.result;
   }

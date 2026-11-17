@@ -153,6 +153,22 @@ describe("Discover admission quality", () => {
     expect([...result.trends, ...result.ideas].every((item) => item.savedOnly)).toBe(true);
   });
 
+  it("keeps a saved Analytics snapshot separate from a Discover recommendation for the same URL", () => {
+    const recommendation = cachedPost("same-post");
+    const bookmark = {
+      ...recommendation,
+      id: "bookmark",
+      fingerprint: "analytics-post:123",
+      saved: true,
+      savedOnly: true,
+      stats: { views: null, likes: 0 },
+    };
+    const result = storedDiscoverData([recommendation, bookmark], null, discoveryNow);
+    expect(result.trends).toHaveLength(2);
+    expect(result.trends).toContainEqual(bookmark);
+    expect(result.trends).toContainEqual(recommendation);
+  });
+
   it("rejects unqualified initial sources before generating ideas or saving recommendations", async () => {
     const qualified = {
       canonicalUrl: "https://youtube.com/watch?v=qualified",
@@ -1038,4 +1054,50 @@ it("removes cached fictional business drama on read without invalidating the usa
   expect(data.trends.map((item) => item.id)).not.toContain("fiction");
   expect(data.trends.find((item) => item.id === "saved-fiction")?.savedOnly).toBe(true);
   expect(data.trends.map((item) => item.id)).toContain("real");
+});
+
+it("ranks a niche match by its measured cached creator baseline", async () => {
+  const makeSource = (day: number, views: number) => ({
+    canonicalUrl: `https://youtube.com/watch?v=ai-source-${day}`,
+    title: "Creator AI workflows",
+    summary: "A case study about creator AI.",
+    sourceName: "YouTube",
+    platform: "YouTube",
+    authorUrl: "https://www.youtube.com/@creator",
+    kind: "youtube" as const,
+    publishedAt: `2026-10-${String(day).padStart(2, "0")}T00:00:00Z`,
+    retrievedAt: `2026-10-${String(day).padStart(2, "0")}T02:00:00Z`,
+    stats: { views, followers: 1_000 },
+  });
+  const target = makeSource(10, 30_000);
+  const peers = [1, 2, 3, 4, 5].map((day) => makeSource(day, day * 1_000));
+  const result = await buildCreatorDiscover(
+    "owner",
+    {
+      loadCreatorContext: async () => ({
+        profile,
+        brainItems: [],
+        insights: [],
+        feedbackSeeds: [],
+      }),
+      getTrendBrief: async (input) => ({
+        ...input,
+        id: "ai-brief",
+        nicheKey: "creator-ai",
+        items: [target, ...peers],
+        warnings: [],
+        fetchedAt: discoveryNow.toISOString(),
+        expiresAt: new Date(discoveryNow.getTime() + 86_400_000).toISOString(),
+      }),
+      generateIdeas: async () => [],
+      saveRecommendations: async (_owner, rows) =>
+        rows.map((row) => ({ ...row, id: row.fingerprint, feedback: "pending" })),
+    },
+    discoveryNow,
+  );
+  expect(result.trends).toHaveLength(1);
+  expect(result.trends[0]).toMatchObject({
+    outlierScore: 10,
+    performanceBaseline: { metric: "views", median: 3_000, sampleSize: 5, observed: 30_000 },
+  });
 });

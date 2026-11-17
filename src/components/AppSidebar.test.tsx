@@ -57,7 +57,7 @@ describe("AppSidebar", () => {
     expect(
       APP_NAV_GROUPS.map(({ label, items }) => [label, items.map((item) => item.label)]),
     ).toEqual([
-      ["Create", ["Agent", "Brain", "Routine", "MCP"]],
+      ["Create", ["Agent", "Brain", "Studio", "Routine", "MCP"]],
       ["Grow", ["Post Scheduler", "Auto DMs", "Social Insights", "Discover"]],
       ["Monetize", ["Link", "Store", "Priority DM", "Calendar", "Community", "Newsletter"]],
     ]);
@@ -117,6 +117,10 @@ describe("AppSidebar", () => {
     expect(within(sidebar).getByRole("link", { name: "Brain" })).toHaveAttribute(
       "href",
       "/content?tab=brain",
+    );
+    expect(within(sidebar).getByRole("link", { name: "Studio" })).toHaveAttribute(
+      "href",
+      "/content?tab=studio",
     );
     expect(within(sidebar).getByRole("link", { name: "Routine" })).toHaveAttribute(
       "href",
@@ -199,6 +203,7 @@ describe("AppSidebar", () => {
   it.each([
     ["Agent", { tab: "agent" }],
     ["Brain", { tab: "brain" }],
+    ["Studio", { tab: "studio" }],
     ["Routine", { tab: "agent", routines: true }],
     ["Discover", { tab: "discover" }],
   ])("marks %s active for its Content view", (label, search) => {

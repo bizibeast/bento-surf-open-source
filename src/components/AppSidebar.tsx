@@ -3,6 +3,7 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import {
   BarChart3,
   Brain,
+  Clapperboard,
   CalendarClock,
   CalendarDays,
   ChevronDown,
@@ -47,7 +48,7 @@ type AppNavItem = {
     | "/earn";
   icon: LucideIcon;
   description: string;
-  contentTab?: "agent" | "brain" | "discover";
+  contentTab?: "agent" | "brain" | "discover" | "studio";
   routines?: boolean;
 };
 
@@ -77,6 +78,13 @@ export const APP_NAV_GROUPS: ReadonlyArray<AppNavGroup> = [
         icon: Brain,
         description: "Context and content strategy",
         contentTab: "brain",
+      },
+      {
+        label: "Studio",
+        to: "/content",
+        icon: Clapperboard,
+        description: "Create carousels and Reels",
+        contentTab: "studio",
       },
       {
         label: "Routine",

@@ -1,3 +1,6 @@
+import { sanitizeMcpReadData } from "./mcp-read-results";
+import { publicSourceUrl } from "./content-source-media";
+
 /** Stable post identity shared by feed, saved items and related recommendations. */
 export function discoverPostKey(item: {
   id?: string;
@@ -5,6 +8,8 @@ export function discoverPostKey(item: {
   sourceUrl?: string | null;
   canonicalUrl?: string;
 }) {
+  // An Analytics bookmark contains observations from the creator's own account.
+  if (item.fingerprint?.startsWith("analytics-post:")) return item.fingerprint;
   const source = item.sourceUrl || item.canonicalUrl;
   if (!source) return item.fingerprint?.replace(/^(trend|idea):/, "source:") || item.id || "";
   try {
@@ -54,6 +59,18 @@ export function discoverPostKey(item: {
   } catch {
     return source;
   }
+}
+
+/** Identify source evidence independently from the workspace recommendation row. */
+export function publicDiscoverEvidenceUrl(value: unknown) {
+  return sanitizeMcpReadData({ sourceUrl: publicSourceUrl(value) }).sourceUrl ?? null;
+}
+
+export function discoverEvidenceId(value: unknown, recommendationId: string) {
+  const sourceUrl = publicDiscoverEvidenceUrl(value);
+  if (!sourceUrl) return `bento:recommendation:${recommendationId}`;
+  const key = discoverPostKey({ sourceUrl });
+  return /^[a-z]+:/.test(key) ? key : `web:${key}`;
 }
 
 export function uniqueDiscoverPosts<

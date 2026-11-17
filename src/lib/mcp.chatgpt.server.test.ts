@@ -474,6 +474,40 @@ describe("ChatGPT MCP catalog", () => {
     });
   });
 
+  it("adds creator intelligence to the Brain tool without growing the curated catalog", async () => {
+    const before = await listedTools();
+    vi.stubEnv("BENTO_V2_CREATOR_INTELLIGENCE_ENABLED", "true");
+    try {
+      const { operations, calls } = fakeOperations();
+      const requested = "00000000-0000-4000-8000-000000000099";
+      operations.resolveMcpWorkspaceId = vi
+        .fn()
+        .mockRejectedValue(new Error("Forbidden workspace"));
+      const tools = await listedTools(operations);
+      expect(tools.map(({ name }) => name)).toEqual(before.map(({ name }) => name));
+      expect(tools.find(({ name }) => name === "get_content_brain")?.inputSchema).toMatchObject({
+        properties: { view: {}, workspaceId: {}, query: {} },
+      });
+
+      const handler = chatGptHandler(operations);
+      const response = await handler.fetch(
+        rpc("https://mcp.bento.surf/chatgpt/mcp", 2, "tools/call", {
+          name: "get_content_brain",
+          arguments: { view: "creator_intelligence", workspaceId: requested },
+        }),
+        { authInfo },
+      );
+      expect((await payload(response)).result.isError).toBe(true);
+      expect(operations.resolveMcpWorkspaceId).toHaveBeenCalledWith(
+        authInfo.extra?.userId,
+        requested,
+      );
+      expect(calls.find(({ name }) => name === "getMcpContentBrain")).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("keeps read-only tools off write handlers and matches the other annotations", async () => {
     const { calls, operations } = fakeOperations();
     const tools = await listedTools(operations);

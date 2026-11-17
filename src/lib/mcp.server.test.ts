@@ -1159,6 +1159,83 @@ describe("Bento MCP tools", () => {
     }
   });
 
+  it("uses the verified workspace for Discover reads, pagination and bookmarks", async () => {
+    const ownerId = String(authInfo.extra!.userId);
+    const workspaceId = "00000000-0000-4000-8000-000000000002";
+    const foreignId = "00000000-0000-4000-8000-000000000003";
+    const recommendationId = "00000000-0000-4000-8000-000000000012";
+    const getMcpContentDiscover = vi.fn(async () => ({
+      creator: { author: "Ada", authorUrl: null, authorAvatarUrl: null },
+      recommendation: {
+        id: recommendationId,
+        title: "Stored source",
+        summary: "",
+        sourceUrl: null,
+        sourcePublishedAt: null,
+        sourceRetrievedAt: null,
+      },
+    }));
+    const readWorkspaceData = vi.fn(async () => ({
+      collection: "discover_items" as const,
+      items: [],
+      hasMore: false,
+      nextCursor: null,
+      readFrom: "stored" as const,
+    }));
+    const manageMcpContentDiscover = vi.fn(async () => ({ id: recommendationId, saved: true }));
+    const resolveMcpWorkspaceId = vi.fn(async (owner: string, requested?: string) => {
+      expect(owner).toBe(ownerId);
+      if (requested && requested !== workspaceId) throw new Error("Workspace is unavailable.");
+      return requested ?? owner;
+    });
+    const handler = createMcpHandler(() =>
+      createBentoMcpServer(authInfo, "https://mcp.bento.surf", {
+        ...defaultBentoMcpOperations,
+        resolveMcpWorkspaceId,
+        getMcpContentDiscover,
+        readWorkspaceData,
+        manageMcpContentDiscover,
+      }),
+    );
+    async function call(name: string, args: Record<string, unknown>, id: number) {
+      const response = await handler.fetch(
+        request({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } }),
+        { authInfo },
+      );
+      return (await payload(response)).result;
+    }
+
+    const overview = await call("get_content_discover", { workspaceId }, 1);
+    expect(overview.isError).not.toBe(true);
+    expect(getMcpContentDiscover).toHaveBeenCalledWith(workspaceId, undefined);
+
+    const page = await call(
+      "read_workspace_data",
+      { collection: "discover_items", cursor: recommendationId, savedOnly: true, workspaceId },
+      2,
+    );
+    expect(page.isError).not.toBe(true);
+    expect(readWorkspaceData).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: workspaceId }),
+      expect.objectContaining({ cursor: recommendationId, savedOnly: true, workspaceId }),
+    );
+
+    const save = await call(
+      "manage_content_discover",
+      { action: "save_item", id: recommendationId, workspaceId },
+      3,
+    );
+    expect(save.isError).not.toBe(true);
+    expect(manageMcpContentDiscover).toHaveBeenCalledWith(workspaceId, {
+      action: "save_item",
+      id: recommendationId,
+    });
+
+    const denied = await call("get_content_discover", { workspaceId: foreignId }, 4);
+    expect(denied.isError).toBe(true);
+    expect(getMcpContentDiscover).toHaveBeenCalledTimes(1);
+  });
+
   it("passes draft and immediate-publish actions through the real scheduler schema without a schedule time", async () => {
     const save = vi.fn(async (_userId: string, input: unknown) => ({
       id: "saved",

@@ -487,6 +487,7 @@ export async function saveSocialPostForUser(
   userId: string,
   input: SocialPostInput,
   agentGuard?: { messageId: string; cardId: string; revision: number },
+  newDraftId?: string,
 ) {
   const data = normalizeCustomerCopy(socialPostInputSchema.parse(input));
   await requireScheduler(userId);
@@ -522,8 +523,25 @@ export async function saveSocialPostForUser(
     };
     const write = data.id
       ? db.from("social_posts").update(values).eq("id", data.id).eq("user_id", userId)
-      : db.from("social_posts").insert(values);
-    const { data: saved, error: saveError } = await write.select("id").single();
+      : newDraftId
+        ? db.from("social_posts").upsert(
+            { ...values, id: newDraftId },
+            {
+              onConflict: "id",
+              ignoreDuplicates: true,
+            },
+          )
+        : db.from("social_posts").insert(values);
+    let { data: saved, error: saveError } = await write.select("id").maybeSingle();
+    if (!saveError && !saved && newDraftId && !data.id) {
+      ({ data: saved, error: saveError } = await db
+        .from("social_posts")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("id", newDraftId)
+        .eq("status", "draft")
+        .maybeSingle());
+    }
     if (saveError || !saved) throw new Error("The draft could not be saved.");
     return { ...(await schedulerData(userId)), savedPostId: String(saved.id), queuedPostId: null };
   }

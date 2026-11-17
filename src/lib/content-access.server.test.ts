@@ -16,7 +16,7 @@ it("requires Brain access for the AI workspace", async () => {
   expect(mocks.requirePlanEntitlement).toHaveBeenCalledWith(
     "creator-id",
     "brain",
-    "Brain is included with the Creator Plus plan. Upgrade to continue.",
+    "Brain is included with the Fully Managed plan. Upgrade to continue.",
   );
 });
 
