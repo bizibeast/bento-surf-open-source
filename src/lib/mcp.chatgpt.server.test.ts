@@ -411,14 +411,14 @@ describe("ChatGPT MCP catalog", () => {
     const tools = await listedTools();
     const names = tools.map((tool) => tool.name);
     expect(new Set(names).size).toBe(names.length);
-    expect(names.length).toBeGreaterThanOrEqual(25);
-    expect(names.length).toBeLessThanOrEqual(40);
+    expect(names).toHaveLength(40);
     expect(names.filter((name) => COMMERCE_NAMES.test(name))).toEqual([]);
     expect(names.some((name) => name.startsWith("manage_"))).toBe(false);
 
     const problems: string[] = [];
     for (const tool of tools) {
       expect(tool.title?.trim(), tool.name).toBeTruthy();
+      expect(tool.annotations?.title, tool.name).toBe(tool.title);
       const annotations = tool.annotations || {};
       for (const key of [
         "readOnlyHint",
@@ -449,6 +449,19 @@ describe("ChatGPT MCP catalog", () => {
         problems.push(`${tool.name} is not marked destructive`);
     }
     expect(problems).toEqual([]);
+
+    for (const name of [
+      "create_page",
+      "update_page",
+      "reorder_pages",
+      "delete_page",
+      "create_page_block",
+      "update_page_block",
+      "reorder_page_blocks",
+      "delete_page_block",
+    ]) {
+      expect(tools.find((tool) => tool.name === name)?.annotations?.openWorldHint).toBe(false);
+    }
 
     const blockTool = tools.find((tool) => tool.name === "create_page_block");
     const typeEnum = (blockTool?.inputSchema.properties as { type?: { enum?: string[] } })?.type

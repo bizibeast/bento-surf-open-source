@@ -368,7 +368,7 @@ export function registerChatGptTools(
       readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: false,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     z.object({
       name: z.string().min(1).max(40),
@@ -388,7 +388,7 @@ export function registerChatGptTools(
       readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: true,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     z.object({ id: z.uuid(), name: z.string().min(1).max(40) }),
     async (input) =>
@@ -405,7 +405,7 @@ export function registerChatGptTools(
       readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: true,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     z.object({ pageIds: z.array(z.uuid()).min(1).max(100) }),
     async ({ pageIds }) =>
@@ -422,7 +422,7 @@ export function registerChatGptTools(
       readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: true,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     z.object({ id: z.uuid() }),
     async ({ id }) =>
@@ -465,7 +465,7 @@ export function registerChatGptTools(
       readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: false,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     z.object({
       type: pageBlockTypeSchema,
@@ -491,7 +491,7 @@ export function registerChatGptTools(
       readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: true,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     z.object({
       id: z.uuid(),
@@ -516,7 +516,7 @@ export function registerChatGptTools(
       readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: true,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     z.object({ items: z.array(blockLayoutItemSchema).max(200) }),
     async ({ items }) => {
@@ -535,7 +535,7 @@ export function registerChatGptTools(
       readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: true,
-      openWorldHint: true,
+      openWorldHint: false,
     },
     z.object({ id: z.uuid() }),
     async ({ id }) => {

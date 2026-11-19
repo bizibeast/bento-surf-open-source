@@ -1,6 +1,6 @@
 {
   "source": "Bento shared application",
-  "syncedAt": "2026-11-17T04:19:00Z",
+  "syncedAt": "2026-11-19T04:18:00Z",
   "features": [
     "proactive content agent",
     "Brain and Discover editorial context",
@@ -33,5 +33,5 @@
     "No hosted credentials or customer data",
     "AGPL license and public release tooling retained"
   ],
-  "sharedSourceCommit": "0b3b5c13349138087c1506e9cddef540cdfcc006"
+  "sharedSourceCommit": "dab1604d231468fde3d51b4b7a420b1839d12253"
 }

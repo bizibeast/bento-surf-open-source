@@ -207,7 +207,8 @@ export function registerExternalMcpTools(
       description:
         "Check progress of this client's Bento job in the selected workspace. When ready, returns generated duration and a private download link valid for 15 minutes. Honor refreshAfter before polling again. A submission with unknown status needs review in HeyGen.",
       inputSchema: workspace.extend(heyGenJobInput.shape),
-      annotations: readOnly,
+      // Polling updates job state and can import the generated video into Bento storage.
+      annotations: { ...write, destructiveHint: true },
     },
     async ({ workspaceId, jobId }) =>
       result(jobLinks(await pollHeyGenJob(await actor(workspaceId), jobId))),

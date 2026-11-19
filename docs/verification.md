@@ -1,8 +1,8 @@
 # Verification status
 
-## Draft shared-app sync through 0b3b5c13
+## Draft shared-app sync through dab1604d
 
-Shared source: `0b3b5c13`. Adds Bento Studio, Benny provider connections, creator intelligence, and the Fully Managed checkout flag on top of `f7ae24a1`. Apply the `20261115` and `20261116` migrations before deploying this code.
+Shared source: `dab1604d`. Adds MCP tool titles, tighter in-app mutation hints, suffix OAuth metadata paths, and Agent tab draft-image polling that pauses when the tab is hidden or the jobs are finished, on top of `0b3b5c13`. Apply the `20261115` and `20261116` migrations before deploying this code.
 
 Public-edition differences kept: localhost defaults instead of hosted origins, instance-administrator billing copy, and the existing public onboarding, server, and package scripts. Help center, SEO, marketing, admin, deploy workflows, the hosted Studio reel renderer service, and secrets stay out.
 

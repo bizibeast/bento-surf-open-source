@@ -26,6 +26,8 @@ vi.mock("./request-security.server", async () => ({
   enforceRequestRateLimit: mcpMocks.enforceRequestRateLimit,
 }));
 
+import * as externalToolServices from "./external-tools.server";
+import * as granolaGateway from "./granola-mcp-gateway.server";
 import { socialPostInputSchema } from "./social-scheduler";
 import { RequestHttpError } from "./request-security.server";
 import {
@@ -110,6 +112,27 @@ describe("Bento MCP HTTP surface", () => {
       process.env.SUPABASE_URL = previous;
     }
   });
+
+  it.each(["/mcp", "/chatgpt/mcp"])(
+    "serves suffix metadata matching path-insertion metadata for %s",
+    async (catalog) => {
+      const origin = "http://localhost:8080";
+      const canonical = await handleBentoMcpRequest(
+        new Request(`${origin}/.well-known/oauth-protected-resource${catalog}`),
+        origin,
+      );
+      const expected = await canonical!.json();
+      expect(expected).toMatchObject({ resource: `${origin}${catalog}` });
+      for (const method of ["GET", "HEAD", "OPTIONS"]) {
+        const response = await handleBentoMcpRequest(
+          new Request(`${origin}${catalog}/.well-known/oauth-protected-resource`, { method }),
+          origin,
+        );
+        expect(response?.status).toBe(200);
+        await expect(response?.json()).resolves.toEqual(expected);
+      }
+    },
+  );
 
   it("leaves the app-host MCP page to the frontend router", async () => {
     const response = await handleBentoMcpRequest(
@@ -289,6 +312,8 @@ describe("Bento MCP HTTP surface", () => {
     const paths = [
       "/.well-known/oauth-protected-resource",
       "/.well-known/oauth-protected-resource/mcp",
+      "/mcp/.well-known/oauth-protected-resource",
+      "/chatgpt/mcp/.well-known/oauth-protected-resource",
     ];
     for (const path of paths) {
       const allowed = await handleBrowserMcpRequest(
@@ -366,6 +391,40 @@ const bentoMcpToolAnnotations = {
     idempotentHint: false,
     openWorldHint: true,
   },
+  list_external_tool_connections: readOnlyAnnotations,
+  get_github_mcp_account: { ...readOnlyAnnotations, openWorldHint: true },
+  get_github_mcp_pull_request: { ...readOnlyAnnotations, openWorldHint: true },
+  list_granola_mcp_connections: readOnlyAnnotations,
+  list_granola_mcp_folders: { ...readOnlyAnnotations, openWorldHint: true },
+  list_heygen_avatars: { ...readOnlyAnnotations, openWorldHint: true },
+  list_heygen_voices: { ...readOnlyAnnotations, openWorldHint: true },
+  prepare_heygen_generation: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    openWorldHint: true,
+    idempotentHint: true,
+  },
+  start_heygen_generation: {
+    readOnlyHint: false,
+    destructiveHint: false,
+    openWorldHint: true,
+    idempotentHint: true,
+  },
+  get_heygen_generation: {
+    readOnlyHint: false,
+    destructiveHint: true,
+    openWorldHint: true,
+    idempotentHint: true,
+  },
+  get_content_studio_projects: readOnlyAnnotations,
+  get_content_studio_render: readOnlyAnnotations,
+  get_creator_intelligence: readOnlyAnnotations,
+  save_content_studio_project: {
+    readOnlyHint: false,
+    destructiveHint: true,
+    openWorldHint: false,
+    idempotentHint: false,
+  },
   get_bento_overview: readOnlyAnnotations,
   list_workspaces: readOnlyAnnotations,
   read_workspace_data: readOnlyAnnotations,
@@ -413,7 +472,7 @@ const bentoMcpToolAnnotations = {
   },
   begin_media_upload: {
     readOnlyHint: false,
-    openWorldHint: true,
+    openWorldHint: false,
     destructiveHint: false,
     idempotentHint: false,
   },
@@ -443,19 +502,19 @@ const bentoMcpToolAnnotations = {
   },
   save_auto_dm_automation: {
     readOnlyHint: false,
-    openWorldHint: true,
+    openWorldHint: false,
     destructiveHint: true,
     idempotentHint: false,
   },
   set_auto_dm_enabled: {
     readOnlyHint: false,
-    openWorldHint: true,
+    openWorldHint: false,
     destructiveHint: true,
     idempotentHint: true,
   },
   delete_auto_dm_automation: {
     readOnlyHint: false,
-    openWorldHint: true,
+    openWorldHint: false,
     destructiveHint: true,
     idempotentHint: false,
   },
@@ -466,50 +525,50 @@ const bentoMcpToolAnnotations = {
   send_priority_dm_message: {
     readOnlyHint: false,
     openWorldHint: true,
-    destructiveHint: true,
+    destructiveHint: false,
     idempotentHint: false,
   },
   set_priority_dm_closed: {
     readOnlyHint: false,
-    openWorldHint: true,
+    openWorldHint: false,
     destructiveHint: true,
     idempotentHint: true,
   },
   get_scheduler_workspace: readOnlyAnnotations,
   manage_scheduler: {
     readOnlyHint: false,
-    openWorldHint: true,
+    openWorldHint: false,
     destructiveHint: true,
     idempotentHint: false,
   },
   manage_page: {
     readOnlyHint: false,
-    openWorldHint: true,
+    openWorldHint: false,
     destructiveHint: true,
     idempotentHint: false,
   },
   manage_block: {
     readOnlyHint: false,
-    openWorldHint: true,
+    openWorldHint: false,
     destructiveHint: true,
     idempotentHint: false,
   },
   get_store_workspace: readOnlyAnnotations,
   manage_product: {
     readOnlyHint: false,
-    openWorldHint: true,
+    openWorldHint: false,
     destructiveHint: true,
     idempotentHint: false,
   },
   manage_discount_code: {
     readOnlyHint: false,
-    openWorldHint: true,
+    openWorldHint: false,
     destructiveHint: true,
     idempotentHint: false,
   },
   manage_order_bump: {
     readOnlyHint: false,
-    openWorldHint: true,
+    openWorldHint: false,
     destructiveHint: true,
     idempotentHint: false,
   },
@@ -522,7 +581,7 @@ const bentoMcpToolAnnotations = {
   get_calendar_workspace: readOnlyAnnotations,
   manage_calendar: {
     readOnlyHint: false,
-    openWorldHint: true,
+    openWorldHint: false,
     destructiveHint: true,
     idempotentHint: false,
   },
@@ -541,7 +600,7 @@ const bentoMcpToolAnnotations = {
   },
   update_profile: {
     readOnlyHint: false,
-    openWorldHint: true,
+    openWorldHint: false,
     destructiveHint: true,
     idempotentHint: false,
   },
@@ -550,7 +609,7 @@ const bentoMcpToolAnnotations = {
   get_earn_workspace: { ...readOnlyAnnotations, readOnlyHint: false },
   manage_earn: {
     readOnlyHint: false,
-    openWorldHint: true,
+    openWorldHint: false,
     destructiveHint: true,
     idempotentHint: false,
   },
@@ -558,6 +617,12 @@ const bentoMcpToolAnnotations = {
 
 describe("Bento MCP tools", () => {
   it("pins read, destructive, idempotent, and open-world hints for every tool", async () => {
+    const externalEnabled = vi
+      .spyOn(externalToolServices, "externalToolsEnabled")
+      .mockReturnValue(true);
+    const granolaEnabled = vi.spyOn(granolaGateway, "granolaGatewayEnabled").mockReturnValue(true);
+    vi.stubEnv("BENTO_V2_STUDIO_ENABLED", "true");
+    vi.stubEnv("BENTO_V2_CREATOR_INTELLIGENCE_ENABLED", "true");
     const handler = createMcpHandler(() =>
       createBentoMcpServer(authInfo, "https://mcp.example.test"),
     );
@@ -567,10 +632,15 @@ describe("Bento MCP tools", () => {
     );
     expect(response.status, await response.clone().text()).toBe(200);
     const body = await payload(response);
+    vi.unstubAllEnvs();
+    externalEnabled.mockRestore();
+    granolaEnabled.mockRestore();
     const actual = Object.fromEntries(
-      body.result.tools.map((tool: { name: string; annotations?: unknown }) => [
+      body.result.tools.map((tool: { name: string; annotations?: Record<string, unknown> }) => [
         tool.name,
-        tool.annotations,
+        Object.fromEntries(
+          Object.entries(tool.annotations || {}).filter(([key]) => key !== "title"),
+        ),
       ]),
     );
     expect(actual).toEqual(bentoMcpToolAnnotations);
@@ -799,6 +869,12 @@ describe("Bento MCP tools", () => {
   });
 
   it("pins tools/list safety annotations", async () => {
+    const externalEnabled = vi
+      .spyOn(externalToolServices, "externalToolsEnabled")
+      .mockReturnValue(true);
+    const granolaEnabled = vi.spyOn(granolaGateway, "granolaGatewayEnabled").mockReturnValue(true);
+    vi.stubEnv("BENTO_V2_STUDIO_ENABLED", "true");
+    vi.stubEnv("BENTO_V2_CREATOR_INTELLIGENCE_ENABLED", "true");
     const handler = createMcpHandler(() => createBentoMcpServer(authInfo, "http://localhost:8080"));
     const response = await handler.fetch(
       request({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
@@ -806,9 +882,14 @@ describe("Bento MCP tools", () => {
     );
     expect(response.status, await response.clone().text()).toBe(200);
     const body = await payload(response);
+    vi.unstubAllEnvs();
+    externalEnabled.mockRestore();
+    granolaEnabled.mockRestore();
     expect(body.result.tools.length).toBeGreaterThan(0);
     for (const tool of body.result.tools) {
       expect(tool.title?.trim(), tool.name).toBeTruthy();
+      expect(tool.annotations?.title, tool.name).toBe(tool.title);
+      expect(typeof tool.annotations?.openWorldHint, tool.name).toBe("boolean");
       expect(typeof tool.annotations?.readOnlyHint, tool.name).toBe("boolean");
       expect(typeof tool.annotations?.destructiveHint, tool.name).toBe("boolean");
       expect(typeof tool.annotations?.idempotentHint, tool.name).toBe("boolean");
@@ -820,10 +901,24 @@ describe("Bento MCP tools", () => {
     const actual = Object.fromEntries(
       body.result.tools.map((tool: { name: string; annotations?: unknown }) => [
         tool.name,
-        tool.annotations,
+        Object.fromEntries(
+          Object.entries(tool.annotations as Record<string, unknown>).filter(
+            ([key]) => key !== "title",
+          ),
+        ),
       ]),
     );
     expect(actual).toEqual(bentoMcpToolAnnotations);
+    const resourcesResponse = await handler.fetch(
+      request({ jsonrpc: "2.0", id: 2, method: "resources/list", params: {} }),
+      { authInfo },
+    );
+    expect((await payload(resourcesResponse)).result.resources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "bento-skill", title: "Bento agent skill" }),
+        expect.objectContaining({ name: "bento-skill-tools", title: "Bento tool reference" }),
+      ]),
+    );
   });
 
   it("exposes complete context to text-only MCP clients without duplicating internal Agent context", async () => {

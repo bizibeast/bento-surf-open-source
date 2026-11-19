@@ -973,6 +973,8 @@ export default {
         "/.well-known/oauth-protected-resource/mcp",
         "/chatgpt/mcp",
         "/.well-known/oauth-protected-resource/chatgpt/mcp",
+        "/mcp/.well-known/oauth-protected-resource",
+        "/chatgpt/mcp/.well-known/oauth-protected-resource",
       ].includes(path)
     ) {
       try {

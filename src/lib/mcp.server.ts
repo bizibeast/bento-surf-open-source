@@ -1627,11 +1627,11 @@ function scannerSafeInputSchema<T>(schema: T): T {
   } as T;
 }
 
-function installScannerSafeToolSchemas(server: McpServer) {
+function installScannerSafeToolMetadata(server: McpServer) {
   const registerTool = server.registerTool.bind(server);
   server.registerTool = ((
     name: string,
-    config: { inputSchema?: unknown },
+    config: { inputSchema?: unknown; title?: string; annotations?: Record<string, unknown> },
     cb: Parameters<McpServer["registerTool"]>[2],
   ) => {
     if (config && typeof config === "object" && "inputSchema" in config) {
@@ -1639,6 +1639,10 @@ function installScannerSafeToolSchemas(server: McpServer) {
         ...config,
         inputSchema: scannerSafeInputSchema(config.inputSchema),
       };
+    }
+    // Directory clients read annotations.title; keep both SDK title fields in sync.
+    if (config.title) {
+      config = { ...config, annotations: { ...config.annotations, title: config.title } };
     }
     return registerTool(name, config as never, cb as never);
   }) as typeof server.registerTool;
@@ -2090,7 +2094,7 @@ function registerBentoTools(
       inputSchema: beginMediaUploadSchema.extend({ workspaceId: z.uuid().optional() }),
       annotations: {
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
         destructiveHint: false,
         idempotentHint: false,
       },
@@ -2366,7 +2370,7 @@ function registerBentoTools(
       inputSchema: autoDmInputSchema,
       annotations: {
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
         destructiveHint: true,
         idempotentHint: false,
       },
@@ -2385,7 +2389,7 @@ function registerBentoTools(
       inputSchema: z.object({ platform: platformSchema, id: z.uuid(), enabled: z.boolean() }),
       annotations: {
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
         destructiveHint: true,
         idempotentHint: true,
       },
@@ -2407,7 +2411,7 @@ function registerBentoTools(
       inputSchema: z.object({ platform: platformSchema, id: z.uuid() }),
       annotations: {
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
         destructiveHint: true,
         idempotentHint: false,
       },
@@ -2511,7 +2515,7 @@ function registerBentoTools(
       annotations: {
         readOnlyHint: false,
         openWorldHint: true,
-        destructiveHint: true,
+        destructiveHint: false,
         idempotentHint: false,
       },
     },
@@ -2532,7 +2536,7 @@ function registerBentoTools(
       inputSchema: z.object({ requestId: z.uuid(), closed: z.boolean() }),
       annotations: {
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
         destructiveHint: true,
         idempotentHint: true,
       },
@@ -2581,7 +2585,7 @@ function registerBentoTools(
       inputSchema: schedulerMutationSchema,
       annotations: {
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
         destructiveHint: true,
         idempotentHint: false,
       },
@@ -2605,7 +2609,7 @@ function registerBentoTools(
       inputSchema: pageMutationInputSchema,
       annotations: {
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
         destructiveHint: true,
         idempotentHint: false,
       },
@@ -2625,7 +2629,7 @@ function registerBentoTools(
       inputSchema: blockMutationInputSchema,
       annotations: {
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
         destructiveHint: true,
         idempotentHint: false,
       },
@@ -2665,7 +2669,7 @@ function registerBentoTools(
       inputSchema: productMutationInputSchema,
       annotations: {
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
         destructiveHint: true,
         idempotentHint: false,
       },
@@ -2684,7 +2688,7 @@ function registerBentoTools(
       inputSchema: discountMutationInputSchema,
       annotations: {
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
         destructiveHint: true,
         idempotentHint: false,
       },
@@ -2704,7 +2708,7 @@ function registerBentoTools(
       inputSchema: orderBumpMutationInputSchema,
       annotations: {
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
         destructiveHint: true,
         idempotentHint: false,
       },
@@ -2767,7 +2771,7 @@ function registerBentoTools(
       inputSchema: calendarMutationInputSchema,
       annotations: {
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
         destructiveHint: true,
         idempotentHint: false,
       },
@@ -2847,7 +2851,7 @@ function registerBentoTools(
       inputSchema: profileUpdateInputSchema,
       annotations: {
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
         destructiveHint: true,
         idempotentHint: false,
       },
@@ -2929,7 +2933,7 @@ function registerBentoTools(
       inputSchema: earnMutationInputSchema,
       annotations: {
         readOnlyHint: false,
-        openWorldHint: true,
+        openWorldHint: false,
         destructiveHint: true,
         idempotentHint: false,
       },
@@ -2971,7 +2975,7 @@ export function createBentoMcpServer(
     },
   );
 
-  installScannerSafeToolSchemas(server);
+  installScannerSafeToolMetadata(server);
   advertiseSkillsOnlyWhenRequested(server);
   registerBentoTools(server, authInfo, origin, operations, creatorContext);
   registerMcpFreeTools(server, authInfo, operations);
@@ -3057,7 +3061,7 @@ export function createChatGptMcpServer(
     { name: "bento", version: "1.1.0" },
     { instructions: CHATGPT_MCP_INSTRUCTIONS },
   );
-  installScannerSafeToolSchemas(server);
+  installScannerSafeToolMetadata(server);
   advertiseSkillsOnlyWhenRequested(server);
   const chatGptToolOperations = operations ?? chatGptOperations(defaultBentoMcpOperations);
   registerChatGptTools(server, authInfo, origin, chatGptToolOperations, creatorContext);
@@ -3227,11 +3231,16 @@ async function routeBentoMcpRequest(
   if (
     url.pathname === "/.well-known/oauth-protected-resource" ||
     url.pathname === "/.well-known/oauth-protected-resource/mcp" ||
-    url.pathname === `/.well-known/oauth-protected-resource${CHATGPT_MCP_PATH}`
+    url.pathname === `/.well-known/oauth-protected-resource${CHATGPT_MCP_PATH}` ||
+    url.pathname === `${MCP_PATH}/.well-known/oauth-protected-resource` ||
+    url.pathname === `${CHATGPT_MCP_PATH}/.well-known/oauth-protected-resource`
   ) {
     return protectedResourceMetadata(
       request,
-      url.pathname.endsWith(CHATGPT_MCP_PATH) ? CHATGPT_MCP_PATH : MCP_PATH,
+      url.pathname.endsWith(CHATGPT_MCP_PATH) ||
+        url.pathname === `${CHATGPT_MCP_PATH}/.well-known/oauth-protected-resource`
+        ? CHATGPT_MCP_PATH
+        : MCP_PATH,
     );
   }
   if (url.pathname !== MCP_PATH && !chatgptRequest) return null;
