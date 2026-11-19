@@ -27,6 +27,8 @@ import {
 import {
   ONBOARDING_OUTPUT_PLATFORMS,
   onboardingBriefSchema,
+  onboardingStrategyTitle,
+  resolveOnboardingPlatform,
   hasUnsupportedOnboardingDrafts,
   type OnboardingBrief,
   type OnboardingCandidates,
@@ -38,7 +40,8 @@ import { beginSocialConnection } from "@/lib/social-oauth.functions";
 import { createCheckout } from "@/lib/billing.functions";
 import {
   PAID_PLAN_IDS,
-  PLAN_PRICING,
+  newPlanBillingPeriod,
+  newPlanPrice,
   TRIAL_DAYS,
   planName,
   type BillingPeriod,
@@ -50,6 +53,7 @@ import { clearOnboardedCache } from "@/lib/auth-entry";
 import { safeNavigationHref } from "@/lib/safe-url";
 import { publicProfileUrl } from "@/lib/application-urls";
 import { captureProductEvent } from "@/lib/posthog";
+import { beginCheckoutTracking, forceCheckoutReplay } from "@/lib/checkout-tracking";
 import {
   checkoutFailureMessage,
   readCheckoutReturn,
@@ -75,6 +79,7 @@ import {
 } from "./OnboardingScreens";
 import { CapabilityShowcase } from "./CapabilityShowcase";
 import { brainDraftOutcome } from "@/lib/onboarding/draft-outcome";
+import { brainChapterSummary } from "@/lib/onboarding/brain-summary";
 import {
   ONBOARDING_DEFAULT_TRIAL_PLAN,
   onboardingPlanAftercare,
@@ -132,21 +137,42 @@ export function OnboardingExperience() {
   const candidateEdits = useRef<OnboardingCandidates | null>(null);
   const saveQueue = useRef<Promise<OnboardingSession | null>>(Promise.resolve(null));
   const headingRef = useRef<HTMLHeadingElement>(null);
+  // True while this tab waits for its own preparation request, so the waiting screen can show
+  // the job's real progress before the request returns.
+  const [watchingPreparation, setWatchingPreparation] = useState(false);
   const query = useQuery({
     queryKey: ["onboarding"],
     queryFn: () => getOnboarding(),
     refetchInterval: (current) =>
+      watchingPreparation ||
       ["queued", "running"].includes(current.state.data?.session.jobStatus || "") ||
       current.state.data?.session.status === "prepared"
         ? 3000
         : false,
   });
+  const managedAvailable = query.data?.fullyManagedCheckoutAvailable === true;
   const connections = (query.data?.connections || []) as OnboardingConnection[];
   const hasHostedAccess = Boolean(
     query.data?.selfHosted || (query.data?.plan && query.data.plan !== "free"),
   );
   const trialEligible = query.data?.trialEligible !== false;
-  const building = busy || Boolean(session && ["queued", "running"].includes(session.jobStatus));
+  // True while this tab starts a preparation request. Kept apart from `busy` so other
+  // actions on the reveal (such as approving the draft) never bring back the Brain
+  // progress screen.
+  const [preparing, setPreparing] = useState(false);
+  // Only a real preparation shows the "Connecting the dots" screen.
+  const building =
+    preparing || Boolean(session && ["queued", "running"].includes(session.jobStatus));
+  // The polled session shows the running job's progress even before this tab accepts it.
+  const liveSession =
+    query.data?.session && session && query.data.session.revision === session.revision
+      ? query.data.session
+      : session;
+  const livePersonalization = liveSession?.candidates?.personalization;
+  const preparationProgress =
+    livePersonalization && livePersonalization.generation === liveSession?.generationCount
+      ? { status: livePersonalization.status, done: livePersonalization.progress ?? [] }
+      : null;
 
   function updateBrief(value: OnboardingBrief) {
     briefRef.current = value;
@@ -361,6 +387,10 @@ export function OnboardingExperience() {
     captureProductEvent("onboarding_workspace_ready");
   }
   useEffect(() => {
+    // The trial step is where people decide to pay: always record the session from here.
+    if (step === 5 && !hasHostedAccess) forceCheckoutReplay();
+  }, [step, hasHostedAccess]);
+  useEffect(() => {
     if (session?.status === "prepared" && step === 5 && hasHostedAccess && !busy)
       void action(activate);
     // Only verified server access can activate a workspace.
@@ -402,11 +432,31 @@ export function OnboardingExperience() {
     });
   }
   async function prepare(value = briefRef.current, manual = false) {
+    // Write for the connected account's platform, or one the creator named in their answers.
+    const provider = connections.find((item) => item.id === value.primaryConnectionId)?.provider;
+    const platform = resolveOnboardingPlatform(value, provider);
+    if (platform !== value.platform) {
+      value = { ...value, platform };
+      updateBrief(value);
+    }
+    setPreparing(true);
+    try {
+      await prepareSteps(value, manual);
+    } finally {
+      setPreparing(false);
+    }
+  }
+  async function prepareSteps(value: OnboardingBrief, manual: boolean) {
     const latest = await save(3, value);
     setStep(3);
     setReveal(0);
     if (!manual) awaitingDraft.current = true;
-    accept(await prepareOnboarding({ data: { revision: latest.revision, generate: !manual } }));
+    setWatchingPreparation(!manual);
+    try {
+      accept(await prepareOnboarding({ data: { revision: latest.revision, generate: !manual } }));
+    } finally {
+      setWatchingPreparation(false);
+    }
     await query.refetch();
   }
   async function forward() {
@@ -482,8 +532,16 @@ export function OnboardingExperience() {
     });
     await action(async () => {
       await saveQueue.current;
+      const billingPeriod = newPlanBillingPeriod(plan, period);
+      if (plan === "creator_plus" && !managedAvailable) return;
       const result = await createCheckout({
-        data: { plan, period, returnTo: "onboarding", contactTier: 500, storageUnits: 0 },
+        data: {
+          plan,
+          period: billingPeriod,
+          returnTo: "onboarding",
+          contactTier: 500,
+          storageUnits: 0,
+        },
       });
       const href = safeNavigationHref(result.url);
       if (!href) throw new Error("The checkout link was invalid.");
@@ -496,6 +554,7 @@ export function OnboardingExperience() {
       };
       captureProductEvent("onboarding_checkout_started", { plan });
       captureProductEvent("checkout_started", properties);
+      beginCheckoutTracking({ plan, trial: trialEligible, surface: "onboarding_trial_step" });
       window.location.assign(href);
     });
   }
@@ -517,7 +576,7 @@ export function OnboardingExperience() {
   ].filter(Boolean) as string[];
   const currentReveal = reveals[Math.min(reveal, reveals.length - 1)];
   const question = questions[contextField];
-  const price = PLAN_PRICING[plan][period];
+  const price = newPlanPrice(plan, period);
   const headings: Record<string, [string, string, string]> = {
     standout: [
       "A little proof of your potential",
@@ -748,6 +807,8 @@ export function OnboardingExperience() {
                   maxLength={contextField === "displayName" ? 60 : 500}
                   value={brief[contextField]}
                   placeholder={question.placeholder}
+                  // Typing while the Brain is being prepared would change the answers it was built from.
+                  readOnly={building || busy}
                   onChange={(event) => patch(contextField, event.target.value)}
                 />
                 <p className="ob-question-hint">
@@ -763,7 +824,9 @@ export function OnboardingExperience() {
                   <PreparationInProgress
                     name={brief.displayName}
                     accountCount={connections.length}
-                    jobStatus={session.jobStatus}
+                    jobStatus={liveSession?.jobStatus ?? session.jobStatus}
+                    progress={preparationProgress}
+                    strategyTitle={onboardingStrategyTitle(brief)}
                   />
                 ) : candidates ? (
                   <>
@@ -807,7 +870,7 @@ export function OnboardingExperience() {
                             <button
                               className="ob-secondary"
                               type="button"
-                              disabled={building}
+                              disabled={building || busy}
                               onClick={() => void action(() => prepare())}
                             >
                               Try the draft again
@@ -817,7 +880,7 @@ export function OnboardingExperience() {
                           <button
                             className="ob-secondary"
                             type="button"
-                            disabled={building}
+                            disabled={building || busy}
                             onClick={() => void action(() => prepare(briefRef.current, true))}
                           >
                             Continue without this draft
@@ -877,13 +940,14 @@ export function OnboardingExperience() {
                       <strong>{brief.displayName}'s Bento</strong>
                       <small>
                         {new URL(configuredPublicOrigin(import.meta.env.VITE_PUBLIC_URL)).host}/
-                        {brief.username} · {candidates?.brain.length || 0} personal Brain chapters
+                        {brief.username} · {brainChapterSummary(candidates)}
                       </small>
                     </span>
                     <CheckCircle2 />
                   </div>
                   <OnboardingPlanChoices
                     plan={plan}
+                    managedAvailable={managedAvailable}
                     period={period}
                     onPlan={setPlan}
                     onPeriod={setPeriod}
@@ -969,7 +1033,7 @@ export function OnboardingExperience() {
                   </span>
                   <span>
                     <Check />
-                    {candidates?.brain.length || 0} Brain chapters saved
+                    {brainChapterSummary(candidates)} saved
                   </span>
                   <span>
                     <Check />
@@ -1058,7 +1122,7 @@ export function OnboardingExperience() {
             )}
             <button
               className="ob-primary"
-              disabled={building || (step === 0 && usernameStatus === "taken")}
+              disabled={building || busy || (step === 0 && usernameStatus === "taken")}
               onClick={() => void forward()}
             >
               {busy && <Loader2 className="motion-safe:animate-spin" />}

@@ -139,6 +139,7 @@ import {
   processContentMediaImportMessage,
   type ContentMediaImportMessage,
 } from "./lib/content-media.server";
+import { studioCarouselMessage, type StudioCarouselMessage } from "./lib/studio-carousel-job";
 import { processDueContentRoutines } from "./lib/content-routines.server";
 import { routeCanonicalHostname, trailingSlashRedirect } from "./lib/hostname-routing.server";
 import { configuredPublicOrigin } from "./lib/application-urls";
@@ -241,6 +242,23 @@ const RUNTIME_STRING_BINDING_PREFIXES = [
 const RUNTIME_STRING_BINDING_NAMES = new Set([
   "APP_ENV",
   "BENTO_EDITION",
+  "BENNY_BYOK_ENABLED",
+  "BENNY_BYOK_WORKSPACES",
+  "BENNY_BYOK_ENCRYPTION_KEY",
+  "BENNY_BYOK_CUSTOM_BASE_URLS",
+  "BENNY_MANAGED_BRAVE_API_KEY",
+  "BENNY_MANAGED_BRAVE_COST_MICROUSD",
+  "BENTO_EXTERNAL_TOOLS_ENABLED",
+  "EXTERNAL_TOOL_ENCRYPTION_KEY",
+  "BENTO_V2_STUDIO_ENABLED",
+  "BENTO_V2_STUDIO_SERVER_CAROUSELS",
+  "BENTO_V2_STUDIO_SERVER_CAROUSEL_PHOTOS",
+  "BENTO_V2_STUDIO_SERVER_REELS",
+  "STUDIO_REEL_RENDERER_URL",
+  "STUDIO_REEL_RENDERER_TOKEN",
+  "STUDIO_REEL_ATTEMPT_MICROUSD",
+  "BENTO_V2_CREATOR_INTELLIGENCE_ENABLED",
+  "BENTO_FULLY_MANAGED_CHECKOUT_ENABLED",
   "INDEXNOW_KEY",
   "CUSTOM_DOMAINS_ENABLED",
   "FOUNDER_ADMIN_EMAILS",
@@ -866,10 +884,26 @@ async function normalizeCatastrophicSsrResponse(
   });
 }
 
+function leakedRouteTemplateResponse(request: Request) {
+  const url = new URL(request.url);
+  if (!url.pathname.includes("$") && !/%24/i.test(url.pathname)) return null;
+  return new Response("Gone", {
+    status: 410,
+    headers: {
+      "content-type": "text/plain; charset=utf-8",
+      "x-robots-tag": "noindex",
+      "cache-control": "public, max-age=86400",
+    },
+  });
+}
+
 export default {
   async fetch(request: CloudflareRequest) {
     const env = hydrateRuntimeEnv(request.runtime?.cloudflare?.env ?? globalThis.__env__);
     const ctx = request.runtime?.cloudflare?.context;
+
+    const leakedTemplate = leakedRouteTemplateResponse(request);
+    if (leakedTemplate) return withDeploymentHeaders(leakedTemplate, env, request);
 
     const canonicalRedirect = routeCanonicalHostname(
       request,
@@ -939,6 +973,8 @@ export default {
         "/.well-known/oauth-protected-resource/mcp",
         "/chatgpt/mcp",
         "/.well-known/oauth-protected-resource/chatgpt/mcp",
+        "/mcp/.well-known/oauth-protected-resource",
+        "/chatgpt/mcp/.well-known/oauth-protected-resource",
       ].includes(path)
     ) {
       try {
@@ -956,6 +992,11 @@ export default {
           request,
         );
       }
+    }
+
+    if (path === "/api/external-tools/heygen/asset") {
+      const { handleHeyGenAssetRequest } = await import("./lib/external-tools.server");
+      return withDeploymentHeaders(await handleHeyGenAssetRequest(request), env, request);
     }
 
     if (path === "/api/mcp-media-upload") {
@@ -1201,6 +1242,7 @@ export default {
       | SocialRepostMessage
       | SocialInsightsBackfillMessage
       | ContentMediaImportMessage
+      | StudioCarouselMessage
       | ReferralQueueMessage
       | InstagramDmQueueMessage
       | TwitterDmQueueMessage
@@ -1237,6 +1279,10 @@ export default {
       (message): message is Message<ContentMediaImportMessage> =>
         "kind" in message.body && message.body.kind === "content_media_import",
     );
+    const studioCarouselMessages = batch.messages.filter(
+      (message): message is Message<StudioCarouselMessage> =>
+        "kind" in message.body && message.body.kind === "studio_carousel_render",
+    );
     const referralMessages = batch.messages.filter(
       (message): message is Message<ReferralQueueMessage> =>
         "kind" in message.body && message.body.kind === "referral_reach_verify",
@@ -1272,6 +1318,7 @@ export default {
             body.kind !== "social_repost" &&
             body.kind !== "social_insights_backfill" &&
             body.kind !== "content_media_import" &&
+            body.kind !== "studio_carousel_render" &&
             body.kind !== "referral_reach_verify" &&
             body.kind !== "instagram_dm_event" &&
             body.kind !== "instagram_comment_reconcile" &&
@@ -1339,6 +1386,20 @@ export default {
         message.retry({ delaySeconds: Math.min(900, 30 * 2 ** Math.max(0, message.attempts - 1)) });
       }
     }
+    for (const message of studioCarouselMessages) {
+      const body = studioCarouselMessage.safeParse(message.body);
+      if (!body.success) {
+        message.ack();
+        continue;
+      }
+      try {
+        const { processStudioCarouselMessage } = await import("./lib/studio-carousel-jobs.server");
+        if ((await processStudioCarouselMessage(body.data)) === "retry") message.retry({ delaySeconds: 180 });
+        else message.ack();
+      } catch {
+        message.retry({ delaySeconds: 180 });
+      }
+    }
     for (const message of referralMessages) {
       try {
         await processReferralQueueMessage(message.body);
@@ -1356,11 +1417,6 @@ export default {
     }
     for (const message of instagramDmMessages) {
       try {
-        if (
-          message.body.kind !== "instagram_comment_reconcile" &&
-          (await deferAutoDmDelivery("instagram", message.body.event.instagramAccountId, message))
-        )
-          continue;
         await processInstagramDmQueueMessage(message.body, env.INSTAGRAM_DM_QUEUE);
         message.ack();
       } catch (error) {
@@ -1396,8 +1452,6 @@ export default {
     }
     for (const message of facebookDmMessages) {
       try {
-        if (await deferAutoDmDelivery("facebook", message.body.event.facebookPageId, message))
-          continue;
         await processFacebookDmQueueMessage(message.body);
         message.ack();
       } catch (error) {
@@ -1429,6 +1483,7 @@ export default {
         emailMessages.length +
         socialInsightsMessages.length +
         contentMediaMessages.length +
+        studioCarouselMessages.length +
         referralMessages.length +
         instagramDmMessages.length +
         twitterDmMessages.length +

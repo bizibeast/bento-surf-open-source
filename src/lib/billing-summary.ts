@@ -1,8 +1,9 @@
-import { PLAN_CONFIG, planName, type PlanId } from "./plans";
+import { PLAN_CONFIG, planName, type BillingCatalog, type PlanId } from "./plans";
 import type { BillingLifecycle } from "./billing-lifecycle";
 
 type SummaryBilling = {
   plan: PlanId;
+  billingCatalog?: BillingCatalog | null;
   status: "active" | "trialing" | "past_due" | "paused" | "canceled" | "incomplete" | null;
   cancelAtPeriodEnd: boolean;
   currentPeriodEnd: string | null;
@@ -35,7 +36,7 @@ export function billingSummary(
   now = Date.now(),
 ): BillingSummary {
   const subscribed = billing?.hasSubscription ? billing.plan : effectivePlan;
-  const name = planName(subscribed);
+  const name = planName(subscribed, billing?.billingCatalog ?? "2026-10");
   const description = PLAN_CONFIG[subscribed].description;
   const lifecycle = billing?.billingLifecycle ?? null;
   if (!billing?.hasSubscription)

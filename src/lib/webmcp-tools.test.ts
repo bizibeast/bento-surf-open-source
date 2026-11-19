@@ -20,7 +20,7 @@ describe("authenticated WebMCP tools", () => {
 
   it("exposes every authenticated operation with unique names", () => {
     const tools = createAuthenticatedWebMcpTools(vi.fn());
-    expect(tools).toHaveLength(42);
+    expect(tools).toHaveLength(43);
     expect(new Set(tools.map((tool) => tool.name)).size).toBe(tools.length);
     expect(tools.map((tool) => tool.name)).toEqual(
       expect.arrayContaining([
@@ -28,6 +28,7 @@ describe("authenticated WebMCP tools", () => {
         "manage_block",
         "manage_product",
         "create_social_post",
+        "list_uploaded_media",
         "manage_calendar",
         "manage_community",
         "update_profile",
@@ -165,6 +166,68 @@ describe("authenticated WebMCP tools", () => {
       data: { operation: "manage_page", input, confirmed: true },
     });
     expect(refresh).toHaveBeenCalledOnce();
+  });
+
+  it("returns uploaded media and large-upload instructions to text-only WebMCP clients", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const tools = Object.fromEntries(
+      createAuthenticatedWebMcpTools(vi.fn()).map((tool) => [tool.name, tool]),
+    );
+    const media = {
+      key: "users/creator/image/photo.jpg",
+      url: "https://bento.surf/cdn/users/creator/image/photo.jpg",
+      name: "photo.jpg",
+      mimeType: "image/jpeg",
+      size: 123,
+    };
+    const upload = {
+      uploadUrl: "https://mcp.bento.surf/api/mcp/media-upload",
+      headers: { Authorization: "Bearer example-upload-ticket" },
+      partSize: 8_388_608,
+      partCount: 1,
+      instructions: "PUT the part and POST its ETag.",
+    };
+    runWrite.mockResolvedValueOnce(media).mockResolvedValueOnce(upload);
+    const signal = new AbortController().signal;
+
+    const uploaded = (await tools.upload_media.execute(
+      {
+        sourceUrl: "https://example.com/photo.jpg",
+        fileName: "photo.jpg",
+        mimeType: "image/jpeg",
+        kind: "image",
+      },
+      { signal },
+    )) as { content: Array<{ text: string }> };
+    expect(JSON.parse(uploaded.content[1].text)).toEqual({ result: media });
+
+    const prepared = (await tools.begin_media_upload.execute(
+      { fileName: "clip.mp4", mimeType: "video/mp4", kind: "video", size: 123 },
+      { signal },
+    )) as { content: Array<{ text: string }> };
+    expect(JSON.parse(prepared.content[1].text)).toEqual({ result: upload });
+  });
+
+  it("recovers existing uploaded media as readable WebMCP text", async () => {
+    const media = {
+      key: "users/creator/image/old.jpg",
+      url: "https://app.bento.surf/cdn/users/creator/image/old.jpg",
+      name: "old.jpg",
+      mimeType: "image/jpeg",
+      size: 123,
+    };
+    runRead.mockResolvedValue({ media: [media], nextCursor: null });
+    const tool = createAuthenticatedWebMcpTools(vi.fn()).find(
+      (candidate) => candidate.name === "list_uploaded_media",
+    );
+    expect(tool).toBeDefined();
+    const result = (await tool!.execute(
+      { limit: 10 },
+      { signal: new AbortController().signal },
+    )) as { content: Array<{ text: string }> };
+    expect(JSON.parse(result.content[1].text)).toEqual({
+      result: { media: [media], nextCursor: null },
+    });
   });
 
   it("does not refresh after cancellation during a write", async () => {
@@ -394,6 +457,27 @@ describe("authenticated WebMCP tools", () => {
     ).toMatchObject({
       trialReel: { type: "boolean" },
       graduationStrategy: { enum: ["MANUAL", "SS_PERFORMANCE"], default: "MANUAL" },
+    });
+    expect(
+      (
+        tools.create_social_post.properties.providerSettings as {
+          properties: { tiktok: { properties: Record<string, unknown> } };
+        }
+      ).properties.tiktok.properties,
+    ).toMatchObject({
+      privacyLevel: { type: "string" },
+      autoAddMusic: { type: "boolean" },
+    });
+    expect(
+      (
+        tools.create_social_post.properties.providerSettings as {
+          properties: { youtube: { properties: Record<string, unknown> } };
+        }
+      ).properties.youtube.properties,
+    ).toMatchObject({
+      youtubeFormat: { enum: ["short", "video"] },
+      youtubePrivacy: { enum: ["private", "unlisted", "public"] },
+      thumbnail: { type: "object" },
     });
     expect(tools.update_profile.properties.username).toMatchObject({
       minLength: 3,

@@ -4,6 +4,7 @@ import {
   isPublicPageRequest,
   PUBLIC_BLOG_CACHE_CONTROL,
   publicBlogFailureFallback,
+  readPublicPageCache,
   storePublicPageCache,
 } from "./public-page-cache.server";
 
@@ -15,7 +16,7 @@ function documentRequest(url: string, init?: RequestInit) {
 }
 
 describe("public page cache boundary", () => {
-  it("uses the unified-page cache generation for rendered HTML", async () => {
+  it("serves creator HTML with browser revalidation while keeping a short edge cache", async () => {
     const put = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("caches", { default: { put } });
     const response = await storePublicPageCache(
@@ -25,13 +26,18 @@ describe("public page cache boundary", () => {
       }),
       undefined,
     );
-    expect(put.mock.calls[0][0].url).toContain("__bento_public_page_cache=v2");
-    expect(response.headers.get("cache-control")).toBe(
-      "public, max-age=30, stale-while-revalidate=86400",
+    expect(put.mock.calls[0][0].url).toContain("__bento_public_page_cache=creator-v3");
+    expect(response.headers.get("cache-control")).toBe("public, max-age=0, must-revalidate");
+    const [key, cachedResponse] = put.mock.calls[0];
+    expect(cachedResponse.headers.get("cache-control")).toBe("public, max-age=30");
+    const match = vi.fn().mockResolvedValue(cachedResponse);
+    vi.stubGlobal("caches", { default: { match } });
+    const hit = await readPublicPageCache(
+      documentRequest("http://localhost:8080/@bizibeast/store"),
     );
-    expect(put.mock.calls[0][1].headers.get("cache-control")).toBe(
-      "public, max-age=30, stale-while-revalidate=86400",
-    );
+    expect(hit?.headers.get("cache-control")).toBe("public, max-age=0, must-revalidate");
+    expect(hit?.headers.get("x-bento-cache")).toBe("HIT");
+    expect(match.mock.calls[0][0].url).toBe(key.url);
     vi.unstubAllGlobals();
   });
 
@@ -95,6 +101,14 @@ describe("public page cache boundary", () => {
     ).toBe(false);
     expect(
       isPublicPageRequest(documentRequest("http://localhost:8080/@bizibeast", { method: "POST" })),
+    ).toBe(false);
+  });
+
+  it("keeps screenshot previews out of the visitor HTML cache", () => {
+    expect(
+      isPublicPageRequest(
+        documentRequest("http://localhost:8080/@bizibeast?__bento_preview=1"),
+      ),
     ).toBe(false);
   });
 

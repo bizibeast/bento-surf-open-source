@@ -260,7 +260,7 @@ export const APP_GUIDES: AppGuide[] = [
       ),
       step(
         "Enable it with intent",
-        "Preview the rule in its app, then enable it. Advanced follow and email gates are available on Creator and Creator Plus.",
+        "Preview the rule in its app, then enable it. Advanced follow and email gates are available on Creator and Fully Managed.",
         "any_dm_enabled",
       ),
     ],

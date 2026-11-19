@@ -1,3 +1,5 @@
+import { LINKEDIN_COMMENT_SCOPE } from "./scheduler-follow-ups";
+import { instagramAudioAuthorization } from "./instagram-audio.server";
 import { normalizeCustomerCopy, normalizeDashes } from "./text/dashes";
 import { getEditorialReviewNotes } from "./content-editorial";
 import {
@@ -25,6 +27,7 @@ import {
   type SocialProvider,
   socialConnectionCanPublish,
   providerSettingsMedia,
+  instagramCatalogAudioSchema,
   postingScheduleSchema,
   scheduledInstagramAutoDmSchema,
   type PostingSchedule,
@@ -83,6 +86,9 @@ function connectionFromRow(row: any): SchedulerConnection {
     status: row.status,
     connectedAt: row.created_at,
     canPublish,
+    ...(row.provider === "linkedin"
+      ? { canFirstComment: canPublish && Boolean(row.scopes?.includes(LINKEDIN_COMMENT_SCOPE)) }
+      : {}),
     publishBlockReason: canPublish
       ? null
       : needsReconnect
@@ -165,10 +171,14 @@ function postFromRow(row: any, insights: Map<string, TargetInsight>): SchedulerP
     targets: (row.targets || [])
       .filter((target: any) => isPublicSocialProvider(target.provider))
       .map((target: any) => {
-        const insight = insights.get(`${target.connection_id}:${target.remote_post_id}`);
+        const insight = target.connection_id
+          ? insights.get(`${target.connection_id}:${target.remote_post_id}`)
+          : undefined;
         return {
           id: target.id,
           connectionId: target.connection_id,
+          accountHandle: target.account_handle_snapshot || null,
+          accountDisplayName: target.account_display_name_snapshot || null,
           provider: target.provider,
           status: target.status,
           remotePostUrl: target.remote_post_url || insight?.remotePostUrl || null,
@@ -237,7 +247,7 @@ async function schedulerData(userId: string, plan?: PlanId) {
     db
       .from("social_posts")
       .select(
-        "*, targets:social_post_targets(id, connection_id, provider, status, remote_post_id, remote_post_url, last_error_message, published_at, next_attempt_at, provider_settings, repost:social_repost_jobs(phase, repost_due_at, remove_due_at, reposted_at, removed_at, last_error_message))",
+        "*, targets:social_post_targets(id, connection_id, account_handle_snapshot, account_display_name_snapshot, provider, status, remote_post_id, remote_post_url, last_error_message, published_at, next_attempt_at, provider_settings, repost:social_repost_jobs(phase, repost_due_at, remove_due_at, reposted_at, removed_at, last_error_message))",
       )
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
@@ -477,6 +487,7 @@ export async function saveSocialPostForUser(
   userId: string,
   input: SocialPostInput,
   agentGuard?: { messageId: string; cardId: string; revision: number },
+  newDraftId?: string,
 ) {
   const data = normalizeCustomerCopy(socialPostInputSchema.parse(input));
   await requireScheduler(userId);
@@ -512,8 +523,25 @@ export async function saveSocialPostForUser(
     };
     const write = data.id
       ? db.from("social_posts").update(values).eq("id", data.id).eq("user_id", userId)
-      : db.from("social_posts").insert(values);
-    const { data: saved, error: saveError } = await write.select("id").single();
+      : newDraftId
+        ? db.from("social_posts").upsert(
+            { ...values, id: newDraftId },
+            {
+              onConflict: "id",
+              ignoreDuplicates: true,
+            },
+          )
+        : db.from("social_posts").insert(values);
+    let { data: saved, error: saveError } = await write.select("id").maybeSingle();
+    if (!saveError && !saved && newDraftId && !data.id) {
+      ({ data: saved, error: saveError } = await db
+        .from("social_posts")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("id", newDraftId)
+        .eq("status", "draft")
+        .maybeSingle());
+    }
     if (saveError || !saved) throw new Error("The draft could not be saved.");
     return { ...(await schedulerData(userId)), savedPostId: String(saved.id), queuedPostId: null };
   }
@@ -616,6 +644,21 @@ export async function saveSocialPostForUser(
       }
     }
   }
+  const catalogAudio = instagramCatalogAudioSchema.safeParse(
+    data.providerSettings.instagram?.catalogAudio,
+  );
+  if (catalogAudio.success) {
+    const instagram = checkedConnections.filter(
+      (connection: any) => connection.provider === "instagram",
+    );
+    if (instagram.length !== 1 || instagram[0].id !== catalogAudio.data.connectionId)
+      throw new Error("Choose one Instagram account when adding a catalog track.");
+    if (
+      !data.asDraft &&
+      !(await instagramAudioAuthorization(userId, catalogAudio.data.connectionId))
+    )
+      throw new Error("Connect Instagram audio through Facebook before scheduling this Reel.");
+  }
   const settingsForConnection = (connection: { id: string; provider: SocialProvider }) => ({
     ...data.providerSettings[connection.provider],
     ...data.connectionOverrides?.[connection.id],
@@ -626,9 +669,22 @@ export async function saveSocialPostForUser(
       data.connectionOverrides?.[connection.id]?.xCommunity != null
     )
       throw new Error("Community destinations are only available for X accounts.");
+    const accountSettings = settingsForConnection(connection);
+    if (connection.provider !== "twitter" && accountSettings.threadReplies != null)
+      throw new Error("Threads are only available for X accounts.");
+    if (connection.provider !== "linkedin" && accountSettings.firstComment != null)
+      throw new Error("First comments are only available for LinkedIn accounts.");
+    if (
+      !data.asDraft &&
+      connection.provider === "linkedin" &&
+      typeof accountSettings.firstComment === "string" &&
+      accountSettings.firstComment.trim() &&
+      !connection.scopes?.includes(LINKEDIN_COMMENT_SCOPE)
+    )
+      throw new Error("Reconnect LinkedIn with comment access before scheduling a first comment.");
     const settings = {
       ...data.providerSettings,
-      [connection.provider]: settingsForConnection(connection),
+      [connection.provider]: accountSettings,
     };
     // Validate mention offsets and provider limits against each account's actual
     // text, including two destinations on the same network.

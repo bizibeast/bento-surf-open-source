@@ -378,6 +378,11 @@ export const completeInstagramConnection = createServerFn({ method: "POST" })
             provider_user_id: accountId,
             provider_handle: handle,
             access_token: encryptedAccessToken,
+            comment_reconcile_permanent_failures: 0,
+            comment_reconcile_next_check_at: null,
+            comment_reconcile_paused_at: null,
+            comment_reconcile_last_provider_code: null,
+            last_comment_reconcile_error: null,
             token_expires_at: longToken.expires_in
               ? new Date(Date.now() + longToken.expires_in * 1_000).toISOString()
               : null,

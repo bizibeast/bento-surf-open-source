@@ -36,6 +36,31 @@ const handlers = () => ({
 });
 
 describe("ContentBrain", () => {
+  it("keeps background indexing failures out of My Human and explains recovery in Sources", () => {
+    render(
+      <ContentBrain
+        profile={profile}
+        items={[]}
+        sources={[]}
+        indexing={{
+          status: "error",
+          error: "AI generation timed out.",
+          indexedAt: null,
+          sourceCount: 0,
+          mediaCount: 0,
+        }}
+        {...handlers()}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "My Human" })).toBeVisible();
+    expect(screen.queryByText(/AI generation timed out/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Your saved Brain is still available/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Sources" }));
+    expect(screen.getByRole("status")).toHaveTextContent("Your saved Brain is still available");
+    expect(screen.getByRole("status")).toHaveTextContent("Refresh from my posts");
+    expect(screen.queryByText(/AI generation timed out/i)).not.toBeInTheDocument();
+  });
+
   it("expands Stories without navigating and opens its index explicitly", () => {
     render(
       <ContentBrain profile={profile} items={[suggestedStory]} sources={[]} {...handlers()} />,

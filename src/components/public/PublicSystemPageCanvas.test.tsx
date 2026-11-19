@@ -120,7 +120,7 @@ it("preserves saved desktop coordinates and places a new product deterministical
   expect(screen.queryByRole("button")).toBeNull();
 });
 
-it("places new system tiles around existing ordinary blocks on desktop", () => {
+it("moves an overlapping system tile down without moving the ordinary block", () => {
   render(
     <PublicSystemPageCanvas
       username="bizibeast"
@@ -145,12 +145,12 @@ it("places new system tiles around existing ordinary blocks on desktop", () => {
     top: "12px",
   });
   expect(screen.getByRole("article", { name: "Product a" }).parentElement).toHaveStyle({
-    left: "179px",
-    top: "12px",
+    left: "12px",
+    top: "179px",
   });
 });
 
-it("omits unfinished public blocks and repacks the remaining canvas", () => {
+it("omits unfinished public blocks while retaining the editor's coordinates", () => {
   render(
     <PublicSystemPageCanvas
       blocks={[
@@ -180,13 +180,14 @@ it("omits unfinished public blocks and repacks the remaining canvas", () => {
 
   expect(screen.queryByText("Upload an image")).toBeNull();
   expect(screen.getByText("Published note").closest("[data-bento-public-grid-item]")).toHaveStyle({
-    left: "12px",
+    left: "179px",
     top: "12px",
   });
 });
 
 it("packs the same combined canvas for mobile while retaining ordinary blocks", () => {
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(380);
+  vi.spyOn(window, "innerWidth", "get").mockReturnValue(404);
   render(
     <PublicSystemPageCanvas
       username="bizibeast"
@@ -212,6 +213,48 @@ it("packs the same combined canvas for mobile while retaining ordinary blocks", 
     top: "196px",
     width: "356px",
   });
+});
+
+it("keeps desktop columns when the sidebar makes the canvas narrower than 640px", () => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(560);
+  vi.spyOn(window, "innerWidth", "get").mockReturnValue(1032);
+  render(
+    <PublicSystemPageCanvas
+      blocks={[
+        {
+          id: "right",
+          type: "note",
+          content: { text: "Right-side block" },
+          x: 6,
+          y: 0,
+          w: 2,
+          h: 2,
+        },
+      ]}
+    />,
+  );
+  expect(screen.getByText("Right-side block").closest("[data-bento-public-grid-item]")).toHaveStyle(
+    {
+      left: "423px",
+      top: "12px",
+    },
+  );
+});
+
+it("renders only configured Home blocks even if a cached payload includes extra product links", () => {
+  const data = {
+    chrome,
+    profile,
+    pages,
+    activePageId: null,
+    blocks: [{ id: "note", type: "note", content: { text: "Home block" }, x: 0, y: 0, w: 2, h: 2 }],
+    productLinks: [{ slug: "unplaced-download", title: "Unplaced download" }],
+  } as unknown as Parameters<typeof PublicProfileView>[0]["data"];
+  render(<PublicProfileView data={data} username="bizibeast" activeSlug={null} />);
+
+  expect(screen.getByText("Home block")).toBeVisible();
+  expect(screen.queryByRole("region", { name: "Products" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "Unplaced download" })).toBeNull();
 });
 
 it("compacts legacy public insight account cards to their available metrics", () => {

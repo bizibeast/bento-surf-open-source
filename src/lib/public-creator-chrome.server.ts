@@ -3,7 +3,11 @@ import { getRequestHost } from "@tanstack/react-start/server";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { hostnameFromRequestHost } from "./custom-domain";
 import { publicProfilePath } from "./application-urls";
-import { planHasEntitlement } from "./plans";
+import {
+  CURRENT_BILLING_CATALOG,
+  FULLY_MANAGED_BILLING_CATALOG,
+  planHasEntitlement,
+} from "./plans";
 import { getPlan, isSelfHostedEdition } from "./plan.server";
 import { safeNavigationHref } from "./safe-url";
 import type { PageSystem } from "./pages.functions";
@@ -51,7 +55,8 @@ export const loadPublicCreatorChrome = createServerOnlyFn(
       return null;
     if (
       !isSelfHostedEdition() &&
-      billing_catalog === "2026-10" &&
+      (billing_catalog === CURRENT_BILLING_CATALOG ||
+        billing_catalog === FULLY_MANAGED_BILLING_CATALOG) &&
       (plan === "free" || !creator.onboarded)
     )
       return null;

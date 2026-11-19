@@ -20,9 +20,9 @@ export function plansIncluding(entitlement: EntitlementKey): PaidPlanId[] {
   return PAID_PLAN_IDS.slice(PAID_PLAN_IDS.indexOf(minimum));
 }
 
-/** "Creator Plus only" or "Included with Creator and Creator Plus". Never implies a lower plan. */
+/** "Fully Managed only" or "Included with Creator and Fully Managed". Never implies a lower plan. */
 export function planAvailabilityLabel(entitlement: EntitlementKey) {
-  const plans = plansIncluding(entitlement).map(planName);
+  const plans = plansIncluding(entitlement).map((plan) => planName(plan));
   if (plans.length === 1) return `Included with ${plans[0]} only`;
   return `Included with ${plans.slice(0, -1).join(", ")} and ${plans[plans.length - 1]}`;
 }

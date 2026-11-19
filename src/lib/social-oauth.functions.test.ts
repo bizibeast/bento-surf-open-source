@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   assertSocialOAuthRedirectMatchesEnvironment,
+  authorizationUrl,
   normalizedSocialConnectionScopes,
   socialProviderCredentialsConfigured,
   socialProviderReadiness,
@@ -19,6 +20,7 @@ const ENV_KEYS = [
   "REDDIT_CLIENT_ID",
   "REDDIT_CLIENT_SECRET",
   "LINKEDIN_CLIENT_ID",
+  "LINKEDIN_COMMENT_ACCESS_APPROVED",
   "LINKEDIN_CLIENT_SECRET",
   "SOCIAL_CONNECTION_ENCRYPTION_KEY",
   "THREADS_PROFILE_DISCOVERY_APPROVED",
@@ -109,6 +111,13 @@ describe("social provider credential readiness", () => {
     expect(socialProviderRequestedScopes("threads")).toContain("threads_profile_discovery");
   });
 
+  it("requests LinkedIn comment access only when approved", () => {
+    delete process.env.LINKEDIN_COMMENT_ACCESS_APPROVED;
+    expect(socialProviderRequestedScopes("linkedin")).not.toContain("w_member_social_feed");
+    setEnvironment("LINKEDIN_COMMENT_ACCESS_APPROVED", "true");
+    expect(socialProviderRequestedScopes("linkedin")).toContain("w_member_social_feed");
+  });
+
   it("requests only LinkedIn sign-in and publishing scopes", () => {
     expect(socialProviderRequestedScopes("linkedin")).toEqual([
       "openid",
@@ -130,6 +139,19 @@ describe("social provider credential readiness", () => {
       "video.list",
       "video.publish",
     ]);
+  });
+
+  it("requests Instagram audio permissions only for the dedicated Facebook grant", () => {
+    const regular = new URL(authorizationUrl("facebook", "app", "state", "challenge"));
+    const audio = new URL(authorizationUrl("facebook", "app", "state", "challenge", true));
+    expect(regular.searchParams.get("scope")).not.toContain("instagram_content_publish");
+    expect(audio.searchParams.get("scope")?.split(",")).toEqual([
+      "pages_show_list",
+      "pages_read_engagement",
+      "instagram_basic",
+      "instagram_content_publish",
+    ]);
+    expect(audio.searchParams.get("auth_type")).toBe("rerequest");
   });
 
   it("requests Facebook Page publishing and Messenger scopes together", () => {

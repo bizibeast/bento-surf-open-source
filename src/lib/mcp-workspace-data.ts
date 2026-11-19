@@ -17,6 +17,7 @@ const recordId = z.union([z.string().uuid(), z.string().regex(/^[1-9][0-9]{0,18}
 export const readWorkspaceDataSchema = z
   .object({
     collection: z.enum(MCP_WORKSPACE_COLLECTIONS),
+    workspaceId: z.uuid().optional(),
     ...schedulerReadFiltersShape,
     cursor: z.string().min(1).max(512).optional(),
     status: z
@@ -119,4 +120,4 @@ export const readWorkspaceDataSchema = z
 
 export type ReadWorkspaceDataInput = z.input<typeof readWorkspaceDataSchema>;
 export const WORKSPACE_DATA_DESCRIPTION =
-  "Read stored Brain documents, imported source text, routines and run history, Discover recommendations/bookmarks, or social account/post/history metrics. social_posts means imported social analytics; scheduler_posts means Scheduler drafts/publications (use get_social_post for metrics and attempt history). provider/connectionId/dateFrom/dateTo filter social data; social_posts also accepts contentType (e.g. video, normalized to lowercase). Scheduler status is the parent state and targetStatus the destination state. Scheduler dates default to destination published_at, not creation time. Workspace-owned data only; no scraping, refresh, generation or provider calls. Pages contain at most 25 records in stable order (Scheduler newest created_at then ID; other collections ID), text previews and nextCursor. Pass nextCursor back as cursor with the same filters until hasMore is false. Pass an item's id to read its full text. Analytics honors plan history limits. Use overview tools for the latest summaries and this tool for complete records and older pages.";
+  "Read stored Brain documents, imported source text, routines and run history, Discover recommendations/bookmarks, or social account/post/history metrics. social_posts means imported social analytics; scheduler_posts means Scheduler drafts/publications (use get_social_post for metrics and attempt history). provider/connectionId/dateFrom/dateTo filter social data; social_posts also accepts contentType (e.g. video, normalized to lowercase). Scheduler status is the parent state and targetStatus the destination state. Scheduler dates default to destination published_at, not creation time. Pass an active workspaceId from list_workspaces to read another owned brand. Workspace-owned data only; no scraping, refresh, generation or provider calls. Pages contain at most 25 records in stable order (Scheduler newest created_at then ID; other collections ID), text previews and nextCursor. Pass nextCursor back as cursor with the same filters until hasMore is false. Pass an item's id to read its full text. Analytics honors plan history limits. Use overview tools for the latest summaries and this tool for complete records and older pages.";

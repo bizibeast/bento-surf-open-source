@@ -84,6 +84,8 @@ import {
 import { Field } from "../login";
 import type { Database } from "@/integrations/supabase/types";
 import { findPlatform, type PlatformCategory } from "@/lib/platforms";
+import { socialProfileHref } from "@/lib/platform-detection";
+import { avatarDeliveryUrl } from "@/lib/media-variants";
 import { geocodeMapLocation } from "@/lib/map.functions";
 import { enrichMapContent, storedMapView } from "@/lib/map-content";
 import {
@@ -96,7 +98,15 @@ import { normalizePlan, planHasEntitlement, planName } from "@/lib/plans";
 import { setPublicCalendarPage } from "@/lib/booking.functions";
 import { setPublicSocialInsights } from "@/lib/social-analytics.functions";
 import { publicProfilePath, publicProfileUrl } from "@/lib/application-urls";
-import { nextEmptyGridRow } from "@/lib/grid-geometry";
+import {
+  GRID_COLS_DESKTOP,
+  GRID_COLS_PHONE,
+  GRID_MARGIN,
+  GRID_PHONE_BREAKPOINT,
+  mobileGridLayout,
+  nextEmptyGridRow,
+  resolveGridOverlaps,
+} from "@/lib/grid-geometry";
 import { consumePostOnboardingUpgradePrompt } from "@/lib/post-onboarding-upgrade";
 import { AnalyticsSettingsPanel } from "@/components/settings/AnalyticsSettingsPanel";
 import { createLinkSocialInsightsWebMcpTools } from "@/lib/link-webmcp";
@@ -161,21 +171,10 @@ export const Route = createFileRoute("/_authenticated/link")({
   component: DashboardPage,
 });
 
-const COLS_LAPTOP = 8;
-const COLS_PHONE = 4;
-const MARGIN = 12;
-
 type ViewMode = "laptop" | "phone";
 
 function sortLayoutItems(items: readonly LayoutItem[]): LayoutItem[] {
   return [...items].sort((a, b) => a.y - b.y || a.x - b.x || a.i.localeCompare(b.i));
-}
-
-function desktopLayoutSignature(blocks: CanvasTile[]) {
-  return [...blocks]
-    .sort((a, b) => a.position - b.position || a.y - b.y || a.x - b.x || a.id.localeCompare(b.id))
-    .map((b) => `${b.id}:${b.x},${b.y},${b.w},${b.h},${b.position}`)
-    .join("|");
 }
 
 function layoutItemsSignature(items: readonly LayoutItem[]) {
@@ -183,30 +182,6 @@ function layoutItemsSignature(items: readonly LayoutItem[]) {
     .sort((a, b) => a.i.localeCompare(b.i))
     .map((item) => `${item.i}:${item.x},${item.y},${item.w},${item.h}`)
     .join("|");
-}
-
-function mobileLayoutFromDesktop(blocks: CanvasTile[]): LayoutItem[] {
-  const sorted = [...blocks].sort(
-    (a, b) => a.position - b.position || a.y - b.y || a.x - b.x || a.id.localeCompare(b.id),
-  );
-  return packLayout(
-    sorted.map((b) => ({ i: b.id, w: Math.max(b.w, 1), h: Math.max(b.h, 1) })),
-    COLS_PHONE,
-  );
-}
-
-function normalizeMobileLayout(items: readonly LayoutItem[]): LayoutItem[] {
-  return packLayout(
-    sortLayoutItems(items).map((l) => ({ i: l.i, w: Math.max(l.w, 1), h: Math.max(l.h, 1) })),
-    COLS_PHONE,
-  );
-}
-
-function clampGridItem<T extends LayoutItem>(item: T, cols: number): T {
-  const w = Math.min(Math.max(item.w, 1), Math.min(COLS_PHONE, cols));
-  const h = Math.max(item.h, 1);
-  const x = Math.min(Math.max(item.x, 0), Math.max(0, cols - w));
-  return { ...item, x, w, h };
 }
 
 // Disallow empty rows: shift items up so each row from 0..maxY has at least one tile.
@@ -228,65 +203,6 @@ function collapseEmptyRows<T extends LayoutItem>(items: T[]): T[] {
   }
 }
 
-function overlaps(a: LayoutItem, b: LayoutItem): boolean {
-  return a.i !== b.i && a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
-}
-
-function resolveOverlaps(
-  items: readonly LayoutItem[],
-  cols: number,
-  pinnedId?: string,
-): LayoutItem[] {
-  const clamped = items.map((item) => clampGridItem({ ...item }, cols));
-  const ordered = [...clamped].sort((a, b) => {
-    if (a.i === pinnedId) return -1;
-    if (b.i === pinnedId) return 1;
-    return a.y - b.y || a.x - b.x || a.i.localeCompare(b.i);
-  });
-  const placed: LayoutItem[] = [];
-  for (const item of ordered) {
-    const next = { ...item };
-    let collision = placed.find((other) => overlaps(next, other));
-    while (collision) {
-      next.y = collision.y + collision.h;
-      collision = placed.find((other) => overlaps(next, other));
-    }
-    placed.push(next);
-  }
-  return clamped.map((item) => placed.find((next) => next.i === item.i) ?? item);
-}
-
-// Greedy first-fit packing: place items left-to-right, top-to-bottom with no gaps.
-function packLayout(items: Array<{ i: string; w: number; h: number }>, cols: number): LayoutItem[] {
-  const occupied = new Set<string>();
-  const key = (x: number, y: number) => `${x},${y}`;
-  const isFree = (x: number, y: number, w: number, h: number) => {
-    for (let dy = 0; dy < h; dy++)
-      for (let dx = 0; dx < w; dx++) if (occupied.has(key(x + dx, y + dy))) return false;
-    return true;
-  };
-  const occupy = (x: number, y: number, w: number, h: number) => {
-    for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) occupied.add(key(x + dx, y + dy));
-  };
-  const placed: LayoutItem[] = [];
-  for (const it of items) {
-    const w = Math.min(Math.max(it.w, 1), cols);
-    const h = Math.max(it.h, 1);
-    let done = false;
-    for (let y = 0; !done; y++) {
-      for (let x = 0; x <= cols - w; x++) {
-        if (isFree(x, y, w, h)) {
-          placed.push({ i: it.i, x, y, w, h });
-          occupy(x, y, w, h);
-          done = true;
-          break;
-        }
-      }
-    }
-  }
-  return placed;
-}
-
 // Desktop: clamp inside grid, prevent overlap, and remove empty rows, but PRESERVE x positions
 // (empty columns are allowed; only empty rows are disallowed).
 function constrainLayoutToNextRow(
@@ -294,13 +210,13 @@ function constrainLayoutToNextRow(
   cols: number,
   pinnedId?: string,
 ): LayoutItem[] {
-  let result = items.map((item) => clampGridItem({ ...item }, cols));
+  let result = [...items];
   for (let i = 0; i < 8; i++) {
     const before = layoutItemsSignature(result);
-    result = collapseEmptyRows(resolveOverlaps(result, cols, pinnedId));
+    result = collapseEmptyRows(resolveGridOverlaps(result, cols, pinnedId));
     if (layoutItemsSignature(result) === before) break;
   }
-  return resolveOverlaps(result, cols, pinnedId);
+  return resolveGridOverlaps(result, cols, pinnedId);
 }
 
 function mutateLayoutToMatch(target: Layout, source: readonly LayoutItem[]) {
@@ -663,7 +579,6 @@ function DashboardPage() {
   const [interactiveMapId, setInteractiveMapId] = useState<string | null>(null);
   const [liveSize, setLiveSize] = useState<{ id: string; w: number; h: number } | null>(null);
   const [gridResetKey, setGridResetKey] = useState(0);
-  const isGridInteractingRef = useRef(false);
   const dragStartLayoutRef = useRef<LayoutItem[] | null>(null);
   useEffect(() => {
     const el = containerRef.current;
@@ -681,10 +596,8 @@ function DashboardPage() {
 
   const [viewMode, setViewMode] = useState<ViewMode>("laptop");
   const [isNarrowViewport, setIsNarrowViewport] = useState(false);
-  const [mobileLayout, setMobileLayout] = useState<LayoutItem[] | null>(null);
-  const mobileDesktopSigRef = useRef("");
   useEffect(() => {
-    const update = () => setIsNarrowViewport(window.innerWidth < 640);
+    const update = () => setIsNarrowViewport(window.innerWidth < GRID_PHONE_BREAKPOINT);
     update();
     window.addEventListener("resize", update);
     return () => window.removeEventListener("resize", update);
@@ -695,41 +608,15 @@ function DashboardPage() {
     setInteractiveMapId(null);
   }, [activePageId, effectiveViewMode]);
 
-  const desktopSig = useMemo(() => desktopLayoutSignature(canvasTiles), [canvasTiles]);
-
-  useEffect(() => {
-    const shouldRebuildFromDesktop = mobileDesktopSigRef.current !== desktopSig;
-    setMobileLayout((current) => {
-      if (canvasTiles.length === 0) return null;
-      const blockIds = new Set(canvasTiles.map((b) => b.id));
-      const hasSameBlocks =
-        current?.length === canvasTiles.length && current.every((item) => blockIds.has(item.i));
-      return !current || !hasSameBlocks || shouldRebuildFromDesktop
-        ? mobileLayoutFromDesktop(canvasTiles)
-        : current;
-    });
-    mobileDesktopSigRef.current = desktopSig;
-  }, [canvasTiles, desktopSig]);
-
-  // Desktop is the source of truth. Phone keeps its own packed state derived from
-  // desktop order, so phone edits never overwrite laptop coordinates.
-  const layout = useMemo<LayoutItem[]>(() => {
-    const cols = effectiveViewMode === "phone" ? COLS_PHONE : COLS_LAPTOP;
-    const sorted = [...canvasTiles].sort((a, b) => a.position - b.position);
-    if (effectiveViewMode === "phone") {
-      const ids = new Set(canvasTiles.map((tile) => tile.id));
-      return mobileLayout?.length === ids.size && mobileLayout.every((item) => ids.has(item.i))
-        ? mobileLayout
-        : mobileLayoutFromDesktop(canvasTiles);
-    }
-    return sorted.map((b) => {
-      const w = Math.min(Math.max(b.w, 1), cols);
-      const h = Math.max(b.h, 1);
-      const x = Math.min(Math.max(b.x ?? 0, 0), Math.max(0, cols - w));
-      const y = Math.max(b.y ?? 0, 0);
-      return { i: b.id, x, y, w, h };
-    });
-  }, [canvasTiles, effectiveViewMode, mobileLayout]);
+  const desktopLayout = useMemo(
+    () =>
+      resolveGridOverlaps(
+        canvasTiles.map(({ id, x, y, w, h }) => ({ i: id, x, y, w, h })),
+        GRID_COLS_DESKTOP,
+      ),
+    [canvasTiles],
+  );
+  const layout = effectiveViewMode === "phone" ? mobileGridLayout(desktopLayout) : desktopLayout;
 
   const layoutMut = useMutation({
     scope: { id: "link-page-layout" },
@@ -752,32 +639,22 @@ function DashboardPage() {
       if (failed) throw failed.reason;
     },
     onError: (error) => toast.error(errorMessage(error, "Could not save page layout.")),
-    onSettled: (_data, _error, saved) => {
+    onSettled: (_data, error, saved) => {
       const { pageId } = saved;
       const pending = pendingPageLayouts.get(qc);
       if (pending?.get(pageId) !== saved) return;
       pending.delete(pageId);
-      void qc.invalidateQueries({ queryKey: ["my-blocks", pageId], refetchType: "none" });
-      void qc.invalidateQueries({ queryKey: ["my-system-page", pageId], refetchType: "none" });
+      const refetchType = error ? "active" : "none";
+      void qc.invalidateQueries({ queryKey: ["my-blocks", pageId], refetchType });
+      void qc.invalidateQueries({ queryKey: ["my-system-page", pageId], refetchType });
     },
   });
 
-  const lastSavedSigRef = useRef<string>("");
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingLayoutRef = useRef<LayoutSave | null>(null);
   const layoutMutateRef = useRef(layoutMut.mutate);
   layoutMutateRef.current = layoutMut.mutate;
-  const sigOf = (
-    items: Array<{ id: string; x: number; y: number; w: number; h: number; position: number }>,
-  ) =>
-    items
-      .slice()
-      .sort((a, b) => (a.id < b.id ? -1 : 1))
-      .map((i) => `${i.id}:${i.x},${i.y},${i.w},${i.h},${i.position}`)
-      .join("|");
-
   useEffect(() => {
-    lastSavedSigRef.current = "";
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       if (pendingLayoutRef.current) {
@@ -789,11 +666,11 @@ function DashboardPage() {
 
   const createMut = useMutation({
     mutationFn: async (input: NewBlockPayload) => {
-      const cols = effectiveViewMode === "phone" ? COLS_PHONE : COLS_LAPTOP;
+      const cols = effectiveViewMode === "phone" ? GRID_COLS_PHONE : GRID_COLS_DESKTOP;
       const w = Math.min(Math.max(input.w ?? 2, 1), cols);
       const h = Math.max(input.h ?? 2, 1);
       const x = 0;
-      const y = nextEmptyGridRow(canvasTiles);
+      const y = nextEmptyGridRow(desktopLayout);
       let content = input.content;
       if (input.type === "map" && content?.location && !storedMapView(content)) {
         content = await enrichMapContent(content, (location) =>
@@ -822,25 +699,10 @@ function DashboardPage() {
     },
   });
 
-  const handleLayoutChange = (next: Layout, options?: { force?: boolean; pinnedId?: string }) => {
-    if (isGridInteractingRef.current && !options?.force) return;
-
-    if (effectiveViewMode === "phone") {
-      const packed = normalizeMobileLayout(next);
-      setMobileLayout((current) =>
-        current && layoutItemsSignature(current) === layoutItemsSignature(packed)
-          ? current
-          : packed,
-      );
-      return;
-    }
-
-    const normalized = constrainLayoutToNextRow(next, COLS_LAPTOP, options?.pinnedId);
-    const changedByNormalize = normalized.some((c) => {
-      const orig = next.find((n) => n.i === c.i);
-      return !orig || orig.x !== c.x || orig.y !== c.y || orig.w !== c.w || orig.h !== c.h;
-    });
-    const ordered = normalized.sort((a, b) => a.y - b.y || a.x - b.x);
+  const handleLayoutChange = (next: Layout, pinnedId?: string) => {
+    const normalized = constrainLayoutToNextRow(next, GRID_COLS_DESKTOP, pinnedId);
+    const changedByNormalize = layoutItemsSignature(next) !== layoutItemsSignature(normalized);
+    const ordered = sortLayoutItems(normalized);
     const items = ordered.map((l, i) => ({
       id: l.i,
       x: l.x,
@@ -849,20 +711,13 @@ function DashboardPage() {
       h: l.h,
       position: i,
     }));
-    const sig = sigOf(items);
-    const shouldSave = Boolean(
-      options?.force || (lastSavedSigRef.current && sig !== lastSavedSigRef.current),
-    );
-    if (!lastSavedSigRef.current && !options?.force) lastSavedSigRef.current = sig;
-    if (shouldSave) {
-      const pending = { pageId: activePageId, items };
-      if (!pendingPageLayouts.has(qc)) pendingPageLayouts.set(qc, new Map());
-      pendingPageLayouts.get(qc)!.set(activePageId, pending);
-      pendingLayoutRef.current = pending;
-      // Cancel before writing: a read already in flight must not restore older geometry.
-      void qc.cancelQueries({ queryKey: ["my-blocks", activePageId], exact: true });
-      void qc.cancelQueries({ queryKey: ["my-system-page", activePageId], exact: true });
-    }
+    const pending = { pageId: activePageId, items };
+    if (!pendingPageLayouts.has(qc)) pendingPageLayouts.set(qc, new Map());
+    pendingPageLayouts.get(qc)!.set(activePageId, pending);
+    pendingLayoutRef.current = pending;
+    // Cancel before writing: a read already in flight must not restore older geometry.
+    void qc.cancelQueries({ queryKey: ["my-blocks", activePageId], exact: true });
+    void qc.cancelQueries({ queryKey: ["my-system-page", activePageId], exact: true });
     qc.setQueryData<DashboardBlock[]>(["my-blocks", activePageId], (prev) =>
       (prev ?? []).map((b) => {
         const item = items.find((i) => i.id === b.id);
@@ -886,11 +741,8 @@ function DashboardPage() {
     }
     if (changedByNormalize) setGridResetKey((k) => k + 1);
 
-    if (!shouldSave) return;
-
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
-      lastSavedSigRef.current = sig;
       const pending = pendingLayoutRef.current;
       pendingLayoutRef.current = null;
       if (pending) layoutMut.mutate(pending);
@@ -987,7 +839,7 @@ function DashboardPage() {
         };
       case "social_link": {
         const p = c.platform ? findPlatform(c.platform) : null;
-        const derived = c.handle && p?.urlBase ? `${p.urlBase}${c.handle}` : "";
+        const derived = c.platform ? socialProfileHref(String(c.platform), c.handle) || "" : "";
         return {
           ...c,
           title: c.title ?? c.handle ?? p?.label ?? "",
@@ -1080,20 +932,8 @@ function DashboardPage() {
   };
 
   const applyPresetFor = (id: string, w: number, h: number) => {
-    const next = layout.map((l) => (l.i === id ? { ...l, w, h } : l));
-    if (effectiveViewMode === "phone") {
-      const packed = normalizeMobileLayout(next);
-      setMobileLayout((current) =>
-        current && layoutItemsSignature(current) === layoutItemsSignature(packed)
-          ? current
-          : packed,
-      );
-      return;
-    }
-    handleLayoutChange(next as Layout, { force: true, pinnedId: id });
-    qc.setQueryData<Block[]>(["my-blocks", activePageId], (prev) =>
-      (prev ?? []).map((b) => (b.id === id ? { ...b, w, h } : b)),
-    );
+    const next = desktopLayout.map((item) => (item.i === id ? { ...item, w, h } : item));
+    handleLayoutChange(next, id);
   };
 
   const initials = (profile?.display_name || profile?.username || "?")[0]?.toUpperCase();
@@ -1180,7 +1020,7 @@ function DashboardPage() {
         <div
           className={
             effectiveViewMode === "phone"
-              ? "mx-auto w-full max-w-[430px] px-4 transition-all duration-300"
+              ? "mx-auto w-full px-3 transition-all duration-300 sm:max-w-[430px]"
               : "link-editor-layout grid grid-cols-1 gap-8"
           }
         >
@@ -1281,10 +1121,10 @@ function DashboardPage() {
                 </div>
               ) : (
                 (() => {
-                  const COLS = effectiveViewMode === "phone" ? COLS_PHONE : COLS_LAPTOP;
+                  const COLS = effectiveViewMode === "phone" ? GRID_COLS_PHONE : GRID_COLS_DESKTOP;
                   const baseLayout = layout.map((item) => ({
-                    ...clampGridItem(item, COLS),
-                    isDraggable: item.i !== interactiveMapId,
+                    ...item,
+                    isDraggable: effectiveViewMode === "laptop" && item.i !== interactiveMapId,
                     isResizable: item.i !== interactiveMapId,
                   }));
                   return (
@@ -1293,9 +1133,9 @@ function DashboardPage() {
                       className="layout"
                       layout={baseLayout}
                       cols={COLS}
-                      rowHeight={Math.max(40, (width - MARGIN * (COLS + 1)) / COLS)}
+                      rowHeight={Math.max(40, (width - GRID_MARGIN * (COLS + 1)) / COLS)}
                       width={width}
-                      margin={[MARGIN, MARGIN]}
+                      margin={[GRID_MARGIN, GRID_MARGIN]}
                       useCSSTransforms={effectiveViewMode !== "phone"}
                       isResizable
                       resizeHandles={["se"]}
@@ -1303,9 +1143,7 @@ function DashboardPage() {
                       preventCollision={false}
                       allowOverlap={false}
                       draggableCancel=".no-drag"
-                      onLayoutChange={handleLayoutChange}
                       onDragStart={(_l, _o, item) => {
-                        isGridInteractingRef.current = true;
                         dragStartLayoutRef.current = baseLayout.map((l) => ({ ...l }));
                         if (item) setActiveId(item.i);
                       }}
@@ -1319,11 +1157,10 @@ function DashboardPage() {
                         const proposed = start.map((l) =>
                           l.i === item.i ? { ...l, x: item.x, y: item.y, w: item.w, h: item.h } : l,
                         );
-                        const preview = resolveOverlaps(proposed, COLS, item.i);
+                        const preview = resolveGridOverlaps(proposed, COLS, item.i);
                         mutateLayoutToMatch(next, preview);
                       }}
                       onDragStop={(next, _oldItem, item) => {
-                        isGridInteractingRef.current = false;
                         setActiveId(null);
                         const startLayout = dragStartLayoutRef.current;
                         dragStartLayoutRef.current = null;
@@ -1334,7 +1171,6 @@ function DashboardPage() {
                           const startItem = startLayout.find((l) => l.i === item.i);
                           if (startItem && startItem.x === item.x && startItem.y === item.y) {
                             setGridResetKey((k) => k + 1);
-                            handleLayoutChange(startLayout as Layout, { force: true });
                             return;
                           }
                         }
@@ -1346,13 +1182,9 @@ function DashboardPage() {
                                 : l,
                             )
                           : next;
-                        handleLayoutChange(
-                          constrainLayoutToNextRow(droppedLayout, COLS, item?.i) as Layout,
-                          { force: true, pinnedId: item?.i },
-                        );
+                        handleLayoutChange(droppedLayout, item?.i);
                       }}
                       onResizeStart={(_l, _o, item) => {
-                        isGridInteractingRef.current = true;
                         if (item) setActiveId(item.i);
                       }}
                       onResize={(_next, _old, item, placeholder) => {
@@ -1368,15 +1200,15 @@ function DashboardPage() {
                         setLiveSize({ id: item.i, w: sw, h: sh });
                       }}
                       onResizeStop={(next, _old, item) => {
-                        isGridInteractingRef.current = false;
                         setActiveId(null);
                         setLiveSize(null);
                         if (!item) return;
                         const [sw, sh] = snapToPreset(item.w, item.h);
-                        const snapped = next.map((l) =>
+                        const source = effectiveViewMode === "phone" ? desktopLayout : next;
+                        const snapped = source.map((l) =>
                           l.i === item.i ? { ...l, w: sw, h: sh } : l,
                         );
-                        handleLayoutChange(snapped as Layout, { force: true, pinnedId: item.i });
+                        handleLayoutChange(snapped, item.i);
                       }}
                     >
                       {canvasTiles.map((tile) => {
@@ -1420,7 +1252,7 @@ function DashboardPage() {
                             {/* Overlay swallows clicks so links don't navigate while editing */}
                             {b && !mapInteractive && (
                               <div
-                                className="absolute inset-0 z-[1] cursor-move rounded-[28px]"
+                                className={`absolute inset-0 z-[1] rounded-[28px] ${effectiveViewMode === "laptop" ? "cursor-move" : "cursor-pointer"}`}
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   setActiveId(b.id);
@@ -2221,9 +2053,9 @@ function ProfileSidebar({
             data-onboarding-target="avatar"
             className="group relative block"
           >
-            {profile?.avatar_url ? (
+            {avatarDeliveryUrl(profile?.avatar_url) ? (
               <DecodedImage
-                src={profile.avatar_url}
+                src={avatarDeliveryUrl(profile?.avatar_url)!}
                 alt=""
                 width={640}
                 height={640}

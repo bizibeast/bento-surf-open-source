@@ -51,8 +51,8 @@ export function videoEncodingCandidates(info: VideoOptimizationMetadata, maxByte
 }
 
 let aacRegistration: Promise<void> | undefined;
-async function ensureAacEncoder() {
-  if (await canEncodeAudio("aac")) return;
+export async function ensureAacEncoder(useBundledEncoder = false) {
+  if (!useBundledEncoder && (await canEncodeAudio("aac"))) return;
   aacRegistration ??= import("@mediabunny/aac-encoder")
     .then(({ registerAacEncoder }) => registerAacEncoder())
     .catch((error) => {

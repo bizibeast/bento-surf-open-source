@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   captureServerEvent: vi.fn(),
   captureServerException: vi.fn(),
   fetch: vi.fn(),
+  updateError: null as { message: string } | null,
   connection: null as Record<string, unknown> | null,
   automations: [] as Array<Record<string, unknown>>,
   existingEvents: [] as Array<Record<string, unknown>>,
@@ -48,7 +49,7 @@ vi.mock("@/integrations/supabase/client.server", () => ({
         const chain: Record<string, unknown> = {};
         chain.eq = vi.fn(async () => {
           mocks.updates.push({ table, values });
-          return { error: null };
+          return { error: mocks.updateError };
         });
         return chain;
       }),
@@ -134,6 +135,7 @@ describe("Instagram missed-comment reconciliation", () => {
     mocks.automations = [automation()];
     mocks.existingEvents = [];
     mocks.updates = [];
+    mocks.updateError = null;
     mocks.getPlan.mockResolvedValue("link");
     mocks.decryptServerSecret.mockResolvedValue("meta-token");
     vi.stubGlobal("fetch", mocks.fetch);
@@ -286,6 +288,137 @@ describe("Instagram missed-comment reconciliation", () => {
       ]),
     );
   });
+
+  it.each([100, 10, 200, 299])(
+    "backs off permanent code %s without capturing an exception",
+    async (code) => {
+      mocks.fetch.mockResolvedValueOnce(response({ error: { code } }, 400));
+      await expect(
+        processInstagramDmQueueMessage(
+          { kind: "instagram_comment_reconcile", connectionId: "connection-1" },
+          queue(),
+        ),
+      ).resolves.toEqual({ failed: true, retryable: false });
+      expect(mocks.updates).toContainEqual({
+        table: "social_connections",
+        values: expect.objectContaining({
+          comment_reconcile_permanent_failures: 1,
+          comment_reconcile_next_check_at: "2026-08-01T10:15:00.000Z",
+        }),
+      });
+      expect(mocks.captureServerException).not.toHaveBeenCalled();
+    },
+  );
+
+  it("pauses on the third rejection and tracks the transition once", async () => {
+    mocks.connection = connection({ comment_reconcile_permanent_failures: 2 });
+    mocks.fetch.mockResolvedValueOnce(response({ error: { code: 100 } }, 400));
+    await processInstagramDmQueueMessage(
+      { kind: "instagram_comment_reconcile", connectionId: "connection-1" },
+      queue(),
+    );
+    expect(mocks.updates).toContainEqual({
+      table: "social_connections",
+      values: expect.objectContaining({
+        comment_reconcile_permanent_failures: 3,
+        comment_reconcile_paused_at: now.toISOString(),
+        comment_reconcile_last_provider_code: "100",
+      }),
+    });
+    // A non-auth rejection must not disable the account's Auto-DMs.
+    expect(
+      mocks.updates.some((update: any) => update.values?.reauth_required === true),
+    ).toBe(false);
+    expect(mocks.captureServerEvent).toHaveBeenCalledWith(
+      "user-1",
+      "instagram_comment_reconcile_paused",
+      expect.objectContaining({ provider_error_code: "100" }),
+    );
+    expect(mocks.captureServerException).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { comment_reconcile_paused_at: now.toISOString() },
+    { comment_reconcile_next_check_at: "2026-08-01T11:00:00.000Z" },
+  ])("skips queued jobs while blocked: %j", async (state) => {
+    mocks.connection = connection(state);
+    await processInstagramDmQueueMessage(
+      { kind: "instagram_comment_reconcile", connectionId: "connection-1" },
+      queue(),
+    );
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.captureServerEvent).not.toHaveBeenCalled();
+  });
+
+  it("does not acknowledge a permanent failure when backoff cannot be saved", async () => {
+    mocks.updateError = { message: "database unavailable" };
+    mocks.fetch.mockResolvedValueOnce(response({ error: { code: 100 } }, 400));
+    await expect(
+      processInstagramDmQueueMessage(
+        { kind: "instagram_comment_reconcile", connectionId: "connection-1" },
+        queue(),
+      ),
+    ).rejects.toThrow("Unable to save Instagram missed-comment check state.");
+  });
+
+  it("uses a one hour delay for the second rejection", async () => {
+    mocks.connection = connection({ comment_reconcile_permanent_failures: 1 });
+    mocks.fetch.mockResolvedValueOnce(response({ error: { code: 100 } }, 400));
+    await processInstagramDmQueueMessage(
+      { kind: "instagram_comment_reconcile", connectionId: "connection-1" },
+      queue(),
+    );
+    expect(mocks.updates).toContainEqual({
+      table: "social_connections",
+      values: expect.objectContaining({
+        comment_reconcile_permanent_failures: 2,
+        comment_reconcile_next_check_at: "2026-08-01T11:00:00.000Z",
+      }),
+    });
+  });
+
+  it("clears failure state after a successful provider check", async () => {
+    mocks.connection = connection({ comment_reconcile_permanent_failures: 2 });
+    mocks.fetch.mockResolvedValueOnce(response({ data: [] }));
+    await processInstagramDmQueueMessage(
+      { kind: "instagram_comment_reconcile", connectionId: "connection-1" },
+      queue(),
+    );
+    expect(mocks.updates).toContainEqual({
+      table: "social_connections",
+      values: expect.objectContaining({
+        comment_reconcile_permanent_failures: 0,
+        comment_reconcile_next_check_at: null,
+        comment_reconcile_paused_at: null,
+        comment_reconcile_last_provider_code: null,
+      }),
+    });
+  });
+
+  it.each([
+    [400, { code: 1 }],
+    [400, { code: 2 }],
+    [400, { code: 17 }],
+    [400, { code: 32 }],
+    [400, { code: 613 }],
+    [400, { code: 100, is_transient: true }],
+    [503, { code: 100 }],
+    [429, { code: 100 }],
+  ])(
+    "retries transient responses %s %j without counting permanent failures",
+    async (status, error) => {
+      mocks.fetch.mockResolvedValueOnce(response({ error }, status));
+      await expect(
+        processInstagramDmQueueMessage(
+          { kind: "instagram_comment_reconcile", connectionId: "connection-1" },
+          queue(),
+        ),
+      ).rejects.toMatchObject({ retryable: true });
+      expect(
+        mocks.updates.every(({ values }) => !("comment_reconcile_permanent_failures" in values)),
+      ).toBe(true);
+    },
+  );
 
   it("surfaces rate limits for queue retry and persists only a sanitized provider code", async () => {
     mocks.fetch.mockResolvedValueOnce(

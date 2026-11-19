@@ -1,5 +1,19 @@
 # Verification status
 
+## Draft shared-app sync through dab1604d
+
+Shared source: `dab1604d`. Adds MCP tool titles, tighter in-app mutation hints, suffix OAuth metadata paths, and Agent tab draft-image polling that pauses when the tab is hidden or the jobs are finished, on top of `0b3b5c13`. Apply the `20261115` and `20261116` migrations before deploying this code.
+
+Public-edition differences kept: localhost defaults instead of hosted origins, instance-administrator billing copy, and the existing public onboarding, server, and package scripts. Help center, SEO, marketing, admin, deploy workflows, the hosted Studio reel renderer service, and secrets stay out.
+
+## Draft shared-app sync through f7ae24a1
+
+Shared source: `f7ae24a1ba69a35fb2142e35a679a430ad8de8de`. Adds the editor-matched public page layout and Instagram Reel audio with expanded Social Insights. Apply migration `20261115120000_expand_social_insights` before deploying this code.
+
+Public-edition differences kept: configured instance origins instead of hosted hosts, and the existing public cache and OAuth adaptations. Hosted SEO pipeline files, help center, marketing, admin, deploy workflows, secrets, and the complimentary workspace fixture stay out.
+
+Checked on this draft: public boundary scan, TypeScript, and 262 focused tests across the layout, cache, budget, scheduler, insights, and publisher files. The full suite and production build were not rerun locally.
+
 ## Current shared-app parity release
 
 Shared source: `25b2bcb4f8de2cffc4a6a9d2900df55919ff91a5`. Adds polling backoff (hidden tabs stop polling, idle tabs back off, cached founder web analytics), one shared daily and monthly Resend send budget with the weekly digest split into Monday and Tuesday cohorts, and trial cancellation that ends the trial and access immediately with no charge (paid cancellations still run to the end of the paid period). Includes migration `20261023060000_resend_shared_daily_budget`; apply it before deploying this code.

@@ -81,6 +81,23 @@ const followGateMigration = readFileSync(
 ).toLowerCase();
 
 describe("Instagram Auto-DM durable workflow migrations", () => {
+  it("keeps paused and backed-off connections out of the reconciliation lease", () => {
+    const migration = readFileSync(
+      resolve(
+        process.cwd(),
+        "supabase/migrations/20261104090000_instagram_comment_reconcile_backoff.sql",
+      ),
+      "utf8",
+    );
+    expect(migration).toContain("comment_reconcile_permanent_failures integer not null default 0");
+    expect(migration).toContain("connection.comment_reconcile_paused_at is null");
+    expect(migration).toContain("connection.comment_reconcile_next_check_at <= v_now");
+    expect(migration).toContain("for update of connection skip locked");
+    expect(migration).toContain("set search_path = ''");
+    expect(migration).toContain("from public, anon, authenticated");
+    expect(migration).toContain("to service_role");
+  });
+
   it("keeps follower rechecks bounded, sender-bound, and service-only", () => {
     expect(followGateMigration).toContain("follow_recheck_count between 0 and follow_max_rechecks");
     expect(followGateMigration).toContain("run.sender_id_hash = p_sender_id_hash");

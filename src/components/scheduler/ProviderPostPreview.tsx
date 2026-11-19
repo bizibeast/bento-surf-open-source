@@ -219,6 +219,7 @@ export function ProviderPostPreview({
   }
 
   if (provider === "tiktok") {
+    const hasVideo = media.some((item) => item.mimeType.startsWith("video/"));
     const privacy =
       tiktokPrivacy === "PUBLIC_TO_EVERYONE"
         ? "Everyone"
@@ -230,7 +231,7 @@ export function ProviderPostPreview({
         <PreviewMedia
           media={media}
           className="absolute inset-0 size-full"
-          emptyLabel="TikTok video"
+          emptyLabel="TikTok photo or video"
           controls={false}
         />
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-black/20" />
@@ -245,7 +246,7 @@ export function ProviderPostPreview({
           >
             {copy}
           </p>
-          <p className="mt-2 shrink-0 text-xs">♫ original sound - {handle}</p>
+          {hasVideo && <p className="mt-2 shrink-0 text-xs">♫ original sound - {handle}</p>}
         </div>
         <div className="absolute bottom-6 right-3 flex flex-col items-center gap-5 text-[10px]">
           <PreviewAvatar

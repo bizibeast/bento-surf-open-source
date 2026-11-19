@@ -24,7 +24,7 @@ import {
 import { extractWidgetUrl, googleMapsEmbedUrl } from "@/lib/embeds";
 import { fetchLinkMetadata } from "@/lib/link-metadata.functions";
 import { safeCssColor } from "@/lib/safe-url";
-import { normalizeSocialHandle } from "@/lib/social-preview.functions";
+import { normalizeStoredSocialLink, socialProfileHref } from "@/lib/platform-detection";
 import { isSocialEmbedProvider, socialEmbedHelp, socialEmbedUrl } from "@/lib/social-embeds";
 import { FileDropzone } from "./FileDropzone";
 import { commerceKind, type CommerceProductKind } from "@/lib/commerce";
@@ -508,7 +508,7 @@ function BlockForm({
         : isSocial
           ? handle.trim().length > 0
           : isLatestYoutube
-            ? normalizeSocialHandle("youtube", handle).length > 0
+            ? normalizeStoredSocialLink("youtube", handle).handle.length > 0
             : isContact
               ? text.trim().length > 0
               : isHeading
@@ -560,20 +560,20 @@ function BlockForm({
         };
         size = { w: 4, h: 2 };
       } else if (isSocial) {
-        const cleanHandle = normalizeSocialHandle(platform.key, handle);
+        const stored = normalizeStoredSocialLink(platform.key, handle);
         if (supportsGallery && useGallery && !isInstagram) {
           type = "image_gallery";
           size = { w: 4, h: 2 };
           content = {
-            platform: platform.key,
-            handle: cleanHandle,
+            platform: stored.platform,
+            handle: stored.handle,
             livePosts: true,
             urls: galleryUrls.filter(Boolean),
           };
         } else {
           content = {
-            platform: platform.key,
-            handle: cleanHandle,
+            platform: stored.platform,
+            handle: stored.handle,
           };
           if (supportsGraph) {
             content.showGraph = true;
@@ -585,7 +585,7 @@ function BlockForm({
       } else if (isLatestYoutube) {
         content = {
           liveProvider: "youtube",
-          handle: normalizeSocialHandle("youtube", handle),
+          handle: normalizeStoredSocialLink("youtube", handle).handle,
         };
         size = { w: 4, h: 2 };
       } else if (isContact) {
@@ -780,7 +780,7 @@ function BlockForm({
               <div className="mt-1 text-[11px] text-muted-foreground">
                 {isInstagram
                   ? "Enter an Instagram username. Followers and recent posts load automatically."
-                  : `Opens ${platform.urlBase}${handle.replace(/^@/, "") || platform.placeholder}`}
+                  : `Opens ${socialProfileHref(platform.key, handle) || `${platform.urlBase}${platform.placeholder ?? ""}`}`}
               </div>
             </Field>
 

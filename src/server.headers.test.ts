@@ -33,6 +33,21 @@ describe("deployment security headers", () => {
     expect(metadata.status).toBe(200);
     expect(metadata.headers.get("access-control-allow-origin")).toBe("https://platform.openai.com");
     expect(metadata.headers.get("vary")?.toLowerCase()).toContain("origin");
+    for (const catalog of ["/mcp", "/chatgpt/mcp"]) {
+      for (const method of ["GET", "HEAD", "OPTIONS"]) {
+        const response = await server.fetch(
+          request(`${catalog}/.well-known/oauth-protected-resource`, {
+            method,
+            headers: { origin: "https://chatgpt.com" },
+          }),
+        );
+        expect(response.status).toBe(200);
+        expect(response.headers.get("access-control-allow-origin")).toBe("https://chatgpt.com");
+        await expect(response.json()).resolves.toMatchObject({
+          resource: `https://self.example${catalog}`,
+        });
+      }
+    }
   });
 
   it.each(["/api/tools/transcribe", "/api/tools/media"])(

@@ -10,7 +10,13 @@ it("shows all three selectable plans immediately and updates annual pricing", ()
     const [plan, setPlan] = useState<PaidPlanId>("creator_plus");
     const [period, setPeriod] = useState<BillingPeriod>("monthly");
     return (
-      <OnboardingPlanChoices plan={plan} period={period} onPlan={setPlan} onPeriod={setPeriod} />
+      <OnboardingPlanChoices
+        managedAvailable
+        plan={plan}
+        period={period}
+        onPlan={setPlan}
+        onPeriod={setPeriod}
+      />
     );
   }
   render(<Choices />);
@@ -19,7 +25,7 @@ it("shows all three selectable plans immediately and updates annual pricing", ()
   expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: /^Store / })).toBeVisible();
   expect(screen.getByRole("button", { name: /^Creator \$/ })).toBeVisible();
-  expect(screen.getByRole("button", { name: /^Creator Plus / })).toHaveAttribute(
+  expect(screen.getByRole("button", { name: /^Fully Managed / })).toHaveAttribute(
     "aria-pressed",
     "true",
   );

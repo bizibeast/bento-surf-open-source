@@ -25,7 +25,6 @@ import { enforceRequestRateLimit } from "@/lib/request-security.server";
 import { safeMediaUrl } from "@/lib/safe-url";
 import { isGoogleFont } from "@/lib/google-fonts";
 import { PATTERN_BY_ID } from "@/lib/patterns/registry";
-import { publicProductPath } from "@/lib/application-urls";
 import { hydratePublicCommerceBlocks, type CommerceProductBlockSource } from "@/lib/commerce";
 import { exploreCategorySchema } from "@/lib/explore";
 import { loadPublicSocialAnalytics } from "@/lib/social-analytics.functions";
@@ -268,7 +267,7 @@ async function loadPublicProfile(
   if (!resolvedSelector) return null;
   const userId = resolvedSelector.userId;
   const blockColumns = "id, type, content, cover_url, x, y, w, h, position, updated_at";
-  const [chrome, homeBlocksResult, publishedProductsResult] = await Promise.all([
+  const [chrome, homeBlocksResult] = await Promise.all([
     loadPublicCreatorChrome(
       userId,
       "username" in selector ? selector.username : undefined,
@@ -283,15 +282,6 @@ async function loadPublicProfile(
           .eq("user_id", userId)
           .is("page_id", null)
           .order("position", { ascending: true }),
-    pageSlug
-      ? Promise.resolve(null)
-      : supabaseAdmin
-          .from("commerce_products")
-          .select("public_slug, title")
-          .eq("creator_id", userId)
-          .eq("status", "published")
-          .order("updated_at", { ascending: false })
-          .limit(24),
   ]);
   if (!chrome || (customDomain && chrome.customDomain !== customDomain)) return null;
   const { creator: profile, pages } = chrome;
@@ -323,7 +313,6 @@ async function loadPublicProfile(
         activePageName: null,
         socialInsights: null,
         newsletterPageEnabled,
-        productLinks: [],
         notFound: true as const,
         customDomain,
       };
@@ -378,25 +367,6 @@ async function loadPublicProfile(
       profile.username,
     ),
   );
-  if (publishedProductsResult?.error) {
-    console.error("Public profile product links query failed", publishedProductsResult.error);
-    throw new Error("Unable to load public profile");
-  }
-  const linkedProductHrefs = new Set(
-    blocks.flatMap((block) => {
-      const content = block.content;
-      if (!content || typeof content !== "object" || Array.isArray(content)) return [];
-      const href = (content as { href?: unknown }).href;
-      return typeof href === "string" ? [href] : [];
-    }),
-  );
-  const productLinks = (publishedProductsResult?.data ?? []).flatMap((product) => {
-    const slug = product.public_slug?.trim();
-    const title = product.title?.trim();
-    if (!slug || !title) return [];
-    const href = publicProductPath(profile.username, slug);
-    return linkedProductHrefs.has(href) ? [] : [{ slug, title }];
-  });
   const socialInsights =
     activeSystemPage === "insights" ? await loadPublicSocialAnalytics(profile.id) : null;
 
@@ -421,7 +391,6 @@ async function loadPublicProfile(
     activePageName,
     socialInsights,
     newsletterPageEnabled,
-    productLinks,
     notFound: false as const,
     customDomain,
   };

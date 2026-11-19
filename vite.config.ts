@@ -54,9 +54,12 @@ export default defineConfig(({ mode, command }) => {
         enforce: "pre",
         resolveId(id) {
           // Nitro emits the native Wasm module for Workers after Vite's SSR pass.
-          if (id === "@resvg/resvg-wasm/index_bg.wasm?module")
+          if (
+            id === "@resvg/resvg-wasm/index_bg.wasm?module" ||
+            id === "@jsquash/webp/codec/dec/webp_dec.wasm?module"
+          )
             return {
-              id: `${createRequire(import.meta.url).resolve("@resvg/resvg-wasm/index_bg.wasm")}?module`,
+              id: `${createRequire(import.meta.url).resolve(id.slice(0, -"?module".length))}?module`,
               external: true,
             };
         },

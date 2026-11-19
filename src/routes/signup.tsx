@@ -7,7 +7,7 @@ import { checkUsername } from "@/lib/profile.functions";
 import { useUsernameAvailability } from "@/lib/use-username-availability";
 import { normalizeUsername } from "@/lib/username";
 import { storePendingUsername } from "@/lib/pending-username";
-import { captureProductEvent } from "@/lib/posthog";
+import { captureProductEvent, captureSignupCompleted } from "@/lib/posthog";
 import { AuthDivider, AuthField, AuthShell, GoogleIcon } from "@/components/AuthShell";
 import { trustedApplicationOrigin } from "@/lib/safe-url";
 import { redirectAuthenticatedVisitor } from "@/lib/auth-entry";
@@ -16,6 +16,19 @@ import { handleWebMcpFormSubmit } from "@/lib/webmcp";
 const lookupUsername = (username: string) => checkUsername({ data: { username } });
 
 export const Route = createFileRoute("/signup")({
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): {
+    utm_source?: string;
+    utm_medium?: string;
+    utm_campaign?: string;
+    utm_content?: string;
+  } => ({
+    utm_source: typeof search.utm_source === "string" ? search.utm_source : undefined,
+    utm_medium: typeof search.utm_medium === "string" ? search.utm_medium : undefined,
+    utm_campaign: typeof search.utm_campaign === "string" ? search.utm_campaign : undefined,
+    utm_content: typeof search.utm_content === "string" ? search.utm_content : undefined,
+  }),
   ssr: false,
   pendingMs: 0,
   beforeLoad: async () => {
@@ -76,9 +89,13 @@ function SignupPage() {
           options: { emailRedirectTo: `${authOrigin}/onboarding` },
         });
         if (error) throw error;
-        captureProductEvent("signup_completed", {
+        // Supabase returns an obfuscated user with no identities for an existing email.
+        const createdUserId = data.user?.identities?.length ? data.user.id : null;
+        captureSignupCompleted({
           method: "email",
-          confirmation_required: !data.session,
+          email: email.trim(),
+          userId: createdUserId,
+          properties: { confirmation_required: !data.session },
         });
         if (data.session) {
           await navigate({ to: "/onboarding", replace: true });

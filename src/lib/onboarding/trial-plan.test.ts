@@ -8,12 +8,12 @@ it("keeps the production default trial plan until Yash changes it", () => {
   expect(PAID_PLAN_IDS).toContain(ONBOARDING_DEFAULT_TRIAL_PLAN);
 });
 
-it("tells Store and Creator trials plainly that Brain and Agent are Creator Plus only", () => {
+it("tells Store and Creator trials plainly that Brain and Agent are Fully Managed", () => {
   expect(plansIncluding("brain")).toEqual(["creator_plus"]);
   expect(plansIncluding("contentAgent")).toEqual(["creator_plus"]);
   for (const plan of ["store", "creator"] as const) {
     const copy = onboardingPlanAftercare(plan);
-    expect(copy).toContain("Creator Plus only");
+    expect(copy).toContain("Fully Managed");
     expect(copy).toContain("download them anytime");
     expect(copy).not.toMatch(/\u2014|keep access/i);
   }

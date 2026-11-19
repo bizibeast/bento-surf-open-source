@@ -1,21 +1,34 @@
 import type { CheckoutSessionCreateParams } from "dodopayments/resources/checkout-sessions";
 import { z } from "zod";
 import { dodo } from "@/integrations/dodo/client.server";
-import { TRIAL_DAYS, PLAN_PRICING, type PaidPlanId } from "./plans";
+import { TRIAL_DAYS, PLAN_PRICING, newPlanPrice, type PaidPlanId } from "./plans";
 
-function assertYearlyPrice(product: unknown, plan: PaidPlanId) {
+function assertProductPrice(product: unknown, amount: number, interval: "Month" | "Year") {
   z.object({
     price: z.object({
       type: z.literal("recurring_price"),
       currency: z.literal("USD"),
-      price: z.literal(PLAN_PRICING[plan].yearly.amount * 100),
+      price: z.literal(amount * 100),
       payment_frequency_count: z.literal(1),
-      payment_frequency_interval: z.literal("Year"),
+      payment_frequency_interval: z.literal(interval),
       subscription_period_count: z.literal(1),
-      subscription_period_interval: z.literal("Year"),
+      subscription_period_interval: z.literal(interval),
       discount: z.literal(0),
     }),
   }).parse(product);
+}
+
+export async function verifyFullyManagedProduct(productId: string) {
+  try {
+    const product = await dodo.products.retrieve(productId);
+    if (product.product_id !== productId || !product.is_recurring)
+      throw new Error("Product mismatch.");
+    assertProductPrice(product, newPlanPrice("creator_plus", "monthly").amount, "Month");
+  } catch {
+    throw new Error(
+      "Fully Managed checkout could not be verified. Contact your instance administrator.",
+    );
+  }
 }
 
 export async function verifyYearlyProduct(productId: string, plan: PaidPlanId) {
@@ -23,7 +36,7 @@ export async function verifyYearlyProduct(productId: string, plan: PaidPlanId) {
     const product = await dodo.products.retrieve(productId);
     if (product.product_id !== productId || !product.is_recurring)
       throw new Error("Product mismatch.");
-    assertYearlyPrice(product, plan);
+    assertProductPrice(product, PLAN_PRICING[plan].yearly.amount, "Year");
   } catch {
     console.error("Dodo yearly product verification failed.");
     throw new Error(
@@ -55,12 +68,15 @@ export async function verifyFreeTrialCheckout(
   productId: string,
   checkout: CheckoutSessionCreateParams,
   yearlyPlan?: PaidPlanId,
+  fullyManaged = false,
 ) {
   try {
     const productJson = await dodo.products.retrieve(productId);
     const product = freeCardTrialProduct.parse(productJson);
     if (product.product_id !== productId) throw new Error("Trial product mismatch.");
-    if (yearlyPlan) assertYearlyPrice(productJson, yearlyPlan);
+    if (yearlyPlan) assertProductPrice(productJson, PLAN_PRICING[yearlyPlan].yearly.amount, "Year");
+    if (fullyManaged)
+      assertProductPrice(productJson, newPlanPrice("creator_plus", "monthly").amount, "Month");
     freeTrialPreview.parse(await dodo.checkoutSessions.preview(checkout));
     const environment =
       process.env.DODO_PAYMENTS_ENVIRONMENT === "live_mode" ? "live_mode" : "test_mode";

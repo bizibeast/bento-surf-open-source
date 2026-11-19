@@ -1,10 +1,12 @@
 import userEvent from "@testing-library/user-event";
+import type { BennyProviderPreferences } from "@/lib/benny-byok";
 import type { ContentDiscoverData } from "@/lib/content-discovery.functions";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const routeState = vi.hoisted(() => ({
   identityError: false,
+  bennySettings: null as (BennyProviderPreferences & { managedAvailable: boolean }) | null,
   retryIdentity: vi.fn(),
   tab: "discover" as "discover" | "agent" | "brain",
   trends: [] as ContentDiscoverData["trends"],
@@ -39,6 +41,7 @@ const routeState = vi.hoisted(() => ({
 }));
 beforeEach(() => {
   routeState.identityError = false;
+  routeState.bennySettings = null;
   routeState.retryIdentity.mockClear();
   routeState.trends = [];
   routeState.send.mockClear();
@@ -59,43 +62,45 @@ vi.mock("@tanstack/react-query", () => ({
     isError: queryKey[0] === "content-agent-identity" && routeState.identityError,
     refetch: routeState.retryIdentity,
     data:
-      queryKey[0] === "content-agent-identity"
-        ? routeState.identityError
-          ? undefined
-          : routeState.identity
-        : ["content-routines", "content-routine-activity"].includes(queryKey[0])
-          ? []
-          : queryKey[0] === "content-agent-threads"
+      queryKey[0] === "benny-ai-settings"
+        ? routeState.bennySettings
+        : queryKey[0] === "content-agent-identity"
+          ? routeState.identityError
+            ? undefined
+            : routeState.identity
+          : ["content-routines", "content-routine-activity"].includes(queryKey[0])
             ? []
-            : queryKey[0] === "content-agent-thread"
-              ? {
-                  thread: {
-                    id: queryKey[1],
-                    title: queryKey[1] === "old-chat" ? "Legacy chat" : "Milo",
-                  },
-                  messages: routeState.messages,
-                }
-              : queryKey[0] === "content-discover"
+            : queryKey[0] === "content-agent-threads"
+              ? []
+              : queryKey[0] === "content-agent-thread"
                 ? {
-                    winners: [],
-                    patterns: [],
-                    trends: routeState.trends,
-                    status: "fresh",
-                    ideas: [],
-                    warnings: [],
-                  }
-                : {
-                    profile: {
-                      goal: "consistent_publishing",
-                      nicheKeywords: [],
-                      language: "en",
-                      region: "global",
-                      timezone: "UTC",
-                      platformFrequencies: {},
+                    thread: {
+                      id: queryKey[1],
+                      title: queryKey[1] === "old-chat" ? "Legacy chat" : "Milo",
                     },
-                    items: [],
-                    sources: [],
-                  },
+                    messages: routeState.messages,
+                  }
+                : queryKey[0] === "content-discover"
+                  ? {
+                      winners: [],
+                      patterns: [],
+                      trends: routeState.trends,
+                      status: "fresh",
+                      ideas: [],
+                      warnings: [],
+                    }
+                  : {
+                      profile: {
+                        goal: "consistent_publishing",
+                        nicheKeywords: [],
+                        language: "en",
+                        region: "global",
+                        timezone: "UTC",
+                        platformFrequencies: {},
+                      },
+                      items: [],
+                      sources: [],
+                    },
   }),
   useInfiniteQuery: ({ queryKey, enabled }: { queryKey: string[]; enabled: boolean }) => {
     if (queryKey[0] === "content-brain-media") {
@@ -242,6 +247,64 @@ describe("Content workspace", () => {
     expect(onThreadChange).toHaveBeenCalledWith("test-thread");
   });
 
+  it("uses a saved OpenRouter default and switches models without changing the conversation", async () => {
+    routeState.bennySettings = {
+      providers: [
+        { id: "provider-a", name: "First", model: "author/one" },
+        { id: "provider-b", name: "Second", model: "author/two" },
+      ],
+      defaultProviderId: "provider-a",
+      managedAvailable: false,
+    };
+    routeState.send.mockResolvedValueOnce({ threadId: "old-chat" });
+    const user = userEvent.setup();
+    render(<ContentPage initialTab="agent" initialThread="old-chat" />);
+    const model = screen.getByRole("combobox", { name: "Benny model" });
+    const composer = screen.getByLabelText("Message Agent");
+    expect(model).toHaveValue("provider-a");
+    expect(screen.queryByRole("option", { name: "Bento model" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add attachments" })).toBeDisabled();
+    await user.type(composer, "First turn");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await user.selectOptions(model, "provider-b");
+    await user.type(composer, "Follow-up");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(routeState.send.mock.calls).toEqual([
+      [
+        {
+          data: {
+            aiProviderId: "provider-a",
+            threadId: "old-chat",
+            text: "First turn",
+            attachmentIds: [],
+          },
+        },
+      ],
+      [
+        {
+          data: {
+            aiProviderId: "provider-b",
+            threadId: "old-chat",
+            text: "Follow-up",
+            attachmentIds: [],
+          },
+        },
+      ],
+    ]);
+  });
+
+  it("helps BYOK-only creators connect a model before sending", async () => {
+    routeState.bennySettings = { providers: [], defaultProviderId: null, managedAvailable: false };
+    const user = userEvent.setup();
+    render(<ContentPage initialTab="agent" />);
+    await user.type(screen.getByLabelText("Message Agent"), "A question");
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Connect a model" }));
+    expect(screen.getByRole("dialog", { name: "Benny AI providers" })).toBeVisible();
+    expect(screen.getByLabelText("OpenRouter API key")).toHaveAttribute("type", "password");
+    expect(routeState.send).not.toHaveBeenCalled();
+  });
+
   it("preserves old deep links and follows a changed thread URL", async () => {
     const user = userEvent.setup();
     const view = render(<ContentPage initialTab="agent" initialThread="old-chat" />);
@@ -334,11 +397,13 @@ describe("Content workspace", () => {
 
 describe("Discover to Agent integration", () => {
   it.each([
-    ["Chat with this post", "Help me explore this idea"],
-    ["Variations", "Generate fresh angles"],
-    ["Reverse Engineer", "Reverse engineer why this post works"],
-    ["Replicate", "Create an original draft with my own perspective and wording"],
-  ])("%s opens the real composer with the selected source", async (label, prompt) => {
+    ["Send to Benny", "Help me explore the selected Discover post", "chat"],
+    ["Variations", "Generate fresh angles", "variations"],
+    ["Generate stronger hooks", "Write five original hooks", "hooks"],
+    ["Reverse Engineer", "Reverse engineer why this post works", "reverse-engineer"],
+    ["Remix", "Create an original draft with my own perspective and wording", "replicate"],
+    ["Create content brief", "Create an original content brief", "brief"],
+  ])("%s opens the real composer with the selected source", async (label, prompt, action) => {
     routeState.trends = [
       {
         id: "11111111-1111-4111-8111-111111111111",
@@ -363,17 +428,23 @@ describe("Discover to Agent integration", () => {
     await user.click(
       within(screen.getByRole("article", { name: "An original creator post" })).getByRole(
         "button",
-        { name: "Boost in chat" },
+        { name: "Post actions" },
       ),
     );
     await user.click(screen.getByRole("menuitem", { name: new RegExp(label) }));
     const composer = screen.getByRole("textbox", { name: "Message Agent" }) as HTMLTextAreaElement;
     expect(composer.value).toContain(prompt);
-    expect(composer.value).toContain("https://example.com/post");
-    expect(composer.value).toContain("Full source context");
+    expect(composer.value).not.toContain("https://example.com/post");
+    expect(composer.value).not.toContain("Full source context");
+    expect(screen.getByRole("button", { name: "Remove Discover source" })).toHaveTextContent(
+      "An original creator post",
+    );
     await user.click(screen.getByRole("button", { name: "Send message" }));
     expect(routeState.send).toHaveBeenCalledWith({
-      data: expect.objectContaining({ text: expect.stringContaining(prompt) }),
+      data: expect.objectContaining({
+        text: expect.stringContaining(prompt),
+        discoverPost: { recommendationId: "11111111-1111-4111-8111-111111111111", action },
+      }),
     });
   });
 });

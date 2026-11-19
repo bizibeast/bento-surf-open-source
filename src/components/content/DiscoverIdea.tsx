@@ -1,6 +1,7 @@
-import { ArrowUpRight, Bookmark, Check, Lightbulb, Sparkles, ThumbsDown } from "lucide-react";
+import { ArrowUpRight, Lightbulb, Sparkles, ThumbsDown } from "lucide-react";
 import type { DiscoverRecommendation } from "@/lib/content-discovery.functions";
 import { publicSourceUrl } from "@/lib/content-source-media";
+import { DiscoverPostActionMenu, DiscoverSaveMenu } from "./DiscoverPostActions";
 import { CreatorIdentity, type DiscoverActions } from "./DiscoverPost";
 
 /** A creation brief, with the original inspiration clearly separated below it. */
@@ -17,7 +18,6 @@ export function DiscoverIdeaCard({
 }) {
   const inspiration = item.inspiration;
   const source = publicSourceUrl(item.sourceUrl);
-  const saved = item.saved || item.feedback === "saved";
   return (
     <article aria-label={item.title} className="discover-card discover-idea-card">
       <div className="discover-idea-topline">
@@ -78,15 +78,8 @@ export function DiscoverIdeaCard({
         <button type="button" onClick={() => actions.onAskAgent(item, "variations")}>
           Explore angles
         </button>
-        <button
-          type="button"
-          className="discover-icon-button"
-          aria-label={saved ? "Saved" : "Save idea"}
-          disabled={actions.pending.has(item.id) || (saved && !actions.onUnsave)}
-          onClick={() => (saved ? actions.onUnsave?.(item.id) : actions.onSave(item.id))}
-        >
-          {saved ? <Check /> : <Bookmark />}
-        </button>
+        <DiscoverPostActionMenu item={item} actions={actions} />
+        <DiscoverSaveMenu item={item} actions={actions} />
         <button
           type="button"
           className="discover-icon-button"

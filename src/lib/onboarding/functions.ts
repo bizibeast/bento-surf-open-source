@@ -1,3 +1,4 @@
+import { fullyManagedCheckoutAvailable } from "../billing-availability.functions";
 import { checkoutEligibility } from "../billing-checkout.server";
 import { resolvePublicUsername } from "../username-alias.server";
 import { indexNowUrlsForProfile, notifyIndexNow } from "../indexnow.server";
@@ -83,6 +84,7 @@ export const getOnboarding = createServerFn({ method: "GET" })
       trialEndsAt: profile.trial_ends_at as string | null,
       currentUsername: profile.username as string | null,
       selfHosted: isSelfHostedEdition(),
+      fullyManagedCheckoutAvailable: fullyManagedCheckoutAvailable(),
       trialEligible: isSelfHostedEdition()
         ? false
         : (await checkoutEligibility(context.authUserId, context.userId)).trialEligible,

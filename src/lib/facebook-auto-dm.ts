@@ -134,12 +134,15 @@ export type FacebookDmAutomation = {
   mediaScope: FacebookDmMediaScope;
   mediaIds: string[];
   replyMessage: string;
+  replyMessages: string[];
   publicReplyEnabled: boolean;
   publicReplyMessages: string[];
   openingMessage: string | null;
+  openingMessages: string[];
   confirmationButtonLabel: string | null;
   emailCaptureEnabled: boolean;
   emailPromptMessage: string | null;
+  emailPromptMessages: string[];
   emailMarketingConsentEnabled: boolean;
   replyButtonLabel: string | null;
   replyButtonUrl: string | null;
@@ -155,7 +158,7 @@ export type FacebookDmActivity = {
   eventContext: FacebookEventContext;
   senderLabel: string;
   matchedKeyword: string | null;
-  status: "received" | "processing" | "sent" | "failed";
+  status: "received" | "processing" | "sent" | "failed" | "ignored";
   errorMessage: string | null;
   createdAt: string;
 };
@@ -202,18 +205,34 @@ export const facebookDmAutomationInputSchema = z
     mediaScope: z.enum(["any", "specific", "future"]).default("any"),
     mediaIds: z.array(z.string().trim().min(1).max(255)).max(100).default([]),
     replyMessage: z.string().trim().min(1).max(1000),
+    replyMessages: z.array(z.string().trim().min(1).max(1000)).max(3).default([]),
     publicReplyEnabled: z.boolean().default(false),
     publicReplyMessages: z.array(z.string().trim().min(1).max(300)).max(3).default([]),
     openingMessage: z.string().trim().min(1).max(1000).nullable().default(null),
+    openingMessages: z.array(z.string().trim().min(1).max(1000)).max(3).default([]),
     confirmationButtonLabel: z.string().trim().min(1).max(20).nullable().default(null),
     emailCaptureEnabled: z.boolean().default(false),
     emailPromptMessage: z.string().trim().min(1).max(700).nullable().default(null),
+    emailPromptMessages: z.array(z.string().trim().min(1).max(700)).max(3).default([]),
     emailMarketingConsentEnabled: z.boolean().default(false),
     replyButtonLabel: z.string().trim().min(1).max(20).nullable().default(null),
     replyButtonUrl: z.string().url().max(2048).nullable().default(null),
     enabled: z.boolean().default(true),
   })
   .superRefine((value, context) => {
+    for (const [field, first, options] of [
+      ["replyMessages", value.replyMessage, value.replyMessages],
+      ["openingMessages", value.openingMessage, value.openingMessages],
+      ["emailPromptMessages", value.emailPromptMessage, value.emailPromptMessages],
+    ] as const) {
+      if (options.length && options[0] !== first) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [field],
+          message: "Option 1 must match the main message.",
+        });
+      }
+    }
     if (
       !FACEBOOK_KEYWORDLESS_TRIGGER_TYPES.includes(value.triggerType) &&
       value.keywords.length === 0
@@ -290,6 +309,22 @@ export const facebookDmAutomationInputSchema = z
         message: "Use a secure https:// link.",
       });
     }
+    const textChoices = [
+      value.replyMessage,
+      ...value.replyMessages,
+      value.openingMessage,
+      ...value.openingMessages,
+      value.emailPromptMessage,
+      ...value.emailPromptMessages,
+      ...value.publicReplyMessages,
+    ];
+    if (textChoices.some((message) => message && /(?:https?:\/\/|www\.)\S+/i.test(message))) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["replyButtonUrl"],
+        message: "Put links in the secure destination URL field so they are sent as buttons.",
+      });
+    }
   })
   .transform((value) => ({
     ...value,
@@ -299,6 +334,33 @@ export const facebookDmAutomationInputSchema = z
     publicReplyMessages: value.publicReplyEnabled
       ? [...new Set(value.publicReplyMessages.map((item) => item.trim()).filter(Boolean))]
       : [],
+    replyMessages: [
+      ...new Set(
+        (value.replyMessages.length ? value.replyMessages : [value.replyMessage]).map((item) =>
+          item.trim(),
+        ),
+      ),
+    ],
+    openingMessages: value.openingMessage
+      ? [
+          ...new Set(
+            (value.openingMessages.length ? value.openingMessages : [value.openingMessage]).map(
+              (item) => item.trim(),
+            ),
+          ),
+        ]
+      : [],
+    emailPromptMessages:
+      value.emailCaptureEnabled && value.emailPromptMessage
+        ? [
+            ...new Set(
+              (value.emailPromptMessages.length
+                ? value.emailPromptMessages
+                : [value.emailPromptMessage]
+              ).map((item) => item.trim()),
+            ),
+          ]
+        : [],
     emailPromptMessage: value.emailCaptureEnabled ? value.emailPromptMessage : null,
     emailMarketingConsentEnabled: value.emailCaptureEnabled,
   }));
@@ -505,7 +567,7 @@ function parseMessagingEvent(
       eventContext: "quick_reply",
       sourceId: postbackId,
       senderId,
-      senderUsername: null,
+      senderUsername: stringValue(sender.name, 80),
       mediaId: null,
       text: stringValue(postback.title, 10_000) || "",
       actionPayload: postbackPayload,
@@ -528,7 +590,7 @@ function parseMessagingEvent(
     eventContext,
     sourceId: messageId,
     senderId,
-    senderUsername: null,
+    senderUsername: stringValue(sender.name, 80),
     mediaId: null,
     text,
     actionPayload,

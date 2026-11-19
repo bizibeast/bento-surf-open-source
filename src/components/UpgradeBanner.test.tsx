@@ -17,10 +17,8 @@ it("shows free workspaces a dismissible banner that opens the upgrade flow", () 
   render(<UpgradeBanner profileId="p1" planId="free" />);
   expect(screen.getByTestId("upgrade-banner")).toBeVisible();
   expect(screen.getByText(/No charge if you cancel before the trial ends/)).toBeVisible();
-  // Plan-honest: AI features are named as Creator Plus only, never promised by the trial.
-  expect(
-    screen.getByText(/Brain and AI drafting are included with Creator Plus only/),
-  ).toBeVisible();
+  // Plan-honest: AI features are named as Fully Managed, never promised by the trial.
+  expect(screen.getByText(/Brain and AI drafting are included with Fully Managed/)).toBeVisible();
   expect(screen.getByTestId("upgrade-banner").textContent).not.toMatch(/[\u2013\u2014]/);
   expect(screen.getByTestId("upgrade-banner").textContent).not.toMatch(/\u2014|keep access/i);
   expect(captureProductEvent).toHaveBeenCalledWith("upgrade_banner_viewed", {

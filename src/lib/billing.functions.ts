@@ -13,13 +13,17 @@ import { dodo } from "@/integrations/dodo/client.server";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import {
   BASE_MARKETING_CONTACTS,
-  CURRENT_DODO_PRODUCT_ENV,
+  FULLY_MANAGED_BILLING_CATALOG,
+  newCheckoutCatalog,
+  newCheckoutDodoProductKey,
+  normalizeBillingCatalog,
   PLAN_ORDER,
   isPaidPlan,
   normalizePlan,
   planName,
   TRIAL_DAYS,
   type BillingPeriod,
+  type BillingCatalog,
   type ContactTier,
   type PaidPlanId,
   type PlanId,
@@ -32,12 +36,17 @@ import {
 import { readOnboardingSession } from "./onboarding/session.server";
 import { settingsIntegrationsPath } from "./settings-integrations";
 import { resolveBillingProduct } from "./billing-catalog";
+import { fullyManagedCheckoutAvailable } from "./billing-availability.functions";
 import { desiredDodoAddonCart } from "./billing-addons";
 import { enforceRequestRateLimit } from "./request-security.server";
 import { parsePublicHttpUrl } from "./safe-url";
 import { usernameSchema } from "./username";
 import type { CheckoutSessionCreateParams } from "dodopayments/resources/checkout-sessions";
-import { verifyFreeTrialCheckout, verifyYearlyProduct } from "./billing-trial.server";
+import {
+  verifyFreeTrialCheckout,
+  verifyFullyManagedProduct,
+  verifyYearlyProduct,
+} from "./billing-trial.server";
 import { withWorkspaceBillingSync } from "./billing-sync.server";
 import { refreshWorkspaceSubscription } from "@/integrations/dodo/webhook.server";
 import { reserveRecoveryCheckout, saveRecoveryCheckout } from "./billing-recovery-checkout.server";
@@ -120,11 +129,26 @@ function checkoutReturnUrl(appUrl: string, returnTo: CheckoutReturnTo, trial = f
   return `${appUrl}/link?upgraded=1&${marker}`;
 }
 
+/** Dodo customer details: the creator's own name when there is one, never the email prefix. */
+export function checkoutCustomer(email: string, name?: string | null) {
+  const cleaned = (name ?? "").replace(/\s+/g, " ").trim().slice(0, 100);
+  return cleaned ? { email, name: cleaned } : { email };
+}
+
+/** A saved profile name, unless it is only the signup default taken from the email. */
+export function checkoutProfileName(email: string | undefined, displayName?: string | null) {
+  const name = displayName?.trim();
+  if (!name) return undefined;
+  return email && name.toLowerCase() === email.split("@")[0]?.toLowerCase() ? undefined : name;
+}
+
 async function createHostedCheckoutSession(input: {
   userId: string;
   authUserId?: string;
   workspaceId?: string;
   email?: string;
+  /** The name the creator entered, never derived from the email address. */
+  name?: string;
   plan: PaidPlanId;
   period: BillingPeriod;
   returnTo: CheckoutReturnTo;
@@ -138,12 +162,16 @@ async function createHostedCheckoutSession(input: {
   ) {
     throw new Error("Add-ons can be added after your trial. There is no charge today.");
   }
-  const envKey = CURRENT_DODO_PRODUCT_ENV[input.plan][input.period];
-  const productId = process.env[envKey];
+  const envKey = newCheckoutDodoProductKey(input.plan, input.period);
+  if (!envKey) throw new Error("Fully Managed is available with monthly billing.");
+  const productId = process.env[envKey]?.trim();
   if (!productId) {
     throw new Error(`No Dodo product configured for ${input.plan} ${input.period}.`);
   }
 
+  const catalog = newCheckoutCatalog(input.plan);
+  if (catalog === FULLY_MANAGED_BILLING_CATALOG && !fullyManagedCheckoutAvailable())
+    throw new Error("Fully Managed checkout is currently unavailable.");
   const addons = input.addons
     ? desiredDodoAddonCart({ ...input, ...input.addons, env: process.env })
     : [];
@@ -153,9 +181,13 @@ async function createHostedCheckoutSession(input: {
     // No allowed_payment_method_types: Dodo offers every method enabled for the
     // business that fits the buyer's country, currency, device and a
     // subscription (cards, UPI, Apple Pay, Google Pay and other local methods).
-    ...(input.email ? { customer: { email: input.email, name: input.email.split("@")[0] } } : {}),
+    // Prefill the creator's own name. Without one, Dodo asks for it on the checkout page.
+    ...(input.email ? { customer: checkoutCustomer(input.email, input.name) } : {}),
   };
-  if (input.period === "yearly" && !input.trial) await verifyYearlyProduct(productId, input.plan);
+  if (!input.trial) {
+    if (input.period === "yearly") await verifyYearlyProduct(productId, input.plan);
+    if (catalog === FULLY_MANAGED_BILLING_CATALOG) await verifyFullyManagedProduct(productId);
+  }
   // Verify before reserving: a failed read/preview creates no provider session
   // and must leave the owner's trial retryable. Recheck resumed checkouts too.
   const trialVerificationKey = input.trial
@@ -163,6 +195,7 @@ async function createHostedCheckoutSession(input: {
         productId,
         checkout,
         input.period === "yearly" ? input.plan : undefined,
+        ...(catalog === FULLY_MANAGED_BILLING_CATALOG ? ([true] as const) : ([] as const)),
       )
     : null;
 
@@ -177,7 +210,7 @@ async function createHostedCheckoutSession(input: {
   if (reservation?.url) return reservation.url;
   const recovery = input.trial
     ? null
-    : await reserveRecoveryCheckout(input.workspaceId ?? input.userId);
+    : await reserveRecoveryCheckout(input.workspaceId ?? input.userId, productId);
   if (recovery?.url) return recovery.url;
   const appUrl = process.env.VITE_APP_URL || "http://localhost:8080";
   let session: Awaited<ReturnType<typeof dodo.checkoutSessions.create>>;
@@ -189,7 +222,7 @@ async function createHostedCheckoutSession(input: {
         workspace_id: input.workspaceId ?? input.userId,
         auth_user_id: input.authUserId ?? input.userId,
         plan: input.plan,
-        billing_catalog: "2026-10",
+        billing_catalog: catalog,
         ...(reservation?.checkoutKey ? { trial_checkout_key: reservation.checkoutKey } : {}),
         period: input.period,
       },
@@ -250,8 +283,11 @@ export const createCheckout = createServerFn({ method: "POST" })
       throw new Error(
         "Manage your existing subscription in Billing; a second subscription is not needed.",
       );
-    if (eligibility.profile.billing_catalog === "2026-10" && !eligibility.profile.onboarded) {
+    let name: string | undefined;
+    if (eligibility.profile.billing_catalog !== "legacy" && !eligibility.profile.onboarded) {
       const preparation = await readOnboardingSession(userId);
+      const entered = (preparation?.brief as { displayName?: unknown } | null)?.displayName;
+      if (typeof entered === "string") name = entered;
       if (
         preparation?.status !== "prepared" ||
         preparation.approved_revision !== preparation.revision
@@ -265,6 +301,7 @@ export const createCheckout = createServerFn({ method: "POST" })
       authUserId,
       workspaceId: userId,
       email,
+      name: name?.trim() || checkoutProfileName(email, eligibility.profile.display_name),
       plan: data.plan,
       period: data.period,
       returnTo: data.returnTo,
@@ -338,7 +375,8 @@ export type MyBillingOverview = {
   currentPeriodEnd: string | null;
   hasSubscription: boolean;
   billingPeriod: BillingPeriod | null;
-  billingCatalog: "legacy" | "2026-10" | null;
+  billingCatalog: BillingCatalog | null;
+  fullyManagedCheckoutAvailable?: boolean;
   pendingPlan: PaidPlanId | null;
   pendingPlanEffectiveAt: string | null;
   retentionOfferAvailable: boolean;
@@ -393,8 +431,10 @@ function billingOverview(
     currentPeriodEnd: subscription?.current_period_end ?? null,
     hasSubscription: Boolean(subscription?.dodo_subscription_id),
     billingPeriod: normalizeBillingPeriod(subscription?.billing_interval),
-    billingCatalog:
-      subscription?.billing_catalog === "2026-10" ? "2026-10" : subscription ? "legacy" : null,
+    billingCatalog: subscription
+      ? normalizeBillingCatalog(subscription.billing_catalog ?? "legacy")
+      : null,
+    fullyManagedCheckoutAvailable: fullyManagedCheckoutAvailable(),
     pendingPlan: pendingPaidPlan(subscription?.pending_plan_id),
     pendingPlanEffectiveAt: subscription?.pending_plan_effective_at ?? null,
     retentionOfferAvailable:
@@ -584,7 +624,12 @@ export const changeMyPlan = createServerFn({ method: "POST" })
 
       const currentPlan = normalizePlan(subscription.plan_id);
       if (!isPaidPlan(currentPlan)) throw new Error("Choose a paid plan to start checkout.");
-      if (currentPlan === data.plan) throw new Error(`You are already on the ${data.plan} plan.`);
+      const nextCatalog = newCheckoutCatalog(data.plan);
+      const movingToManaged =
+        data.plan === "creator_plus" &&
+        subscription.billing_catalog !== FULLY_MANAGED_BILLING_CATALOG;
+      if (currentPlan === data.plan && !movingToManaged)
+        throw new Error(`You are already on the ${planName(data.plan, nextCatalog)} plan.`);
       if (subscription.pending_plan_id) {
         throw new Error("Finish or cancel your scheduled plan change first.");
       }
@@ -632,12 +677,27 @@ export const changeMyPlan = createServerFn({ method: "POST" })
         throw new Error(
           "Contact support to change an existing annual contract. Its original price is preserved.",
         );
-      const productId = process.env[CURRENT_DODO_PRODUCT_ENV[data.plan][period]];
+      const envKey = newCheckoutDodoProductKey(data.plan, period);
+      if (!envKey) {
+        throw new Error(
+          "Fully Managed is available with monthly billing. Contact support to change your annual plan.",
+        );
+      }
+      const productId = process.env[envKey]?.trim();
       if (!productId) throw new Error(`No Dodo product configured for ${data.plan} ${period}.`);
       if (period === "yearly") await verifyYearlyProduct(productId, data.plan);
+      if (nextCatalog === FULLY_MANAGED_BILLING_CATALOG) {
+        if (!fullyManagedCheckoutAvailable())
+          throw new Error("Fully Managed checkout is currently unavailable.");
+        await verifyFullyManagedProduct(productId);
+      }
+      if (currentProduct?.catalog === FULLY_MANAGED_BILLING_CATALOG && currentPlan === data.plan)
+        throw new Error("You are already on the Fully Managed plan.");
 
       const inTrial = subscription.status === "trialing";
-      const isUpgrade = !inTrial && PLAN_ORDER.indexOf(data.plan) > PLAN_ORDER.indexOf(currentPlan);
+      const isUpgrade =
+        !inTrial &&
+        (movingToManaged || PLAN_ORDER.indexOf(data.plan) > PLAN_ORDER.indexOf(currentPlan));
       const contactTier =
         data.plan !== "store"
           ? ((subscription.contact_tier_contacts ?? BASE_MARKETING_CONTACTS) as ContactTier)
@@ -665,7 +725,7 @@ export const changeMyPlan = createServerFn({ method: "POST" })
             period,
             workspace_id: userId,
             auth_user_id: context.authUserId,
-            billing_catalog: "2026-10",
+            billing_catalog: nextCatalog,
           },
         });
       } catch (error) {
@@ -856,7 +916,19 @@ export const createMyBillingPortal = createServerFn({ method: "POST" })
 
 export const getCheckoutOffer = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
-  .handler(async ({ context }) => {
-    const result = await checkoutEligibility(context.authUserId, context.userId);
-    return { trialEligible: result.trialEligible, active: result.active };
-  });
+  .handler(
+    async ({
+      context,
+    }): Promise<{
+      active: boolean;
+      trialEligible: boolean;
+      fullyManagedCheckoutAvailable?: boolean;
+    }> => {
+      const result = await checkoutEligibility(context.authUserId, context.userId);
+      return {
+        trialEligible: result.trialEligible,
+        active: result.active,
+        fullyManagedCheckoutAvailable: fullyManagedCheckoutAvailable(),
+      };
+    },
+  );

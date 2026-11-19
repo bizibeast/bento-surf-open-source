@@ -72,6 +72,14 @@ import {
   loadDiscoverSourcePage,
 } from "./content-discover-pagination.server";
 import { withDiscoverRefreshLease } from "./content-discover-refresh.server";
+import {
+  DISCOVER_BASELINE_LOOKBACK_MS,
+  discoverBaselineSchema,
+  measureDiscoverBaselines,
+  observedDiscoverMetric,
+  type DiscoverBaseline,
+  type DiscoverMetricObservation,
+} from "./content-discover-baseline";
 
 export type DiscoverRecommendation = ContentSourcePresentation & {
   id: string;
@@ -98,6 +106,7 @@ export type DiscoverRecommendation = ContentSourcePresentation & {
   thumbnailUrl?: string | null;
   stats?: ContentSourceStats;
   inspiration?: DiscoverInspiration;
+  performanceBaseline?: DiscoverBaseline;
 };
 
 export type RecommendationInput = Omit<DiscoverRecommendation, "id" | "feedback"> & {
@@ -140,6 +149,7 @@ export type CreatorDiscoverDependencies = {
   getCreatorSources?: typeof researchDiscoverFollows;
   readCreators?: typeof readDiscoverFollows;
   getCachedSources?(userId: string, briefId: string): Promise<ContentSourceItem[]>;
+  getBaselineSources?(userId: string, now: Date): Promise<DiscoverMetricObservation[]>;
   generateIdeas?: typeof buildDiscoverIdeas;
   saveRecommendations(
     userId: string,
@@ -213,6 +223,7 @@ function shortFingerprint(value: string) {
 
 function recommendationFromRow(row: any): DiscoverRecommendation {
   const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata : {};
+  const baseline = discoverBaselineSchema.safeParse(metadata.performanceBaseline);
   const inspiration = z
     .object({
       hook: z.string(),
@@ -244,8 +255,65 @@ function recommendationFromRow(row: any): DiscoverRecommendation {
     thumbnailUrl: metadata.thumbnailUrl || null,
     stats: metadata.stats || {},
     ...(inspiration.success ? { inspiration: inspiration.data } : {}),
+    ...(baseline.success ? { performanceBaseline: baseline.data } : {}),
     ...sourcePresentation(metadata),
   };
+}
+
+function cachedSourceFromRow(row: any): ContentSourceItem[] {
+  const item = recommendationFromRow(row);
+  if (!item.sourceUrl) return [];
+  return [
+    {
+      ...sourcePresentation(item),
+      canonicalUrl: item.sourceUrl,
+      title: item.title,
+      summary: item.summary,
+      sourceName: item.sourceName || "Web",
+      platform: item.platform || undefined,
+      author: item.author,
+      thumbnailUrl: item.thumbnailUrl,
+      stats: item.stats,
+      publishedAt: item.sourcePublishedAt,
+      retrievedAt: item.sourceRetrievedAt || "",
+      kind: "social_search",
+    },
+  ];
+}
+
+async function readDiscoverBaselineSources(workspaceId: string, now: Date) {
+  const { data, error } = await (supabaseAdmin as any)
+    .from("creator_content_recommendations")
+    .select(
+      "source_url,source_published_at,source_retrieved_at,author_url:metadata->>authorUrl,media_type:metadata->>mediaType,platform:metadata->>platform,stats:metadata->stats",
+    )
+    .eq("user_id", workspaceId)
+    .eq("kind", "trend")
+    .gte(
+      "source_published_at",
+      new Date(now.getTime() - DISCOVER_BASELINE_LOOKBACK_MS).toISOString(),
+    )
+    .order("source_published_at", { ascending: false })
+    .limit(400);
+  if (error) {
+    console.warn("discover_baseline_cache_unavailable");
+    return [];
+  }
+  return (data || []).flatMap((row: any): DiscoverMetricObservation[] => {
+    return row.source_url && row.source_retrieved_at
+      ? [
+          {
+            ...sourcePresentation({ authorUrl: row.author_url, mediaType: row.media_type }),
+            canonicalUrl: row.source_url,
+            publishedAt: row.source_published_at,
+            retrievedAt: row.source_retrieved_at,
+            kind: "social_search",
+            platform: typeof row.platform === "string" ? row.platform : undefined,
+            stats: row.stats,
+          },
+        ]
+      : [];
+  });
 }
 
 export function storedDiscoverData(
@@ -378,27 +446,23 @@ export async function readStoredDiscover(userId: string): Promise<ContentDiscove
   const creators = creatorContext.creators || [];
   const suggestedCreators = suggestDiscoverCreators(creatorContext);
   if (latestError) throw new Error("Content recommendations could not be loaded.");
-  if (!latest?.trend_brief_id)
-    return {
-      ...storedDiscoverData([], null, new Date(), creatorContext),
-      creators,
-      suggestedCreators,
-    };
-
+  const briefId = latest?.trend_brief_id;
+  const saved = "feedback.eq.saved,metadata->>saved.eq.true";
   const [recommendationsResult, briefResult] = await Promise.all([
     db
       .from("creator_content_recommendations")
       .select("*")
       .eq("user_id", userId)
-      .or(
-        `trend_brief_id.eq.${latest.trend_brief_id},feedback.eq.saved,metadata->>saved.eq.true,feedback.eq.not_relevant`,
-      )
-      .order("source_retrieved_at", { ascending: false }),
-    db
-      .from("content_trend_briefs")
-      .select("niche_key,warnings,fetched_at,expires_at,language,region")
-      .eq("id", latest.trend_brief_id)
-      .maybeSingle(),
+      .or(briefId ? `trend_brief_id.eq.${briefId},${saved},feedback.eq.not_relevant` : saved)
+      .order("source_retrieved_at", { ascending: false })
+      .limit(1_000),
+    briefId
+      ? db
+          .from("content_trend_briefs")
+          .select("niche_key,warnings,fetched_at,expires_at,language,region")
+          .eq("id", briefId)
+          .maybeSingle()
+      : { data: null, error: null },
   ]);
   if (recommendationsResult.error || briefResult.error) {
     throw new Error("Content recommendations could not be loaded.");
@@ -417,7 +481,7 @@ export async function readStoredDiscover(userId: string): Promise<ContentDiscove
     ...storedDiscoverData(
       (recommendationsResult.data || []).map((row: any) => ({
         ...recommendationFromRow(row),
-        savedOnly: row.trend_brief_id !== latest.trend_brief_id,
+        savedOnly: !briefId || row.trend_brief_id !== briefId,
       })),
       brief,
       new Date(),
@@ -431,6 +495,7 @@ export async function readStoredDiscover(userId: string): Promise<ContentDiscove
 const defaultDependencies: CreatorDiscoverDependencies = {
   personalizeContext: personalizeDiscoverContext,
   generateIdeas: buildDiscoverIdeas,
+  getBaselineSources: readDiscoverBaselineSources,
   async getCachedSources(userId, briefId) {
     // A brief ID belongs to one niche, locale and day; this never crosses topics or workspaces.
     const { data, error } = await (supabaseAdmin as any)
@@ -443,27 +508,7 @@ const defaultDependencies: CreatorDiscoverDependencies = {
       .order("source_retrieved_at", { ascending: false })
       .limit(150);
     if (error) throw new Error("Recent source matches could not be loaded.");
-    return (data || []).flatMap((row: any): ContentSourceItem[] => {
-      const item = recommendationFromRow(row);
-      return item.sourceUrl
-        ? [
-            {
-              ...sourcePresentation(item),
-              canonicalUrl: item.sourceUrl,
-              title: item.title,
-              summary: item.summary,
-              sourceName: item.sourceName || "Web",
-              platform: item.platform || undefined,
-              author: item.author,
-              thumbnailUrl: item.thumbnailUrl,
-              stats: item.stats,
-              publishedAt: item.sourcePublishedAt,
-              retrievedAt: item.sourceRetrievedAt || row.created_at,
-              kind: "social_search",
-            },
-          ]
-        : [];
-    });
+    return (data || []).flatMap(cachedSourceFromRow);
   },
   getCreatorSources: researchDiscoverFollows,
   readCreators: readDiscoverFollows,
@@ -578,6 +623,7 @@ const defaultDependencies: CreatorDiscoverDependencies = {
         thumbnailUrl: row.thumbnailUrl || null,
         stats: row.stats || {},
         ...(row.inspiration ? { inspiration: row.inspiration } : {}),
+        ...(row.performanceBaseline ? { performanceBaseline: row.performanceBaseline } : {}),
       },
       content_insight_id: row.contentInsightId || null,
       trend_brief_id: row.trendBriefId || null,
@@ -754,13 +800,13 @@ export function inferDiscoverNiche(context: CreatorDiscoverContext) {
 
 function primaryMetric(source: ContentSourceItem) {
   const stats = source.stats || {};
-  if (stats.views !== null && stats.views !== undefined) {
-    return { name: "views" as const, value: stats.views };
-  }
-  const engagements =
-    (stats.likes || 0) + (stats.comments || 0) + (stats.shares || 0) + (stats.saves || 0);
-  return engagements > 0
-    ? { name: "engagements" as const, value: engagements }
+  const views = observedDiscoverMetric(stats.views);
+  if (views !== null) return { name: "views" as const, value: views };
+  const counts = [stats.likes, stats.comments, stats.shares, stats.saves].map(
+    observedDiscoverMetric,
+  );
+  return counts.every((value) => value !== null)
+    ? { name: "engagements" as const, value: counts.reduce((sum, value) => sum + value, 0) }
     : { name: null, value: null };
 }
 
@@ -790,7 +836,7 @@ function sourceRecommendation(
     sourceUrl: source.canonicalUrl,
     sourceName: source.sourceName,
     sourcePublishedAt: source.publishedAt,
-    sourceRetrievedAt: source.retrievedAt,
+    sourceRetrievedAt: source.retrievedAt || null,
     reason,
     relevanceScore: (followed ? 100 : 0) + (matchedTopic ? 10 : 0),
     metricName: metric.name,
@@ -819,6 +865,7 @@ function contextualSourceRecommendations(
   context: CreatorDiscoverContext,
   nicheKeywords: string[],
   now: Date,
+  baselineSources: DiscoverMetricObservation[],
 ): RecommendationInput[] {
   const creators = context.creators || [];
   const suggestedCreators = suggestDiscoverCreators(context);
@@ -828,6 +875,7 @@ function contextualSourceRecommendations(
       .filter((word) => !NICHE_STOP_WORDS.has(word)),
   );
   const signals = discoverPersonalizationSignals(context);
+  const baselines = measureDiscoverBaselines(sources, baselineSources, now.getTime());
   return sources.map((source) => {
     const text = `${source.title} ${source.summary}`.toLowerCase();
     const preferenceScore = Math.min(
@@ -838,16 +886,18 @@ function contextualSourceRecommendations(
     const followed = creators.some((creator) => creatorMatchesSource(creator, source));
     const established = suggestedCreators.some((creator) => creatorMatchesSource(creator, source));
     const item = sourceRecommendation(source, briefId, nicheKeywords, creators);
+    const baseline = baselines.get(discoverPostKey(source));
     const relevance =
       personal.score +
       preferenceScore +
       (sourceMatchesDiscoverNiche(source, nicheKeywords) || followed ? 10 : 0);
     return {
       ...item,
+      ...(baseline ? { outlierScore: baseline.ratio, performanceBaseline: baseline } : {}),
       relevanceScore: discoverInspirationScore(
         source,
         relevance,
-        { followed, established },
+        { followed, established, baselineRatio: baseline?.ratio },
         now.getTime(),
       ),
       reason: followed ? item.reason : personal.reason || item.reason,
@@ -894,7 +944,7 @@ export async function buildCreatorDiscover(
   if (!nicheKeywords.length && creators.length)
     nicheKeywords.push(...creators.map((creator) => creator.topics || creator.name).slice(0, 4));
   const providerWarnings: string[] = [];
-  const [brief, creatorSources] = await Promise.all([
+  const [brief, creatorSources, baselineSources] = await Promise.all([
     nicheKeywords.length
       ? dependencies.getTrendBrief(
           {
@@ -918,7 +968,14 @@ export async function buildCreatorDiscover(
             if (eligible.length)
               await dependencies.saveRecommendations(
                 userId,
-                contextualSourceRecommendations(eligible, partial.id, context, nicheKeywords, now),
+                contextualSourceRecommendations(
+                  eligible,
+                  partial.id,
+                  context,
+                  nicheKeywords,
+                  now,
+                  partial.items,
+                ),
               );
           },
         )
@@ -932,6 +989,9 @@ export async function buildCreatorDiscover(
             );
             return [];
           })
+      : [],
+    nicheKeywords.length && dependencies.getBaselineSources
+      ? dependencies.getBaselineSources(userId, now)
       : [],
   ]);
   const cachedSources =
@@ -955,7 +1015,12 @@ export async function buildCreatorDiscover(
   if (!sources.length && !brief?.items.length && brief?.warnings.length)
     throw new Error(`Research could not finish. ${brief.warnings.join(" ")} Try refreshing again.`);
   const posts = brief
-    ? contextualSourceRecommendations(sources, brief.id, context, nicheKeywords, now)
+    ? contextualSourceRecommendations(sources, brief.id, context, nicheKeywords, now, [
+        ...creatorSources,
+        ...brief.items,
+        ...cachedSources,
+        ...baselineSources,
+      ])
     : [];
   const rankedPosts = rankDiscoverRecommendations(posts, now.getTime()).slice(0, 96);
   const sourceByUrl = new Map(sources.map((source) => [source.canonicalUrl, source]));
@@ -974,9 +1039,10 @@ export async function buildCreatorDiscover(
     ...ideas.flatMap((idea): RecommendationInput[] => {
       const original = postByUrl.get(idea.sourceUrl);
       if (!original) return [];
+      const { performanceBaseline: _baseline, ...ideaContext } = original;
       return [
         {
-          ...original,
+          ...ideaContext,
           ...idea,
           fingerprint: `idea:${shortFingerprint(idea.sourceUrl)}`,
           kind: "idea",
@@ -1107,7 +1173,10 @@ export async function loadMoreDiscoverForUser(
           (context.creators || []).some((creator) => creatorMatchesSource(creator, item))) &&
         !excluded.some((topic) => discoverTopicMatches(`${item.title} ${item.summary}`, topic)),
     );
-    const rows = contextualSourceRecommendations(sources, brief.id, context, nicheKeywords, now);
+    const rows = contextualSourceRecommendations(sources, brief.id, context, nicheKeywords, now, [
+      ...page.items,
+      ...(await readDiscoverBaselineSources(userId, now)),
+    ]);
     await assertCurrent();
     const saved = rows.length
       ? await defaultDependencies.saveRecommendations(userId, rows, leaseKey)

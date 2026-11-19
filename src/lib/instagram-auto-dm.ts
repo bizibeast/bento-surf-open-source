@@ -144,15 +144,19 @@ export type InstagramDmAutomation = {
   mediaScope: InstagramDmMediaScope;
   mediaIds: string[];
   replyMessage: string;
+  replyMessages: string[];
   publicReplyEnabled: boolean;
   publicReplyMessages: string[];
   openingMessage: string | null;
+  openingMessages: string[];
   confirmationButtonLabel: string | null;
   emailCaptureEnabled: boolean;
   emailPromptMessage: string | null;
+  emailPromptMessages: string[];
   emailMarketingConsentEnabled: boolean;
   followGateEnabled: boolean;
   followPromptMessage: string;
+  followPromptMessages: string[];
   followMaxRechecks: number;
   followFailAction: "send_anyway" | "withhold";
   replyButtonLabel: string | null;
@@ -169,7 +173,7 @@ export type InstagramDmActivity = {
   eventContext: InstagramEventContext;
   senderLabel: string;
   matchedKeyword: string | null;
-  status: "received" | "processing" | "sent" | "failed";
+  status: "received" | "processing" | "sent" | "failed" | "ignored";
   errorMessage: string | null;
   createdAt: string;
 };
@@ -223,12 +227,15 @@ export const instagramDmAutomationInputSchema = z
     mediaScope: z.enum(["any", "specific", "future"]).default("any"),
     mediaIds: z.array(z.string().trim().min(1).max(255)).max(100).default([]),
     replyMessage: z.string().trim().min(1).max(1000),
+    replyMessages: z.array(z.string().trim().min(1).max(1000)).max(3).default([]),
     publicReplyEnabled: z.boolean().default(false),
     publicReplyMessages: z.array(z.string().trim().min(1).max(300)).max(3).default([]),
     openingMessage: z.string().trim().min(1).max(1000).nullable().default(null),
+    openingMessages: z.array(z.string().trim().min(1).max(1000)).max(3).default([]),
     confirmationButtonLabel: z.string().trim().min(1).max(20).nullable().default(null),
     emailCaptureEnabled: z.boolean().default(false),
     emailPromptMessage: z.string().trim().min(1).max(700).nullable().default(null),
+    emailPromptMessages: z.array(z.string().trim().min(1).max(700)).max(3).default([]),
     emailMarketingConsentEnabled: z.boolean().default(false),
     followGateEnabled: z.boolean().default(false),
     followPromptMessage: z
@@ -237,6 +244,7 @@ export const instagramDmAutomationInputSchema = z
       .min(1)
       .max(700)
       .default("Follow this account, then tap I’ve followed."),
+    followPromptMessages: z.array(z.string().trim().min(1).max(700)).max(3).default([]),
     followMaxRechecks: z.number().int().min(1).max(3).default(3),
     followFailAction: z.enum(["send_anyway", "withhold"]).default("send_anyway"),
     replyButtonLabel: z.string().trim().min(1).max(20).nullable().default(null),
@@ -244,6 +252,20 @@ export const instagramDmAutomationInputSchema = z
     enabled: z.boolean().default(true),
   })
   .superRefine((value, context) => {
+    for (const [field, first, options] of [
+      ["replyMessages", value.replyMessage, value.replyMessages],
+      ["openingMessages", value.openingMessage, value.openingMessages],
+      ["emailPromptMessages", value.emailPromptMessage, value.emailPromptMessages],
+      ["followPromptMessages", value.followPromptMessage, value.followPromptMessages],
+    ] as const) {
+      if (options.length && options[0] !== first) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [field],
+          message: "Option 1 must match the main message.",
+        });
+      }
+    }
     const keywordOptional = [
       "any_comment",
       "any_dm",
@@ -329,6 +351,24 @@ export const instagramDmAutomationInputSchema = z
         message: "Use a secure https:// link.",
       });
     }
+    const textChoices = [
+      value.replyMessage,
+      ...value.replyMessages,
+      value.openingMessage,
+      ...value.openingMessages,
+      value.emailPromptMessage,
+      ...value.emailPromptMessages,
+      value.followPromptMessage,
+      ...value.followPromptMessages,
+      ...value.publicReplyMessages,
+    ];
+    if (textChoices.some((message) => message && /(?:https?:\/\/|www\.)\S+/i.test(message))) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["replyButtonUrl"],
+        message: "Put links in the secure destination URL field so they are sent as buttons.",
+      });
+    }
   })
   .transform((value) => ({
     ...value,
@@ -337,6 +377,43 @@ export const instagramDmAutomationInputSchema = z
     mediaIds: [...new Set(value.mediaIds.map((item) => item.trim()).filter(Boolean))],
     publicReplyMessages: value.publicReplyEnabled
       ? [...new Set(value.publicReplyMessages.map((item) => item.trim()).filter(Boolean))]
+      : [],
+    replyMessages: [
+      ...new Set(
+        (value.replyMessages.length ? value.replyMessages : [value.replyMessage]).map((item) =>
+          item.trim(),
+        ),
+      ),
+    ],
+    openingMessages: value.openingMessage
+      ? [
+          ...new Set(
+            (value.openingMessages.length ? value.openingMessages : [value.openingMessage]).map(
+              (item) => item.trim(),
+            ),
+          ),
+        ]
+      : [],
+    emailPromptMessages:
+      value.emailCaptureEnabled && value.emailPromptMessage
+        ? [
+            ...new Set(
+              (value.emailPromptMessages.length
+                ? value.emailPromptMessages
+                : [value.emailPromptMessage]
+              ).map((item) => item.trim()),
+            ),
+          ]
+        : [],
+    followPromptMessages: value.followGateEnabled
+      ? [
+          ...new Set(
+            (value.followPromptMessages.length
+              ? value.followPromptMessages
+              : [value.followPromptMessage]
+            ).map((item) => item.trim()),
+          ),
+        ]
       : [],
     emailPromptMessage: value.emailCaptureEnabled ? value.emailPromptMessage : null,
     emailMarketingConsentEnabled: value.emailCaptureEnabled,

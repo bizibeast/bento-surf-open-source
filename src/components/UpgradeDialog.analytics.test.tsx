@@ -2,9 +2,14 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { captureProductEvent } from "@/lib/posthog";
 import { createCheckout, getCheckoutOffer } from "@/lib/billing.functions";
+import { beginCheckoutTracking, forceCheckoutReplay } from "@/lib/checkout-tracking";
 import { UpgradeDialog } from "./UpgradeDialog";
 
 vi.mock("@/lib/posthog", () => ({ captureProductEvent: vi.fn() }));
+vi.mock("@/lib/checkout-tracking", () => ({
+  beginCheckoutTracking: vi.fn(),
+  forceCheckoutReplay: vi.fn(),
+}));
 vi.mock("@/lib/billing.functions", () => ({
   getCheckoutOffer: vi.fn(),
   createCheckout: vi.fn(),
@@ -13,6 +18,7 @@ vi.mock("@/lib/safe-url", () => ({ safeNavigationHref: (url: string) => url }));
 
 beforeEach(() => {
   vi.mocked(captureProductEvent).mockClear();
+  vi.mocked(beginCheckoutTracking).mockClear();
   vi.mocked(getCheckoutOffer).mockResolvedValue({ trialEligible: true, active: false });
   vi.mocked(createCheckout).mockResolvedValue({ url: "#checkout" } as never);
 });
@@ -42,6 +48,12 @@ it("tracks the dialog funnel with source, plan and billing interval", async () =
   expect(createCheckout).toHaveBeenCalledWith({
     data: expect.objectContaining({ plan: "store", period: "yearly" }),
   });
+  expect(forceCheckoutReplay).toHaveBeenCalled();
+  expect(beginCheckoutTracking).toHaveBeenCalledWith({
+    plan: "store",
+    trial: true,
+    surface: "upgrade_dialog",
+  });
 });
 
 it("does not count a failed checkout as started", async () => {
@@ -50,4 +62,5 @@ it("does not count a failed checkout as started", async () => {
   fireEvent.click(await screen.findByRole("button", { name: /Start 3-day .* trial/ }));
   await waitFor(() => expect(createCheckout).toHaveBeenCalled());
   expect(captureProductEvent).not.toHaveBeenCalledWith("checkout_started", expect.anything());
+  expect(beginCheckoutTracking).not.toHaveBeenCalled();
 });

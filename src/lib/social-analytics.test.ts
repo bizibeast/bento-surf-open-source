@@ -582,10 +582,11 @@ describe("social analytics", () => {
             { name: "shares" },
             { name: "subscribersGained" },
             { name: "subscribersLost" },
+            { name: "estimatedMinutesWatched" },
           ],
           rows: [
-            ["2026-01-01", 500, 20, 3, 2, 6, 1],
-            ["2026-01-02", 300, 12, 2, 1, 3, 1],
+            ["2026-01-01", 500, 20, 3, 2, 6, 1, 25],
+            ["2026-01-02", 300, 12, 2, 1, 3, 1, 10],
           ],
         },
         107,
@@ -597,6 +598,14 @@ describe("social analytics", () => {
         views: 500,
         reach: null,
         engagements: 25,
+        detailMetrics: {
+          likes: 20,
+          comments: 3,
+          shares: 2,
+          follows: 6,
+          unfollows: 1,
+          watchSeconds: 1500,
+        },
       },
       {
         capturedAt: "2026-01-02T00:00:00.000Z",
@@ -604,6 +613,14 @@ describe("social analytics", () => {
         views: 300,
         reach: null,
         engagements: 15,
+        detailMetrics: {
+          likes: 12,
+          comments: 2,
+          shares: 1,
+          follows: 3,
+          unfollows: 1,
+          watchSeconds: 600,
+        },
       },
     ]);
   });

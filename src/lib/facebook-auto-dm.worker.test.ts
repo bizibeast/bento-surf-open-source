@@ -14,6 +14,9 @@ const mocks = vi.hoisted(() => ({
   captureServerEvent: vi.fn(),
   captureServerException: vi.fn(),
   fetch: vi.fn(),
+  claimMetaDmSend: vi.fn(),
+  handleMetaDmRecipientPreference: vi.fn(),
+  noteMetaDmProviderRejection: vi.fn(),
 }));
 
 function selectChain(data: unknown[]) {
@@ -21,6 +24,7 @@ function selectChain(data: unknown[]) {
     then(onfulfilled, onrejected) {
       return Promise.resolve({ data, error: null }).then(onfulfilled, onrejected);
     },
+    maybeSingle: vi.fn(async () => ({ data: data[0] || null, error: null })),
   };
   for (const method of ["eq", "in", "gt", "order", "limit"]) {
     chain[method] = vi.fn(() => chain);
@@ -65,6 +69,12 @@ vi.mock("./secret-crypto.server", () => ({
 vi.mock("./posthog.server", () => ({
   captureServerEvent: mocks.captureServerEvent,
   captureServerException: mocks.captureServerException,
+}));
+
+vi.mock("./meta-auto-dm-safety.server", () => ({
+  claimMetaDmSend: mocks.claimMetaDmSend,
+  handleMetaDmRecipientPreference: mocks.handleMetaDmRecipientPreference,
+  noteMetaDmProviderRejection: mocks.noteMetaDmProviderRejection,
 }));
 
 import {
@@ -147,7 +157,13 @@ describe("Facebook Auto-DM queue worker", () => {
     mocks.updates.length = 0;
     mocks.getPlan.mockResolvedValue("link");
     mocks.decryptServerSecret.mockResolvedValue("meta-token-b");
+    mocks.claimMetaDmSend.mockResolvedValue("allowed");
+    mocks.handleMetaDmRecipientPreference.mockResolvedValue(null);
+    mocks.noteMetaDmProviderRejection.mockResolvedValue(undefined);
     mocks.rpc.mockImplementation(async (name: string) => {
+      if (name === "claim_meta_dm_send") return { data: "allowed", error: null };
+      if (name === "note_meta_dm_provider_rejection") return { data: null, error: null };
+      if (name === "set_meta_dm_recipient_opt_out") return { data: null, error: null };
       if (name === "claim_facebook_delivery_slot") {
         return { data: [{ wait_ms: 0 }], error: null };
       }
@@ -172,6 +188,81 @@ describe("Facebook Auto-DM queue worker", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+  });
+
+  it("skips a send when the account budget is exhausted", async () => {
+    mocks.connections.push(connection());
+    mocks.automations.push(automation());
+    mocks.claimMetaDmSend.mockResolvedValueOnce("account_budget");
+    await expect(
+      processFacebookDmQueueMessage({ kind: "facebook_dm_event", event: event() }),
+    ).resolves.toEqual({ ignored: true });
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.updates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          values: expect.objectContaining({
+            error_code: "account_budget",
+            connection_id: "connection-b",
+            automation_id: "automation-b",
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("retries a failed STOP preference write before claiming the webhook", async () => {
+    const stopEvent = event({
+      externalEventId: "message:stop-1",
+      eventType: "message",
+      eventContext: "dm",
+      sourceId: "stop-1",
+      text: "STOP",
+    });
+    mocks.handleMetaDmRecipientPreference
+      .mockRejectedValueOnce(new Error("Preference database unavailable"))
+      .mockResolvedValueOnce("command");
+
+    await expect(
+      processFacebookDmQueueMessage({ kind: "facebook_dm_event", event: stopEvent }),
+    ).rejects.toThrow("Preference database unavailable");
+    expect(mocks.rpc).not.toHaveBeenCalledWith("claim_facebook_dm_event", expect.anything());
+
+    await expect(
+      processFacebookDmQueueMessage({ kind: "facebook_dm_event", event: stopEvent }),
+    ).resolves.toEqual({ ignored: true });
+    expect(mocks.rpc).toHaveBeenCalledWith("claim_facebook_dm_event", expect.anything());
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.updates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          values: expect.objectContaining({ error_code: "recipient_preference_updated" }),
+        }),
+      ]),
+    );
+  });
+
+  it("records a rate-limited public reply after a private reply succeeds", async () => {
+    vi.stubEnv("APP_ENV", "production");
+    mocks.connections.push(connection());
+    mocks.automations.push(
+      automation("automation-b", {
+        public_reply_enabled: true,
+        public_reply_message: "Please check your inbox.",
+      }),
+    );
+    mocks.fetch
+      .mockResolvedValueOnce(Response.json({ id: "private-reply-1" }))
+      .mockResolvedValueOnce(Response.json({ error: { code: 4 } }, { status: 429 }));
+
+    await expect(
+      processFacebookDmQueueMessage({ kind: "facebook_dm_event", event: event() }),
+    ).resolves.toEqual({ sent: true });
+    expect(mocks.noteMetaDmProviderRejection).toHaveBeenCalledWith(
+      "facebook",
+      "facebook-page-b",
+      "429",
+    );
   });
 
   it("normalizes unreadable saved tokens into a reconnect-required Meta error", async () => {

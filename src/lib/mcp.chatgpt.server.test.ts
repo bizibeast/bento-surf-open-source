@@ -23,6 +23,7 @@ vi.mock("./request-security.server", async () => ({
 
 import { RequestHttpError } from "./request-security.server";
 import type { ChatGptToolOperations } from "./mcp.chatgpt.server";
+import { runDeterministicFreeTool } from "./mcp-free-text";
 import {
   createChatGptMcpServer,
   handleBentoMcpRequest as handleInstanceMcpRequest,
@@ -45,6 +46,9 @@ const POST = "00000000-0000-4000-8000-000000000013";
 const AUTO = "00000000-0000-4000-8000-000000000014";
 
 const READ_OPS = new Set([
+  "listMcpFreeTools",
+  "runMcpFreeTextTool",
+  "listMcpWorkspaces",
   "getBentoOverview",
   "getProfileWorkspace",
   "listPages",
@@ -53,10 +57,15 @@ const READ_OPS = new Set([
   "getSchedulerWorkspace",
   "getMcpContentBrain",
   "getMcpContentMedia",
+  "listMcpUploadedMedia",
   "getAnalyticsWorkspace",
   "listAutoDmAutomations",
 ]);
 const WRITE_OPS = new Set([
+  "runMcpFreeAiTool",
+  "runMcpFreeMediaTool",
+  "runMcpFreeImageTool",
+  "transcribeMcpFreeAudio",
   "mutatePage",
   "mutateBlock",
   "reorderPages",
@@ -97,6 +106,7 @@ const COMMERCE_FIELDS =
 
 type ListedTool = {
   name: string;
+  title?: string;
   description: string;
   inputSchema: Record<string, unknown>;
   annotations?: Record<string, unknown>;
@@ -197,6 +207,37 @@ function fakeOperations() {
     ],
   };
   const operations = {
+    listMcpFreeTools: () => {
+      calls.push({ name: "listMcpFreeTools", args: [] });
+      return [];
+    },
+    runMcpFreeTextTool: (input: Parameters<typeof runDeterministicFreeTool>[0]) => {
+      calls.push({ name: "runMcpFreeTextTool", args: [input] });
+      return runDeterministicFreeTool(input);
+    },
+    runMcpFreeAiTool: record("runMcpFreeAiTool", {
+      outputs: ["One"],
+      provider: "workers-ai" as const,
+    }),
+    runMcpFreeMediaTool: record("runMcpFreeMediaTool", {
+      kind: "download",
+      items: [],
+      expiresInSeconds: 90,
+    }),
+    runMcpFreeImageTool: record("runMcpFreeImageTool", {
+      toolSlug: "image-compressor" as const,
+      images: [],
+    }),
+    transcribeMcpFreeAudio: record("transcribeMcpFreeAudio", {
+      transcript: "Hello",
+      wordCount: 1,
+      segments: [],
+    }),
+    listMcpWorkspaces: record("listMcpWorkspaces", [
+      { id: String(authInfo.extra!.userId), username: "ada", status: "active" },
+    ]),
+    resolveMcpWorkspaceId: async (authUserId: string, requestedId?: string) =>
+      requestedId ?? authUserId,
     getBentoOverview: record("getBentoOverview", {
       profile: { username: "ada" },
       plan: { id: "creator", name: "Creator" },
@@ -263,6 +304,7 @@ function fakeOperations() {
     beginMcpMediaUpload: record("beginMcpMediaUpload", {
       uploadUrl: "https://app.bento.surf/upload",
     }),
+    listMcpUploadedMedia: record("listMcpUploadedMedia", { media: [], nextCursor: null }),
     getAnalyticsWorkspace: record("getAnalyticsWorkspace", {
       range: "30d",
       site: { views: 1 },
@@ -292,7 +334,27 @@ async function listedTools(operations = fakeOperations().operations) {
 }
 
 const samples: Record<string, Record<string, unknown>> = {
+  list_free_tools: {},
+  run_free_text_tool: { toolSlug: "social-post-formatter", text: "Hello" },
+  run_free_ai_tool: {
+    toolSlug: "instagram-bio-generator",
+    platform: "Instagram",
+    values: { role: "Creator" },
+  },
+  run_free_media_tool: {
+    toolSlug: "youtube-video-downloader",
+    url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    rightsConfirmed: true,
+  },
+  run_free_image_tool: {
+    toolSlug: "image-compressor",
+    fileName: "a.png",
+    mimeType: "image/png",
+    base64: "AQIDBA==",
+  },
+  transcribe_free_audio: { fileName: "a.wav", mimeType: "audio/wav", base64: "UklGRg==" },
   get_bento_overview: {},
+  list_workspaces: {},
   get_profile: {},
   list_pages: {},
   get_page: { id: PAGE },
@@ -329,6 +391,7 @@ const samples: Record<string, Record<string, unknown>> = {
     sourceUrl: "https://example.com/a.png",
   },
   begin_media_upload: { fileName: "a.png", mimeType: "image/png", kind: "image", size: 1024 },
+  list_uploaded_media: {},
   get_analytics: {},
   list_auto_dm_automations: {},
   create_auto_dm_automation: {
@@ -348,13 +411,14 @@ describe("ChatGPT MCP catalog", () => {
     const tools = await listedTools();
     const names = tools.map((tool) => tool.name);
     expect(new Set(names).size).toBe(names.length);
-    expect(names.length).toBeGreaterThanOrEqual(25);
-    expect(names.length).toBeLessThanOrEqual(40);
+    expect(names).toHaveLength(40);
     expect(names.filter((name) => COMMERCE_NAMES.test(name))).toEqual([]);
     expect(names.some((name) => name.startsWith("manage_"))).toBe(false);
 
     const problems: string[] = [];
     for (const tool of tools) {
+      expect(tool.title?.trim(), tool.name).toBeTruthy();
+      expect(tool.annotations?.title, tool.name).toBe(tool.title);
       const annotations = tool.annotations || {};
       for (const key of [
         "readOnlyHint",
@@ -376,10 +440,28 @@ describe("ChatGPT MCP catalog", () => {
         if (tool.annotations.openWorldHint !== false)
           problems.push(`${tool.name} read is open world`);
       }
-      if (/^(delete_|cancel_)/.test(tool.name) && tool.annotations?.destructiveHint !== true)
+      if (
+        /^(delete_|cancel_|update_|reorder_|schedule_|create_|set_auto_dm_enabled$)/.test(
+          tool.name,
+        ) &&
+        tool.annotations?.destructiveHint !== true
+      )
         problems.push(`${tool.name} is not marked destructive`);
     }
     expect(problems).toEqual([]);
+
+    for (const name of [
+      "create_page",
+      "update_page",
+      "reorder_pages",
+      "delete_page",
+      "create_page_block",
+      "update_page_block",
+      "reorder_page_blocks",
+      "delete_page_block",
+    ]) {
+      expect(tools.find((tool) => tool.name === name)?.annotations?.openWorldHint).toBe(false);
+    }
 
     const blockTool = tools.find((tool) => tool.name === "create_page_block");
     const typeEnum = (blockTool?.inputSchema.properties as { type?: { enum?: string[] } })?.type
@@ -403,6 +485,40 @@ describe("ChatGPT MCP catalog", () => {
       destructiveHint: true,
       openWorldHint: false,
     });
+  });
+
+  it("adds creator intelligence to the Brain tool without growing the curated catalog", async () => {
+    const before = await listedTools();
+    vi.stubEnv("BENTO_V2_CREATOR_INTELLIGENCE_ENABLED", "true");
+    try {
+      const { operations, calls } = fakeOperations();
+      const requested = "00000000-0000-4000-8000-000000000099";
+      operations.resolveMcpWorkspaceId = vi
+        .fn()
+        .mockRejectedValue(new Error("Forbidden workspace"));
+      const tools = await listedTools(operations);
+      expect(tools.map(({ name }) => name)).toEqual(before.map(({ name }) => name));
+      expect(tools.find(({ name }) => name === "get_content_brain")?.inputSchema).toMatchObject({
+        properties: { view: {}, workspaceId: {}, query: {} },
+      });
+
+      const handler = chatGptHandler(operations);
+      const response = await handler.fetch(
+        rpc("https://mcp.bento.surf/chatgpt/mcp", 2, "tools/call", {
+          name: "get_content_brain",
+          arguments: { view: "creator_intelligence", workspaceId: requested },
+        }),
+        { authInfo },
+      );
+      expect((await payload(response)).result.isError).toBe(true);
+      expect(operations.resolveMcpWorkspaceId).toHaveBeenCalledWith(
+        authInfo.extra?.userId,
+        requested,
+      );
+      expect(calls.find(({ name }) => name === "getMcpContentBrain")).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("keeps read-only tools off write handlers and matches the other annotations", async () => {
@@ -460,7 +576,7 @@ describe("ChatGPT MCP catalog", () => {
     const { operations, calls } = fakeOperations();
     const handler = chatGptHandler(operations);
     const response = await handler.fetch(
-      rpc("https://mcp.bento.surf/chatgpt/mcp", 3, "tools/call", {
+      rpc("https://mcp.example.com/chatgpt/mcp", 3, "tools/call", {
         name: "list_social_posts",
         arguments: {
           provider: "instagram",
@@ -489,6 +605,173 @@ describe("ChatGPT MCP catalog", () => {
       cursor: "previous-page",
       dateField: "published_at",
     });
+  });
+
+  it("schedules ChatGPT social posts in the requested workspace", async () => {
+    const { calls, operations } = fakeOperations();
+    const handler = chatGptHandler(operations);
+    const brandId = "00000000-0000-4000-8000-000000000002";
+    const call = async (name: string, arguments_: Record<string, unknown>) => {
+      const response = await handler.fetch(
+        rpc("https://mcp.example.com/chatgpt/mcp", 3, "tools/call", { name, arguments: arguments_ }),
+        { authInfo },
+      );
+      return payload(response);
+    };
+
+    const listed = await call("list_workspaces", {});
+    expect(listed.result.structuredContent.workspaces[0].username).toBe("ada");
+    await call("list_social_accounts", { workspaceId: brandId });
+    const scheduled = await call("schedule_social_post", {
+      workspaceId: brandId,
+      body: "Bento Surf update",
+      connectionIds: [CONN],
+      scheduledAt: "2030-01-01T00:00:00+00:00",
+    });
+
+    expect(scheduled.result.isError).not.toBe(true);
+    expect(scheduled.result.structuredContent.workspaceId).toBe(brandId);
+    expect(calls.find((entry) => entry.name === "listSocialAccounts")?.args[0]).toBe(brandId);
+    expect(calls.find((entry) => entry.name === "saveSocialPostForUser")?.args[0]).toBe(brandId);
+  });
+
+  it("exposes and forwards TikTok carousel settings when scheduling through ChatGPT MCP", async () => {
+    const { calls, operations } = fakeOperations();
+    const listed = await listedTools(operations);
+    const schedule = listed.find((tool) => tool.name === "schedule_social_post")!;
+    expect(schedule.inputSchema).toMatchObject({
+      properties: {
+        providerSettings: {
+          properties: {
+            tiktok: {
+              properties: {
+                privacyLevel: { type: "string" },
+                autoAddMusic: { type: "boolean" },
+              },
+            },
+          },
+        },
+      },
+    });
+    const media = [1, 2].map((index) => ({
+      key: `users/${authInfo.extra!.userId}/image/carousel-${index}.jpg`,
+      url: `https://app.bento.surf/cdn/carousel-${index}.jpg`,
+      name: `carousel-${index}.jpg`,
+      mimeType: "image/jpeg",
+      size: 1024,
+    }));
+    const response = await chatGptHandler(operations).fetch(
+      rpc("https://mcp.example.com/chatgpt/mcp", 3, "tools/call", {
+        name: "schedule_social_post",
+        arguments: {
+          body: "A photo carousel",
+          connectionIds: [CONN],
+          scheduledAt: "2030-01-01T00:00:00+00:00",
+          media,
+          providerSettings: { tiktok: { privacyLevel: "SELF_ONLY", autoAddMusic: true } },
+        },
+      }),
+      { authInfo },
+    );
+    expect((await payload(response)).result.isError).not.toBe(true);
+    expect(calls.find((call) => call.name === "saveSocialPostForUser")?.args[1]).toMatchObject({
+      media,
+      providerSettings: { tiktok: { privacyLevel: "SELF_ONLY", autoAddMusic: true } },
+      asDraft: false,
+      publishNow: false,
+    });
+  });
+
+  it("exposes and forwards YouTube Shorts settings when scheduling through ChatGPT MCP", async () => {
+    const { calls, operations } = fakeOperations();
+    const listed = await listedTools(operations);
+    const schedule = listed.find((tool) => tool.name === "schedule_social_post")!;
+    expect(schedule.inputSchema).toMatchObject({
+      properties: {
+        providerSettings: {
+          properties: {
+            youtube: {
+              properties: {
+                youtubeFormat: { enum: ["short", "video"] },
+                youtubePrivacy: { enum: ["private", "unlisted", "public"] },
+                thumbnail: { type: "object" },
+              },
+            },
+          },
+        },
+      },
+    });
+    const video = {
+      key: "users/creator/video/short.mp4",
+      url: "https://app.bento.surf/cdn/short.mp4",
+      name: "short.mp4",
+      mimeType: "video/mp4",
+      size: 1024,
+    };
+    const response = await chatGptHandler(operations).fetch(
+      rpc("https://mcp.example.com/chatgpt/mcp", 4, "tools/call", {
+        name: "schedule_social_post",
+        arguments: {
+          body: "Short caption",
+          title: "Short title",
+          connectionIds: [CONN],
+          scheduledAt: "2030-01-01T00:00:00+00:00",
+          media: [video],
+          providerSettings: {
+            youtube: {
+              youtubeFormat: "short",
+              youtubePrivacy: "private",
+              description: "Full description",
+            },
+          },
+        },
+      }),
+      { authInfo },
+    );
+    expect((await payload(response)).result.isError).not.toBe(true);
+    expect(calls.find((call) => call.name === "saveSocialPostForUser")?.args[1]).toMatchObject({
+      media: [video],
+      providerSettings: {
+        youtube: {
+          youtubeFormat: "short",
+          youtubePrivacy: "private",
+          description: "Full description",
+        },
+      },
+    });
+  });
+
+  it("lets ChatGPT MCP recover existing uploaded media without reuploading it", async () => {
+    const media = {
+      key: "users/creator/image/old.jpg",
+      url: "https://app.bento.surf/cdn/users/creator/image/old.jpg",
+      name: "old.jpg",
+      mimeType: "image/jpeg",
+      size: 123,
+    };
+    const listMcpUploadedMedia = vi.fn(async () => ({ media: [media], nextCursor: null }));
+    const { operations } = fakeOperations();
+    const handler = chatGptHandler({ ...operations, listMcpUploadedMedia });
+    const response = await handler.fetch(
+      rpc("https://mcp.example.com/chatgpt/mcp", 5, "tools/call", {
+        name: "list_uploaded_media",
+        arguments: { limit: 10 },
+      }),
+      { authInfo },
+    );
+    const result = (await payload(response)).result;
+    expect(result.isError).not.toBe(true);
+    expect(JSON.parse(result.content[1].text)).toEqual({
+      workspaceId: authInfo.extra!.userId,
+      media: [media],
+      nextCursor: null,
+    });
+    expect(listMcpUploadedMedia).toHaveBeenCalledWith(
+      authInfo.extra!.userId,
+      "https://mcp.example.com",
+      undefined,
+      10,
+    );
   });
 
   it("hides commerce records from reads and refuses commerce block edits", async () => {

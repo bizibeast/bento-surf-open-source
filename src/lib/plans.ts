@@ -4,9 +4,16 @@
 export type PlanId = "free" | "store" | "creator" | "creator_plus";
 export type PaidPlanId = Exclude<PlanId, "free">;
 export type BillingPeriod = "monthly" | "yearly";
-export type BillingCatalog = "legacy" | "2026-10";
+export const FULLY_MANAGED_BILLING_CATALOG = "2026-11-managed";
+export const FULLY_MANAGED_DODO_PRODUCT_ENV = "DODO_FULLY_MANAGED_99_MONTHLY_PRODUCT_ID";
+export type BillingCatalog = "legacy" | "2026-10" | typeof FULLY_MANAGED_BILLING_CATALOG;
 export const CURRENT_BILLING_CATALOG: BillingCatalog = "2026-10";
 export const NEW_BILLING_PERIODS: readonly BillingPeriod[] = ["monthly", "yearly"];
+
+export function normalizeBillingCatalog(value: unknown): BillingCatalog {
+  if (value === "legacy" || value === FULLY_MANAGED_BILLING_CATALOG) return value;
+  return CURRENT_BILLING_CATALOG;
+}
 
 export type EntitlementKey =
   | "advancedAnalytics"
@@ -36,6 +43,7 @@ export type EntitlementKey =
   | "discover"
   | "brain"
   | "contentAgent"
+  | "bennyByok"
   | "contentRoutines"
   | "weeklyStrategyReview"
   | "mcpSocialAutomation";
@@ -122,6 +130,7 @@ const freeEntitlements: Record<EntitlementKey, boolean> = {
   discover: false,
   brain: false,
   contentAgent: false,
+  bennyByok: false,
   contentRoutines: false,
   weeklyStrategyReview: false,
   mcpSocialAutomation: false,
@@ -156,6 +165,7 @@ const creatorEntitlements: Record<EntitlementKey, boolean> = {
   emailMarketing: true,
   verifiedBadge: true,
   discover: true,
+  bennyByok: true,
   mcpSocialAutomation: true,
 };
 
@@ -312,6 +322,24 @@ export const PLAN_PRICING: Record<PaidPlanId, Record<BillingPeriod, PlanPrice>> 
   creator_plus: PLAN_CONFIG.creator_plus.pricing!,
 };
 
+const FULLY_MANAGED_PRICE: PlanPrice = { amount: 99, label: "$99", cadence: "/month" };
+const FULLY_MANAGED_HIGHLIGHTS = [
+  ...PLAN_CONFIG.creator_plus.highlights,
+  "Bento-managed AI allowance after your first payment",
+];
+
+export function newPlanBillingPeriod(plan: PaidPlanId, period: BillingPeriod): BillingPeriod {
+  return plan === "creator_plus" ? "monthly" : period;
+}
+
+export function newPlanPrice(plan: PaidPlanId, period: BillingPeriod): PlanPrice {
+  return plan === "creator_plus" ? FULLY_MANAGED_PRICE : PLAN_PRICING[plan][period];
+}
+
+export function newPlanHighlights(plan: PaidPlanId): readonly string[] {
+  return plan === "creator_plus" ? FULLY_MANAGED_HIGHLIGHTS : PLAN_CONFIG[plan].highlights;
+}
+
 export const PLAN_HIGHLIGHTS: Record<PlanId, readonly string[]> = {
   free: PLAN_CONFIG.free.highlights,
   store: PLAN_CONFIG.store.highlights,
@@ -350,6 +378,15 @@ export const CURRENT_DODO_PRODUCT_ENV: Record<PaidPlanId, Record<BillingPeriod, 
   },
 };
 
+export function newCheckoutDodoProductKey(plan: PaidPlanId, period: BillingPeriod): string | null {
+  if (plan === "creator_plus") return period === "monthly" ? FULLY_MANAGED_DODO_PRODUCT_ENV : null;
+  return CURRENT_DODO_PRODUCT_ENV[plan][period];
+}
+
+export function newCheckoutCatalog(plan: PaidPlanId): BillingCatalog {
+  return plan === "creator_plus" ? FULLY_MANAGED_BILLING_CATALOG : CURRENT_BILLING_CATALOG;
+}
+
 export const ENTITLEMENT_LABELS: Record<EntitlementKey, string> = {
   advancedAnalytics: "Advanced analytics",
   customFonts: "Font selection",
@@ -378,6 +415,7 @@ export const ENTITLEMENT_LABELS: Record<EntitlementKey, string> = {
   discover: "Discover",
   brain: "Brain",
   contentAgent: "Agent",
+  bennyByok: "Benny with your own AI",
   contentRoutines: "Routines",
   weeklyStrategyReview: "Weekly strategy reviews",
   mcpSocialAutomation: "MCP posting and Auto DMs",
@@ -504,7 +542,11 @@ export function minimumPlanForEntitlement(entitlement: EntitlementKey): PaidPlan
   return PAID_PLAN_IDS.find((plan) => planHasEntitlement(plan, entitlement)) ?? "creator_plus";
 }
 
-export function planName(plan: PlanId): string {
+export function planName(
+  plan: PlanId,
+  catalog: BillingCatalog = FULLY_MANAGED_BILLING_CATALOG,
+): string {
+  if (plan === "creator_plus" && catalog === FULLY_MANAGED_BILLING_CATALOG) return "Fully Managed";
   return PLAN_CONFIG[plan].name;
 }
 

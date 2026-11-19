@@ -76,6 +76,7 @@ const now = new Date("2026-10-26T09:01:00.000Z");
 let outbox: Map<string, Row>;
 let budget: ReturnType<typeof fakeBudget>;
 let resendCalls: string[];
+let resendRecipients: string[][];
 let providerDailyQuota: number | null;
 let providerQuotaError: boolean;
 
@@ -135,18 +136,18 @@ function claim(limit: number) {
 
 function emailOutboxTable() {
   let patch: Record<string, unknown> = {};
-  const builder: Record<string, unknown> = {
+  return {
     update: vi.fn((values: Record<string, unknown>) => {
       patch = values;
-      return builder;
-    }),
-    eq: vi.fn((_column: string, id: string) => {
-      const row = outbox.get(id);
-      if (row) Object.assign(row, patch);
-      return Promise.resolve({ error: null });
+      return {
+        eq: vi.fn((_column: string, id: string) => {
+          const row = outbox.get(id);
+          if (row) Object.assign(row, patch);
+          return Promise.resolve({ error: null });
+        }),
+      };
     }),
   };
-  return builder;
 }
 
 function emptyTable() {
@@ -165,6 +166,7 @@ beforeEach(() => {
   outbox = new Map();
   budget = fakeBudget();
   resendCalls = [];
+  resendRecipients = [];
   providerDailyQuota = null;
   providerQuotaError = false;
   process.env.EMAIL_DELIVERY_MODE = "production";
@@ -196,6 +198,8 @@ beforeEach(() => {
   });
   mocks.fetch.mockImplementation((_url: string, init: RequestInit) => {
     const key = (init.headers as Record<string, string>)["idempotency-key"]!;
+    const body = JSON.parse(String(init.body)) as { to?: string[] };
+    resendRecipients.push(body.to ?? []);
     if (providerQuotaError) {
       return Promise.resolve(
         new Response(
@@ -223,6 +227,7 @@ afterEach(() => {
     "EMAIL_DELIVERY_MODE",
     "RESEND_API_KEY",
     "RESEND_FROM_EMAIL",
+    "RESEND_TEST_RECIPIENT",
     "EMAIL_SIGNING_SECRET",
     "RESEND_MIN_INTERVAL_MS",
   ]) {
@@ -306,6 +311,74 @@ describe("shared Resend daily cap", () => {
     expect(resendCalls).toHaveLength(65);
     expect(new Set(resendCalls).size).toBe(65);
     expect([...outbox.values()].every((row) => row.status === "sent")).toBe(true);
+  });
+
+  it("suppresses all sandbox nudges without using send budget or creating tokens", async () => {
+    process.env.EMAIL_DELIVERY_MODE = "sandbox";
+    process.env.RESEND_TEST_RECIPIENT = "review@gmail.com";
+    // A short secret passes readiness but fails if an unsubscribe token is created.
+    process.env.EMAIL_SIGNING_SECRET = "short";
+    for (const [index, event_type] of [
+      "onboarding_quick_win",
+      "commerce_feature",
+      "pro_upgrade",
+    ].entries()) {
+      addRow({
+        id: `nudge-${index}`,
+        event_key: `nudge:${index}`,
+        event_type,
+        category: "marketing",
+      });
+    }
+    mocks.fetch.mockClear();
+    await processEmailOutbox(10);
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(budget.used()).toBe(0);
+    for (const row of outbox.values()) {
+      expect(row.status).toBe("suppressed");
+      expect(row.last_error).toBe("Lifecycle nudges are not sent in sandbox.");
+    }
+  });
+
+  it("sends production nudges to normalized stored addresses and suppresses test inboxes", async () => {
+    for (const [index, recipient_email] of [
+      " Person+newsletter@Gmail.com ",
+      "other+news@fastmail.com",
+      "owner+qa@gmail.com",
+    ].entries()) {
+      addRow({
+        id: `nudge-${index}`,
+        event_key: `nudge:${index}`,
+        event_type: "onboarding_quick_win",
+        category: "marketing",
+        recipient_email,
+      });
+    }
+    await processEmailOutbox(10);
+    expect(resendRecipients).toEqual([
+      ["person+newsletter@gmail.com"],
+      ["other+news@fastmail.com"],
+    ]);
+    expect(budget.used()).toBe(2);
+    expect(outbox.get("nudge-0")?.status).toBe("sent");
+    expect(outbox.get("nudge-1")?.status).toBe("sent");
+    expect(outbox.get("nudge-2")?.status).toBe("suppressed");
+    expect(outbox.get("nudge-2")?.last_error).toBe("Test, disposable, or invalid inbox.");
+  });
+
+  it("still redirects non-nudge sandbox mail with its original recipient header", async () => {
+    process.env.EMAIL_DELIVERY_MODE = "sandbox";
+    process.env.RESEND_TEST_RECIPIENT = "review@gmail.com";
+    transactionalRow(1);
+    mocks.fetch.mockClear();
+    await processEmailOutbox(10);
+    expect(resendRecipients).toEqual([["review@gmail.com"]]);
+    const body = JSON.parse(String(mocks.fetch.mock.calls[0][1].body));
+    expect(body.headers).toMatchObject({
+      "X-Bento-Environment": "staging",
+      "X-Bento-Original-Recipient": "welcome-1@gmail.com",
+    });
+    expect(budget.used()).toBe(1);
   });
 
   it("drops a digest from an earlier week instead of sending it late", async () => {

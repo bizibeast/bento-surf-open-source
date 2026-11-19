@@ -1,6 +1,10 @@
-import { AutoDmDelaySettings } from "@/components/AutoDmDelaySettings";
+import {
+  AutoDmCopySuggestButton,
+  AutoDmMessageVariantsEditor,
+} from "@/components/AutoDmMessageVariantsEditor";
 import { InstagramPublicRepliesEditor } from "@/components/InstagramPublicRepliesEditor";
 import { INSTAGRAM_AUTO_DM_DEFAULTS as autoDmDefaults } from "@/lib/instagram-auto-dm-defaults";
+import { hasAutoDmTextLink } from "@/lib/auto-dm-message-variants";
 import { AutoDmActivityRow } from "@/components/AutoDmDetails";
 import { AutoDmDetailActions } from "@/components/AutoDmDetailDialog";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
@@ -101,15 +105,19 @@ type Draft = {
   mediaScope: InstagramDmMediaScope;
   mediaIds: string[];
   replyMessage: string;
+  replyMessageAlternatives: string[];
   publicReplyEnabled: boolean;
   publicReplyMessages: string;
   openingMessage: string;
+  openingMessageAlternatives: string[];
   confirmationButtonLabel: string;
   emailCaptureEnabled: boolean;
   emailPromptMessage: string;
+  emailPromptMessageAlternatives: string[];
   emailMarketingConsentEnabled: boolean;
   followGateEnabled: boolean;
   followPromptMessage: string;
+  followPromptMessageAlternatives: string[];
   followMaxRechecks: number;
   followFailAction: "send_anyway" | "withhold";
   replyButtonLabel: string;
@@ -129,15 +137,19 @@ const EMPTY_DRAFT: Draft = {
   mediaScope: "any",
   mediaIds: [],
   replyMessage: autoDmDefaults.replyMessage,
+  replyMessageAlternatives: [],
   publicReplyEnabled: false,
   publicReplyMessages: DEFAULT_PUBLIC_REPLY_MESSAGES,
   openingMessage: autoDmDefaults.openingMessage,
+  openingMessageAlternatives: [],
   confirmationButtonLabel: autoDmDefaults.confirmationButtonLabel,
   emailCaptureEnabled: false,
   emailPromptMessage: autoDmDefaults.emailPromptMessage,
+  emailPromptMessageAlternatives: [],
   emailMarketingConsentEnabled: false,
   followGateEnabled: false,
   followPromptMessage: autoDmDefaults.followPromptMessage,
+  followPromptMessageAlternatives: [],
   followMaxRechecks: 3,
   followFailAction: "send_anyway",
   replyButtonLabel: "",
@@ -152,11 +164,14 @@ function basicInstagramDraft(draft: Draft): Draft {
     publicReplyEnabled: false,
     publicReplyMessages: "",
     openingMessage: "",
+    openingMessageAlternatives: [],
     confirmationButtonLabel: "",
     emailCaptureEnabled: false,
     emailPromptMessage: "",
+    emailPromptMessageAlternatives: [],
     emailMarketingConsentEnabled: false,
     followGateEnabled: false,
+    followPromptMessageAlternatives: [],
   };
 }
 
@@ -217,6 +232,9 @@ function InstagramAutoDmPage() {
           mediaScope: draft.mediaScope,
           mediaIds: draft.mediaIds,
           replyMessage: draft.replyMessage,
+          replyMessages: [draft.replyMessage, ...draft.replyMessageAlternatives]
+            .map((item) => item.trim())
+            .filter(Boolean),
           publicReplyEnabled: Boolean(data?.advancedAutoDm && draft.publicReplyEnabled),
           publicReplyMessages:
             data?.advancedAutoDm && draft.publicReplyEnabled
@@ -226,6 +244,12 @@ function InstagramAutoDmPage() {
             data?.advancedAutoDm && triggerFamily(draft.triggerType) === "comment"
               ? draft.openingMessage.trim() || null
               : null,
+          openingMessages:
+            data?.advancedAutoDm && triggerFamily(draft.triggerType) === "comment"
+              ? [draft.openingMessage, ...draft.openingMessageAlternatives]
+                  .map((item) => item.trim())
+                  .filter(Boolean)
+              : [],
           confirmationButtonLabel:
             data?.advancedAutoDm && triggerFamily(draft.triggerType) === "comment"
               ? draft.confirmationButtonLabel.trim() || null
@@ -241,6 +265,12 @@ function InstagramAutoDmPage() {
             draft.emailCaptureEnabled
               ? draft.emailPromptMessage.trim() || null
               : null,
+          emailPromptMessages:
+            data?.advancedAutoDm && draft.emailCaptureEnabled
+              ? [draft.emailPromptMessage, ...draft.emailPromptMessageAlternatives]
+                  .map((item) => item.trim())
+                  .filter(Boolean)
+              : [],
           emailMarketingConsentEnabled:
             Boolean(data?.advancedAutoDm) &&
             triggerFamily(draft.triggerType) === "comment" &&
@@ -252,6 +282,12 @@ function InstagramAutoDmPage() {
             draft.followGateEnabled,
           ),
           followPromptMessage: draft.followPromptMessage,
+          followPromptMessages:
+            data?.advancedAutoDm && draft.followGateEnabled
+              ? [draft.followPromptMessage, ...draft.followPromptMessageAlternatives]
+                  .map((item) => item.trim())
+                  .filter(Boolean)
+              : [],
           followMaxRechecks: draft.followMaxRechecks,
           followFailAction: draft.followFailAction,
           replyButtonLabel: draft.replyButtonLabel.trim() || null,
@@ -334,6 +370,7 @@ function InstagramAutoDmPage() {
     const template = getInstagramAutoDmStarterTemplate(templateId);
     setSelectedTemplateId(templateId);
     updateDraft({
+      ...EMPTY_DRAFT,
       ...template.draft,
       mediaIds: [...template.draft.mediaIds],
       connectionId: readyConnections[0]?.id || connections[0]?.id || "",
@@ -368,6 +405,7 @@ function InstagramAutoDmPage() {
       mediaScope: automation.mediaScope,
       mediaIds: automation.mediaIds,
       replyMessage: automation.replyMessage,
+      replyMessageAlternatives: automation.replyMessages.slice(1),
       publicReplyEnabled: automation.publicReplyEnabled,
       publicReplyMessages: [
         ...automation.publicReplyMessages,
@@ -376,13 +414,16 @@ function InstagramAutoDmPage() {
         .slice(0, 3)
         .join("\n"),
       openingMessage: automation.openingMessage || "",
+      openingMessageAlternatives: automation.openingMessages.slice(1),
       confirmationButtonLabel: automation.confirmationButtonLabel || "",
       emailCaptureEnabled: automation.emailCaptureEnabled,
       emailPromptMessage:
         automation.emailPromptMessage || "What’s the best email address to send this to?",
+      emailPromptMessageAlternatives: automation.emailPromptMessages.slice(1),
       emailMarketingConsentEnabled: automation.emailMarketingConsentEnabled,
       followGateEnabled: automation.followGateEnabled,
       followPromptMessage: automation.followPromptMessage,
+      followPromptMessageAlternatives: automation.followPromptMessages.slice(1),
       followMaxRechecks: automation.followMaxRechecks,
       followFailAction: automation.followFailAction,
       replyButtonLabel: automation.replyButtonLabel || "",
@@ -420,7 +461,6 @@ function InstagramAutoDmPage() {
       />
 
       <div className={micro.main}>
-        <AutoDmDelaySettings />
         <DmAutomationPlatformNav current="instagram" />
         {!isLoading && !data?.advancedAutoDm && (
           <div
@@ -1242,6 +1282,17 @@ function AutomationEditor({
         return false;
       }
     })();
+  const textHasLink = hasAutoDmTextLink([
+    draft.replyMessage,
+    ...draft.replyMessageAlternatives,
+    draft.openingMessage,
+    ...draft.openingMessageAlternatives,
+    draft.emailPromptMessage,
+    ...draft.emailPromptMessageAlternatives,
+    draft.followPromptMessage,
+    ...draft.followPromptMessageAlternatives,
+    draft.publicReplyMessages,
+  ]);
   const canSave =
     draft.connectionId &&
     draft.name.trim() &&
@@ -1260,7 +1311,8 @@ function AutomationEditor({
       !draft.followGateEnabled ||
       Boolean(draft.followPromptMessage.trim())) &&
     Boolean(draft.replyButtonLabel.trim()) === Boolean(draft.replyButtonUrl.trim()) &&
-    validUrl;
+    validUrl &&
+    !textHasLink;
 
   const stepValid =
     step === 1
@@ -1541,7 +1593,7 @@ function AutomationEditor({
                   <div>
                     <div className="text-sm font-semibold">Reply publicly too</div>
                     <div className="mt-0.5 text-xs text-muted-foreground">
-                      Add up to 3 replies. Bento rotates them naturally.
+                      Add up to 3 creator-approved replies.
                     </div>
                   </div>
                   <Switch
@@ -1560,6 +1612,20 @@ function AutomationEditor({
                 </div>
                 {draft.publicReplyEnabled && (
                   <div className="mt-4">
+                    <AutoDmCopySuggestButton
+                      platform="instagram"
+                      kind="public"
+                      source={splitLines(draft.publicReplyMessages)[0] || ""}
+                      onSuggestions={(alternatives) =>
+                        setDraft({
+                          ...draft,
+                          publicReplyMessages: [
+                            splitLines(draft.publicReplyMessages)[0],
+                            ...alternatives,
+                          ].join("\n"),
+                        })
+                      }
+                    />
                     <InstagramPublicRepliesEditor
                       value={draft.publicReplyMessages.split("\n")}
                       onChange={(replies) =>
@@ -1604,6 +1670,17 @@ function AutomationEditor({
                       placeholder="Thanks for your comment!"
                     />
                   </Field>
+                  <AutoDmMessageVariantsEditor
+                    alternativesOnly
+                    platform="instagram"
+                    kind="opening"
+                    label="Opening message options"
+                    value={[draft.openingMessage, ...draft.openingMessageAlternatives]}
+                    maxLength={1000}
+                    onChange={(messages) =>
+                      setDraft({ ...draft, openingMessageAlternatives: messages.slice(1) })
+                    }
+                  />
                   <Field label="Reply button text">
                     <input
                       value={draft.confirmationButtonLabel}
@@ -1648,6 +1725,17 @@ function AutomationEditor({
                         className={`${inputClass} resize-none`}
                       />
                     </Field>
+                    <AutoDmMessageVariantsEditor
+                      alternativesOnly
+                      platform="instagram"
+                      kind="follow"
+                      label="Follow prompt options"
+                      value={[draft.followPromptMessage, ...draft.followPromptMessageAlternatives]}
+                      maxLength={700}
+                      onChange={(messages) =>
+                        setDraft({ ...draft, followPromptMessageAlternatives: messages.slice(1) })
+                      }
+                    />
                     <div className="grid gap-3 sm:grid-cols-2">
                       <Field label="Maximum checks">
                         <select
@@ -1731,6 +1819,17 @@ function AutomationEditor({
                         placeholder="What’s the best email address to send this to?"
                       />
                     </Field>
+                    <AutoDmMessageVariantsEditor
+                      alternativesOnly
+                      platform="instagram"
+                      kind="email"
+                      label="Email prompt options"
+                      value={[draft.emailPromptMessage, ...draft.emailPromptMessageAlternatives]}
+                      maxLength={700}
+                      onChange={(messages) =>
+                        setDraft({ ...draft, emailPromptMessageAlternatives: messages.slice(1) })
+                      }
+                    />
                     <div className={`p-3 ${micro.soft}`}>
                       <div>
                         <p className="text-sm font-semibold">Marketing consent included</p>
@@ -1767,6 +1866,18 @@ function AutomationEditor({
               </div>
             </Field>
 
+            <AutoDmMessageVariantsEditor
+              alternativesOnly
+              platform="instagram"
+              kind="reply"
+              label="Private DM reply options"
+              value={[draft.replyMessage, ...draft.replyMessageAlternatives]}
+              maxLength={1000}
+              onChange={(messages) =>
+                setDraft({ ...draft, replyMessageAlternatives: messages.slice(1) })
+              }
+            />
+
             <div className="space-y-3">
               <Field label="Final link button text" hint="Optional">
                 <input
@@ -1786,6 +1897,11 @@ function AutomationEditor({
                 />
                 {!validUrl && (
                   <p className="mt-1 text-xs text-rose-600">Use a valid https:// URL.</p>
+                )}
+                {textHasLink && (
+                  <p className="mt-1 text-xs text-rose-600">
+                    Remove links from message text and use this button URL instead.
+                  </p>
                 )}
               </Field>
             </div>

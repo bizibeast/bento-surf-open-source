@@ -10,6 +10,20 @@ import {
 import type { ImageDraftRef } from "@/lib/content-agent-images.server";
 
 type DraftImages = Awaited<ReturnType<typeof getAgentDraftImages>>;
+
+const DRAFT_IMAGE_POLL_MS = 15_000;
+const IN_PROGRESS_DRAFT_IMAGE_STATUSES = new Set([
+  "queued",
+  "submitting",
+  "submitted",
+  "ambiguous",
+  "storage_pending",
+]);
+
+function draftImageJobIsInProgress(jobs: DraftImages["jobs"] | undefined) {
+  return Boolean(jobs?.some((job) => IN_PROGRESS_DRAFT_IMAGE_STATUSES.has(job.status)));
+}
+
 export function ContentDraftImages({
   draftRef,
   showPreview = true,
@@ -42,16 +56,27 @@ export function ContentDraftImages({
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     let previousReady = "";
+    let generation = 0;
+    let settingsLoaded = false;
     onReady?.(false);
     async function refresh() {
+      const current = ++generation;
+      const settingsRequest = settingsLoaded
+        ? Promise.resolve()
+        : getContentImageSettings()
+            .then((settings) => {
+              settingsLoaded = true;
+              if (!cancelled && current === generation) setImageSettings(settings);
+            })
+            .catch(() => {});
+      let jobs: DraftImages["jobs"] | undefined;
       try {
         const value = await getAgentDraftImages({ data: { messageId, cardId, revision } });
-        if (cancelled) return;
+        if (cancelled || current !== generation) return;
+        jobs = value.jobs;
         setState(value);
         onAssets(value.assets);
         onReady?.(!value.missingMediaIds?.length);
-        const settings = await getContentImageSettings();
-        if (!cancelled) setImageSettings(settings);
         const ready = value.jobs
           .filter((j) => j.status === "ready")
           .map((j) => j.id)
@@ -59,23 +84,32 @@ export function ContentDraftImages({
         if (ready && ready !== previousReady) await onChanged?.();
         previousReady = ready;
       } catch (e) {
-        if (!cancelled) {
+        if (!cancelled && current === generation) {
           setError(e instanceof Error ? e.message : "Image previews unavailable.");
           onReady?.(false);
           if (e instanceof Error && /Draft changed/.test(e.message)) await onChanged?.();
         }
       }
-      if (!cancelled) timer = setTimeout(refresh, 15000);
+      await settingsRequest;
+      if (
+        !cancelled &&
+        current === generation &&
+        document.visibilityState !== "hidden" &&
+        draftImageJobIsInProgress(jobs)
+      )
+        timer = setTimeout(refresh, DRAFT_IMAGE_POLL_MS);
     }
-    void refresh();
-    void getContentImageSettings()
-      .then((v) => {
-        if (!cancelled) setImageSettings(v);
-      })
-      .catch(() => {});
+    const onVisibilityChange = () => {
+      generation++;
+      clearTimeout(timer);
+      if (document.visibilityState !== "hidden") void refresh();
+    };
+    if (document.visibilityState !== "hidden") void refresh();
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
     // Draft ownership/revision changes must refetch URLs before an export is enabled.
     // eslint-disable-next-line react-hooks/exhaustive-deps

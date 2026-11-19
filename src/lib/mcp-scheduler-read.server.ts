@@ -18,7 +18,7 @@ import {
 const POST_FIELDS =
   "id,body,title,media,settings,scheduled_at,timezone,status,published_at,cancelled_at,created_at,updated_at";
 const TARGET_FIELDS =
-  "id,connection_id,provider,status,remote_post_id,remote_post_url,last_error_code,last_error_message,published_at,provider_settings,attempt_count,next_attempt_at,retry_started_at,processing_started_at,upload_byte_offset,last_reconcile_at,created_at,updated_at";
+  "id,connection_id,account_handle_snapshot,account_display_name_snapshot,provider,status,remote_post_id,remote_post_url,last_error_code,last_error_message,published_at,provider_settings,attempt_count,next_attempt_at,retry_started_at,processing_started_at,upload_byte_offset,last_reconcile_at,created_at,updated_at";
 const METRIC_FIELDS =
   "id,connection_id,provider,remote_post_id,remote_post_url,caption,content_type,thumbnail_url,views,impressions,reach,engagements,likes,comments,shares,saves,published_at,fetched_at";
 const ATTEMPT_FIELDS =
@@ -26,7 +26,7 @@ const ATTEMPT_FIELDS =
 
 type Target = {
   id: string;
-  connection_id: string;
+  connection_id: string | null;
   provider: string;
   remote_post_id: string | null;
   remote_post_url: string | null;
@@ -140,6 +140,14 @@ export async function getSchedulerPost(userId: string, raw: GetSocialPostInput) 
   // Join each metric through the owned post's exact connection + platform + remote ID.
   const targets = await Promise.all(
     (post.targets || []).map(async (target) => {
+      if (!target.connection_id)
+        return {
+          ...target,
+          metrics: null,
+          metricsAvailability: "connection_disconnected",
+          resolvedRemotePostUrl: target.remote_post_url,
+          remotePostUrlSource: target.remote_post_url ? "scheduler_target" : null,
+        };
       if (!target.remote_post_id)
         return {
           ...target,

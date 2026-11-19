@@ -14,6 +14,22 @@ const base = {
 };
 
 describe("Billing header", () => {
+  it("shows the purchased contract name even when both versions grant the same tier", () => {
+    expect(
+      billingSummary(
+        { ...base, plan: "creator_plus", billingCatalog: "2026-10" },
+        "creator_plus",
+        now,
+      ).badge,
+    ).toBe("Creator Plus trial");
+    expect(
+      billingSummary(
+        { ...base, plan: "creator_plus", billingCatalog: "2026-11-managed" },
+        "creator_plus",
+        now,
+      ).badge,
+    ).toBe("Fully Managed trial");
+  });
   it("names the subscribed Store plan during a trial and promises no extra tools", () => {
     const summary = billingSummary(base, "store", now);
     expect(summary.plan).toBe("store");

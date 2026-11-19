@@ -1025,6 +1025,7 @@ async function completeMultipartUpload(
       return jsonError("Completed upload size does not match the declared upload", 400);
     }
     let storedSize = object.size;
+    let storedType = (object.httpMetadata?.contentType || "").split(";", 1)[0].toLowerCase();
     if (
       env.IMAGES &&
       (kind === "avatar" || kind === "image" || kind === "cover") &&
@@ -1033,6 +1034,7 @@ async function completeMultipartUpload(
     ) {
       const current = await env.MEDIA_BUCKET.get(key);
       const currentType = (current?.httpMetadata?.contentType || "").split(";", 1)[0].toLowerCase();
+      if (currentType) storedType = currentType;
       if (current?.body && OPTIMIZABLE_IMAGE_TYPES.has(currentType)) {
         const source = new Uint8Array(await new Response(current.body).arrayBuffer());
         const optimized = await optimizeImageForStorage(env, source, currentType, kind, userId);
@@ -1048,6 +1050,7 @@ async function completeMultipartUpload(
             customMetadata: { ...(current.customMetadata ?? {}), imageOptimized: "1" },
           });
           storedSize = replaced?.size ?? optimized.bytes.byteLength;
+          storedType = optimized.contentType;
         }
       }
     }
@@ -1060,6 +1063,7 @@ async function completeMultipartUpload(
         key: object.key,
         publicUrl: isPrivate ? null : mediaObjectUrl(object.key, new URL(request.url).origin),
         size: storedSize,
+        mimeType: storedType,
       },
       { status: 201 },
     );
@@ -1234,6 +1238,7 @@ async function uploadMedia(
         ? null
         : mediaObjectUrl(key, new URL(request.url).origin),
       size: object.size,
+      mimeType: storedType,
     },
     { status: 201 },
   );
