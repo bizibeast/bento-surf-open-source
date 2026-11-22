@@ -66,6 +66,36 @@
   min-width: 64px;
   text-align: right;
 }
+.ob-workspace-return {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 0 32px;
+}
+.ob-workspace-return button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  max-width: 100%;
+  text-align: left;
+  font-size: 12px;
+  color: var(--ob-muted);
+}
+.ob-workspace-return button:hover {
+  color: var(--ob-ink);
+}
+.ob-workspace-return button:disabled {
+  opacity: 0.5;
+}
+.ob-workspace-return svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+.ob-workspace-return p {
+  color: #b42318;
+  font-size: 12px;
+}
 .ob-main {
   max-width: 940px;
   margin: 0 auto;
@@ -1286,6 +1316,9 @@
   }
 }
 @media (max-width: 760px) {
+  .ob-workspace-return {
+    padding-inline: 20px;
+  }
   .ob-header {
     padding: 20px;
     gap: 12px;
@@ -1541,5 +1574,73 @@
   to {
     opacity: 1;
     transform: none;
+  }
+}
+.ob-progress {
+  max-width: 380px;
+  margin: 26px auto 14px;
+  text-align: left;
+}
+.ob-progress-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ob-muted) 18%, transparent);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.ob-progress-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #3478f6;
+  transition: width 0.6s ease;
+}
+.ob-progress-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.ob-progress-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--ob-muted);
+}
+.ob-progress-step svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+.ob-progress-step.is-done {
+  color: inherit;
+}
+.ob-progress-step.is-done svg {
+  color: #3478f6;
+}
+.ob-progress-step.is-active {
+  color: inherit;
+  font-weight: 600;
+}
+.ob-progress-dot {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+.ob-progress-dot::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.45;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ob-progress-bar > span {
+    transition: none;
   }
 }

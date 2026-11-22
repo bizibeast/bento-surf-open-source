@@ -107,25 +107,33 @@ export const agentMutationSchema = z.discriminatedUnion("action", [
   }),
 ]);
 
+const discoverWorkspace = { workspaceId: uuid.optional() };
+
 export const discoverMutationSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("refresh"), force: z.boolean().default(false) }),
-  loadMoreDiscoverInputSchema.extend({ action: z.literal("load_more") }),
   z.object({
+    ...discoverWorkspace,
+    action: z.literal("refresh"),
+    force: z.boolean().default(false),
+  }),
+  loadMoreDiscoverInputSchema.extend({ ...discoverWorkspace, action: z.literal("load_more") }),
+  z.object({
+    ...discoverWorkspace,
     action: z.literal("feedback"),
     id: uuid,
     feedback: z.enum(["pending", "liked", "saved", "not_relevant"]),
   }),
-  z.object({ action: z.literal("save_item"), id: uuid }),
-  z.object({ action: z.literal("unsave_item"), id: uuid }),
+  z.object({ ...discoverWorkspace, action: z.literal("save_item"), id: uuid }),
+  z.object({ ...discoverWorkspace, action: z.literal("unsave_item"), id: uuid }),
   z.object({
+    ...discoverWorkspace,
     action: z.literal("save_preferences"),
     nicheKeywords: z.array(z.string().trim().min(1).max(80)).max(20),
     useBrainContext: z.boolean().default(true),
     language: z.string().trim().min(2).max(12),
     region: z.string().trim().min(2).max(80),
   }),
-  trackDiscoverCreatorSchema.extend({ action: z.literal("track_creator") }),
-  z.object({ action: z.literal("untrack_creator"), id: uuid }),
+  trackDiscoverCreatorSchema.extend({ ...discoverWorkspace, action: z.literal("track_creator") }),
+  z.object({ ...discoverWorkspace, action: z.literal("untrack_creator"), id: uuid }),
 ]);
 
 async function ownedMutation(query: any, message: string) {
@@ -637,6 +645,7 @@ export async function getMcpContentDiscover(userId: string, creatorId?: string) 
 
 export async function manageMcpContentDiscover(userId: string, input: unknown) {
   const data = discoverMutationSchema.parse(input);
+  if (data.workspaceId && data.workspaceId !== userId) throw new Error("Workspace is unavailable.");
   await requireContentWorkspace(userId, "discover");
   if (data.action === "refresh") return refreshContentDiscoverForUser(userId, data.force);
   if (data.action === "load_more") return loadMoreDiscoverForUser(userId, data);

@@ -1,3 +1,5 @@
+import { BENNY_EDITING_MODELS } from "./benny-models";
+
 /** USD per million tokens is numerically equal to micro-USD per token.
  * Verified against provider model catalogs on 2026-10-22. Update these ceilings
  * and OpenRouter's max_price constraint together when changing models.
@@ -5,6 +7,7 @@
 export type AiPricePolicy = { input: number; output: number };
 
 const AI_PRICE_POLICIES: Record<string, AiPricePolicy> = {
+  ...Object.fromEntries(BENNY_EDITING_MODELS.map(({ id, price }) => [`openrouter:${id}`, price])),
   "workers-ai:@cf/openai/gpt-oss-20b": { input: 0.2, output: 0.3 },
   "workers-ai:@cf/openai/gpt-oss-120b": { input: 0.35, output: 0.75 },
   "groq:openai/gpt-oss-20b": { input: 0.075, output: 0.3 },

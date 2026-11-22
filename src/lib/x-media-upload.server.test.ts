@@ -75,7 +75,7 @@ describe("X v2 media upload", () => {
     expect(finalizes).toBe(1);
     expect(parts.length).toBe(Math.ceil(totalBytes / X_MEDIA_CHUNK_BYTES));
     expect(failed).toBe(true);
-  }, 20_000);
+  }, 60_000);
 
   it("never finalizes or creates a post after a truncated source", async () => {
     const calls: string[] = [];

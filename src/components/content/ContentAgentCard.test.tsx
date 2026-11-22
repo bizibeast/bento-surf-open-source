@@ -64,7 +64,7 @@ describe("ContentAgentCard", () => {
     expect(screen.queryByLabelText("Draft feedback")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Reject draft" }));
     await waitFor(() => expect(reject).toHaveBeenCalledWith("draft-1", "Not a fit for me"));
-    expect(screen.getByText("Draft rejected")).toBeVisible();
+    expect(await screen.findByText("Draft rejected")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Open in scheduler" })).not.toBeInTheDocument();
   });
   it("makes saved editorial feedback available on a Needs review draft", () => {

@@ -128,7 +128,7 @@ export function EmailBroadcastsPanel({
       {locked ? (
         <div className="mt-4 flex flex-col gap-3 rounded-2xl bg-[#f6f7fa] p-4 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-[#17213a]/55">
-            Newsletter is included with Creator and Creator Plus.
+            Newsletter is included with Creator and Creator+.
           </p>
           <Link
             to="/settings"

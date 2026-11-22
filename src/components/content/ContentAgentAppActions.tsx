@@ -1,3 +1,5 @@
+import { ChatContentArtifact } from "./ChatContentArtifact";
+import { isChatCreationTool, chatCreationSummary } from "@/lib/content-chat-artifact";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { usePageActivity } from "@/hooks/use-page-activity";
@@ -72,7 +74,11 @@ export function ContentAgentAppActions({
   messageId,
   actions,
   accounts,
+  workspaceId,
+  onRevise,
 }: {
+  workspaceId?: string;
+  onRevise?: (id: string, title: string) => void;
   messageId: string;
   actions: AgentAppAction[];
   accounts: SchedulerConnection[];
@@ -102,6 +108,10 @@ export function ContentAgentAppActions({
         rows?.map((row) => (row.id === result.id ? { ...row, ...result } : row)),
       );
       await client.invalidateQueries({ queryKey: ["social-scheduler"] });
+      if (actions.some((action) => action.id === result.id && isChatCreationTool(action.tool))) {
+        await client.invalidateQueries({ queryKey: key });
+        await client.invalidateQueries({ queryKey: ["chat-content-artifact"] });
+      }
     },
   });
   return (
@@ -110,6 +120,8 @@ export function ContentAgentAppActions({
         <ActionReview
           key={action.id}
           action={action}
+          workspaceId={workspaceId}
+          onRevise={onRevise}
           accounts={accounts}
           state={status.data?.find((row) => row.id === action.id)}
           loading={status.isPending}
@@ -147,6 +159,8 @@ export function ContentAgentAppActions({
 function ActionReview({
   action,
   accounts,
+  workspaceId,
+  onRevise,
   state,
   loading,
   unavailable,
@@ -157,6 +171,8 @@ function ActionReview({
   onEdit,
 }: {
   action: AgentAppAction;
+  workspaceId?: string;
+  onRevise?: (id: string, title: string) => void;
   accounts: SchedulerConnection[];
   state?: AgentAppActionState;
   loading: boolean;
@@ -169,15 +185,28 @@ function ActionReview({
 }) {
   const args = state?.arguments || action.arguments;
   const isPost = action.tool === "create_social_post";
+  const creation = isChatCreationTool(action.tool);
+  const summary = chatCreationSummary(args);
   const pending = state?.status === "pending";
   const completed = state?.status === "completed";
+  if (creation && completed && state?.artifact && workspaceId) {
+    return (
+      <ChatContentArtifact
+        workspaceId={workspaceId}
+        entryId={state.artifact.entryId}
+        onRevise={onRevise}
+      />
+    );
+  }
   const heading = isPost
     ? args.mode === "schedule"
       ? "Schedule this post"
       : args.mode === "publish_now"
         ? "Publish this post"
         : "Save this draft"
-    : action.title;
+    : creation
+      ? summary.title
+      : action.title;
   return (
     <article
       className="min-w-0 rounded-2xl border border-border bg-card p-4 sm:p-5"
@@ -210,20 +239,27 @@ function ActionReview({
           </span>
         </div>
       )}
-      <details className="mt-4" open={!isPost}>
-        <summary className="cursor-pointer text-sm font-medium">
-          {isPost ? "Review all settings, media and Auto DMs" : "Review details"}
-        </summary>
-        <div className="mt-3 max-h-80 overflow-y-auto rounded-xl bg-muted/50 p-3">
-          <Details value={args} accounts={accounts} labels={action.labels} />
-        </div>
-      </details>
-      {(state?.message || error) && (
+      {creation ? (
+        <p className="text-sm leading-6 text-muted-foreground">{summary.summary}</p>
+      ) : (
+        <details className="mt-4" open={!isPost}>
+          <summary className="cursor-pointer text-sm font-medium">
+            {isPost ? "Review all settings, media and Auto DMs" : "Review details"}
+          </summary>
+          <div className="mt-3 max-h-80 overflow-y-auto rounded-xl bg-muted/50 p-3">
+            <Details value={args} accounts={accounts} labels={action.labels} />
+          </div>
+        </details>
+      )}
+      {((!creation && state?.message) || error || (creation && state?.status === "failed")) && (
         <p
           role={error || state?.status === "failed" ? "alert" : "status"}
           className="mt-3 whitespace-pre-wrap break-words text-sm leading-6"
         >
-          {error || state?.message}
+          {error ||
+            (creation
+              ? "This creation could not be completed. Ask Benny to check it before trying again."
+              : state?.message)}
         </p>
       )}
       {unavailable && (

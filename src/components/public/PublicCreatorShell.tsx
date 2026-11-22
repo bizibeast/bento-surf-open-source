@@ -99,7 +99,7 @@ export function PublicCreatorShell({
       </div>
       <FontApplier headline={profile.secondary_font} body={profile.primary_font} />
       <div className="mx-auto w-full max-w-6xl px-3 pt-8 lg:px-6 lg:pt-0 lg:pb-0 lg:min-h-[calc(100vh-4rem)]">
-        <div className="grid grid-cols-1 gap-8 lg:grid-cols-[380px_1fr] lg:gap-11 lg:overflow-visible">
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-[380px_minmax(0,1fr)] lg:gap-11 lg:overflow-visible">
           <aside className="flex w-full flex-col items-center text-center text-foreground lg:sticky lg:top-0 lg:self-start lg:items-start lg:text-left lg:overflow-visible lg:min-h-[calc(100vh-4rem)] lg:py-8 lg:pl-1 lg:pr-2">
             {showPhoto &&
               (avatarDeliveryUrl(profile.avatar_url) || safeMediaUrl(profile.avatar_url) ? (
@@ -167,7 +167,7 @@ export function PublicCreatorShell({
             )}
           </aside>
 
-          <main className="lg:pb-32 lg:pt-8">
+          <main className="min-w-0 lg:pb-32 lg:pt-8">
             {documentHeading ? <h1 className="sr-only">{documentHeading}</h1> : null}
             {children}
           </main>

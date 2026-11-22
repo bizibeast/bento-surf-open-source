@@ -30,7 +30,7 @@ import {
 const requireScheduler = (id: string) =>
   requirePlanEntitlement(id, "postScheduler", "Upgrade to Creator to use the post scheduler.");
 const requireAi = (id: string) =>
-  requirePlanEntitlement(id, "brain", "AI assistance is included with Creator Plus.");
+  requirePlanEntitlement(id, "brain", "AI assistance is included with Creator+.");
 
 export const rewriteSchedulerText = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])

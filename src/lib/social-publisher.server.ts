@@ -1,3 +1,14 @@
+import { INSTAGRAM_AUDIO_GRAPH_URL, instagramAudioAuthorization } from "./instagram-audio.server";
+import {
+  runSocialPublishSequence,
+  type SocialPublishProgress,
+} from "./social-publish-sequence.server";
+import {
+  xThreadReplies,
+  xThreadError,
+  linkedInFirstCommentError,
+  LINKEDIN_COMMENT_SCOPE,
+} from "./scheduler-follow-ups";
 import {
   activateScheduledPostAutoDm,
   reconcileScheduledPostAutoDms,
@@ -18,6 +29,9 @@ import {
   socialRetryDelaySeconds,
   SOCIAL_PROVIDER_DEFINITIONS,
   parseSchedulerMediaSetting,
+  instagramReelAudioFor,
+  instagramCatalogAudioFor,
+  instagramCatalogAudioSchema,
   resolvedYouTubeFormat,
   tiktokCoverTimestampMs,
   youtubeDescriptionForUpload,
@@ -136,7 +150,7 @@ export async function providerJson(url: string, init: RequestInit, provider: Soc
       `${provider} rejected the post`;
     const providerMessage =
       code === "url_ownership_unverified"
-        ? "TikTok rejected the video URL because app.example.com / bento.surf is not verified under URL properties in the TikTok developer app. Verify domain ownership, then retry."
+        ? "TikTok rejected the media URL because your application domain is not verified under URL properties in the TikTok developer app. Verify domain ownership, then retry."
         : code === "unaudited_client_can_only_post_to_private_accounts"
           ? "Unaudited / sandbox TikTok apps can only post when the TikTok account is private and privacy is Only me (SELF_ONLY)."
           : code === "privacy_level_option_mismatch"
@@ -260,6 +274,17 @@ export function buildInstagramMediaParams(
     params.set("video_url", media.url);
     const cover = parseSchedulerMediaSetting(settings.cover);
     if (cover?.url) params.set("cover_url", cover.url);
+    const audio = instagramCatalogAudioSchema.safeParse(settings.catalogAudio);
+    if (audio.success) {
+      params.set(
+        "audio_configuration",
+        JSON.stringify({
+          audio_id: audio.data.audioId,
+          audio_volume: audio.data.trackVolume,
+          video_volume: audio.data.originalVolume,
+        }),
+      );
+    }
     if (settings.trialReel === true) {
       const graduationStrategy: InstagramTrialGraduationStrategy =
         settings.graduationStrategy === "SS_PERFORMANCE" ? "SS_PERFORMANCE" : "MANUAL";
@@ -277,6 +302,7 @@ async function publishInstagram(
   body: string,
   media: SchedulerMedia[],
   settings: Record<string, unknown> = {},
+  graphUrl = "https://graph.instagram.com/v25.0",
 ) {
   if (!media.length)
     throw new ProviderError("Instagram needs an image or video.", "media_required", false);
@@ -310,7 +336,7 @@ async function publishInstagram(
     const params = buildInstagramMediaParams(body, first, settings);
     params.set("access_token", token);
     const created = await providerJson(
-      `https://graph.instagram.com/v25.0/${userId}/media`,
+      `${graphUrl}/${userId}/media`,
       {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -337,7 +363,7 @@ async function publishInstagram(
       childParams.set("image_url", item.url);
     }
     const child = await providerJson(
-      `https://graph.instagram.com/v25.0/${userId}/media`,
+      `${graphUrl}/${userId}/media`,
       {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -357,7 +383,7 @@ async function publishInstagram(
   }
 
   const created = await providerJson(
-    `https://graph.instagram.com/v25.0/${userId}/media`,
+    `${graphUrl}/${userId}/media`,
     {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -376,9 +402,14 @@ async function publishInstagram(
   return { id: containerId, pending: true };
 }
 
-async function finishInstagram(userId: string, containerId: string, token: string) {
+async function finishInstagram(
+  userId: string,
+  containerId: string,
+  token: string,
+  graphUrl = "https://graph.instagram.com/v25.0",
+) {
   const statusResult = await providerJson(
-    `https://graph.instagram.com/v25.0/${containerId}?fields=status_code,status&access_token=${encodeURIComponent(token)}`,
+    `${graphUrl}/${containerId}?fields=status_code,status&access_token=${encodeURIComponent(token)}`,
     { method: "GET" },
     "instagram",
   );
@@ -405,7 +436,7 @@ async function finishInstagram(userId: string, containerId: string, token: strin
     return { id: containerId, pending: true };
   }
   const published = await providerJson(
-    `https://graph.instagram.com/v25.0/${userId}/media_publish`,
+    `${graphUrl}/${userId}/media_publish`,
     {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -441,12 +472,78 @@ async function publishFacebook(
   return { id, url: id ? `https://www.facebook.com/${id.replace("_", "/posts/")}` : undefined };
 }
 
-async function publishLinkedIn(
+function sequenceCheckpoint(target: any) {
+  return async (progress: SocialPublishProgress) => {
+    const root = progress.completed[0];
+    const { data, error } = await (supabaseAdmin as any)
+      .from("social_post_targets")
+      .update({
+        publish_progress: progress,
+        ...(root ? { remote_post_id: root.id, remote_post_url: root.url || null } : {}),
+      })
+      .eq("id", target.id)
+      .eq("idempotency_key", target.idempotency_key)
+      .eq("status", "publishing")
+      .select("id")
+      .maybeSingle();
+    if (error || !data) throw new Error("Publishing progress could not be saved.");
+    target.publish_progress = progress;
+    if (root) {
+      target.remote_post_id = root.id;
+      target.remote_post_url = root.url;
+    }
+  };
+}
+
+export async function publishLinkedIn(
   author: string,
   token: string,
   body: string,
   media: SchedulerMedia[],
-) {
+  settings: Record<string, unknown> = {},
+  target: any = {},
+): Promise<PublishResult> {
+  const commentError = linkedInFirstCommentError(settings);
+  if (commentError) throw new ProviderError(commentError, "comment_invalid", false);
+  const firstComment =
+    typeof settings.firstComment === "string" ? settings.firstComment.trim() : "";
+  if (firstComment) {
+    if (!target.connection?.scopes?.includes(LINKEDIN_COMMENT_SCOPE))
+      throw new ProviderError(
+        "Reconnect LinkedIn with comment access before publishing a first comment.",
+        "comment_scope_required",
+        false,
+      );
+    return runSocialPublishSequence(
+      target.publish_progress,
+      [
+        () => publishLinkedIn(author, token, body, media),
+        async (original) => {
+          const { data, response } = await providerJson(
+            `https://api.linkedin.com/rest/socialActions/${encodeURIComponent(original!.id)}/comments`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+                "X-Restli-Protocol-Version": "2.0.0",
+                "LinkedIn-Version": process.env.LINKEDIN_API_VERSION?.trim() || "202606",
+              },
+              body: JSON.stringify({
+                actor: author,
+                object: original!.id,
+                message: { text: firstComment },
+              }),
+            },
+            "linkedin",
+          );
+          return { id: response.headers.get("x-restli-id") || String(data.id || "") };
+        },
+      ],
+      sequenceCheckpoint(target),
+    );
+  }
+
   const version = process.env.LINKEDIN_API_VERSION?.trim() || "202606";
   const linkedInHeaders = {
     Authorization: `Bearer ${token}`,
@@ -1162,7 +1259,36 @@ export async function publishX(
   title: string,
   settings: Record<string, unknown>,
   target: any,
-) {
+): Promise<PublishResult> {
+  const threadError = xThreadError(body, settings);
+  if (threadError) throw new ProviderError(threadError, "thread_invalid", false);
+  const replies = xThreadReplies(settings);
+  if (replies) {
+    const communityError = xCommunityError(settings);
+    if (communityError) throw new ProviderError(communityError, "community_invalid", false);
+    return runSocialPublishSequence(
+      target.publish_progress,
+      [
+        () => publishX(token, body, media, title, { ...settings, threadReplies: null }, target),
+        ...replies.map((text) => async (previous?: { id: string }) => {
+          const { data } = await providerJson(
+            "https://api.x.com/2/tweets",
+            {
+              method: "POST",
+              headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                text: normalizeDashes(text),
+                reply: { in_reply_to_tweet_id: previous!.id },
+              }),
+            },
+            "twitter",
+          );
+          return { id: String(data.data?.id || data.id || "") };
+        }),
+      ],
+      sequenceCheckpoint(target),
+    );
+  }
   const communityError = xCommunityError(settings);
   if (communityError) throw new ProviderError(communityError, "community_invalid", false);
   const community = xCommunityFromSettings(settings);
@@ -1359,11 +1485,10 @@ async function setYouTubeThumbnail(
   );
   if (!uploaded.ok) {
     const retryable = uploaded.status === 404 || uploaded.status === 429 || uploaded.status >= 500;
-    // Shorts use the same thumbnails.set call. 403 usually means the channel
-    // cannot set Shorts covers yet; the Shorts feed plays the video anyway.
-    if (format === "short" && uploaded.status === 403) return;
     throw new ProviderError(
-      "YouTube accepted the video but rejected the custom thumbnail. Confirm the channel can upload thumbnails, then retry.",
+      format === "short" && uploaded.status === 403
+        ? "YouTube published the Short but rejected its thumbnail. Add it in YouTube Studio on a computer, or remove the thumbnail and retry this destination."
+        : "YouTube accepted the video but rejected the custom thumbnail. Confirm the channel can upload thumbnails, then retry.",
       String(uploaded.status),
       retryable,
       uploaded.status,
@@ -1658,7 +1783,7 @@ export async function loadTikTokCreatorInfo(connection: any) {
   };
 }
 
-const RETRYABLE_TIKTOK_FAILURES = new Set(["internal", "video_pull_failed"]);
+const RETRYABLE_TIKTOK_FAILURES = new Set(["internal", "video_pull_failed", "photo_pull_failed"]);
 
 export function buildTikTokPostInfo(
   body: string,
@@ -1678,9 +1803,49 @@ export function buildTikTokPostInfo(
   };
 }
 
-async function publishTikTok(token: string, body: string, media: SchedulerMedia[], settings: any) {
+export function buildTikTokPhotoPostRequest(
+  body: string,
+  media: SchedulerMedia[],
+  settings: Record<string, unknown>,
+  creator: { commentDisabled: boolean },
+) {
+  return {
+    post_mode: "DIRECT_POST",
+    media_type: "PHOTO",
+    post_info: {
+      description: body,
+      privacy_level: String(settings.privacyLevel || ""),
+      disable_comment: creator.commentDisabled || Boolean(settings.disableComment),
+      auto_add_music: Boolean(settings.autoAddMusic),
+      brand_content_toggle: Boolean(settings.brandContentToggle),
+      brand_organic_toggle: Boolean(settings.brandOrganicToggle),
+    },
+    source_info: {
+      source: "PULL_FROM_URL",
+      photo_cover_index: 0,
+      photo_images: media.map((item) => item.url),
+    },
+    is_aigc: Boolean(settings.isAigc),
+  };
+}
+
+export async function publishTikTok(
+  token: string,
+  body: string,
+  media: SchedulerMedia[],
+  settings: any,
+) {
   const video = media.find((item) => item.mimeType.startsWith("video/"));
-  if (!video) throw new ProviderError("TikTok needs a video.", "video_required", false);
+  if (!media.length)
+    throw new ProviderError("TikTok needs an image or video.", "media_required", false);
+  if (video && media.length !== 1)
+    throw new ProviderError(
+      "TikTok cannot mix images and video in one post.",
+      "invalid_media",
+      false,
+    );
+  if (!video && media.some((item) => !item.mimeType.startsWith("image/")))
+    throw new ProviderError("TikTok photo posts need images only.", "invalid_media", false);
   const creator = await fetchTikTokCreatorInfo(token);
   const allowed = creator.privacyLevelOptions;
   const requested = String(settings?.privacyLevel || "");
@@ -1702,6 +1867,7 @@ async function publishTikTok(token: string, body: string, media: SchedulerMedia[
   }
   const duration = Number(settings?.videoDurationSeconds);
   if (
+    video &&
     Number.isFinite(duration) &&
     creator.maxVideoPostDurationSec > 0 &&
     duration > creator.maxVideoPostDurationSec
@@ -1729,17 +1895,23 @@ async function publishTikTok(token: string, body: string, media: SchedulerMedia[
     );
   }
   const result = await providerJson(
-    "https://open.tiktokapis.com/v2/post/publish/video/init/",
+    video
+      ? "https://open.tiktokapis.com/v2/post/publish/video/init/"
+      : "https://open.tiktokapis.com/v2/post/publish/content/init/",
     {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json; charset=UTF-8",
       },
-      body: JSON.stringify({
-        post_info: buildTikTokPostInfo(body, settings, creator),
-        source_info: { source: "PULL_FROM_URL", video_url: video.url },
-      }),
+      body: JSON.stringify(
+        video
+          ? {
+              post_info: buildTikTokPostInfo(body, settings, creator),
+              source_info: { source: "PULL_FROM_URL", video_url: video.url },
+            }
+          : buildTikTokPhotoPostRequest(body, media, settings, creator),
+      ),
     },
     "tiktok",
   );
@@ -2056,10 +2228,19 @@ async function publish(
   if (socialProviderUsesMock(provider)) {
     return { id: `staging-${target.id}` };
   }
-  const token = await accessTokenForConnection(connection);
   let media = (Array.isArray(post.media) ? post.media : []) as SchedulerMedia[];
   let settings = target.provider_settings || {};
-  if (["instagram", "facebook", "threads"].includes(provider)) {
+  if (provider === "instagram" && settings.reelAudio != null) {
+    const reelAudio = instagramReelAudioFor(media, settings.reelAudio);
+    if (!reelAudio)
+      throw new ProviderError(
+        "Apply the audio mix to the selected Reel video.",
+        "invalid_reel_audio",
+        false,
+      );
+    media = [reelAudio.video];
+  }
+  if (["instagram", "facebook", "threads", "tiktok"].includes(provider)) {
     try {
       // Prepare sequentially so carousels never buffer several originals at once.
       const prepared: SchedulerMedia[] = [];
@@ -2085,6 +2266,24 @@ async function publish(
     }
   }
   const { body, title } = targetPostCopy(post, target.provider_settings || {}, provider, media);
+  if (provider === "instagram" && settings.catalogAudio != null) {
+    if (!instagramCatalogAudioFor(media, connection.id, settings.catalogAudio))
+      throw new ProviderError(
+        "Choose audio for this Reel again.",
+        "invalid_instagram_audio",
+        false,
+      );
+    const audio = await publishingInstagramAudioAuthorization(connection);
+    return publishInstagram(
+      audio.userId,
+      audio.token,
+      body,
+      media,
+      settings,
+      INSTAGRAM_AUDIO_GRAPH_URL,
+    );
+  }
+  const token = await accessTokenForConnection(connection);
   if (provider === "threads")
     return publishThreads(connection.provider_user_id, token, body, media);
   if (provider === "instagram")
@@ -2092,7 +2291,7 @@ async function publish(
   if (provider === "facebook")
     return publishFacebook(connection.provider_user_id, token, body, media);
   if (provider === "linkedin")
-    return publishLinkedIn(connection.provider_user_id, token, body, media);
+    return publishLinkedIn(connection.provider_user_id, token, body, media, settings, target);
   if (provider === "twitter")
     return publishX(token, body, media, title || "", target.provider_settings || {}, target);
   if (provider === "youtube")
@@ -2123,15 +2322,30 @@ export function targetPostCopy(
   };
 }
 
+async function publishingInstagramAudioAuthorization(connection: { id: string; user_id: string }) {
+  const authorization = await instagramAudioAuthorization(connection.user_id, connection.id);
+  if (!authorization)
+    throw new ProviderError(
+      "Reconnect Instagram audio through Facebook and retry this Reel.",
+      "instagram_audio_grant_expired",
+      false,
+    );
+  return authorization;
+}
+
 async function finishPendingPublish(
   provider: SocialProvider,
   connection: any,
   target: any,
 ): Promise<PublishResult> {
-  const token = await accessTokenForConnection(connection);
   const remoteId = String(target.remote_post_id || "");
   if (!remoteId)
     throw new ProviderError("The provider processing ID is missing.", "missing_remote_id", false);
+  if (provider === "instagram" && target.provider_settings?.catalogAudio != null) {
+    const audio = await publishingInstagramAudioAuthorization(connection);
+    return finishInstagram(audio.userId, remoteId, audio.token, INSTAGRAM_AUDIO_GRAPH_URL);
+  }
+  const token = await accessTokenForConnection(connection);
   if (provider === "instagram")
     return finishInstagram(connection.provider_user_id, remoteId, token);
   if (provider === "threads") return finishThreads(connection.provider_user_id, remoteId, token);
@@ -2301,6 +2515,17 @@ export async function processSocialPublishMessage(message: SocialPublishMessage)
             )
           : new ProviderError("Publishing failed unexpectedly.", "unexpected", true);
 
+    if (
+      target.provider === "instagram" &&
+      target.provider_settings?.catalogAudio != null &&
+      (providerError.status === 401 || needsSocialReconnect(providerError))
+    ) {
+      providerError = new ProviderError(
+        "Reconnect Instagram audio through Facebook and retry this Reel.",
+        "instagram_audio_grant_expired",
+        false,
+      );
+    }
     // A rejected request is safe to retry after renewing access. Never repeat an unknown-outcome write.
     if (providerError.status === 401 && !needsSocialReconnect(providerError)) {
       try {

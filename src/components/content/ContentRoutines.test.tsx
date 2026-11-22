@@ -16,6 +16,26 @@ const routines: ContentRoutineView[] = [
 ];
 
 describe("ContentRoutines", () => {
+  it("keeps only routine actions when embedded in Schedule", () => {
+    render(
+      <ContentRoutines
+        embedded
+        routines={[]}
+        timezone="UTC"
+        onSave={vi.fn()}
+        onPause={vi.fn()}
+        onClose={vi.fn()}
+        onSettings={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Close Routines" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Memory preferences" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "New Routine" }));
+    expect(screen.getByLabelText("Name")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "All routines" }));
+    expect(screen.getByRole("button", { name: "New Routine" })).toBeVisible();
+  });
+
   it("creates a custom routine inline and retains instructions after a failed save", async () => {
     const onSave = vi.fn().mockRejectedValue(new Error("Offline"));
     render(

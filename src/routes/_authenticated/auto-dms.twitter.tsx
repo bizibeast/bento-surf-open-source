@@ -303,8 +303,8 @@ function TwitterAutoDmPage() {
             className={`${micro.bannerInfo} mb-6 flex flex-wrap items-center justify-between gap-3`}
           >
             <p className="text-sm">
-              Store includes unlimited Trigger → message automations. Creator and Creator Plus
-              unlock advanced exclusions and conditions.
+              Store includes unlimited Trigger → message automations. Creator and Creator+ unlock
+              advanced exclusions and conditions.
             </p>
             <UpgradeDialog feature="advancedAutoDM" />
           </div>

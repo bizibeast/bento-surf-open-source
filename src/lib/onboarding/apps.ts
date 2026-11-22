@@ -260,7 +260,7 @@ export const APP_GUIDES: AppGuide[] = [
       ),
       step(
         "Enable it with intent",
-        "Preview the rule in its app, then enable it. Advanced follow and email gates are available on Creator and Creator Plus.",
+        "Preview the rule in its app, then enable it. Advanced follow and email gates are available on Creator and Creator+.",
         "any_dm_enabled",
       ),
     ],
@@ -304,24 +304,24 @@ export const APP_GUIDES: AppGuide[] = [
   },
   {
     id: "agent",
-    name: "Agent",
+    name: "Benny",
     path: "/content?tab=agent",
-    benefit: "Turn your context into drafts and decisions you can actually use.",
+    benefit: "Chat, create and schedule with your creator context.",
     entitlement: "contentAgent",
     steps: [
       step(
-        "Bring your Brain",
-        "Your confirmed identity, voice and strategy are already available to Agent. Open Brain to correct anything first.",
+        "Make Benny your own",
+        "Use Memory for your instructions, voice, editing styles and avatar preferences. Add reference files in Context and manage recurring work in Schedule.",
         "brain",
       ),
       step(
         "Start with a saved draft",
-        "Open your onboarding conversation, or ask for a draft for one audience and platform. Review any factual claims.",
+        "Choose a model below the message box and ask Benny to research or draft content. Use the plus menu for files, carousels and Reels.",
         "assistant",
       ),
       step(
         "Move it toward publication",
-        "Edit a draft card and send it to the scheduler as a draft. Add media and choose a time there when you’re ready.",
+        "Edit the result in the conversation, or open its editor. Use Schedule for recurring work and approve publishing actions after reviewing them.",
         "social_draft",
       ),
     ],
@@ -453,13 +453,9 @@ export function appGuideForLocation(
     return APP_GUIDES.find(
       (app) =>
         app.id ===
-        (search.routines
-          ? "routines"
-          : search.tab === "brain"
-            ? "brain"
-            : search.tab === "agent"
-              ? "agent"
-              : "discover"),
+        (search.routines || ["agent", "brain", "studio"].includes(String(search.tab))
+          ? "agent"
+          : "discover"),
     );
   return [...APP_GUIDES]
     .sort((a, b) => b.path.length - a.path.length)

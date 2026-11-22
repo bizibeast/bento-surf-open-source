@@ -36,6 +36,41 @@ describe("Streamable HTTP MCP client", () => {
     expect(fetcher).toHaveBeenCalledTimes(3);
   });
 
+  it("keeps the default fetch receiver compatible with the Worker runtime", async () => {
+    const response = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(json({ jsonrpc: "2.0", id: 1, result: {} }))
+      .mockResolvedValueOnce(new Response(null, { status: 202 }))
+      .mockResolvedValueOnce(json({ jsonrpc: "2.0", id: 2, result: { tools: [] } }));
+    vi.stubGlobal("fetch", function (this: unknown, input, options) {
+      if (this !== undefined && this !== globalThis) throw new TypeError("Illegal invocation");
+      return response(input, options);
+    } satisfies typeof fetch);
+    try {
+      const client = new McpHttpClient({
+        endpoint: "https://mcp.example.com/mcp",
+        accessToken: "access-token",
+      });
+      await expect(client.listTools()).resolves.toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("rejects redirects without forwarding the bearer token", async () => {
+    const endpoint = "https://mcp.example.com/mcp";
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(Response.redirect("https://other.example.com/mcp", 307));
+    const client = new McpHttpClient({ endpoint, accessToken: "access-token", fetch: fetcher });
+
+    await expect(client.listTools()).rejects.toThrow("MCP request failed (307).");
+    expect(fetcher).toHaveBeenCalledExactlyOnceWith(
+      endpoint,
+      expect.objectContaining({ redirect: "manual" }),
+    );
+  });
+
   it("parses JSON-RPC responses delivered as server-sent events", async () => {
     const fetcher = vi
       .fn<typeof fetch>()

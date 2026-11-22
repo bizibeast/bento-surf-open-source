@@ -103,14 +103,39 @@ function sanitizeOriginalFilename(value: string | null) {
   return sanitized || null;
 }
 
+function publicMediaOrigin(origin: string | undefined) {
+  if (!origin) return "";
+  try {
+    const url = new URL(origin);
+    const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    // ponytail: loopback uploads store a root-relative /cdn path so a local
+    // session cannot persist http://localhost into production rows. Callers
+    // that need an absolute URL should pass a public origin.
+    if (
+      host === "localhost" ||
+      host.endsWith(".localhost") ||
+      host === "127.0.0.1" ||
+      host === "::1" ||
+      host === "0.0.0.0"
+    ) {
+      return null;
+    }
+    if (url.protocol === "https:" || url.protocol === "http:") return url.origin;
+  } catch {
+    // Unparseable origins fall through to the canonical host.
+  }
+  return "";
+}
+
 export function mediaObjectUrl(key: string, origin = process.env.VITE_PUBLIC_URL) {
   const safeKey = validateMediaObjectKey(key);
   if (!safeKey) throw new Error("Invalid media object key");
-  const base = (origin || "http://localhost:8080").replace(/\/$/, "");
-  return `${base}${MEDIA_CDN_PATH}${safeKey
+  const path = `${MEDIA_CDN_PATH}${safeKey
     .split("/")
     .map((part) => encodeURIComponent(part))
     .join("/")}`;
+  const base = publicMediaOrigin(origin);
+  return base ? `${base}${path}` : path;
 }
 
 export function getMediaBucket() {
@@ -1025,6 +1050,7 @@ async function completeMultipartUpload(
       return jsonError("Completed upload size does not match the declared upload", 400);
     }
     let storedSize = object.size;
+    let storedType = (object.httpMetadata?.contentType || "").split(";", 1)[0].toLowerCase();
     if (
       env.IMAGES &&
       (kind === "avatar" || kind === "image" || kind === "cover") &&
@@ -1033,6 +1059,7 @@ async function completeMultipartUpload(
     ) {
       const current = await env.MEDIA_BUCKET.get(key);
       const currentType = (current?.httpMetadata?.contentType || "").split(";", 1)[0].toLowerCase();
+      if (currentType) storedType = currentType;
       if (current?.body && OPTIMIZABLE_IMAGE_TYPES.has(currentType)) {
         const source = new Uint8Array(await new Response(current.body).arrayBuffer());
         const optimized = await optimizeImageForStorage(env, source, currentType, kind, userId);
@@ -1048,6 +1075,7 @@ async function completeMultipartUpload(
             customMetadata: { ...(current.customMetadata ?? {}), imageOptimized: "1" },
           });
           storedSize = replaced?.size ?? optimized.bytes.byteLength;
+          storedType = optimized.contentType;
         }
       }
     }
@@ -1060,6 +1088,7 @@ async function completeMultipartUpload(
         key: object.key,
         publicUrl: isPrivate ? null : mediaObjectUrl(object.key, new URL(request.url).origin),
         size: storedSize,
+        mimeType: storedType,
       },
       { status: 201 },
     );
@@ -1234,6 +1263,7 @@ async function uploadMedia(
         ? null
         : mediaObjectUrl(key, new URL(request.url).origin),
       size: object.size,
+      mimeType: storedType,
     },
     { status: 201 },
   );

@@ -8,6 +8,7 @@ import {
   CONNECTED_PAYMENTS_REQUIRED_MESSAGE,
   creatorPaymentsUnlocked,
   normalizePlan,
+  normalizeBillingCatalog,
   planHasEntitlement,
   planLimits,
   STORAGE_ADDON_UNIT_MB,
@@ -28,7 +29,7 @@ export async function getBillingCatalog(userId: string): Promise<BillingCatalog>
     .maybeSingle();
   if (error) throw new Error(error.message);
   // Only an explicit legacy marker can retain the former bundle.
-  return data?.billing_catalog === "legacy" ? "legacy" : "2026-10";
+  return normalizeBillingCatalog(data?.billing_catalog);
 }
 
 export async function hasPlanEntitlement(
@@ -45,7 +46,7 @@ export async function hasPlanEntitlement(
       .maybeSingle(),
   ]);
   if (profile.error) throw new Error(profile.error.message);
-  const catalog = profile.data?.billing_catalog === "legacy" ? "legacy" : "2026-10";
+  const catalog = normalizeBillingCatalog(profile.data?.billing_catalog);
   if (plan === "free" && !billingAllows(profile.data?.billing_lifecycle, "tools")) return false;
   if (entitlement === "oneTapCheckout") {
     if (creatorPaymentsUnlocked({ plan, catalog })) return true;

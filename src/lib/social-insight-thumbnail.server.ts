@@ -50,7 +50,7 @@ export async function durableSocialInsightThumbnailUrl(input: {
       response = await fetch(source, {
         redirect: "manual",
         signal: AbortSignal.timeout(8_000),
-        headers: { Accept: "image/avif,image/webp,image/png,image/jpeg" },
+        headers: { Accept: "image/webp,image/png,image/jpeg" },
       });
       if (response.status >= 300 && response.status < 400) {
         const location = response.headers.get("location");

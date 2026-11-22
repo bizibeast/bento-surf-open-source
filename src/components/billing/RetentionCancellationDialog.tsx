@@ -113,7 +113,7 @@ export function RetentionCancellationDialog({
   const [resultDate, setResultDate] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const planLabel = planName(plan);
+  const planLabel = planName(plan, billing.billingCatalog ?? "2026-10");
   const targetPlan = plan === "creator_plus" ? "creator" : "store";
 
   useEffect(() => {

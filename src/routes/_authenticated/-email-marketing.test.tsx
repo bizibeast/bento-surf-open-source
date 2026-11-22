@@ -515,7 +515,7 @@ describe("Newsletter workspace", () => {
     );
 
     expect(
-      await screen.findByText(/Newsletter is included with Creator and Creator Plus/i),
+      await screen.findByText(/Newsletter is included with Creator and Creator\+/i),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "Overview" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Broadcasts" })).toBeNull();

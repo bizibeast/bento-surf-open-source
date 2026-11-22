@@ -1,3 +1,5 @@
+import { FULLY_MANAGED_BILLING_CATALOG } from "./plans";
+import { selectedBennyEditingModel } from "./benny-models.server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const ids = {
@@ -33,6 +35,7 @@ const payload = {
 };
 
 const mocks = vi.hoisted(() => ({
+  billingCatalog: vi.fn(),
   recordEvent: vi.fn(),
   runTurn: vi.fn(),
   inferBrain: vi.fn(),
@@ -92,7 +95,12 @@ vi.mock("@tanstack/react-start", () => ({
     fn.handler =
       (
         handler: (input: {
-          context: { userId: string; supabase: { scope: string }; accessToken: string };
+          context: {
+            userId: string;
+            workspaceId: string;
+            supabase: { scope: string };
+            accessToken: string;
+          };
           data: unknown;
         }) => unknown,
       ) =>
@@ -100,6 +108,7 @@ vi.mock("@tanstack/react-start", () => ({
         handler({
           context: {
             userId: "owner",
+            workspaceId: "workspace-owner",
             supabase: { scope: "authenticated" },
             accessToken: "user-jwt",
           },
@@ -114,6 +123,10 @@ vi.mock("@/integrations/supabase/client.server", () => ({
 }));
 vi.mock("./content-workspace-analytics.server", () => ({ recordContentEvent: mocks.recordEvent }));
 vi.mock("./content-index.server", () => ({ requestContentIndex: mocks.requestIndex }));
+vi.mock("./plan.server", async (original) => ({
+  ...(await original<typeof import("./plan.server")>()),
+  getBillingCatalog: mocks.billingCatalog,
+}));
 vi.mock("./content-access.server", () => ({
   requireContentWorkspace: mocks.requireContentWorkspace,
 }));
@@ -154,6 +167,7 @@ import {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.billingCatalog.mockResolvedValue(null);
   mocks.queries.length = 0;
   mocks.messageRows = [];
   mocks.rpc.mockResolvedValue({
@@ -185,6 +199,34 @@ describe("content Agent authenticated functions", () => {
       "content-agent-turn",
       "owner",
     );
+  });
+
+  it("preserves native tool context while routing a selected managed model", async () => {
+    mocks.billingCatalog.mockResolvedValue(FULLY_MANAGED_BILLING_CATALOG);
+    mocks.runTurn.mockImplementationOnce(async (input) => {
+      expect(selectedBennyEditingModel()).toBe("anthropic/claude-opus-5.5");
+      expect(input.toolContext).toEqual({
+        userId: "owner",
+        supabase: { scope: "authenticated" },
+        accessToken: "user-jwt",
+      });
+      expect(input.byokTransport).toBeUndefined();
+      return { threadId: ids.thread, result: payload };
+    });
+    await sendContentAgentMessage({
+      data: { text: "Edit my reel", aiModel: "anthropic/claude-opus-5.5" },
+    });
+    expect(mocks.runTurn).toHaveBeenCalledOnce();
+    expect(selectedBennyEditingModel()).toBeUndefined();
+  });
+
+  it("rejects a forged managed model from an ordinary Creator before starting a turn", async () => {
+    await expect(
+      sendContentAgentMessage({
+        data: { text: "Edit my reel", aiModel: "anthropic/claude-opus-5.5" },
+      }),
+    ).rejects.toThrow(/Creator\+/);
+    expect(mocks.runTurn).not.toHaveBeenCalled();
   });
 
   it("creates initial Brain suggestions without confirming them", async () => {
@@ -456,4 +498,21 @@ it("checks the thread revision without rereading message payloads when unchanged
   const result = await getContentAgentThread({ data: { threadId: ids.thread, knownRevision: 7 } });
   expect(result.unchanged).toBe(true);
   expect(mocks.queries.some((q) => q.table === "content_agent_messages")).toBe(false);
+});
+
+it("passes a server-resolved saved revision to the agent while keeping the user's text ordinary", async () => {
+  const entry = { id: ids.connection, revision: 2, title: "My reel", document: { format: "reel" } };
+  const chat = await import("./content-chat.server");
+  const read = vi.spyOn(chat, "readChatContentEntry").mockResolvedValueOnce(entry as never);
+  await sendContentAgentMessage({
+    data: { text: "Make the hook stronger", editingEntryId: ids.connection },
+  });
+  expect(read).toHaveBeenCalledWith("workspace-owner", ids.connection);
+  expect(mocks.runTurn).toHaveBeenCalledWith(
+    expect.objectContaining({
+      text: "Make the hook stronger",
+      intelligence: expect.stringContaining(JSON.stringify(entry)),
+    }),
+  );
+  read.mockRestore();
 });

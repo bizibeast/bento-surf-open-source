@@ -1,5 +1,7 @@
+import type { PublicSocialPlatform } from "./public-social-url";
 import type { TranscriptionResult } from "./transcription-tool";
 
+export const PUBLIC_SOCIAL_MEDIA_PATH = "/public-media";
 export const MEDIA_TOOLS_API_PATH = "/api/tools/media";
 export const MEDIA_DOWNLOAD_EXPIRES_IN_SECONDS = 90;
 export const MEDIA_DOWNLOAD_MAX_ITEMS = 20;
@@ -36,7 +38,7 @@ export const mediaToolSpecsBySlug = {
 
 export type MediaToolSlug = keyof typeof mediaToolSpecsBySlug;
 export type MediaToolSpec = (typeof mediaToolSpecsBySlug)[MediaToolSlug];
-export type MediaToolPlatform = MediaToolSpec["platform"];
+export type MediaToolPlatform = MediaToolSpec["platform"] | PublicSocialPlatform;
 export type ResolvedMediaToolPlatform = Exclude<MediaToolPlatform, "auto">;
 export type MediaToolOperation = MediaToolSpec["operation"];
 export type MediaToolFilter = "all" | "image" | "video";
@@ -53,7 +55,7 @@ export type MediaToolRequest = {
 export type MediaToolDownloadItem = {
   url: string;
   filename: string;
-  mediaType: "video" | "gif" | "image";
+  mediaType: "video" | "gif" | "image" | "document";
 };
 
 export type MediaToolDownloadResult = {
@@ -106,7 +108,9 @@ function isBoundDownloadFilename(urlValue: unknown, filename: unknown, mediaType
       ? lowerFilename.endsWith(".gif")
       : mediaType === "image"
         ? /\.(?:jpe?g|png|webp)$/u.test(lowerFilename)
-        : mediaType === "video" && /\.(?:mp4|webm)$/u.test(lowerFilename);
+        : mediaType === "document"
+          ? lowerFilename.endsWith(".pdf")
+          : mediaType === "video" && /\.(?:mp4|webm)$/u.test(lowerFilename);
   if (!extensionMatches) {
     return false;
   }
@@ -148,7 +152,10 @@ export function isMediaToolDownloadResult(value: unknown): value is MediaToolDow
       (item) =>
         !!item &&
         typeof item === "object" &&
-        (item.mediaType === "video" || item.mediaType === "gif" || item.mediaType === "image") &&
+        (item.mediaType === "video" ||
+          item.mediaType === "gif" ||
+          item.mediaType === "image" ||
+          item.mediaType === "document") &&
         isBoundDownloadFilename(item.url, item.filename, item.mediaType),
     )
   );
@@ -181,3 +188,6 @@ export function isMediaToolTranscriptResult(value: unknown): value is MediaToolT
 export function isMediaToolResult(value: unknown): value is MediaToolResult {
   return isMediaToolDownloadResult(value) || isMediaToolTranscriptResult(value);
 }
+
+/** Direct downloads stream in bounded chunks; AI analysis retains its smaller input limits. */
+export const MEDIA_DOWNLOAD_MAX_BYTES = 5 * 1024 ** 3;

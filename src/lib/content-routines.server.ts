@@ -1,5 +1,8 @@
 import { normalizeCustomerCopy, normalizeDashes } from "./text/dashes";
-import { withProviderBudgetWorkspace } from "./provider-budget.server";
+import {
+  withProviderBudgetWorkspace,
+  withWorkspaceManagedProviderBudget,
+} from "./provider-budget.server";
 import { z } from "zod";
 import { runAiJson } from "./ai-json.server";
 import { loadContentBusinessContext } from "./content-business-context.server";
@@ -591,7 +594,8 @@ export function processContentRoutineRun(
   run: ContentRoutineRun,
   dependencies: ContentRoutineServerDependencies = defaultDependencies,
 ) {
-  return withProviderBudgetWorkspace(run.userId, () =>
-    processContentRoutineRunScoped(run, dependencies),
-  );
+  const execute = () => processContentRoutineRunScoped(run, dependencies);
+  return dependencies === defaultDependencies
+    ? withWorkspaceManagedProviderBudget({ workspaceId: run.userId }, execute)
+    : withProviderBudgetWorkspace(run.userId, execute);
 }

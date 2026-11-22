@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import time
 import uuid
+import sys
 
 root = Path(__file__).resolve().parent.parent
 name = 'bento-cost-test-' + uuid.uuid4().hex[:10]
@@ -59,5 +60,95 @@ update public.provider_budget_policies set daily_limit=10,monthly_limit=10,works
         results = list(pool.map(lambda _: sql("select public.reserve_provider_usage('apimart_images',1,null)").strip(), range(50)))
     assert results.count('t') == 10 and results.count('f') == 40, results
     print('PASS: fail-closed policies, workspace/global boundaries, access grants, chat revisions, cleanup, and 50 concurrent reservations (10 accepted, 40 blocked).')
+
+    sql("""create schema auth;
+create schema private;
+create function auth.role() returns text language sql as $$ select current_user::text $$;
+create table auth.users(id uuid primary key);
+create table public.profiles(
+  id uuid primary key, workspace_status text, billing_lifecycle jsonb,
+  plan_id text, is_pro boolean, trial_ends_at timestamptz, onboarded boolean,
+  billing_catalog text constraint profiles_billing_catalog_check check (billing_catalog in ('legacy', '2026-10'))
+);
+create table public.subscriptions(
+  user_id uuid primary key, plan_id text, status text, trial_ends_at timestamptz,
+  product_id text, billing_interval text, current_period_end timestamptz,
+  dodo_subscription_id text,
+  billing_catalog text constraint subscriptions_billing_catalog_check check (billing_catalog in ('legacy', '2026-10'))
+);
+create table public.workspace_memberships(auth_user_id uuid, workspace_id uuid, role text, status text);
+create table public.bento_instance_settings(edition text);
+create table public.payments(
+  subscription_id text, product_id text, payment_id text, status text,
+  total_amount int, occurred_at timestamptz, refund_status text, currency text,
+  settlement_currency text, settlement_amount int, tax int
+);
+create table public.refunds(payment_id text, amount int, status text, currency text);
+""")
+    sql((root / 'supabase/migrations/20261022025448_reconcile_ai_provider_usage.sql').read_text())
+    sql((root / 'supabase/migrations/20261007152000_retention_checkout_hold.sql').read_text())
+    sql((root / 'supabase/migrations/20261115071441_bento_v2_managed_billing.sql').read_text())
+    owner = 'a1000000-0000-4000-8000-000000000001'
+    workspaces = ['a2000000-0000-4000-8000-000000000001', 'a2000000-0000-4000-8000-000000000002']
+    sql(f"""insert into auth.users values ('{owner}');
+insert into public.profiles(id, workspace_status) values ('{workspaces[0]}','active'), ('{workspaces[1]}','active');
+insert into public.workspace_memberships values
+  ('{owner}', '{workspaces[0]}','owner','active'), ('{owner}', '{workspaces[1]}','owner','active');
+insert into public.bento_instance_settings values ('hosted');
+insert into public.subscriptions values
+  ('{workspaces[0]}','creator_plus','active',null,'managed-fixture','Month',now() + interval '20 days','sub-a','2026-11-managed'),
+  ('{workspaces[1]}','creator_plus','active',null,'managed-fixture','Month',now() + interval '20 days','sub-b','2026-11-managed');
+insert into public.payments(subscription_id, product_id, payment_id, status, total_amount, occurred_at,
+  currency, settlement_currency, settlement_amount, dodo_charge_type, billing_contract_catalog) values
+  ('sub-a','managed-fixture','paid-a','succeeded',9900,now(),'USD','USD',9400,'renewal','2026-11-managed'),
+  ('sub-b','managed-fixture','paid-b','succeeded',9900,now(),'USD','USD',9400,'renewal','2026-11-managed');
+update public.managed_provider_spend_policy set weekly_microusd=10, monthly_microusd=20;
+""")
+
+    def reserve_managed(workspace, attempt_id):
+        return sql(f"""select public.reserve_managed_provider_usage(
+          '{workspace}','{owner}','managed-fixture','{attempt_id}',
+          'ai_microusd',1,1,'openrouter','test-model'
+        )->>'allowed'""").strip()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as pool:
+        managed = list(pool.map(lambda n: reserve_managed(workspaces[n % 2], uuid.uuid4()), range(50)))
+    assert managed.count('true') == 10 and managed.count('false') == 40, managed
+    assert sql("select sum(reserved_microusd) from public.managed_provider_spend_reservations").strip() == '10'
+
+    sql('update public.managed_provider_spend_policy set weekly_microusd=20')
+    same_attempt = uuid.uuid4()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as pool:
+        duplicate = list(pool.map(lambda _: reserve_managed(workspaces[0], same_attempt), range(20)))
+    assert duplicate.count('true') == 1 and duplicate.count('false') == 19, duplicate
+    print('PASS: managed account cap held across 50 parallel requests in two workspaces, and 20 duplicate attempts produced one receipt.')
+
+    if '--heygen-budget' in sys.argv:
+        sql((root / 'supabase/migrations/20261119150313_managed_heygen_meter_provider.sql').read_text())
+        sql((root / 'supabase/tests/managed_heygen_budget.sql').read_text())
+        print('PASS: managed HeyGen shares global/owner caps, reconciles usage and rejects duplicate or unapproved attempts.')
+
+    if '--reel-production' in sys.argv:
+        for filename in (
+            '20261115071612_external_tool_gateway.sql',
+            '20261115160000_content_studio.sql',
+            '20261116091500_studio_carousel_render_jobs.sql',
+            '20261116100000_studio_background_reel_exports.sql',
+            '20261119032310_benny_hyperframes_production.sql',
+        ):
+            sql((root / 'supabase/migrations' / filename).read_text())
+        sql((root / 'supabase/tests/reel_production.sql').read_text())
+        print('PASS: production migration, hard $25 cap, private asset grants, scoped audio references, approval checks, concurrency and idempotent render dispatch.')
+
+    if '--managed-complimentary' in sys.argv:
+        sql("create table public.complimentary_plan_grants(id uuid primary key,user_id uuid unique references public.profiles(id),plan_id text,status text,expires_at timestamptz)")
+        sql((root / 'supabase/migrations/20261119180859_managed_complimentary_creator_plus.sql').read_text())
+        sql((root / 'supabase/tests/managed_complimentary.sql').read_text())
+        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as pool:
+            granted = list(pool.map(lambda n: reserve_managed(workspaces[n % 2], uuid.uuid4()), range(30)))
+        assert granted.count('true') == 5 and granted.count('false') == 25, granted
+        assert sql("select count(*) from public.payments").strip() == '0'
+        print('PASS: explicit complimentary Creator+ funding, no fabricated payments, revocation/expiry/tier/tenant checks, settlement, all caps and 30 parallel requests (5 accepted, 25 denied).')
+
 finally:
     subprocess.run(['docker', 'rm', '-f', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

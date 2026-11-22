@@ -66,3 +66,7 @@ Apply the `20261017190000_auto_dm_delay_and_token_refresh_leases.sql` migration
 before updating your Worker. It also adds server-only coordination for OAuth
 refresh tokens. Temporary provider errors retain the connection; revoked
 permissions or refresh tokens still require the user to reconnect.
+
+## Benny creation harness and self-hosted media
+
+See [the Benny media setup guide](benny-media.md) for persistent creator memory, shared MCP skills, reference analysis, frame collages, HyperFrames rendering, external tools and sound-volume controls. Shared source is aligned with the hosted application; deployment origins, credentials, billing products and customer data belong to each instance.

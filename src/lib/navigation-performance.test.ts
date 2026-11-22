@@ -113,7 +113,7 @@ describe("authenticated navigation performance", () => {
       readFile(stylesSource, "utf8"),
     ]);
     expect(layout).toContain('const compactAppUi = pathname !== "/link"');
-    expect(layout).toContain('FEATUREBASE_CONFIG && pathname !== "/link" && (');
+    expect(layout).toContain('FEATUREBASE_CONFIG && pathname !== "/link" && !agentChat && (');
     expect(root).toContain('String(match.routeId).startsWith("/_authenticated")');
     expect(root).toContain('href="#main-content"');
     expect(root).toContain('id="main-content"');

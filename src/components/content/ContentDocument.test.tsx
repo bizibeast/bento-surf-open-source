@@ -3,6 +3,20 @@ import { describe, expect, it, vi } from "vitest";
 import { ContentDocument, ContentMarkdown } from "./ContentDocument";
 
 describe("Content documents", () => {
+  it("shows formatting only for a selection wholly inside the editable document", () => {
+    render(<ContentDocument label="Memory" value="Select this text" onSave={vi.fn()} />);
+    expect(screen.queryByRole("toolbar", { name: "Document formatting" })).toBeNull();
+    const editor = screen.getByRole("textbox", { name: "Memory" });
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    fireEvent(document, new Event("selectionchange"));
+    expect(screen.getByRole("toolbar", { name: "Document formatting" })).toBeVisible();
+    window.getSelection()!.removeAllRanges();
+    fireEvent(document, new Event("selectionchange"));
+    expect(screen.queryByRole("toolbar", { name: "Document formatting" })).toBeNull();
+  });
   it("renders headings, lists, links, and code as safe prose", () => {
     const { container } = render(
       <ContentMarkdown
@@ -23,7 +37,7 @@ describe("Content documents", () => {
   it("edits visible prose and saves automatically without an Edit or Save step", async () => {
     const onSave = vi.fn();
     render(<ContentDocument label="Instructions" value="A rule" onSave={onSave} />);
-    expect(screen.getByRole("button", { name: "Edit Instructions" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Edit Instructions" })).not.toBeInTheDocument();
     const editor = screen.getByRole("textbox", { name: "Instructions" });
     expect(editor).toHaveTextContent("A rule");
     editor.innerHTML = "<h3>Voice</h3><p>Write <strong>clearly</strong>.</p>";

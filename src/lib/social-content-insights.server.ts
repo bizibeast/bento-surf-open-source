@@ -4,6 +4,11 @@ import { readResponseText } from "./request-security.server";
 import { socialApiErrorMessage, socialApiPayloadHasError } from "./social-provider-response";
 import { ProviderError } from "./social-publisher.server";
 import { contentMediaSources, type ContentMediaSource } from "./content-media";
+import {
+  socialDetailMetrics,
+  socialMetricValue,
+  type SocialDetailMetrics,
+} from "./social-insights-metrics";
 import type { SocialProvider } from "./social-scheduler";
 
 export type SocialContentInsight = {
@@ -25,6 +30,7 @@ export type SocialContentInsight = {
   saves: number | null;
   fetchedAt: string;
   mediaSources?: ContentMediaSource[];
+  detailMetrics?: SocialDetailMetrics;
 };
 
 function graphPostMedia(item: any): ContentMediaSource[] {
@@ -76,6 +82,7 @@ export type LinkedInPostMetric =
 export type SocialContentInsightsPage = {
   content: SocialContentInsight[];
   nextCursor: string | null;
+  archiveCursor?: string | null;
 };
 
 type CursorState = Record<string, string | number | boolean>;
@@ -269,17 +276,60 @@ function unavailableItemInsights(error: unknown) {
   return { data: [] };
 }
 
+function graphThumbnail(item: any, kind: string): string | null {
+  const child = item.children?.data?.[0];
+  if (kind === "VIDEO") return item.thumbnail_url || null;
+  return (
+    item.thumbnail_url ||
+    item.media_url ||
+    child?.thumbnail_url ||
+    (String(child?.media_type).toUpperCase() === "IMAGE" ? child.media_url : null)
+  );
+}
+
 function metricMap(payload: any) {
   return new Map<string, number | null>(
     (Array.isArray(payload?.data) ? payload.data : []).map((metric: any) => [
       metric.name,
-      count(metric.total_value?.value ?? metric.values?.at(-1)?.value),
+      socialMetricValue(metric.total_value?.value ?? metric.values?.at(-1)?.value) ?? null,
     ]),
   );
 }
 
 const INSTAGRAM_PAGE_SIZE = 6;
 const INSTAGRAM_POST_METRICS = ["views", "reach", "total_interactions", "saved", "shares"];
+const INSTAGRAM_REEL_METRICS = [
+  "reels_skip_rate",
+  "ig_reels_avg_watch_time",
+  "ig_reels_video_view_total_time",
+];
+
+async function graphPostMetrics(
+  endpoint: string,
+  token: string,
+  required: string[],
+  optional: string[],
+) {
+  const read = (metrics: string[]) =>
+    providerJson(`${endpoint}?metric=${metrics.join(",")}`, token);
+  const [base, extra] = await Promise.all([
+    read(required).catch(unavailableItemInsights),
+    optional.length ? read(optional).catch(unavailableItemInsights) : null,
+  ]);
+  const baseMetrics = metricMap(base);
+  // Some older media rejects a metric combination. Keep every supported metric.
+  if (!required.some((key) => baseMetrics.has(key))) {
+    const entries = await Promise.all(
+      required.map((metric) => read([metric]).catch(unavailableItemInsights).then(metricMap)),
+    );
+    for (const entry of entries) for (const [key, value] of entry) baseMetrics.set(key, value);
+  }
+  return new Map([...baseMetrics, ...metricMap(extra)]);
+}
+
+function seconds(milliseconds: number | null | undefined) {
+  return milliseconds == null ? undefined : milliseconds / 1000;
+}
 
 async function fetchInstagram(
   connection: any,
@@ -295,7 +345,7 @@ async function fetchInstagram(
   );
   url.searchParams.set(
     "fields",
-    "id,caption,media_type,thumbnail_url,media_url,permalink,timestamp,like_count,comments_count,children{id,media_type,media_url,thumbnail_url}",
+    "id,caption,media_type,media_product_type,thumbnail_url,media_url,permalink,timestamp,like_count,comments_count,children{id,media_type,media_url,thumbnail_url}",
   );
   url.searchParams.set("limit", String(INSTAGRAM_PAGE_SIZE));
   let page = await graphPage(url, token, typeof state.after === "string" ? state.after : undefined);
@@ -308,16 +358,20 @@ async function fetchInstagram(
   }
   const media = page.items.slice(0, INSTAGRAM_PAGE_SIZE);
   const items = await mapInBatches(media, 6, async (item: any): Promise<ProviderContentInsight> => {
-    const metricEntries = await Promise.all(
-      INSTAGRAM_POST_METRICS.map(async (metric) => {
-        const insights = await providerJson(
-          `https://graph.instagram.com/${version}/${encodeURIComponent(item.id)}/insights?metric=${metric}`,
-          token,
-        ).catch(unavailableItemInsights);
-        return [metric, metricMap(insights).get(metric) ?? null] as const;
-      }),
+    const reel = String(item.media_product_type).toUpperCase() === "REELS";
+    const metrics = await graphPostMetrics(
+      `https://graph.instagram.com/${version}/${encodeURIComponent(item.id)}/insights`,
+      token,
+      INSTAGRAM_POST_METRICS,
+      reel ? INSTAGRAM_REEL_METRICS : ["follows", "profile_visits"],
     );
-    const metrics = new Map(metricEntries);
+    // Reposts were introduced independently of the legacy media metrics.
+    const reposts = metricMap(
+      await providerJson(
+        `https://graph.instagram.com/${version}/${encodeURIComponent(item.id)}/insights?metric=reposts`,
+        token,
+      ).catch(unavailableItemInsights),
+    ).get("reposts");
     const likes = count(item.like_count) ?? metrics.get("likes") ?? null;
     const comments = count(item.comments_count) ?? metrics.get("comments") ?? null;
     const shares = metrics.get("shares") ?? null;
@@ -335,7 +389,7 @@ async function fetchInstagram(
               ? "image"
               : "other",
       caption: item.caption || null,
-      thumbnailUrl: item.thumbnail_url || item.media_url || null,
+      thumbnailUrl: graphThumbnail(item, kind),
       mediaSources: graphPostMedia(item),
       publishedAt: item.timestamp,
       views: metrics.get("views") ?? null,
@@ -346,6 +400,14 @@ async function fetchInstagram(
       comments,
       shares,
       saves,
+      detailMetrics: socialDetailMetrics({
+        reposts,
+        follows: metrics.get("follows"),
+        profileVisits: metrics.get("profile_visits"),
+        skipRate: metrics.get("reels_skip_rate"),
+        averageWatchSeconds: seconds(metrics.get("ig_reels_avg_watch_time")),
+        watchSeconds: seconds(metrics.get("ig_reels_video_view_total_time")),
+      }),
     };
   });
   return {
@@ -389,36 +451,72 @@ async function fetchFacebook(
     );
     page = await graphPage(url, token, typeof state.after === "string" ? state.after : undefined);
   }
-  const items = page.items.slice(0, 25).map((item: any): ProviderContentInsight => {
-    const metrics = metricMap(item.insights);
-    const likes = count(item.reactions?.summary?.total_count);
-    const comments = count(item.comments?.summary?.total_count);
-    const shares = count(item.shares?.count);
-    const mediaType = String(item.attachments?.data?.[0]?.media_type || "").toLowerCase();
-    return {
-      remotePostId: String(item.id),
-      remotePostUrl: item.permalink_url || null,
-      contentType: mediaType.includes("video")
-        ? "video"
-        : item.full_picture
-          ? "image"
-          : item.message
-            ? "text"
-            : "other",
-      caption: item.message || null,
-      thumbnailUrl: item.full_picture || null,
-      mediaSources: facebookPostMedia(item),
-      publishedAt: item.created_time,
-      views: metrics.get("post_media_view") ?? null,
-      impressions: null,
-      reach: metrics.get("post_total_media_view_unique") ?? null,
-      engagements: sum(likes, comments, shares),
-      likes,
-      comments,
-      shares,
-      saves: null,
-    };
-  });
+  const items = await mapInBatches(
+    page.items.slice(0, 25),
+    5,
+    async (item: any): Promise<ProviderContentInsight> => {
+      const metrics = metricMap(item.insights);
+      const likes = count(item.reactions?.summary?.total_count);
+      const comments = count(item.comments?.summary?.total_count);
+      const shares = count(item.shares?.count);
+      const attachment = item.attachments?.data?.[0];
+      const mediaType = String(attachment?.media_type || attachment?.type || "").toLowerCase();
+      const isVideo = /video|reel/.test(mediaType);
+      const videoId = attachment?.target?.id;
+      const reel = mediaType.includes("reel") || /\/reels?\//.test(item.permalink_url || "");
+      const videoMetrics =
+        isVideo && videoId && scopes.has("read_insights")
+          ? metricMap(
+              await providerJson(
+                `https://graph.facebook.com/${version}/${encodeURIComponent(videoId)}/video_insights?metric=${
+                  reel
+                    ? "post_video_avg_time_watched,post_video_view_time,blue_reels_play_count"
+                    : "total_video_avg_time_watched,total_video_view_total_time,total_video_30s_views"
+                }`,
+                token,
+              ).catch(unavailableItemInsights),
+            )
+          : new Map<string, number | null>();
+      return {
+        remotePostId: String(item.id),
+        remotePostUrl: item.permalink_url || null,
+        contentType: isVideo
+          ? "video"
+          : item.full_picture
+            ? "image"
+            : item.message
+              ? "text"
+              : "other",
+        caption: item.message || null,
+        thumbnailUrl:
+          item.full_picture ||
+          attachment?.media?.image?.src ||
+          attachment?.subattachments?.data?.[0]?.media?.image?.src ||
+          null,
+        mediaSources: facebookPostMedia(item),
+        publishedAt: item.created_time,
+        views: metrics.get("post_media_view") ?? videoMetrics.get("blue_reels_play_count") ?? null,
+        impressions: null,
+        reach: metrics.get("post_total_media_view_unique") ?? null,
+        engagements: sum(likes, comments, shares),
+        likes,
+        comments,
+        shares,
+        saves: null,
+        detailMetrics: socialDetailMetrics({
+          averageWatchSeconds: seconds(
+            videoMetrics.get("post_video_avg_time_watched") ??
+              videoMetrics.get("total_video_avg_time_watched"),
+          ),
+          watchSeconds: seconds(
+            videoMetrics.get("post_video_view_time") ??
+              videoMetrics.get("total_video_view_total_time"),
+          ),
+          qualifiedViews: videoMetrics.get("total_video_30s_views"),
+        }),
+      };
+    },
+  );
   return { items, nextState: page.after ? { after: page.after } : null };
 }
 
@@ -450,23 +548,16 @@ async function fetchThreads(
     page.items.slice(0, 6),
     6,
     async (item: any): Promise<ProviderContentInsight> => {
-      const entries = await Promise.all(
-        ["views", "likes", "replies", "reposts", "quotes", "shares"].map(async (metric) => {
-          const insights = await providerJson(
-            `https://graph.threads.net/v1.0/${encodeURIComponent(item.id)}/insights?metric=${metric}`,
-            token,
-          ).catch(unavailableItemInsights);
-          return [metric, metricMap(insights).get(metric) ?? null] as const;
-        }),
+      const metrics = await graphPostMetrics(
+        `https://graph.threads.net/v1.0/${encodeURIComponent(item.id)}/insights`,
+        token,
+        ["views", "likes", "replies", "reposts", "quotes"],
+        ["follows", "profile_visits"],
       );
-      const metrics = new Map(entries);
       const likes = metrics.get("likes") ?? null;
       const comments = metrics.get("replies") ?? null;
-      const shares = sum(
-        metrics.get("reposts") ?? null,
-        metrics.get("quotes") ?? null,
-        metrics.get("shares") ?? null,
-      );
+      const reposts = metrics.get("reposts") ?? null;
+      const quotes = metrics.get("quotes") ?? null;
       const kind = String(item.media_type || "").toUpperCase();
       return {
         remotePostId: String(item.id),
@@ -480,16 +571,22 @@ async function fetchThreads(
                 ? "carousel"
                 : "text",
         caption: item.text || null,
-        thumbnailUrl: item.thumbnail_url || item.media_url || null,
+        thumbnailUrl: graphThumbnail(item, kind),
         mediaSources: graphPostMedia(item),
         publishedAt: item.timestamp,
         views: metrics.get("views") ?? null,
         impressions: null,
         reach: null,
-        engagements: sum(likes, comments, shares),
+        engagements: sum(likes, comments, reposts, quotes),
         likes,
         comments,
-        shares,
+        shares: sum(reposts, quotes),
+        detailMetrics: socialDetailMetrics({
+          reposts,
+          quotes,
+          follows: metrics.get("follows"),
+          profileVisits: metrics.get("profile_visits"),
+        }),
         saves: null,
       };
     },
@@ -504,7 +601,7 @@ async function fetchTikTok(
 ): Promise<ProviderPage> {
   const cursor = typeof state.cursor === "number" ? state.cursor : undefined;
   const payload = await providerJson(
-    "https://open.tiktokapis.com/v2/video/list/?fields=id,create_time,cover_image_url,share_url,video_description,title,like_count,comment_count,share_count,view_count",
+    "https://open.tiktokapis.com/v2/video/list/?fields=id,create_time,cover_image_url,share_url,video_description,title,duration,like_count,comment_count,share_count,view_count",
     token,
     { method: "POST", body: { max_count: 20, ...(cursor !== undefined ? { cursor } : {}) } },
   );
@@ -536,6 +633,7 @@ async function fetchTikTok(
         comments,
         shares,
         saves: null,
+        detailMetrics: socialDetailMetrics({ durationSeconds: item.duration }),
       },
     ];
   });
@@ -544,6 +642,20 @@ async function fetchTikTok(
     items,
     nextState: payload.data?.has_more && next !== null ? { cursor: next } : null,
   };
+}
+
+export async function fetchTikTokInsightCovers(token: string, ids: string[]) {
+  const payload = await providerJson(
+    "https://open.tiktokapis.com/v2/video/query/?fields=id,cover_image_url",
+    token,
+    { method: "POST", body: { filters: { video_ids: ids } } },
+  );
+  const covers: Record<string, string> = {};
+  for (const video of Array.isArray(payload.data?.videos) ? payload.data.videos : []) {
+    if (ids.includes(video.id) && typeof video.cover_image_url === "string")
+      covers[video.id] = video.cover_image_url;
+  }
+  return covers;
 }
 
 async function fetchTwitter(
@@ -568,7 +680,10 @@ async function fetchTwitter(
   url.searchParams.set("exclude", "retweets,replies");
   url.searchParams.set("tweet.fields", "created_at,public_metrics,attachments");
   url.searchParams.set("expansions", "attachments.media_keys");
-  url.searchParams.set("media.fields", "media_key,type,url,preview_image_url,variants");
+  url.searchParams.set(
+    "media.fields",
+    "media_key,type,url,preview_image_url,variants,public_metrics,duration_ms",
+  );
   if (/^\d{1,30}$/.test(sinceId)) url.searchParams.set("since_id", sinceId);
   if (typeof state.paginationToken === "string")
     url.searchParams.set("pagination_token", state.paginationToken);
@@ -585,7 +700,8 @@ async function fetchTwitter(
     const metrics = item.public_metrics || {};
     const likes = count(metrics.like_count);
     const comments = count(metrics.reply_count);
-    const shares = sum(count(metrics.retweet_count), count(metrics.quote_count));
+    const reposts = count(metrics.retweet_count);
+    const quotes = count(metrics.quote_count);
     const attachments = (item.attachments?.media_keys || [])
       .map((key: string) => media.get(key))
       .filter(Boolean);
@@ -619,13 +735,18 @@ async function fetchTwitter(
         thumbnailUrl: attachment?.preview_image_url || attachment?.url || null,
         mediaSources,
         publishedAt: item.created_at,
-        views: null,
+        views: count(attachment?.public_metrics?.view_count),
         impressions: count(metrics.impression_count),
         reach: null,
-        engagements: sum(likes, comments, shares, count(metrics.bookmark_count)),
+        engagements: sum(likes, comments, reposts, quotes, count(metrics.bookmark_count)),
         likes,
         comments,
-        shares,
+        shares: sum(reposts, quotes),
+        detailMetrics: socialDetailMetrics({
+          reposts,
+          quotes,
+          durationSeconds: seconds(attachment?.duration_ms),
+        }),
         saves: count(metrics.bookmark_count),
       },
     ];
@@ -774,14 +895,20 @@ async function fetchYouTube(
     url.searchParams.set("startDate", "2005-04-23");
     url.searchParams.set("endDate", new Date().toISOString().slice(0, 10));
     url.searchParams.set("dimensions", "video");
-    url.searchParams.set("metrics", "views,likes,comments,shares");
+    url.searchParams.set(
+      "metrics",
+      "views,likes,comments,shares,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,subscribersGained,subscribersLost,videosAddedToPlaylists",
+    );
     url.searchParams.set("filters", `video==${ids.join(",")}`);
     url.searchParams.set("maxResults", "50");
     const payload = await providerJson(url, token).catch(() => null);
     const headers = (payload?.columnHeaders || []).map((header: any) => header.name);
     for (const row of Array.isArray(payload?.rows) ? payload.rows : []) {
       const values = Object.fromEntries(
-        headers.map((header: string, index: number) => [header, count(row[index])]),
+        headers.map((header: string, index: number) => [
+          header,
+          socialMetricValue(row[index]) ?? null,
+        ]),
       );
       if (typeof row[headers.indexOf("video")] === "string")
         analytics.set(row[headers.indexOf("video")], values);
@@ -800,7 +927,10 @@ async function fetchYouTube(
         contentType: "video",
         caption: item.snippet?.title || item.snippet?.description || null,
         thumbnailUrl:
-          item.snippet?.thumbnails?.high?.url || item.snippet?.thumbnails?.medium?.url || null,
+          item.snippet?.thumbnails?.high?.url ||
+          item.snippet?.thumbnails?.medium?.url ||
+          item.snippet?.thumbnails?.default?.url ||
+          null,
         mediaSources: contentMediaSources(
           item.snippet?.thumbnails?.high?.url
             ? [{ id: `${item.id}:cover`, type: "thumbnail", url: item.snippet.thumbnails.high.url }]
@@ -815,6 +945,17 @@ async function fetchYouTube(
         comments,
         shares,
         saves: null,
+        detailMetrics: socialDetailMetrics({
+          follows: report?.subscribersGained,
+          unfollows: report?.subscribersLost,
+          watchSeconds:
+            report?.estimatedMinutesWatched == null
+              ? undefined
+              : report.estimatedMinutesWatched * 60,
+          averageWatchSeconds: report?.averageViewDuration,
+          averageViewedPercent: report?.averageViewPercentage,
+          playlistAdds: report?.videosAddedToPlaylists,
+        }),
       },
     ];
   });
@@ -877,6 +1018,7 @@ export async function fetchSocialContentInsightsPage(
   connection: any,
   token: string,
   cursor?: string | null,
+  trackArchive = false,
 ): Promise<SocialContentInsightsPage> {
   const provider = connection.provider as SocialProvider;
   const state = decodeCursor(provider, cursor);
@@ -892,6 +1034,10 @@ export async function fetchSocialContentInsightsPage(
   else if (provider === "twitter") page = await fetchTwitter(connection, token, state);
   else if (provider === "youtube") page = await fetchYouTube(connection, token, state);
   else if (provider === "reddit") page = await fetchReddit(connection, token, state);
+  const nextState =
+    page.nextState && Object.entries(page.nextState).some(([key, value]) => state[key] !== value)
+      ? page.nextState
+      : null;
   const fetchedAt = new Date().toISOString();
   return {
     content: page.items.map((item) => ({
@@ -900,10 +1046,13 @@ export async function fetchSocialContentInsightsPage(
       provider,
       fetchedAt,
     })),
+    ...(trackArchive && {
+      archiveCursor: encodeCursor(provider, nextState && { ...nextState, budgetPage: 1 }),
+    }),
     nextCursor: encodeCursor(
       provider,
-      page.nextState && completedPages + 1 < pageLimit
-        ? { ...page.nextState, budgetPage: completedPages + 1 }
+      nextState && completedPages + 1 < pageLimit
+        ? { ...nextState, budgetPage: completedPages + 1 }
         : null,
     ),
   };

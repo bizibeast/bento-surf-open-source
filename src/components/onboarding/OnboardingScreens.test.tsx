@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { FirstDraft, OnboardingPlanChoices } from "./OnboardingScreens";
 import { onboardingBriefSchema } from "@/lib/onboarding/brief";
 import type { PaidPlanId, BillingPeriod } from "@/lib/plans";
@@ -10,7 +10,13 @@ it("shows all three selectable plans immediately and updates annual pricing", ()
     const [plan, setPlan] = useState<PaidPlanId>("creator_plus");
     const [period, setPeriod] = useState<BillingPeriod>("monthly");
     return (
-      <OnboardingPlanChoices plan={plan} period={period} onPlan={setPlan} onPeriod={setPeriod} />
+      <OnboardingPlanChoices
+        managedAvailable
+        plan={plan}
+        period={period}
+        onPlan={setPlan}
+        onPeriod={setPeriod}
+      />
     );
   }
   render(<Choices />);
@@ -19,7 +25,7 @@ it("shows all three selectable plans immediately and updates annual pricing", ()
   expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: /^Store / })).toBeVisible();
   expect(screen.getByRole("button", { name: /^Creator \$/ })).toBeVisible();
-  expect(screen.getByRole("button", { name: /^Creator Plus / })).toHaveAttribute(
+  expect(screen.getByRole("button", { name: /^Creator\+ / })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
@@ -60,4 +66,21 @@ it("shows the owned Instagram photo inside the LinkedIn draft", () => {
     "https://www.instagram.com/p/owned",
   );
   expect(screen.getByText("A publishable lesson from my own work.")).toBeVisible();
+});
+
+it("keeps unavailable Creator+ visible without selecting or checking it out", () => {
+  const select = vi.fn();
+  render(
+    <OnboardingPlanChoices
+      plan="creator"
+      period="monthly"
+      managedAvailable={false}
+      onPlan={select}
+      onPeriod={vi.fn()}
+    />,
+  );
+  const managed = screen.getByRole("button", { name: "Creator+ $99/month" });
+  expect(managed).toBeDisabled();
+  fireEvent.click(managed);
+  expect(select).not.toHaveBeenCalled();
 });

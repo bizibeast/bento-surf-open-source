@@ -49,6 +49,7 @@ vi.mock("@/components/settings/AnalyticsSettingsPanel", () => ({
 }));
 vi.mock("../login", () => ({ Field: () => null }));
 // jsdom has no pointer geometry. Exercise the route's real drag/resize callbacks at the grid boundary.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const grid = vi.hoisted(() => ({ props: {} as Record<string, any>, real: false }));
 vi.mock("react-grid-layout/legacy", async (importOriginal) => {
   const { default: ActualGrid } = await importOriginal<typeof import("react-grid-layout/legacy")>();
@@ -362,27 +363,27 @@ describe("Link internal page canvases", () => {
     });
   });
 
-  it("packs and resizes system tiles on Phone without overwriting the desktop layout", async () => {
+  it("packs Phone view from the saved layout and saves size changes at the desktop coordinates", async () => {
     await renderEditor();
     await screen.findByRole("article", { name: "calendar introduction" });
     fireEvent.click(screen.getByRole("button", { name: "Phone view" }));
     await waitFor(() => expect(grid.props.cols).toBe(4));
     expect(grid.props.layout).toEqual([
-      expect.objectContaining({ i: "system:intro", x: 0, y: 0, w: 4, h: 2 }),
+      expect.objectContaining({ i: "system:intro", x: 0, y: 0, w: 4, h: 2, isDraggable: false }),
       expect.objectContaining({ i: blockId, x: 0, y: 2, w: 2, h: 2 }),
     ]);
     const intro = screen
       .getByRole("article", { name: "calendar introduction" })
       .closest("[data-system-item-key]") as HTMLElement;
     fireEvent.click(within(intro).getByRole("button", { name: "4×4" }));
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 450));
-    });
-    expect(saveMySystemPageLayout).not.toHaveBeenCalled();
-    expect(updateBlockLayout).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(saveMySystemPageLayout).toHaveBeenCalledWith({
+        data: { pageId, items: [{ itemKey: "intro", x: 0, y: 0, w: 4, h: 4, position: 0 }] },
+      }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Laptop view" }));
     expect(grid.props.layout).toContainEqual(
-      expect.objectContaining({ i: "system:intro", x: 0, y: 0, w: 4, h: 2 }),
+      expect.objectContaining({ i: "system:intro", x: 0, y: 0, w: 4, h: 4 }),
     );
   });
 

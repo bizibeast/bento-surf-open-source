@@ -71,5 +71,21 @@ describe("homeDashboardFromRows", () => {
       refundedAmount: 1000,
       occurredAt: "2026-08-17T08:00:00Z",
     });
+    expect(dashboard.weekly).toBeNull();
+  });
+
+  it("accepts weekly aggregates independently of the existing activity previews", () => {
+    const weekly = {
+      startedAt: "2026-11-11T12:00:00Z",
+      endedAt: "2026-11-18T12:00:00Z",
+      followers: { current: 1003, previous: 2 },
+      leads: { current: 0, previous: 1 },
+      revenue: [{ currency: "usd", current: 2500, previous: 1000 }],
+    };
+    const dashboard = homeDashboardFromRows([], [], [], [], { weekly });
+    expect(dashboard.weekly).toEqual(weekly);
+    expect(dashboard.pulse.posts.current).toBe(0);
+    expect(dashboard.posts).toEqual([]);
+    expect(homeDashboardFromRows([], [], [], [], { weekly: { error: true } }).weekly).toBeNull();
   });
 });

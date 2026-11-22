@@ -217,7 +217,7 @@ function AuthLayout() {
   const pathname = location.pathname;
   const contentSearch = location.search as { tab?: string; routines?: boolean };
   const agentChat =
-    pathname === "/content" && contentSearch.tab === "agent" && !contentSearch.routines;
+    pathname === "/content" && ["agent", "brain", "studio"].includes(contentSearch.tab ?? "");
   const contentViewport = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -378,7 +378,7 @@ function AuthLayout() {
             <Outlet />
           </div>
         )}
-        {FEATUREBASE_CONFIG && pathname !== "/link" && (
+        {FEATUREBASE_CONFIG && pathname !== "/link" && !agentChat && (
           <FeaturebaseHub portalUrl={FEATUREBASE_CONFIG.portalUrl} inAppShell={showSidebar} />
         )}
       </div>

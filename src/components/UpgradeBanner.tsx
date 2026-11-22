@@ -54,10 +54,11 @@ export function UpgradeBanner({
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold">Do more with your Bento.</p>
             <p className="mt-1 text-[13px] leading-5 text-white/70">
-              Paid plans add selling, post scheduling and content ideas. The Brain and AI drafting
-              are included with Creator Plus only. If you have not had a trial yet, start a{" "}
-              {TRIAL_DAYS}-day trial of the plan you pick. Card, UPI or wallet required. No charge
-              if you cancel before the trial ends.
+              Paid plans add selling, post scheduling and content ideas. Use Benny with your own AI
+              on Creator. Bento-managed AI is included with Creator+. If you have not had a trial
+              yet, start a {TRIAL_DAYS}
+              -day trial of the plan you pick. Card, UPI or wallet required. No charge if you cancel
+              before the trial ends.
             </p>
           </div>
           <button

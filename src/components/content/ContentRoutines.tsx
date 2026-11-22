@@ -224,6 +224,7 @@ export function ContentRoutines({
   onPause,
   onClose,
   onSettings,
+  embedded = false,
 }: {
   routines: ContentRoutineView[];
   timezone: string;
@@ -233,6 +234,7 @@ export function ContentRoutines({
   onPause: (id: string, paused: boolean) => void | Promise<void>;
   onClose: () => void;
   onSettings?: () => void;
+  embedded?: boolean;
 }) {
   const [selection, setSelection] = useState<{
     preset?: Preset;
@@ -277,20 +279,22 @@ export function ContentRoutines({
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {onSettings && (
+            {!embedded && onSettings && (
               <button type="button" className="content-action" onClick={onSettings}>
-                AI images & agent settings
+                Memory preferences
               </button>
             )}
-            <button
-              type="button"
-              onClick={onClose}
-              className="content-action"
-              aria-label="Close Routines"
-            >
-              <ArrowLeft className="size-4" />
-              Agent
-            </button>
+            {!embedded && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="content-action"
+                aria-label="Close Routines"
+              >
+                <ArrowLeft className="size-4" />
+                Agent
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setSelection({})}

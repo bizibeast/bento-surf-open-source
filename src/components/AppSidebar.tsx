@@ -2,11 +2,9 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
   BarChart3,
-  Brain,
   CalendarClock,
   CalendarDays,
   ChevronDown,
-  Clock3,
   Compass,
   House,
   BadgeDollarSign,
@@ -47,7 +45,7 @@ type AppNavItem = {
     | "/earn";
   icon: LucideIcon;
   description: string;
-  contentTab?: "agent" | "brain" | "discover";
+  contentTab?: "agent" | "brain" | "discover" | "studio";
   routines?: boolean;
 };
 
@@ -65,26 +63,18 @@ export const APP_NAV_GROUPS: ReadonlyArray<AppNavGroup> = [
     icon: PanelsTopLeft,
     items: [
       {
-        label: "Agent",
+        label: "Benny",
         to: "/content",
         icon: Bot,
-        description: "Research, write and prepare content",
+        description: "Your creator assistant",
         contentTab: "agent",
       },
       {
-        label: "Brain",
+        label: "Discover",
         to: "/content",
-        icon: Brain,
-        description: "Context and content strategy",
-        contentTab: "brain",
-      },
-      {
-        label: "Routine",
-        to: "/content",
-        icon: Clock3,
-        description: "Automated content preparation",
-        contentTab: "agent",
-        routines: true,
+        icon: Compass,
+        description: "Ideas from the niche and top performers",
+        contentTab: "discover",
       },
       { label: "MCP", to: "/mcp", icon: Bot, description: "Connect an AI agent" },
     ],
@@ -110,13 +100,6 @@ export const APP_NAV_GROUPS: ReadonlyArray<AppNavGroup> = [
         to: "/social-insights",
         icon: BarChart3,
         description: "Audience growth and content performance",
-      },
-      {
-        label: "Discover",
-        to: "/content",
-        icon: Compass,
-        description: "Ideas from the niche and top performers",
-        contentTab: "discover",
       },
     ],
   },
@@ -404,8 +387,7 @@ function isNavItemActive(pathname: string, search: SidebarSearch | undefined, it
     const tab = typeof search?.tab === "string" ? search.tab : "discover";
     return (
       pathname === "/content" &&
-      tab === item.contentTab &&
-      Boolean(search?.routines) === Boolean(item.routines)
+      (item.contentTab === "agent" ? tab !== "discover" : tab === item.contentTab)
     );
   }
   return item.to === "/auto-dms" || item.to === "/email-marketing"
@@ -443,7 +425,15 @@ function SidebarLink({
           : "border border-transparent text-muted-foreground hover:bg-black/[0.035] hover:text-foreground dark:hover:bg-white/[0.06]"
       } ${collapsed ? "lg:justify-center lg:px-0" : nested ? "ml-2 w-[calc(100%-0.5rem)]" : ""}`}
     >
-      <Icon className="size-4 shrink-0" />
+      {label === "Benny" ? (
+        <img
+          src="/mascot/benny-avatar.webp"
+          alt=""
+          className="size-5 shrink-0 rounded-full object-cover"
+        />
+      ) : (
+        <Icon className="size-4 shrink-0" />
+      )}
       {!collapsed && <span className="truncate">{label}</span>}
     </Link>
   );

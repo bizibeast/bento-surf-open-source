@@ -34,17 +34,17 @@ describe("FeaturebaseHub", () => {
     expect(whenReady).not.toHaveBeenCalled();
   });
 
-  it("keeps the launcher inside the app header on mobile", () => {
+  it("keeps the launcher clear of the app header on mobile", () => {
     render(<FeaturebaseHub portalUrl="https://feedback.example" inAppShell />);
 
     expect(
       screen.getByRole("button", { name: "Help, feedback and updates" }).parentElement,
-    ).toHaveClass("right-3", "top-1", "lg:bottom-5", "lg:top-auto");
+    ).toHaveClass("right-3", "bottom-[calc(1rem+env(safe-area-inset-bottom))]", "lg:bottom-5");
   });
 
-  it("offers support, feedback, updates, docs, and roadmap from one launcher", async () => {
+  it.each([false, true])("offers all support actions with inline mode %s", async (inline) => {
     const user = userEvent.setup();
-    render(<FeaturebaseHub portalUrl="https://feedback.example" />);
+    render(<FeaturebaseHub portalUrl="https://feedback.example" inline={inline} />);
 
     expect(screen.getByText("3")).toBeInTheDocument();
 

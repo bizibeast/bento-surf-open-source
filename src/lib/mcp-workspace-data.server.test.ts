@@ -10,7 +10,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/integrations/supabase/client.server", () => ({ supabaseAdmin: { from: mocks.from } }));
 vi.mock("./plan.server", () => ({ getPlan: mocks.getPlan, requirePlanEntitlement: mocks.access }));
 vi.mock("./content-access.server", () => ({ requireContentWorkspace: mocks.access }));
-vi.mock("./request-security.server", () => ({ enforceRequestRateLimit: mocks.rate }));
+vi.mock("./request-security.server", async (original) => ({
+  ...(await original<typeof import("./request-security.server")>()),
+  enforceRequestRateLimit: mocks.rate,
+}));
 
 import { readWorkspaceData } from "./mcp-workspace-data.server";
 import { getAnalyticsWorkspace } from "./mcp.creator-ops.server";
@@ -233,11 +236,12 @@ describe("stored MCP workspace data", () => {
         id: id(1),
         user_id: owner,
         title: "Old saved",
+        source_url: "https://twitter.com/ada/status/42?utm_source=saved",
         feedback: "pending",
         metadata: {
           saved: true,
           api_key: "secret",
-          stats: { views: 20, token: "secret" },
+          stats: { views: 20, comments: 0, likes: null, token: "secret" },
           inspiration: { hook: "The hook", outline: ["Point"], token: "secret" },
         },
       },
@@ -250,10 +254,19 @@ describe("stored MCP workspace data", () => {
     expect(result.items).toHaveLength(1);
     expect(result.items[0]).toMatchObject({
       saved: true,
-      stats: { views: 20 },
+      sourceId: "x:42",
+      performanceBaseline: null,
+      stats: { views: 20, comments: 0 },
       inspiration: { hook: "The hook", outline: ["Point"] },
     });
     expect(JSON.stringify(result)).not.toMatch(/api_key|token|secret/);
+  });
+
+  it("rejects a workspace parameter different from the verified context", async () => {
+    await expect(
+      readWorkspaceData(context, { collection: "discover_items", workspaceId: other }),
+    ).rejects.toMatchObject({ statusCode: 403 });
+    expect(calls).toEqual([]);
   });
 
   it("honors plan history limits in the creator timezone, even for id lookups", async () => {

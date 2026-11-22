@@ -282,7 +282,7 @@ export async function submitApiMartImage(
     !value.task_id
   )
     throw new ApiMartRejectedError(
-      `API Mart rejected this request (${response.status}). No image was generated; the reservation was released.`,
+      `The image generation service rejected this request (${response.status}). No image was generated; the reservation was released.`,
     );
   if (
     !response.ok ||

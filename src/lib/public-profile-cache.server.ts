@@ -1,3 +1,6 @@
+import { publicProfilePath } from "./application-urls";
+import { clearPublicPageCache } from "./public-page-cache.server";
+
 const PUBLIC_PROFILE_CACHE_VERSION = "v2";
 const PUBLIC_PROFILE_TTL_SECONDS = 30;
 const MISSING_PROFILE_TTL_SECONDS = 10;
@@ -51,6 +54,8 @@ export async function clearPublicProfileCache(
 ) {
   const cache = defaultCache();
   if (!cache) return;
+  const publicHost = new URL(process.env.VITE_PUBLIC_URL || "http://localhost:8080").hostname;
+  const appHost = new URL(process.env.VITE_APP_URL || "http://localhost:8080").hostname;
   const slugs = new Set([
     "",
     "calendar",
@@ -61,15 +66,27 @@ export async function clearPublicProfileCache(
     "newsletters",
     ...pageSlugs,
   ]);
-  const keys = [...slugs].flatMap((slug) => {
-    const suffix = slug ? [slug] : [];
-    return [
-      publicProfileCacheKey(null, [username, ...suffix]),
-      ...hostnames.map((hostname) => publicProfileCacheKey(hostname, suffix)),
-    ];
-  });
   try {
-    await Promise.all(keys.map((key) => cache.delete(new Request(key))));
+    await Promise.all(
+      [...slugs].flatMap((slug) => {
+        const suffix = slug ? [slug] : [];
+        const hostedPath = publicProfilePath(username, slug);
+        const domainPath = slug ? `/${encodeURIComponent(slug)}` : "/";
+        const dataKeys = [
+          ...[null, publicHost, appHost].map((host) =>
+            publicProfileCacheKey(host, [username, ...suffix]),
+          ),
+          ...hostnames.map((host) => publicProfileCacheKey(host, suffix)),
+        ];
+        return [
+          ...dataKeys.map((key) => cache.delete(new Request(key))),
+          clearPublicPageCache([
+            `https://${publicHost}${hostedPath}`,
+            ...hostnames.map((host) => `https://${host}${domainPath}`),
+          ]),
+        ];
+      }),
+    );
   } catch (error) {
     console.warn("[public-profile-cache] clear failed", error);
   }

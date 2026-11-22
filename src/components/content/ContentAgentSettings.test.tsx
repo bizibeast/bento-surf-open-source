@@ -35,8 +35,9 @@ describe("ContentAgentSettings", () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     const onClose = vi.fn();
     render(<ContentAgentSettings preferences={preferences} onSave={onSave} onClose={onClose} />);
-    expect(screen.getByRole("dialog", { name: "Agent settings" })).toBeVisible();
-    fireEvent.change(screen.getByLabelText("Agent name"), { target: { value: "  Sage  " } });
+    expect(screen.getByRole("dialog", { name: "Benny preferences" })).toBeVisible();
+    expect(screen.queryByLabelText("Benny’s name")).not.toBeInTheDocument();
+    expect(screen.queryByText("Publishing accounts")).not.toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("Pause proactive messages"));
     fireEvent.click(screen.getByLabelText("X posts · 70% with photos"));
     expect(screen.getByLabelText("Use my indexed face photos")).toBeDisabled();
@@ -44,10 +45,10 @@ describe("ContentAgentSettings", () => {
     fireEvent.click(screen.getByLabelText("Generate AI images"));
     expect(screen.getByLabelText("Use my indexed face photos")).not.toBeChecked();
     expect(screen.queryByText(/Enable AI images first/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save preferences" }));
     await waitFor(() =>
       expect(onSave).toHaveBeenCalledWith({
-        displayName: "Sage",
+        displayName: "Benny",
         proactivePaused: true,
         generateImages: true,
         useFaceReferences: false,
@@ -72,13 +73,9 @@ describe("ContentAgentSettings", () => {
   it("retains edits and reports a failed save, and rejects a blank name", async () => {
     const onSave = vi.fn().mockRejectedValue(new Error("Could not save"));
     render(<ContentAgentSettings preferences={preferences} onSave={onSave} onClose={vi.fn()} />);
-    fireEvent.change(screen.getByLabelText("Agent name"), { target: { value: "  " } });
-    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
-    expect(onSave).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByLabelText("Agent name"), { target: { value: "Sage" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save preferences" }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Could not save"));
-    expect(screen.getByLabelText("Agent name")).toHaveValue("Sage");
+    expect(screen.queryByLabelText("Benny’s name")).not.toBeInTheDocument();
   });
 });
 
@@ -104,7 +101,7 @@ it("allows revocation and removing photos during provider unavailability", async
   expect(screen.getByLabelText("Generate AI images")).not.toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Remove selected photos" }));
   fireEvent.click(screen.getByLabelText("Generate AI images"));
-  fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save preferences" }));
   await waitFor(() =>
     expect(save).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -138,6 +135,19 @@ it("reports unavailable rollout and provider without allowing preferences to ena
   render(<ContentAgentSettings preferences={preferences} onSave={vi.fn()} onClose={vi.fn()} />);
   await screen.findByText(/Proactive delivery is not available/);
   expect(screen.getByLabelText("Generate AI images")).toBeDisabled();
-  expect(screen.getByLabelText("Agent name")).not.toBeDisabled();
+  expect(screen.queryByLabelText("Benny’s name")).not.toBeInTheDocument();
   expect(screen.getByText(/Generation is currently unavailable/)).toBeVisible();
+});
+
+it("saves preferences inside Memory without closing it or nesting a second dialog", async () => {
+  const save = vi.fn().mockResolvedValue(undefined);
+  const close = vi.fn();
+  render(<ContentAgentSettings embedded preferences={preferences} onSave={save} onClose={close} />);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Save preferences" }));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Saved to memory."));
+  expect(save).toHaveBeenCalledWith(expect.objectContaining({ displayName: "Benny" }));
+  expect(close).not.toHaveBeenCalled();
+  expect(screen.queryByLabelText("Benny’s name")).not.toBeInTheDocument();
 });

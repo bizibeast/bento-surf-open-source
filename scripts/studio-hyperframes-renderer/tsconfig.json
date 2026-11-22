@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.json",
+  "include": ["cloudflare.ts", "cloudflare-env.d.ts", "bridge.ts"],
+  "compilerOptions": { "types": ["@cloudflare/workers-types"], "lib": ["ES2022"] }
+}

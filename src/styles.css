@@ -738,24 +738,36 @@ textarea {
     height: auto !important;
     min-height: 2.5rem;
   }
+}
 
-  /* Keep native keyboard/mobile pickers, with an inset chevron and room for text.
-     The important padding also overrides the shared authenticated form shorthand. */
-  select.scheduler-select {
-    appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 0.75rem center;
-    background-size: 1rem;
-    padding-right: 2.5rem !important;
+/* Authenticated controls, including portalled dialogs. Creator-page previews and
+   public pages retain their own styles. Keep native keyboard and mobile pickers. */
+@layer components {
+  /* Keep this override in the same layer as the shared important form padding. */
+  :is(.app-native-selects select, select.scheduler-select):not([multiple]):not(
+      [size]:not([size="1"])
+    ):not(:where([data-bento-public-page] *)) {
+    padding-right: 2.75rem !important;
     text-overflow: ellipsis;
   }
+}
 
-  @media (forced-colors: active) {
-    select.scheduler-select {
-      appearance: auto;
-      background-image: none;
-    }
+:is(.app-native-selects select, select.scheduler-select):not([multiple]):not(
+    [size]:not([size="1"])
+  ):not(.appearance-none):not(:where([data-bento-public-page] *)) {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.875rem center;
+  background-size: 1rem;
+}
+
+@media (forced-colors: active) {
+  :is(.app-native-selects select, select.scheduler-select):not([multiple]):not(
+      [size]:not([size="1"])
+    ):not(.appearance-none):not(:where([data-bento-public-page] *)) {
+    appearance: auto;
+    background-image: none;
   }
 }
 

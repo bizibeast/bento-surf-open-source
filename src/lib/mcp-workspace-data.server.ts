@@ -1,8 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Analytics and content tables precede generated types. */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { sourcePresentation, type ContentSourcePresentation } from "./content-source-media";
+import { discoverBaselineSchema, observedDiscoverMetric } from "./content-discover-baseline";
+import { discoverEvidenceId } from "./content-discover-identity";
 import { requireContentWorkspace } from "./content-access.server";
-import { enforceRequestRateLimit } from "./request-security.server";
+import { enforceRequestRateLimit, RequestHttpError } from "./request-security.server";
 import { readWorkspaceDataSchema, type ReadWorkspaceDataInput } from "./mcp-workspace-data";
 import { getSchedulerPost, listSchedulerPosts } from "./mcp-scheduler-read.server";
 import { sanitizeMcpReadData } from "./mcp-read-results";
@@ -88,6 +90,8 @@ export async function readWorkspaceData(
   [key: string]: unknown;
 }> {
   const data = readWorkspaceDataSchema.parse(input);
+  if (data.workspaceId && data.workspaceId !== context.userId)
+    throw new RequestHttpError(403, "Workspace is unavailable.");
   await enforceRequestRateLimit("PUBLIC_API_RATE_LIMITER", "mcp-workspace-read", context.userId);
   if (["brain_items", "brain_sources", "routines", "routine_runs"].includes(data.collection))
     await requireContentWorkspace(context.userId);
@@ -170,6 +174,9 @@ export async function readWorkspaceData(
     }
     if (data.collection === "discover_items") {
       const metadata = row.metadata as Record<string, unknown> | null;
+      item.sourceId = discoverEvidenceId(row.source_url, String(row.id));
+      const baseline = discoverBaselineSchema.safeParse(metadata?.performanceBaseline);
+      item.performanceBaseline = baseline.success ? baseline.data : null;
       item.saved = row.feedback === "saved" || metadata?.saved === true;
       Object.assign(item, sourcePresentation((metadata || {}) as ContentSourcePresentation));
       for (const key of ["platform", "author", "thumbnailUrl"])
@@ -186,7 +193,11 @@ export async function readWorkspaceData(
           "shares",
           "saves",
           "followers",
-        ].flatMap((key) => (typeof stats?.[key] === "number" ? [[key, stats[key]]] : [])),
+          "engagementRate",
+        ].flatMap((key) => {
+          const value = observedDiscoverMetric(stats?.[key]);
+          return value === null ? [] : [[key, value]];
+        }),
       );
       const inspiration = metadata?.inspiration as Record<string, unknown> | undefined;
       if (inspiration)

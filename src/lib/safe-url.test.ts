@@ -38,7 +38,10 @@ describe("safe URL handling", () => {
   });
 
   it("never emits local or private media URLs into public pages", () => {
-    expect(safePublicMediaUrl("http://localhost:8080/cdn/avatar.png")).toBeNull();
+    expect(safePublicMediaUrl("http://localhost:8080/cdn/avatars/user/avatar.png")).toBe(
+      "/cdn/avatars/user/avatar.png",
+    );
+    expect(safePublicMediaUrl("http://localhost:8080/other/avatar.png")).toBeNull();
     expect(safePublicMediaUrl("http://192.168.1.4/avatar.png")).toBeNull();
     expect(safePublicMediaUrl("https://cdn.example.com/avatar.png")).toBe(
       "https://cdn.example.com/avatar.png",

@@ -271,7 +271,7 @@ describe("ContentAgent", () => {
     expect(values.onSelectThread).toHaveBeenCalledWith("named-agent");
     fireEvent.click(screen.getByRole("button", { name: "Pin Recent idea" }));
     expect(values.onPinThread).toHaveBeenCalledWith("recent", true);
-    fireEvent.click(screen.getByRole("button", { name: "Agent settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Benny preferences" }));
     expect(values.onOpenSettings).toHaveBeenCalled();
   });
 
@@ -503,7 +503,7 @@ describe("ContentAgent", () => {
   it("offers initial Brain analysis when no knowledge exists", () => {
     const values = { ...props(), brainEmpty: true };
     render(<ContentAgent {...values} />);
-    fireEvent.click(screen.getByRole("button", { name: "Build my Brain from my posts" }));
+    fireEvent.click(screen.getByRole("button", { name: "Build my memory from my posts" }));
     expect(values.onBuildBrain).toHaveBeenCalled();
   });
 });

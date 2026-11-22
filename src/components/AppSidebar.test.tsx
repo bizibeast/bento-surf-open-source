@@ -57,8 +57,8 @@ describe("AppSidebar", () => {
     expect(
       APP_NAV_GROUPS.map(({ label, items }) => [label, items.map((item) => item.label)]),
     ).toEqual([
-      ["Create", ["Agent", "Brain", "Routine", "MCP"]],
-      ["Grow", ["Post Scheduler", "Auto DMs", "Social Insights", "Discover"]],
+      ["Create", ["Benny", "Discover", "MCP"]],
+      ["Grow", ["Post Scheduler", "Auto DMs", "Social Insights"]],
       ["Monetize", ["Link", "Store", "Priority DM", "Calendar", "Community", "Newsletter"]],
     ]);
 
@@ -110,19 +110,18 @@ describe("AppSidebar", () => {
     fireEvent.click(create);
     expect(create).toHaveAttribute("aria-expanded", "true");
     expect(monetize).toHaveAttribute("aria-expanded", "true");
-    expect(within(sidebar).getByRole("link", { name: "Agent" })).toHaveAttribute(
+    expect(within(sidebar).getByRole("link", { name: "Benny" })).toHaveAttribute(
       "href",
       "/content?tab=agent",
     );
-    expect(within(sidebar).getByRole("link", { name: "Brain" })).toHaveAttribute(
-      "href",
-      "/content?tab=brain",
-    );
-    expect(within(sidebar).getByRole("link", { name: "Routine" })).toHaveAttribute(
-      "href",
-      "/content?tab=agent&routines=true",
-    );
+    for (const label of ["Brain", "Studio", "Routine"]) {
+      expect(within(sidebar).queryByRole("link", { name: label })).not.toBeInTheDocument();
+    }
     expect(within(sidebar).getByRole("link", { name: "MCP" })).toHaveAttribute("href", "/mcp");
+    expect(within(sidebar).getByRole("link", { name: "Discover" })).toHaveAttribute(
+      "href",
+      "/content?tab=discover",
+    );
 
     fireEvent.click(grow);
     expect(grow).toHaveAttribute("aria-expanded", "true");
@@ -146,6 +145,7 @@ describe("AppSidebar", () => {
     fireEvent.click(grow);
     expect(grow).toHaveAttribute("aria-expanded", "false");
     expect(create).toHaveAttribute("aria-expanded", "true");
+    expect(within(sidebar).getByRole("link", { name: "Discover" })).toBeVisible();
   });
 
   it("expands on hover and collapses on leave", () => {
@@ -197,15 +197,17 @@ describe("AppSidebar", () => {
   });
 
   it.each([
-    ["Agent", { tab: "agent" }],
-    ["Brain", { tab: "brain" }],
-    ["Routine", { tab: "agent", routines: true }],
+    ["Benny", { tab: "agent" }],
+    ["Benny", { tab: "brain" }],
+    ["Benny", { tab: "studio" }],
+    ["Benny", { tab: "agent", routines: true }],
     ["Discover", { tab: "discover" }],
   ])("marks %s active for its Content view", (label, search) => {
     routerState.pathname = "/content";
     routerState.search = search;
     renderSidebar();
     expect(screen.getByRole("link", { name: label })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "Create" })).toHaveAttribute("aria-expanded", "true");
   });
 
   it("opens mobile navigation with Earn pinned outside the scroll area", async () => {
@@ -222,6 +224,22 @@ describe("AppSidebar", () => {
     expect(within(dialog).getByRole("link", { name: "Earn" })).toHaveAttribute("href", "/earn");
     fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
     expect(within(dialog).getByRole("link", { name: "MCP" })).toHaveAttribute("href", "/mcp");
+    expect(
+      within(navigation)
+        .getAllByRole("link")
+        .map((link) => link.textContent),
+    ).toEqual([
+      "Home",
+      "Benny",
+      "Discover",
+      "MCP",
+      "Link",
+      "Store",
+      "Priority DM",
+      "Calendar",
+      "Community",
+      "Newsletter",
+    ]);
     fireEvent.click(within(dialog).getByRole("button", { name: "Grow" }));
     expect(within(dialog).getByRole("link", { name: "Post Scheduler" })).toHaveAttribute(
       "href",

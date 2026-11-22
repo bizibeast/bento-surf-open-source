@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const handlerMocks = vi.hoisted(() => {
   const updates: unknown[] = [];
   const subscription = {
+    billing_catalog: "2026-10",
     billing_interval: "monthly",
     cancel_at_period_end: false,
     contact_tier_contacts: 50_000,
@@ -130,11 +131,16 @@ describe("paid plan changes", () => {
       price: {
         type: "recurring_price",
         currency: "USD",
-        price: productId === "creator-new-yearly" ? 39000 : 19000,
+        price:
+          productId === "managed-monthly"
+            ? 9900
+            : productId === "creator-new-yearly"
+              ? 39000
+              : 19000,
         payment_frequency_count: 1,
-        payment_frequency_interval: "Year",
+        payment_frequency_interval: productId === "managed-monthly" ? "Month" : "Year",
         subscription_period_count: 1,
-        subscription_period_interval: "Year",
+        subscription_period_interval: productId === "managed-monthly" ? "Month" : "Year",
         discount: 0,
       },
     }));
@@ -147,6 +153,8 @@ describe("paid plan changes", () => {
       DODO_STORE_190_YEARLY_PRODUCT_ID: "store-new-yearly",
       DODO_CREATOR_PLUS_MONTHLY_PRODUCT_ID: "plus-monthly",
       DODO_CREATOR_PLUS_490_YEARLY_PRODUCT_ID: "plus-yearly",
+      DODO_FULLY_MANAGED_99_MONTHLY_PRODUCT_ID: "managed-monthly",
+      BENTO_FULLY_MANAGED_CHECKOUT_ENABLED: "true",
       DODO_CREATOR_MONTHLY_PRODUCT_ID: "creator-monthly",
       DODO_CREATOR_YEARLY_PRODUCT_ID: "creator-yearly",
       DODO_STORAGE_10GB_MONTHLY_ADDON_ID: "storage-monthly",
@@ -155,6 +163,7 @@ describe("paid plan changes", () => {
       DODO_STORE_YEARLY_PRODUCT_ID: "store-yearly",
     });
     Object.assign(handlerMocks.subscription, {
+      billing_catalog: "2026-10",
       billing_interval: "monthly",
       cancel_at_period_end: false,
       contact_tier_contacts: 50_000,
@@ -228,11 +237,60 @@ describe("paid plan changes", () => {
     expect(handlerMocks.changePlan).toHaveBeenCalledWith(
       "sub_123",
       expect.objectContaining({
+        product_id: "managed-monthly",
         effective_at: "next_billing_date",
         proration_billing_mode: "full_immediately",
-        metadata: expect.objectContaining({ auth_user_id: "owner" }),
+        metadata: expect.objectContaining({
+          auth_user_id: "owner",
+          billing_catalog: "2026-11-managed",
+        }),
       }),
     );
+  });
+
+  it("moves an explicitly selected Creator+ monthly contract to Creator+", async () => {
+    handlerMocks.retrieve.mockResolvedValue({
+      product_id: "plus-monthly",
+      payment_frequency_interval: "Month",
+    });
+    Object.assign(handlerMocks.subscription, { plan_id: "creator_plus" });
+    await changeMyPlan({ data: { plan: "creator_plus" } });
+    expect(handlerMocks.changePlan).toHaveBeenCalledWith(
+      "sub_123",
+      expect.objectContaining({
+        product_id: "managed-monthly",
+        effective_at: "immediately",
+        proration_billing_mode: "prorated_immediately",
+        on_payment_failure: "prevent_change",
+      }),
+    );
+  });
+
+  it("keeps the launch flag independent from a legacy contract", async () => {
+    process.env.BENTO_FULLY_MANAGED_CHECKOUT_ENABLED = "false";
+    await expect(changeMyPlan({ data: { plan: "creator_plus" } })).rejects.toThrow(
+      "Creator+ checkout is currently unavailable",
+    );
+    expect(handlerMocks.changePlan).not.toHaveBeenCalled();
+    await changeMyPlan({ data: { plan: "store" } });
+    expect(handlerMocks.changePlan).toHaveBeenCalledWith(
+      "sub_123",
+      expect.objectContaining({
+        product_id: "store-new-monthly",
+      }),
+    );
+  });
+
+  it("rejects a configured managed product with a different recurring price", async () => {
+    handlerMocks.productRetrieve.mockResolvedValue({
+      product_id: "managed-monthly",
+      is_recurring: true,
+      price: { type: "recurring_price", price: 4900 },
+    });
+    await expect(changeMyPlan({ data: { plan: "creator_plus" } })).rejects.toThrow(
+      "Creator+ checkout could not be verified",
+    );
+    expect(handlerMocks.changePlan).not.toHaveBeenCalled();
   });
 
   it("does not create a replacement charge when the old subscription cannot be verified", async () => {

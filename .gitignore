@@ -45,3 +45,9 @@ supabase/.temp/
 *.njsproj
 *.sln
 *.sw?
+
+# Downloader runtime credentials and Python caches
+__pycache__/
+*.pyc
+*cookies*.txt
+*cookies*.json

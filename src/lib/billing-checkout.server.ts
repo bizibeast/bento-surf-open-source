@@ -21,7 +21,7 @@ export async function checkoutEligibility(authUserId: string, workspaceId: strin
       .maybeSingle(),
     db
       .from("profiles")
-      .select("billing_catalog,onboarded,billing_lifecycle")
+      .select("billing_catalog,onboarded,billing_lifecycle,display_name")
       .eq("id", workspaceId)
       .single(),
   ]);

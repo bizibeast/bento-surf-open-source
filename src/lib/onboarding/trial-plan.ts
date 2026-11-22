@@ -8,10 +8,12 @@ export const ONBOARDING_DEFAULT_TRIAL_PLAN: PaidPlanId = "creator_plus";
 
 /**
  * What a creator keeps from onboarding on each plan. Brain chapters and starter drafts are
- * always saved and downloadable; only Creator Plus can open them in Brain and Agent.
+ * always saved and downloadable; Creator+ can open them in Brain and Agent.
  */
 export function onboardingPlanAftercare(plan: PaidPlanId) {
   if (plan === "creator_plus")
     return "Your Brain chapters and starter draft open in Brain and Agent as soon as your trial starts.";
-  return "Brain and Agent are included with Creator Plus only. On this plan, your Brain chapters and starter draft stay saved and you can download them anytime. They open in Brain and Agent if you move to Creator Plus.";
+  if (plan === "creator")
+    return "Use Benny and your saved creator memory with your own AI API key. Creator+ includes Bento-managed AI and scheduled routines within usage limits. Your chapters and starter draft stay saved and downloadable.";
+  return "Benny and creator tools are available on Creator with your own AI, or on Creator+ with managed AI. Your chapters and starter draft stay saved and downloadable.";
 }

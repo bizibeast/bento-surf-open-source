@@ -1,3 +1,4 @@
+import { ChatContentArtifact } from "./ChatContentArtifact";
 import {
   AGENT_ATTACHMENT_LIMIT,
   AGENT_ATTACHMENT_ACCEPT,
@@ -16,14 +17,16 @@ import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "rea
 import {
   Paperclip,
   FileText,
+  Clapperboard,
   Images,
   X,
   LoaderCircle,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRightOpen,
   Plus,
   Search,
-  Send,
+  ArrowUp,
   Sparkles,
   Settings2,
   Pin,
@@ -69,7 +72,7 @@ export type ContentAgentThread = {
 };
 
 const starters = [
-  ["Write a post in my voice", "Write a post in my voice using my Brain and recent work."],
+  ["Write a post in my voice", "Write a post in my voice using my memory and recent work."],
   [
     "What should I sell?",
     "Use my store products, sales and social insights to recommend what I should sell next. Explain the evidence, audience, offer and one small experiment to validate demand.",
@@ -79,7 +82,7 @@ const starters = [
     "Review my content and business. Identify the biggest opportunity to grow revenue, explain the evidence and give me three concrete next steps.",
   ],
   ["Analyze my recent posts", "Analyze my recent posts and tell me what to repeat next."],
-  ["Plan this week's posts", "Plan this week's posts using my Brain and empty schedule slots."],
+  ["Plan this week's posts", "Plan this week's posts using my memory and empty schedule slots."],
 ] as const;
 
 export function ContentAgent({
@@ -92,6 +95,15 @@ export function ContentAgent({
   onDeleteThread,
   onMarkRead,
   onOpenSettings,
+  modelControls,
+  headerActions,
+  inspector,
+  workspaceId,
+  onReviseContent,
+  conversationContent,
+  textOnly = false,
+  sendDisabled = false,
+  draftTools = true,
   identityUnavailable = false,
   onRetryIdentity,
   hasMoreThreads = false,
@@ -121,6 +133,7 @@ export function ContentAgent({
   onRegenerateDraft,
   onApproveSchedule,
   onSaveDraft,
+  onStudioDraft,
   onDraftChanged,
 }: {
   threads: ContentAgentThread[];
@@ -131,7 +144,16 @@ export function ContentAgent({
   onRenameThread: (threadId: string, title: string) => Promise<void>;
   onDeleteThread: (threadId: string) => Promise<void>;
   onMarkRead: (threadId: string, throughMessageId: string) => void | Promise<void>;
-  onOpenSettings: () => void;
+  onOpenSettings?: () => void;
+  modelControls?: ReactNode;
+  headerActions?: ReactNode;
+  inspector?: ReactNode;
+  workspaceId?: string;
+  onReviseContent?: (id: string, title: string) => void;
+  conversationContent?: ReactNode;
+  textOnly?: boolean;
+  sendDisabled?: boolean;
+  draftTools?: boolean;
   identityUnavailable?: boolean;
   onRetryIdentity?: () => void;
   hasMoreThreads?: boolean;
@@ -153,6 +175,12 @@ export function ContentAgent({
   brainEmpty: boolean;
   sending: boolean;
   onDraftChanged?: () => void | Promise<unknown>;
+  onStudioDraft?: (source: {
+    format: "carousel" | "reel";
+    title: string;
+    text: string;
+    url: string | null;
+  }) => void;
   onSaveDraft?: (messageId: string, cardId: string, edit: AgentDraftEdit) => void | Promise<void>;
   onNewThread: () => void;
   onSelectThread: (threadId: string) => void;
@@ -174,6 +202,13 @@ export function ContentAgent({
   const [attachmentProgress, setAttachmentProgress] = useState("");
   const [mediaOpen, setMediaOpen] = useState(false);
   const attachmentInput = useRef<HTMLInputElement>(null);
+  const messageInput = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const input = messageInput.current;
+    if (!input) return;
+    input.style.height = "auto";
+    input.style.height = `${Math.min(input.scrollHeight, 176)}px`;
+  }, [text]);
   const uploadController = useRef<AbortController | null>(null);
   const attachmentVersion = useRef(0);
   useEffect(() => {
@@ -250,6 +285,7 @@ export function ContentAgent({
   const [search, setSearch] = useState("");
   const [conversationsCollapsed, setConversationsCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const mobileTrigger = useRef<HTMLButtonElement>(null);
   const readWatermark = useRef("");
   const [sendError, setSendError] = useState("");
@@ -401,7 +437,7 @@ export function ContentAgent({
             {(
               [
                 ["Pinned", pinned],
-                ["Recents", recent],
+                ["Recent chats", recent],
               ] as const
             ).map(([name, items]) => (
               <div key={name} className="agent-chat-group">
@@ -516,7 +552,11 @@ export function ContentAgent({
       (attachments.length
         ? "Use these attached files as references. Ask me what I would like to create or schedule."
         : "");
-    if (!message || sending || loading || loadError || attachmentBusy) return;
+    if (!message || sending || loading || loadError || attachmentBusy || sendDisabled) return;
+    if (textOnly && attachments.length) {
+      setSendError("Remove attachments or choose a Bento model to send them.");
+      return;
+    }
     setSendError("");
     setPendingText(message);
     try {
@@ -541,7 +581,7 @@ export function ContentAgent({
       onDrop={(event) => {
         if (event.dataTransfer.files.length) {
           event.preventDefault();
-          void addFiles(Array.from(event.dataTransfer.files));
+          if (!textOnly) void addFiles(Array.from(event.dataTransfer.files));
         }
       }}
       onSubmit={(event) => {
@@ -597,7 +637,30 @@ export function ContentAgent({
           {attachmentProgress || "Preparing attachment…"}
         </p>
       )}
-      <div className="agent-composer-field">
+      <textarea
+        ref={messageInput}
+        aria-label="Message Agent"
+        value={text}
+        disabled={sending}
+        onChange={(event) => setText(event.target.value.slice(0, 20_000))}
+        onPaste={(event) => {
+          const files = Array.from(event.clipboardData.files);
+          if (files.length) {
+            event.preventDefault();
+            if (!textOnly) void addFiles(files);
+          }
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+            event.preventDefault();
+            send();
+          }
+        }}
+        rows={2}
+        className="agent-composer-input placeholder:text-muted-foreground"
+        placeholder={`Message ${agentName}, or tell me what to change…`}
+      />
+      <div className="agent-composer-toolbar">
         <input
           ref={attachmentInput}
           type="file"
@@ -617,50 +680,59 @@ export function ContentAgent({
               type="button"
               aria-label="Add attachments"
               title="Attach files or choose media"
-              disabled={sending || attachmentBusy || attachments.length >= AGENT_ATTACHMENT_LIMIT}
-              className="flex size-11 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-background disabled:opacity-40"
+              disabled={
+                sending ||
+                attachmentBusy ||
+                (textOnly && !onStudioDraft) ||
+                (!onStudioDraft && attachments.length >= AGENT_ATTACHMENT_LIMIT)
+              }
+              className="agent-add flex size-11 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-background disabled:opacity-40"
             >
-              <Paperclip className="size-5" />
+              <Plus className="size-5" />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" side="top">
-            <DropdownMenuItem onSelect={() => attachmentInput.current?.click()}>
+            <DropdownMenuItem
+              disabled={textOnly || attachments.length >= AGENT_ATTACHMENT_LIMIT}
+              onSelect={() => attachmentInput.current?.click()}
+            >
               <Paperclip />
               Upload files
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => setMediaOpen(true)}>
+            <DropdownMenuItem
+              disabled={textOnly || attachments.length >= AGENT_ATTACHMENT_LIMIT}
+              onSelect={() => setMediaOpen(true)}
+            >
               <Images />
               Photos, stock & AI images
             </DropdownMenuItem>
+            {onStudioDraft &&
+              (["carousel", "reel"] as const).map((format) => (
+                <DropdownMenuItem
+                  key={format}
+                  onSelect={() =>
+                    onStudioDraft({
+                      format,
+                      title:
+                        activeThreadTitle || (format === "carousel" ? "New carousel" : "New Reel"),
+                      text,
+                      url: null,
+                    })
+                  }
+                >
+                  {format === "carousel" ? <Images /> : <Clapperboard />}
+                  {format === "carousel" ? "Create carousel" : "Create Reel"}
+                </DropdownMenuItem>
+              ))}
           </DropdownMenuContent>
         </DropdownMenu>
-        <textarea
-          aria-label="Message Agent"
-          value={text}
-          disabled={sending}
-          onChange={(event) => setText(event.target.value.slice(0, 20_000))}
-          onPaste={(event) => {
-            const files = Array.from(event.clipboardData.files);
-            if (files.length) {
-              event.preventDefault();
-              void addFiles(files);
-            }
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-              event.preventDefault();
-              send();
-            }
-          }}
-          rows={1}
-          className="max-h-40 min-h-11 min-w-0 flex-1 resize-none bg-transparent py-2.5 text-base leading-6 text-foreground outline-none placeholder:text-muted-foreground"
-          placeholder={`Message ${agentName}, or tell me what to change…`}
-        />
+        <div className="benny-model-controls">{modelControls}</div>
         <button
           type="submit"
           aria-label="Send message"
           disabled={
             (!text.trim() && !attachments.length) ||
+            sendDisabled ||
             sending ||
             attachmentBusy ||
             loading ||
@@ -668,7 +740,7 @@ export function ContentAgent({
           }
           className="agent-send"
         >
-          <Send className="size-4" />
+          <ArrowUp className="size-5" />
         </button>
       </div>
       <SchedulerMediaPicker
@@ -688,7 +760,7 @@ export function ContentAgent({
 
   return (
     <section
-      className={`content-workspace agent-shell ${conversationsCollapsed ? "agent-collapsed" : ""}`}
+      className={`content-workspace agent-shell ${conversationsCollapsed ? "agent-collapsed" : ""} ${inspector ? "benny-unified" : ""}`}
       aria-label="Content chat"
     >
       <aside className="agent-desktop-sidebar">
@@ -743,41 +815,70 @@ export function ContentAgent({
             <span className="block truncate text-sm font-semibold text-foreground">
               {currentTitle}
             </span>
-            <span className="block text-xs text-muted-foreground">Your AI head of content</span>
           </div>
           {identityUnavailable && (
             <>
               <span
                 role="status"
                 className="max-w-[40%] truncate text-xs"
-                title="Agent settings are unavailable. Your chat is still available."
+                title="Benny preferences are unavailable. Your chat is still available."
               >
-                Agent settings unavailable
+                Benny preferences unavailable
               </span>
               <button
                 type="button"
                 className="agent-settings-button"
-                aria-label="Retry agent settings"
-                title="Retry agent settings"
+                aria-label="Retry Benny preferences"
+                title="Retry Benny preferences"
                 onClick={onRetryIdentity}
               >
                 <RotateCw className="size-4" />
               </button>
             </>
           )}
-          <button
-            type="button"
-            className="agent-settings-button"
-            aria-label="Agent settings"
-            title="Agent settings"
-            disabled={!agentThreadId}
-            onClick={onOpenSettings}
-          >
-            <Settings2 className="size-4" />
-          </button>
+
+          {inspector && (
+            <Dialog open={inspectorOpen} onOpenChange={setInspectorOpen}>
+              <DialogTrigger asChild>
+                <button
+                  type="button"
+                  className="benny-details-trigger agent-settings-button"
+                  aria-label="Open Benny workspace"
+                >
+                  <PanelRightOpen className="size-4" />
+                </button>
+              </DialogTrigger>
+              <DialogContent className="content-workspace benny-mobile-inspector">
+                <DialogTitle>Benny workspace</DialogTitle>
+                <DialogDescription className="sr-only">
+                  Context, memory and schedule.
+                </DialogDescription>
+                <div
+                  onClick={(event) => {
+                    if ((event.target as HTMLElement).closest("button")) setInspectorOpen(false);
+                  }}
+                >
+                  {inspector}
+                </div>
+              </DialogContent>
+            </Dialog>
+          )}
+          {onOpenSettings && (
+            <button
+              type="button"
+              className="agent-settings-button"
+              aria-label="Benny preferences"
+              title="Benny preferences"
+              disabled={!agentThreadId}
+              onClick={onOpenSettings}
+            >
+              <Settings2 className="size-4" />
+            </button>
+          )}
+          {headerActions}
         </header>
         <div ref={messageList} className="agent-messages" aria-live="polite">
-          {brainEmpty && (
+          {brainEmpty && !inspector && (
             <div className="agent-brain-hint">
               <p className="font-semibold text-foreground">
                 Give {agentName} your starting context.
@@ -791,7 +892,7 @@ export function ContentAgent({
                 onClick={() => void onBuildBrain()}
                 className={`${micro.btnPrimary} mt-3`}
               >
-                <Sparkles className="size-4" /> Build my Brain from my posts
+                <Sparkles className="size-4" /> Build my memory from my posts
               </button>
             </div>
           )}
@@ -829,20 +930,21 @@ export function ContentAgent({
                   className="size-12 rounded-full object-cover"
                 />
               </span>
-              <p className={`${micro.eyebrow} mt-6`}>Your head of content & monetization</p>
-              <h2 className="mt-2 text-3xl font-semibold tracking-tight">Ask {agentName}</h2>
-              <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">
-                Turn your ideas into content and your audience into a business. {agentName} uses
-                your Brain, social insights, and store results. Attach files or references, ask for
-                a post, scheduling or Auto DMs, then review and approve the prepared action here.
+              <h2 className="mt-5 text-3xl font-semibold tracking-tight">Ask {agentName}</h2>
+              <p className="mt-3 max-w-md text-sm leading-6 text-muted-foreground">
+                Add your instructions and references to help {agentName} get to know you.
               </p>
-              <div className="mt-5 flex flex-wrap justify-center gap-2">
+              <div
+                role="group"
+                aria-label="Suggested prompts"
+                className="mt-5 flex flex-wrap justify-center gap-2"
+              >
                 {starters.map(([label, prompt]) => (
                   <button
                     key={label}
                     type="button"
                     onClick={() => send(prompt)}
-                    className="rounded-lg px-4 py-2 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                    className="rounded-xl border border-border bg-muted/60 px-4 py-2 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                   >
                     {label}
                   </button>
@@ -926,6 +1028,8 @@ export function ContentAgent({
                             key={card.cardId}
                             messageId={message.id}
                             card={card}
+                            draftTools={draftTools}
+                            onStudioDraft={onStudioDraft}
                             previewAccounts={previewAccounts}
                             draftState={
                               parsed.data.draftStates?.[
@@ -958,13 +1062,25 @@ export function ContentAgent({
                           />
                         ),
                       )}
-                    {parsed.success && !!parsed.data.appActions?.length && (
+                    {draftTools && parsed.success && !!parsed.data.appActions?.length && (
                       <ContentAgentAppActions
                         messageId={message.id}
                         actions={parsed.data.appActions}
                         accounts={previewAccounts}
+                        workspaceId={workspaceId}
+                        onRevise={onReviseContent}
                       />
                     )}
+                    {workspaceId &&
+                      parsed.success &&
+                      parsed.data.artifacts?.map((artifact) => (
+                        <ChatContentArtifact
+                          key={artifact.entryId}
+                          workspaceId={workspaceId}
+                          entryId={artifact.entryId}
+                          onRevise={onReviseContent}
+                        />
+                      ))}
                     {hasDraft && message.content.length > 180 && (
                       <details className="agent-draft-notes">
                         <summary>Benny’s notes</summary>
@@ -982,6 +1098,9 @@ export function ContentAgent({
               )}
             </div>
           )}
+          {conversationContent && (
+            <div className="mx-auto w-full max-w-3xl px-1">{conversationContent}</div>
+          )}
         </div>
 
         <div className="agent-composer-area">
@@ -992,10 +1111,15 @@ export function ContentAgent({
             </p>
           )}
           <p className="mt-2 text-center text-[11px] text-muted-foreground">
-            {agentName} uses your Brain. Review facts and schedules before publishing.
+            Review facts and schedules before publishing.
           </p>
         </div>
       </div>
+      {inspector && (
+        <aside className="benny-desktop-inspector" aria-label="Benny workspace">
+          {inspector}
+        </aside>
+      )}
       <Dialog open={Boolean(renameTarget)} onOpenChange={(open) => !open && setRenameTarget(null)}>
         <DialogContent>
           <DialogTitle>Rename chat</DialogTitle>

@@ -28,7 +28,7 @@ describe("Facebook Auto-DM durable workflow migrations", () => {
 });
 
 describe("Facebook Auto-DM activity", () => {
-  it("filters ignored webhook events before limiting recent activity", () => {
+  it("keeps safety skips visible while filtering unrelated ignored events", () => {
     const query = functionsSource.slice(
       functionsSource.indexOf('.from("facebook_dm_events")'),
       functionsSource.indexOf(
@@ -36,7 +36,9 @@ describe("Facebook Auto-DM activity", () => {
         functionsSource.indexOf('.from("facebook_dm_events")'),
       ),
     );
-    expect(query).toContain('.neq("status", "ignored")');
-    expect(query.indexOf('.neq("status", "ignored")')).toBeLessThan(query.indexOf(".limit(50)"));
+    expect(query).toContain(
+      "error_code.in.(recipient_preference_updated,recipient_opted_out,recipient_cooldown,account_budget,account_paused,recipient_missing)",
+    );
+    expect(query.indexOf(".or(")).toBeLessThan(query.indexOf(".limit(50)"));
   });
 });

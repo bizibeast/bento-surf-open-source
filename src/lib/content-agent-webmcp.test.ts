@@ -198,7 +198,7 @@ describe("Content Agent WebMCP tools", () => {
   it("requires approval and server validation for Agent preference changes", async () => {
     const found = tool("update_content_agent_settings");
     vi.spyOn(window, "confirm").mockReturnValue(false);
-    await expect(found.execute({ displayName: "Bento Studio" }, { signal })).rejects.toThrow(
+    await expect(found.execute({ displayName: "Benny" }, { signal })).rejects.toThrow(
       "did not approve",
     );
     expect(updateContentAgentPreferences).not.toHaveBeenCalled();
@@ -209,10 +209,10 @@ describe("Content Agent WebMCP tools", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     vi.mocked(updateContentAgentPreferences).mockResolvedValue({} as never);
     await expect(
-      found.execute({ displayName: "Bento Studio", platforms: ["linkedin"] }, { signal }),
+      found.execute({ displayName: "Benny", platforms: ["linkedin"] }, { signal }),
     ).resolves.toMatchObject({ structuredContent: { saved: true } });
     expect(updateContentAgentPreferences).toHaveBeenCalledWith({
-      data: { displayName: "Bento Studio", platforms: ["linkedin"] },
+      data: { displayName: "Benny", platforms: ["linkedin"] },
     });
   });
 

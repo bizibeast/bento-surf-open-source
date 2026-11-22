@@ -1,5 +1,8 @@
+import { createSignupTracking, redactSignupMessage, signupFailureReason } from "@/lib/signup-tracking";
+import { forceOnboardingReplay } from "@/lib/checkout-tracking";
+import { redirectPublicHostToAppHost } from "@/lib/app-host-handoff";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { ArrowLeft, ArrowRight, Check, Eye, EyeOff, Mail, RotateCw } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -7,7 +10,7 @@ import { checkUsername } from "@/lib/profile.functions";
 import { useUsernameAvailability } from "@/lib/use-username-availability";
 import { normalizeUsername } from "@/lib/username";
 import { storePendingUsername } from "@/lib/pending-username";
-import { captureProductEvent } from "@/lib/posthog";
+import { captureProductEvent, captureSignupCompleted } from "@/lib/posthog";
 import { AuthDivider, AuthField, AuthShell, GoogleIcon } from "@/components/AuthShell";
 import { trustedApplicationOrigin } from "@/lib/safe-url";
 import { redirectAuthenticatedVisitor } from "@/lib/auth-entry";
@@ -16,12 +19,36 @@ import { handleWebMcpFormSubmit } from "@/lib/webmcp";
 const lookupUsername = (username: string) => checkUsername({ data: { username } });
 
 export const Route = createFileRoute("/signup")({
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): {
+    utm_source?: string;
+    utm_medium?: string;
+    utm_campaign?: string;
+    utm_content?: string;
+  } => ({
+    utm_source: typeof search.utm_source === "string" ? search.utm_source : undefined,
+    utm_medium: typeof search.utm_medium === "string" ? search.utm_medium : undefined,
+    utm_campaign: typeof search.utm_campaign === "string" ? search.utm_campaign : undefined,
+    utm_content: typeof search.utm_content === "string" ? search.utm_content : undefined,
+  }),
   ssr: false,
   pendingMs: 0,
   beforeLoad: async () => {
+    if (
+      typeof window !== "undefined" &&
+      redirectPublicHostToAppHost(window.location, (url) => window.location.replace(url))
+    ) {
+      await new Promise<never>(() => undefined);
+    }
     await redirectAuthenticatedVisitor();
   },
-  head: () => ({ meta: [{ title: "Create your creator storefront | bento.surf" }] }),
+  head: () => ({
+    meta: [
+      { name: "google", content: "notranslate" },
+      { title: "Create your creator storefront | bento.surf" },
+    ],
+  }),
   component: SignupPage,
 });
 
@@ -39,6 +66,55 @@ function SignupPage() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [confirmationEmail, setConfirmationEmail] = useState<string | null>(null);
 
+  const [tracking] = useState(() => createSignupTracking(Date.now()));
+  const accountViewed = useRef(false);
+  const snapshot = useRef({ step, email: false, password: false, confirmation: false });
+  snapshot.current = {
+    step,
+    email: Boolean(email),
+    password: Boolean(password),
+    confirmation: Boolean(confirmationEmail),
+  };
+  useEffect(() => {
+    if (step !== 2) return;
+    captureProductEvent("signup_account_step_viewed", { username_selected: true });
+    if (!accountViewed.current) {
+      accountViewed.current = true;
+      forceOnboardingReplay();
+    }
+  }, [step]);
+  useEffect(() => {
+    const leave = () => {
+      const value = snapshot.current;
+      const properties = tracking.leave(
+        value.confirmation ? "confirmation" : value.step === 1 ? "username" : "account",
+        value.email,
+        value.password,
+        Date.now(),
+      );
+      if (properties) captureProductEvent("signup_abandoned", properties);
+    };
+    const hidden = () => {
+      if (document.visibilityState === "hidden") leave();
+    };
+    window.addEventListener("pagehide", leave);
+    document.addEventListener("visibilitychange", hidden);
+    return () => {
+      window.removeEventListener("pagehide", leave);
+      document.removeEventListener("visibilitychange", hidden);
+    };
+  }, [tracking]);
+  function reportSignupFailure(
+    method: "email" | "google",
+    error: unknown,
+    reason = signupFailureReason(error),
+  ) {
+    tracking.failed();
+    const message = getAuthErrorMessage(error);
+    const safeMessage = redactSignupMessage(message, [email.trim(), password]);
+    captureProductEvent("signup_failed", { method, reason, message: safeMessage });
+  }
+
   const claim = (event: FormEvent<HTMLFormElement>) =>
     handleWebMcpFormSubmit(event, () => {
       if (available !== true) {
@@ -52,6 +128,7 @@ function SignupPage() {
   const handleSignup = (event: FormEvent<HTMLFormElement>) =>
     handleWebMcpFormSubmit(event, async () => {
       setAuthError(null);
+      captureProductEvent("signup_email_submitted", {});
       if (
         !email.trim() ||
         email.trim().length > 254 ||
@@ -59,6 +136,7 @@ function SignupPage() {
         password.length > 128
       ) {
         const message = "Enter a valid email and an 8+ character password.";
+        reportSignupFailure("email", new Error(message), "validation");
         setAuthError(message);
         toast.error(message);
         return { ok: false, message: "Account setup needs valid credentials." };
@@ -76,17 +154,26 @@ function SignupPage() {
           options: { emailRedirectTo: `${authOrigin}/onboarding` },
         });
         if (error) throw error;
-        captureProductEvent("signup_completed", {
+        // Supabase returns an obfuscated user with no identities for an existing email.
+        const createdUserId = data.user?.identities?.length ? data.user.id : null;
+        if (data.user && data.user.identities?.length === 0) {
+          reportSignupFailure("email", new Error("Account already exists."), "user_exists");
+        }
+        captureSignupCompleted({
           method: "email",
-          confirmation_required: !data.session,
+          email: email.trim(),
+          userId: createdUserId,
+          properties: { confirmation_required: !data.session },
         });
         if (data.session) {
+          tracking.succeeded();
           await navigate({ to: "/onboarding", replace: true });
           return { ok: true, message: "Account created. Opening Bento onboarding." };
         }
         setConfirmationEmail(email.trim());
         return { ok: true, message: "Account created. Check your email to confirm it." };
       } catch (error) {
+        reportSignupFailure("email", error);
         const message = getAuthErrorMessage(error);
         setAuthError(message);
         toast.error(message);
@@ -115,6 +202,7 @@ function SignupPage() {
       if (error) throw error;
       toast.success("A fresh confirmation link is on its way.");
     } catch (error) {
+      reportSignupFailure("email", error);
       toast.error(getAuthErrorMessage(error));
     } finally {
       setResendLoading(false);
@@ -124,6 +212,7 @@ function SignupPage() {
   const handleGoogle = async () => {
     setAuthError(null);
     setGoogleLoading(true);
+    tracking.google();
     const toastId = toast.loading("Opening Google sign-in…");
     try {
       storePendingUsername(window.sessionStorage, username);
@@ -139,6 +228,7 @@ function SignupPage() {
       if (error) throw error;
       // The browser redirects to Google on success; nothing runs after this.
     } catch (error) {
+      reportSignupFailure("google", error);
       const message = getAuthErrorMessage(error);
       setAuthError(message);
       toast.error(message, { id: toastId });
@@ -148,7 +238,7 @@ function SignupPage() {
   };
 
   return (
-    <AuthShell>
+    <AuthShell translate="no">
       <div className="mb-8 flex items-center gap-2" aria-label={`Step ${step} of 2`}>
         {[1, 2].map((item) => (
           <span

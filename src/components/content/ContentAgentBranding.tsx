@@ -1,86 +1,20 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { agentBrandingSchema, colorOn, type AgentBranding } from "@/lib/content-agent-branding";
 import { getContentExistingPhotos } from "@/lib/content-agent-images.functions";
-import { getContentPublishingAccounts } from "@/lib/content-agent-preferences.functions";
 
 export function ContentAgentBranding({
   brand,
   onChange,
-  destinations,
-  onDestinationsChange,
 }: {
   brand: AgentBranding;
   onChange: (brand: AgentBranding) => void;
-  destinations: Partial<Record<"twitter" | "linkedin" | "instagram", string>>;
-  onDestinationsChange: (value: typeof destinations) => void;
 }) {
   const [photos, setPhotos] = useState<Awaited<ReturnType<typeof getContentExistingPhotos>>>([]);
-  const [accounts, setAccounts] = useState<
-    Awaited<ReturnType<typeof getContentPublishingAccounts>>
-  >([]);
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
-  useEffect(() => {
-    let active = true;
-    void getContentPublishingAccounts()
-      .then((value) => {
-        if (active) setAccounts(value);
-      })
-      .catch(() => {
-        if (active) setError("Connected accounts could not be loaded.");
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
   const checked = agentBrandingSchema.safeParse(brand);
   return (
     <>
-      <fieldset className="agent-settings-section space-y-3">
-        <legend className="text-sm font-medium">Publishing accounts</legend>
-        <p className="text-xs text-muted-foreground">
-          Your agent selects these accounts before review. You can change the destination on each
-          draft.
-        </p>
-        {(["linkedin", "twitter", "instagram"] as const).map((platform) => (
-          <label key={platform} className="grid gap-1 text-xs">
-            {platform === "twitter"
-              ? "X / Twitter"
-              : platform === "linkedin"
-                ? "LinkedIn"
-                : "Instagram"}
-            <select
-              className="content-field"
-              value={destinations[platform] || ""}
-              onChange={(event) => {
-                const next = { ...destinations };
-                if (event.target.value) next[platform] = event.target.value;
-                else delete next[platform];
-                onDestinationsChange(next);
-              }}
-            >
-              <option value="">
-                {accounts.some((a) => a.provider === platform)
-                  ? "Most recently connected account"
-                  : "Connect an account in the scheduler"}
-              </option>
-              {destinations[platform] && !accounts.some((a) => a.id === destinations[platform]) && (
-                <option value={destinations[platform]}>Saved account · reconnect to publish</option>
-              )}
-              {accounts
-                .filter((a) => a.provider === platform)
-                .map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.provider_handle || platform}
-                  </option>
-                ))}
-            </select>
-          </label>
-        ))}
-        <a className="content-action inline-flex" href="/post-scheduler">
-          Manage connections
-        </a>
-      </fieldset>
       <fieldset className="agent-settings-section space-y-4">
         <legend className="text-sm font-medium">Your carousel style</legend>
         <p className="text-xs text-muted-foreground">

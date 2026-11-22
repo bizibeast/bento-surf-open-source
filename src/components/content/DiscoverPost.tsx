@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Bookmark,
-  BookmarkMinus,
   Check,
   Copy,
   ExternalLink,
@@ -10,9 +9,7 @@ import {
   Globe,
   Heart,
   MessageCircle,
-  Plus,
   Repeat2,
-  Search,
   Sparkles,
   ThumbsDown,
   ThumbsUp,
@@ -40,14 +37,7 @@ import {
 } from "@/lib/content-source-media";
 import { DecodedImage } from "@/components/DecodedImage";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { DiscoverPostActionMenu, DiscoverSaveMenu } from "./DiscoverPostActions";
 import type { DiscoverRecommendation } from "@/lib/content-discovery.functions";
 import {
   discoverMediaLabel,
@@ -59,6 +49,7 @@ import {
   relativePublishedAt,
   visibleStats,
   type DiscoverBoostAction,
+  type DiscoverStudioSource,
 } from "./discover-utils";
 
 export type DiscoverActions = {
@@ -68,6 +59,7 @@ export type DiscoverActions = {
   onReject: (id: string) => void;
   onAskAgent: (item: DiscoverRecommendation, action?: DiscoverBoostAction) => void;
   onCreateDraft: (item: DiscoverRecommendation) => void;
+  onCreateStudio?: (source: DiscoverStudioSource) => void;
   onShowSaved: () => void;
   pending: ReadonlySet<string>;
   onResolveCreator?: (item: DiscoverRecommendation) => Promise<DiscoverCreator>;
@@ -217,119 +209,6 @@ export function CreatorIdentity({
   );
 }
 
-function BoostMenu({
-  item,
-  actions,
-  detail = false,
-}: {
-  item: DiscoverRecommendation;
-  actions: DiscoverActions;
-  detail?: boolean;
-}) {
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          className={detail ? "discover-detail-action" : "discover-icon-button"}
-          aria-label="Boost in chat"
-          title="Boost in chat"
-        >
-          <Zap />
-          <span className={detail ? "" : "sr-only"}>Boost</span>
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" sideOffset={6} className="discover-menu w-64">
-        <DropdownMenuItem onSelect={() => actions.onAskAgent(item, "chat")}>
-          <MessageCircle />
-          <span>
-            Chat with this post<small>Open Agent to riff on it</small>
-          </span>
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuLabel>Boost</DropdownMenuLabel>
-        <DropdownMenuItem onSelect={() => actions.onAskAgent(item, "variations")}>
-          <Sparkles />
-          <span>
-            Variations<small>Generate fresh angles</small>
-          </span>
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => actions.onAskAgent(item, "reverse-engineer")}>
-          <Search />
-          <span>
-            Reverse Engineer<small>Break down why it works</small>
-          </span>
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => actions.onCreateDraft(item)}>
-          <Repeat2 />
-          <span>
-            Replicate<small>Use the structure yourself</small>
-          </span>
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-function SaveMenu({
-  item,
-  actions,
-  detail = false,
-}: {
-  item: DiscoverRecommendation;
-  actions: DiscoverActions;
-  detail?: boolean;
-}) {
-  const saved = item.saved || item.feedback === "saved";
-  if (saved && actions.onUnsave)
-    return (
-      <button
-        type="button"
-        className={detail ? "discover-detail-action" : "discover-icon-button"}
-        aria-label="Unsave"
-        title="Remove from Saved. Existing Brain copies are kept."
-        data-active
-        disabled={actions.pending.has(item.id)}
-        onClick={() => actions.onUnsave?.(item.id)}
-      >
-        <BookmarkMinus />
-        <span className={detail ? "" : "sr-only"}>Unsave</span>
-      </button>
-    );
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          className={detail ? "discover-detail-action" : "discover-icon-button"}
-          aria-label={saved ? "Saved" : "Save"}
-          title={saved ? "Saved to Brain" : "Save"}
-          data-active={saved}
-          disabled={actions.pending.has(item.id)}
-        >
-          {saved ? <Check /> : <Plus />}
-          <span className={detail ? "" : "sr-only"}>{saved ? "Saved" : "Save"}</span>
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" sideOffset={6} className="discover-menu w-64">
-        <DropdownMenuItem disabled={saved} onSelect={() => actions.onSave(item.id)}>
-          <Bookmark />
-          <span>
-            {saved ? "Saved to Brain" : "Save to Brain"}
-            <small>Keep this post in your inspiration library</small>
-          </span>
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={actions.onShowSaved}>
-          <Eye />
-          <span>
-            View saved posts<small>Your saved inspiration</small>
-          </span>
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
 const statIcons = {
   Views: Eye,
   Likes: Heart,
@@ -340,9 +219,10 @@ const statIcons = {
 };
 function Stats({ item, detail = false }: { item: DiscoverRecommendation; detail?: boolean }) {
   const stats = visibleStats(item);
+  const hasBaseline = Boolean(item.performanceBaseline);
   return (
     <div className={detail ? "discover-detail-stats" : "discover-stats"}>
-      {detail && item.outlierScore !== null && <Outlier item={item} detail />}
+      {detail && hasBaseline && <Outlier item={item} detail />}
       {(detail ? stats : stats.slice(0, 2)).map(([label, value]) => {
         const Icon = statIcons[label];
         return (
@@ -359,8 +239,8 @@ function Stats({ item, detail = false }: { item: DiscoverRecommendation; detail?
           </span>
         );
       })}
-      {!detail && item.outlierScore !== null && <Outlier item={item} />}
-      {!stats.length && item.outlierScore === null && (
+      {!detail && hasBaseline && <Outlier item={item} />}
+      {!stats.length && !hasBaseline && (
         <span className="discover-metrics-unavailable">Metrics unavailable</span>
       )}
     </div>
@@ -368,17 +248,24 @@ function Stats({ item, detail = false }: { item: DiscoverRecommendation; detail?
 }
 
 function Outlier({ item, detail = false }: { item: DiscoverRecommendation; detail?: boolean }) {
-  if (item.outlierScore === null || !Number.isFinite(item.outlierScore)) return null;
+  const baseline = item.performanceBaseline;
+  if (!baseline) return null;
+  const ratio = baseline.ratio.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  const description = `${ratio}× median ${baseline.metric} of ${baseline.sampleSize} ${baseline.format} posts from this creator observed within ${baseline.ageWindow.minDays}–${baseline.ageWindow.maxDays} days after publication.`;
   return (
     <span
       className={detail ? "discover-stat-tile discover-outlier" : "discover-outlier"}
-      title={`${item.outlierScore.toFixed(2)}× this creator's typical performance`}
+      title={description}
     >
       <span>
         <Zap aria-hidden="true" />
-        {formatStat(item.outlierScore)}×
+        {ratio}×
       </span>
-      {detail && <small>vs {item.metricName || "typical"}</small>}
+      {detail && (
+        <small>
+          median {baseline.metric} · {baseline.sampleSize} posts
+        </small>
+      )}
     </span>
   );
 }
@@ -440,8 +327,8 @@ export function DiscoverPostCard({
         >
           <ThumbsDown />
         </button>
-        <BoostMenu item={item} actions={actions} />
-        <SaveMenu item={item} actions={actions} />
+        <DiscoverPostActionMenu item={item} actions={actions} />
+        <DiscoverSaveMenu item={item} actions={actions} />
       </div>
       {mediaFirst && image}
       <div className="discover-card-body">
@@ -543,6 +430,7 @@ export function DiscoverPostDialog({
 }) {
   const authorUrl = item && (publicSourceUrl(item.authorUrl) || sourceCreator(item.sourceUrl)?.url);
   const related = item ? relatedDiscoverPosts(item, items) : [];
+  const sourceUrl = publicSourceUrl(item?.sourceUrl);
   return (
     <Dialog open={Boolean(item)} onOpenChange={(open) => !open && onClose()}>
       <DialogContent
@@ -589,8 +477,8 @@ export function DiscoverPostDialog({
                 )}
               </div>
               <div className="discover-detail-actions">
-                <SaveMenu item={item} actions={actions} detail />
-                <BoostMenu item={item} actions={actions} detail />
+                <DiscoverSaveMenu item={item} actions={actions} detail />
+                <DiscoverPostActionMenu item={item} actions={actions} detail />
                 <button
                   type="button"
                   className="discover-detail-action"
@@ -601,10 +489,10 @@ export function DiscoverPostDialog({
                   <span>Hide</span>
                 </button>
                 <CopyButton text={discoverPostText(item)} />
-                {item.sourceUrl && (
+                {sourceUrl && (
                   <a
                     className="discover-detail-action"
-                    href={item.sourceUrl}
+                    href={sourceUrl}
                     target="_blank"
                     rel="noreferrer noopener"
                     aria-label="Open original post"

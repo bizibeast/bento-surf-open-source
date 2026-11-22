@@ -1,3 +1,4 @@
+import { reserveProviderUsage, ProviderBudgetError } from "./provider-budget.server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   detectMediaToolPlatform,
@@ -82,6 +83,22 @@ function tunnelFetcher(
 }
 
 describe("media tool request parsing", () => {
+  it("uses the Worker-supported manual redirect mode and rejects redirects without following them", async () => {
+    for (const status of [200, 302]) {
+      const fetcher = vi.fn<typeof fetch>(async (_url, options) => {
+        if (options?.redirect === "error") throw new TypeError("Invalid redirect value");
+        expect(options?.redirect).toBe("manual");
+        return status === 302
+          ? new Response(null, { status: 302, headers: { location: "https://example.com/" } })
+          : Response.json({ status: "tunnel", url: TUNNEL_URL, filename: "video.mp4" });
+      });
+      const response = await handleFreeToolMediaRequest(jsonRequest(), developmentEnv(), {
+        fetcher,
+      });
+      expect(response?.status).toBe(status === 200 ? 200 : 502);
+      expect(fetcher).toHaveBeenCalledOnce();
+    }
+  });
   it("strictly accepts the documented request and derives operation server-side", () => {
     expect(
       parseMediaToolRequest(
@@ -179,6 +196,55 @@ describe("media source URL policy", () => {
   ] as const)("auto-detects a supported %s URL", (platform, url) => {
     expect(detectMediaToolPlatform(url)).toBe(platform);
     expect(normalizeMediaSourceUrl("auto", url)).toMatch(/^https:\/\//u);
+  });
+
+  it.each([
+    ["twitter", "https://x.com/i/status/123", "https://x.com/i/status/123"],
+    ["twitter", "https://twitter.com/i/web/status/123?s=20", "https://x.com/i/status/123"],
+    ["twitter", "https://www.x.com/creator/status/123/photo/1", "https://x.com/i/status/123"],
+    [
+      "pinterest",
+      "https://in.pinterest.com/pin/title-123456789/?foo=1",
+      "https://www.pinterest.com/pin/123456789/",
+    ],
+    ["pinterest", "https://pin.it/Idea9Pin/?ref=share", "https://pin.it/Idea9Pin"],
+    [
+      "pinterest",
+      "https://fr.pinterest.com/pin/caf%C3%A9-123456789/",
+      "https://www.pinterest.com/pin/123456789/",
+    ],
+    [
+      "linkedin",
+      "https://fr.linkedin.com/posts/caf%C3%A9_activity-1234567890123456789-post/?tracking=1",
+      "https://www.linkedin.com/posts/caf%C3%A9_activity-1234567890123456789-post/",
+    ],
+    [
+      "linkedin",
+      "https://uk.linkedin.com/posts/team_activity-1234567890123456789-post/?tracking=1",
+      "https://www.linkedin.com/posts/team_activity-1234567890123456789-post/",
+    ],
+    [
+      "linkedin",
+      "https://linkedin.com/feed/update/urn%3Ali%3Aactivity%3A1234567890123456789?foo=bar",
+      "https://www.linkedin.com/feed/update/urn:li:activity:1234567890123456789/",
+    ],
+  ] as const)("normalizes %s canonical post form", (platform, source, normalized) => {
+    expect(detectMediaToolPlatform(source)).toBe(platform);
+    expect(normalizeMediaSourceUrl(platform, source)).toBe(normalized);
+  });
+
+  it.each([
+    "https://business.pinterest.com/pin/123456789/",
+    "https://pin.it/Bad/Path",
+    "https://linkedin.com.evil.example/posts/team_activity-1234567890123456789-post",
+    "https://linkedin.com:8443/feed/update/urn:li:activity:1234567890123456789",
+    "https://www.linkedin.com/posts/profile/redirect?activity=1234567890123456789",
+    "https://linkedin.com/posts/team%2Fnews_activity-1234567890123456789-post",
+    "https://linkedin.com/posts/team%FF_activity-1234567890123456789-post",
+    "https://pinterest.com/pin/folder%2Ftitle-123456789/",
+    "https://x.com/example/not-a-status/status/123",
+  ])("refuses unsafe or non-post URLs in the generic downloader: %s", (source) => {
+    expect(detectMediaToolPlatform(source)).toBeNull();
   });
 
   it("does not auto-detect unsupported or lookalike hosts", () => {
@@ -516,6 +582,61 @@ describe("free URL media endpoint", () => {
     expect(payload.items.every((item) => item.mediaType === "image")).toBe(true);
   });
 
+  it("explains a failed public CDN file without claiming the original post is inaccessible", async () => {
+    const fetcher = tunnelFetcher({
+      cobaltResponse: { status: "error", error: { code: "public_media_file_unavailable" } },
+    });
+    const response = await handleFreeToolMediaRequest(
+      jsonRequest({
+        toolSlug: "social-media-downloader",
+        url: "https://pinterest.com/pin/1234567890/",
+      }),
+      developmentEnv(),
+      { fetcher },
+    );
+    expect(response?.status).toBe(422);
+    await expect(response?.json()).resolves.toEqual({
+      error:
+        "Bento could not download the file from that post. Try again or ask the owner for the original file.",
+    });
+  });
+
+  it("requests the default H.264-compatible TikTok format explicitly for downloads", async () => {
+    const fetcher = tunnelFetcher({
+      cobaltResponse: { status: "tunnel", url: TUNNEL_URL, filename: "video.mp4" },
+    });
+    const response = await handleFreeToolMediaRequest(
+      jsonRequest({
+        toolSlug: "social-media-downloader",
+        url: "https://www.tiktok.com/@creator/video/1234567890123456789",
+      }),
+      developmentEnv(),
+      { fetcher },
+    );
+    expect(response?.status).toBe(200);
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toMatchObject({
+      allowH265: false,
+    });
+  });
+
+  it("requests the existing video filter when resolving an X video", async () => {
+    const fetcher = tunnelFetcher({
+      cobaltResponse: { status: "tunnel", url: TUNNEL_URL, filename: "video.mp4" },
+    });
+    const response = await handleFreeToolMediaRequest(
+      jsonRequest({
+        toolSlug: "twitter-video-downloader",
+        url: "https://x.com/creator/status/123",
+      }),
+      developmentEnv(),
+      { fetcher },
+    );
+    expect(response?.status).toBe(200);
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toMatchObject({
+      mediaFilter: "video",
+    });
+  });
+
   it("classifies a single tunneled image from its safe filename extension", async () => {
     const response = await handleFreeToolMediaRequest(
       jsonRequest({
@@ -760,6 +881,116 @@ describe("free URL media endpoint", () => {
     ).toHaveLength(1);
   });
 
+  it("preserves the signed Instagram carousel filenames and excludes unsigned CDN links", async () => {
+    const photo = `${COBALT_ORIGIN}/instagram-media?kind=image&bento_filename=instagram-CxsaqgOPVJe-01.jpg&signature=signed-photo`;
+    const video = `${COBALT_ORIGIN}/instagram-media?kind=video&bento_filename=instagram-CxsaqgOPVJe-02.mp4&signature=signed-video`;
+    const invalidFilename = `${COBALT_ORIGIN}/instagram-media?kind=video&bento_filename=changed.mp4&signature=bad-filename`;
+    const response = await handleFreeToolMediaRequest(
+      jsonRequest({
+        toolSlug: "instagram-carousel-downloader",
+        url: "https://instagram.com/p/CxsaqgOPVJe/",
+      }),
+      developmentEnv(),
+      {
+        fetcher: tunnelFetcher({
+          cobaltResponse: {
+            status: "picker",
+            picker: [
+              { type: "photo", url: photo, filename: "instagram-CxsaqgOPVJe-01.jpg" },
+              { type: "video", url: video, filename: "instagram-CxsaqgOPVJe-02.mp4" },
+              { type: "video", url: invalidFilename, filename: "original.mp4" },
+              {
+                type: "photo",
+                url: "https://cdninstagram.com/unsigned.jpg",
+                filename: "unsigned.jpg",
+              },
+            ],
+          },
+        }),
+      },
+    );
+    expect(response?.status).toBe(200);
+    await expect(response?.json()).resolves.toMatchObject({
+      items: [
+        { url: photo, filename: "instagram-CxsaqgOPVJe-01.jpg", mediaType: "image" },
+        { url: video, filename: "instagram-CxsaqgOPVJe-02.mp4", mediaType: "video" },
+      ],
+    });
+  });
+
+  it("preserves a trailing shortcode hyphen in a signed single-item Instagram download", async () => {
+    const filename = "instagram-CxsaqgOPVJ-.mp4";
+    const url = `${COBALT_ORIGIN}/instagram-media?kind=video&bento_filename=${filename}&signature=signed-video`;
+    const response = await handleFreeToolMediaRequest(
+      jsonRequest({
+        toolSlug: "instagram-video-downloader",
+        url: "https://instagram.com/reel/CxsaqgOPVJ-/",
+      }),
+      developmentEnv(),
+      {
+        fetcher: tunnelFetcher({ cobaltResponse: { status: "tunnel", url, filename } }),
+      },
+    );
+    expect(response?.status).toBe(200);
+    await expect(response?.json()).resolves.toMatchObject({
+      items: [{ url, filename, mediaType: "video" }],
+    });
+  });
+
+  it("transcribes a signed Instagram MP4 with a trailing shortcode hyphen", async () => {
+    const filename = "instagram-CxsaqgOPVJ-.mp4";
+    const url = `${COBALT_ORIGIN}/instagram-media?kind=video&bento_filename=${filename}&signature=signed-video`;
+    const video = new Uint8Array(64);
+    video.set(new TextEncoder().encode("ftyp"), 4);
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ status: "tunnel", url, filename }))
+      .mockResolvedValueOnce(new Response(video, { headers: { "content-type": "video/mp4" } }));
+    const transcribeAudio = vi.fn().mockResolvedValue(transcriptResult);
+    const response = await handleFreeToolMediaRequest(
+      jsonRequest({
+        toolSlug: "instagram-to-transcript",
+        url: "https://instagram.com/reel/CxsaqgOPVJ-/",
+      }),
+      developmentEnv({ GROQ_API_KEY: "test-groq-key" }),
+      { fetcher, transcribeAudio },
+    );
+    expect(response?.status).toBe(200);
+    expect(String(fetcher.mock.calls[1][0])).toBe(url);
+    expect(transcribeAudio).toHaveBeenCalledWith(
+      video,
+      "audio/mp4",
+      expect.anything(),
+      expect.any(AbortSignal),
+    );
+    await expect(response?.json()).resolves.toMatchObject({
+      kind: "transcript",
+      filename: "instagram-CxsaqgOPVJ-.mp3",
+    });
+  });
+
+  it("explains an Instagram reel that has no downloadable video", async () => {
+    const response = await handleFreeToolMediaRequest(
+      jsonRequest({
+        toolSlug: "instagram-video-downloader",
+        url: "https://instagram.com/reel/CxsaqgOPVJe/",
+      }),
+      developmentEnv(),
+      {
+        fetcher: tunnelFetcher({
+          cobaltResponse: {
+            status: "error",
+            error: { code: "error.api.instagram.video_unavailable" },
+          },
+        }),
+      },
+    );
+    expect(response?.status).toBe(422);
+    await expect(response?.json()).resolves.toEqual({
+      error: "Instagram did not provide a downloadable video for that link",
+    });
+  });
+
   it("accepts the dedicated same-origin audio tunnel from a picker response", async () => {
     const transcribeAudio = vi.fn().mockResolvedValue(transcriptResult);
     const fetcher = tunnelFetcher({
@@ -811,7 +1042,7 @@ describe("free URL media endpoint", () => {
     expect(await response?.text()).not.toContain("secret-detail");
   });
 
-  it("explains the configured 25-minute provider limit", async () => {
+  it("explains a provider processing-duration refusal", async () => {
     const response = await handleFreeToolMediaRequest(jsonRequest(), developmentEnv(), {
       fetcher: tunnelFetcher({
         cobaltResponse: {
@@ -823,7 +1054,7 @@ describe("free URL media endpoint", () => {
 
     expect(response?.status).toBe(422);
     await expect(response?.json()).resolves.toEqual({
-      error: "This video is longer than Bento's 25-minute limit",
+      error: "This video exceeds the supported processing duration",
     });
   });
 
@@ -1007,5 +1238,17 @@ describe("free URL media endpoint", () => {
     expect(response?.status).toBe(200);
     expect(ai.run).toHaveBeenCalledOnce();
     expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("bounded public downloader compute", () => {
+  it("denies YouTube work before contacting media providers when the shared budget is full", async () => {
+    vi.mocked(reserveProviderUsage).mockRejectedValueOnce(
+      new ProviderBudgetError("mcp_media_resolutions"),
+    );
+    const fetcher = vi.fn();
+    const response = await handleFreeToolMediaRequest(jsonRequest(), developmentEnv(), { fetcher });
+    expect(response?.status).toBe(429);
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });

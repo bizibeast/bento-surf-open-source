@@ -1,5 +1,5 @@
 import { STRATEGY_PLATFORMS, type StrategyPlatform } from "@/lib/content-brain";
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
 import { ChevronRight, Eye, Image, Plus, RefreshCw, Search } from "lucide-react";
 import {
   AlertDialog,
@@ -12,14 +12,19 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  activeBrainItems,
+  memoryDocument,
+  memoryDocumentInput,
+  topicReference,
+} from "@/lib/benny-memory-documents";
+import { BennySkills } from "./BennySkills";
 import { ContentDocument, ContentMarkdown } from "./ContentDocument";
 import {
   buildContentStrategy,
   brainDocumentBody,
   contentTopics,
-  writingVoiceDocument,
   groupBrainItems,
-  profileDocuments,
   type BrainItem,
   type BrainItemInput,
   type ContentProfile,
@@ -56,19 +61,20 @@ export type ContentBrainSection =
   | "file"
   | "photo"
   | "sources"
-  | "skill";
+  | "skill"
+  | "creative"
+  | "preferences";
 type Section = ContentBrainSection;
 const sections: Array<[Section, string]> = [
-  ["profile", "My Human"],
+  ["profile", "About You"],
   ["instruction", "Instructions"],
   ["strategy", "Strategy"],
   ["topics", "Topics"],
   ["story", "Stories"],
-  ["file", "Files"],
-  ["photo", "Media"],
+  ["photo", "Files"],
   ["skill", "Skills"],
-  ["library", "Library"],
-  ["sources", "Sources"],
+  ["creative", "Styles & avatars"],
+  ["preferences", "Preferences"],
 ];
 const providers: Record<string, string> = {
   twitter: "X",
@@ -99,6 +105,7 @@ export function ContentBrain({
     ),
   ) ?? "twitter",
   onNavigate,
+  panels,
   sources,
   photos = [],
   folders = [],
@@ -131,6 +138,7 @@ export function ContentBrain({
 }: {
   profile: ContentProfile;
   humanSummary?: string;
+  panels?: Partial<Record<"creative" | "preferences", ReactNode>>;
   initialSection?: Section;
   initialItemId?: string | null;
   initialPlatform?: StrategyPlatform;
@@ -183,7 +191,13 @@ export function ContentBrain({
   onMoveMedia?: (id: string, folderId: string | null) => Promise<void>;
   onSetHero?: (slot: number, id: string | null) => Promise<void>;
 }) {
-  const [section, setSection] = useState<Section>(initialSection);
+  const [section, setSection] = useState<Section>(
+    initialSection === "file"
+      ? "photo"
+      : ["sources", "library"].includes(initialSection)
+        ? "profile"
+        : initialSection,
+  );
   const [selected, setSelected] = useState<string | null>(initialItemId);
   const [storiesOpen, setStoriesOpen] = useState(initialSection === "story");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -217,7 +231,13 @@ export function ContentBrain({
     }
   };
   useEffect(() => {
-    setSection(initialSection);
+    setSection(
+      initialSection === "file"
+        ? "photo"
+        : ["sources", "library"].includes(initialSection)
+          ? "profile"
+          : initialSection,
+    );
     setSelected(initialItemId);
     setPlatform(initialPlatform);
   }, [initialSection, initialItemId, initialPlatform]);
@@ -226,11 +246,7 @@ export function ContentBrain({
     setSelected(id);
     onNavigate?.(next, id, platform);
   };
-  const grouped = useMemo(() => groupBrainItems(items), [items]);
-  const { human, humanContent, details, memories } = profileDocuments(items);
-  const voice = writingVoiceDocument(
-    grouped.instruction.filter((item) => !item.tags?.includes("skill")),
-  );
+  const grouped = useMemo(() => groupBrainItems(activeBrainItems(items)), [items]);
   const visible =
     section === "library"
       ? [...grouped.inspiration, ...grouped.link]
@@ -239,8 +255,13 @@ export function ContentBrain({
         : section === "skill"
           ? grouped.instruction.filter((item) => item.tags?.includes("skill"))
           : section === "instruction"
-            ? voice.others
-            : grouped[section as keyof typeof grouped];
+            ? grouped.instruction.filter(
+                (item) =>
+                  !item.tags?.some((tag) =>
+                    ["skill", "creative-preference", "topic-preferences"].includes(tag),
+                  ),
+              )
+            : grouped[section as keyof typeof grouped] || [];
   const filtered = visible.filter((item) =>
     `${item.title} ${item.content}`.toLowerCase().includes(search.toLowerCase()),
   );
@@ -305,7 +326,8 @@ export function ContentBrain({
   const upload = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.currentTarget.files || []);
     event.currentTarget.value = "";
-    for (const file of files) await onUpload(file, section === "photo" ? "photo" : "file");
+    for (const file of files)
+      await onUpload(file, /^(image|video)\//.test(file.type) ? "photo" : "file");
   };
   const photoItems: ContentBrainPhoto[] = photos;
   const activePhoto = photoItems.find((photo) => photo.id === selected);
@@ -319,53 +341,61 @@ export function ContentBrain({
           aria-label="Brain sections"
           className="flex overflow-x-auto md:grid md:overflow-visible"
         >
-          {sections.map(([id, label]) => (
-            <div key={id} className={`shrink-0 min-w-0 ${id === "story" ? "md:mt-5" : ""}`}>
-              <button
-                type="button"
-                className="content-nav flex items-center gap-2"
-                aria-current={section === id ? "page" : undefined}
-                aria-expanded={id === "story" ? storiesOpen : undefined}
-                onClick={() => (id === "story" ? setStoriesOpen(!storiesOpen) : changeSection(id))}
-              >
-                {id === "story" && (
-                  <ChevronRight
-                    className={`size-3 transition-transform ${storiesOpen ? "rotate-90" : ""}`}
-                  />
-                )}{" "}
-                {label}
-              </button>
-              {(id === "story"
-                ? storiesOpen
-                : section === id && ["file", "library"].includes(id)) && (
-                <div className="ml-3 mt-1 border-l border-neutral-200 pl-1">
+          {sections
+            .filter(
+              ([id]) =>
+                !["creative", "preferences"].includes(id) ||
+                panels?.[id as "creative" | "preferences"],
+            )
+            .map(([id, label]) => (
+              <div key={id} className={`shrink-0 min-w-0 ${id === "story" ? "md:mt-5" : ""}`}>
+                <button
+                  type="button"
+                  className="content-nav flex items-center gap-2"
+                  aria-current={section === id ? "page" : undefined}
+                  aria-expanded={id === "story" ? storiesOpen : undefined}
+                  onClick={() =>
+                    id === "story" ? setStoriesOpen(!storiesOpen) : changeSection(id)
+                  }
+                >
                   {id === "story" && (
-                    <button
-                      className="content-nav"
-                      aria-current={section === "story" && !selected ? "page" : undefined}
-                      onClick={() => selectItem(null, "story")}
-                    >
-                      Index
-                    </button>
-                  )}
-                  {(id === "story" ? grouped.story : visible).map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className="content-nav truncate"
-                      aria-current={selected === item.id ? "page" : undefined}
-                      onClick={() => {
-                        selectItem(item.id, id);
-                        setAdding(false);
-                      }}
-                    >
-                      {item.title}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
+                    <ChevronRight
+                      className={`size-3 transition-transform ${storiesOpen ? "rotate-90" : ""}`}
+                    />
+                  )}{" "}
+                  {label}
+                </button>
+                {(id === "story"
+                  ? storiesOpen
+                  : section === id && ["file", "library"].includes(id)) && (
+                  <div className="ml-3 mt-1 border-l border-neutral-200 pl-1">
+                    {id === "story" && (
+                      <button
+                        className="content-nav"
+                        aria-current={section === "story" && !selected ? "page" : undefined}
+                        onClick={() => selectItem(null, "story")}
+                      >
+                        Index
+                      </button>
+                    )}
+                    {(id === "story" ? grouped.story : visible).map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="content-nav truncate"
+                        aria-current={selected === item.id ? "page" : undefined}
+                        onClick={() => {
+                          selectItem(item.id, id);
+                          setAdding(false);
+                        }}
+                      >
+                        {item.title}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
         </nav>
         {onBuildBrain && (
           <button
@@ -390,20 +420,15 @@ export function ContentBrain({
               {title} / Back to index
             </button>
           )}
-          {indexing &&
-            (section === "sources" ||
-              ["pending", "running", "error"].includes(indexing.status)) && (
-              <p
-                role="status"
-                className={`mb-5 text-xs leading-5 ${indexing.status === "error" ? "text-red-700" : "text-neutral-500"}`}
-              >
-                {indexing.status === "pending" || indexing.status === "running"
-                  ? "Learning from your connected posts…"
-                  : indexing.status === "error"
-                    ? indexing.error || "Source indexing will retry shortly."
-                    : `${indexing.sourceCount} source posts indexed · ${indexing.mediaCount} reusable assets imported`}
-              </p>
-            )}
+          {indexing && section === "sources" && (
+            <p role="status" className="mb-5 text-xs leading-5 text-neutral-500">
+              {indexing.status === "pending" || indexing.status === "running"
+                ? "Learning from your connected posts…"
+                : indexing.status === "error"
+                  ? "Bento couldn’t finish refreshing your sources. Your saved Brain is still available. Use “Refresh from my posts” to try again."
+                  : `${indexing.sourceCount} source posts indexed · ${indexing.mediaCount} reusable assets imported`}
+            </p>
+          )}
           <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-[28px] font-semibold tracking-tight">
               {selectedItem?.title ||
@@ -436,11 +461,11 @@ export function ContentBrain({
                 <input
                   type="file"
                   multiple
-                  aria-label={`Upload ${section === "photo" ? "media" : "files"}`}
+                  aria-label="Upload files"
                   className="sr-only"
                   accept={
                     section === "photo"
-                      ? "image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm"
+                      ? "image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,.pdf,.txt,.md"
                       : "image/*,.pdf,.txt,.md"
                   }
                   onChange={upload}
@@ -448,55 +473,17 @@ export function ContentBrain({
               </label>
             )}
           </header>
-          {section === "profile" ? (
+          {section === "creative" || section === "preferences" ? (
+            panels?.[section]
+          ) : section === "profile" ? (
             <>
-              <h3 className="mb-3 text-lg font-semibold">Summary</h3>
               <ContentDocument
-                key="human"
-                label="Summary"
-                value={humanContent || humanSummary}
-                placeholder="Everything Bento should know about you - background, product facts, audience notes, offers, positioning, examples to remember…"
-                onSave={(content) => saveText(human, "profile", "My Human", content)}
+                label="About You"
+                value={memoryDocument(items, "profile", humanSummary)}
+                placeholder="Add your background, audience, goals and anything Benny should remember…"
+                allowEmpty
+                onSave={(content) => onSaveItem(memoryDocumentInput(items, "profile", content))}
               />
-              {details.length > 0 && (
-                <section className="mt-10" aria-label="Profile">
-                  <h3 className="mb-3 text-lg font-semibold">Profile</h3>
-                  {details.map((item) => (
-                    <ContentDocument
-                      key={item.id}
-                      label="Profile"
-                      value={brainDocumentBody(item.content, item.title)}
-                      onSave={(content) => saveText(item, "profile", item.title, content)}
-                    />
-                  ))}
-                </section>
-              )}
-              <div className="my-8 border-t border-neutral-100" />
-              <h3 className="text-lg font-semibold">Bento Memories</h3>
-              <p className="mt-1 mb-6 text-xs leading-5 text-neutral-500">
-                Remembered from your conversations and posts. Edit anything to correct Bento - your
-                corrections stick.
-              </p>
-              {memories.length ? (
-                memories.map((item) => (
-                  <KnowledgeItem
-                    key={item.id}
-                    item={item}
-                    showTitle={item.title.toLowerCase() !== "bento memories"}
-                    onSave={(content) => saveText(item, item.kind, item.title, content)}
-                    onConfirm={onConfirm}
-                    onLock={onLock}
-                    onDelete={onDelete}
-                  />
-                ))
-              ) : (
-                <ContentDocument
-                  label="Bento Memories"
-                  value=""
-                  placeholder="What should Bento remember? Click here to add a fact, preference, or lesson."
-                  onSave={(content) => saveText(undefined, "profile", "Bento Memories", content)}
-                />
-              )}
               <section className="mt-10 border-t border-neutral-100 pt-5">
                 <button
                   type="button"
@@ -525,7 +512,12 @@ export function ContentBrain({
               </section>
             </>
           ) : section === "topics" ? (
-            <Topics profile={profile} items={items} onSave={onSaveProfile} />
+            <Topics
+              profile={profile}
+              items={items}
+              onSave={onSaveProfile}
+              onSaveItem={onSaveItem}
+            />
           ) : section === "strategy" ? (
             (() => {
               const item = grouped.strategy.find((candidate) =>
@@ -583,6 +575,23 @@ export function ContentBrain({
                 <p role="alert" className="mb-4 text-sm text-red-700">
                   {error}
                 </p>
+              )}
+              {grouped.file.length > 0 && (
+                <details className="mb-6 rounded-xl border border-border p-4">
+                  <summary className="cursor-pointer font-medium">
+                    Documents ({grouped.file.length})
+                  </summary>
+                  {grouped.file.map((item) => (
+                    <KnowledgeItem
+                      key={item.id}
+                      item={item}
+                      onSave={(content) => saveText(item, item.kind, item.title, content)}
+                      onConfirm={onConfirm}
+                      onLock={onLock}
+                      onDelete={onDelete}
+                    />
+                  ))}
+                </details>
               )}
               <p className="mb-4 text-xs leading-5 text-neutral-500">
                 Bento saves up to 10 top post images or covers per connected platform. Add up to 50
@@ -978,6 +987,16 @@ export function ContentBrain({
                 </>
               )}
             </>
+          ) : section === "instruction" ? (
+            <ContentDocument
+              label="Instructions"
+              value={memoryDocument(items, "instruction")}
+              placeholder="Add your writing voice, examples and standing instructions, including headings…"
+              allowEmpty
+              onSave={(content) => onSaveItem(memoryDocumentInput(items, "instruction", content))}
+            />
+          ) : section === "skill" ? (
+            <BennySkills items={items} onSave={onSaveItem} />
           ) : selectedItem ? (
             <KnowledgeItem
               key={selectedItem.id}
@@ -992,36 +1011,12 @@ export function ContentBrain({
             />
           ) : (
             <>
-              {section === "instruction" && (
-                <section className="mb-8">
-                  <h3 className="mb-3 text-lg font-semibold">Writing voice</h3>
-                  <ContentDocument
-                    label="Writing voice"
-                    value={voice.content}
-                    placeholder="How should Bento sound? Add your tone, examples, and words to avoid."
-                    onSave={(content) =>
-                      onSaveItem({
-                        ...(voice.primary || {}),
-                        kind: "instruction",
-                        title: "Writing voice",
-                        content,
-                        tags: ["canonical-voice"],
-                        provenance: "creator",
-                        status: "confirmed",
-                        locked: true,
-                      })
-                    }
-                  />
-                </section>
-              )}
               <p className="mb-5 text-sm leading-6 text-neutral-500">
-                {section === "instruction"
-                  ? "Standing rules Bento applies to every reply. Add a rule, or edit an existing one."
-                  : section === "story"
-                    ? `${visible.length} stories from your own experience. Open a story to read, correct, and reuse it.`
-                    : section === "library"
-                      ? "Saved ideas and links for inspiration. Edit a note to tell Bento what you want to learn from it; these are not facts about your life."
-                      : "Reference material Bento can use when planning and writing."}
+                {section === "story"
+                  ? `${visible.length} stories from your own experience. Open a story to read, correct, and reuse it.`
+                  : section === "library"
+                    ? "Saved ideas and links for inspiration. Edit a note to tell Bento what you want to learn from it; these are not facts about your life."
+                    : "Reference material Bento can use when planning and writing."}
               </p>
               {visible.length > 3 && (
                 <label className="relative mb-6 block">
@@ -1105,7 +1100,7 @@ export function ContentBrain({
                   />
                 ))
               )}
-              {!filtered.length && section !== "instruction" && (
+              {!filtered.length && (
                 <p className="py-6 text-sm text-neutral-400">
                   {visible.length
                     ? "No matching items."
@@ -1121,13 +1116,7 @@ export function ContentBrain({
                       onClick={() => setAdding(true)}
                     >
                       <Plus className="size-4" />
-                      {section === "instruction"
-                        ? "Add instruction"
-                        : section === "story"
-                          ? "Add story"
-                          : section === "skill"
-                            ? "New skill"
-                            : "Add knowledge"}
+                      {section === "story" ? "Add story" : "Add knowledge"}
                     </button>
                   ) : (
                     <form
@@ -1137,7 +1126,7 @@ export function ContentBrain({
                       }}
                       className="space-y-3"
                     >
-                      {section !== "instruction" && (
+                      {
                         <input
                           aria-label="Brain item title"
                           className="content-field"
@@ -1146,7 +1135,7 @@ export function ContentBrain({
                           onChange={(event) => setNewTitle(event.target.value)}
                           placeholder="Title"
                         />
-                      )}
+                      }
                       <textarea
                         autoFocus
                         aria-label="Brain item content"
@@ -1154,11 +1143,7 @@ export function ContentBrain({
                         value={newContent}
                         maxLength={20_000}
                         onChange={(event) => setNewContent(event.target.value)}
-                        placeholder={
-                          section === "instruction"
-                            ? "Never use emojis. Keep hooks to one line…"
-                            : "What should Bento remember?"
-                        }
+                        placeholder={"What should Benny remember?"}
                       />
                       <div className="flex gap-2">
                         <button
@@ -1197,9 +1182,11 @@ function Topics({
   profile,
   items,
   onSave,
+  onSaveItem,
 }: {
   profile: ContentProfile;
   items: BrainItem[];
+  onSaveItem: (item: BrainItemInput) => void | Promise<void>;
   onSave: (profile: ContentProfile) => void | Promise<void>;
 }) {
   const topics = contentTopics(profile, items);
@@ -1209,8 +1196,8 @@ function Topics({
   return (
     <div className="space-y-10">
       <p className="text-sm leading-7 text-neutral-500">
-        Learned from your Brain strategies and stories. Your interests guide the news, ideas, and
-        trends Bento brings to you.
+        Edit or delete any pillar or topic below. Your saved choices guide the news, ideas, and
+        trends Benny brings to you.
       </p>
       {(
         [
@@ -1220,25 +1207,27 @@ function Topics({
       ).map(([label, values]) => (
         <section key={label}>
           <h3 className="mb-5 text-lg font-semibold">{label}</h3>
-          <ul className="flex flex-wrap gap-x-8 gap-y-5">
-            {values.map((value) => (
-              <li
-                key={value}
-                className={
-                  label === "Pillars"
-                    ? "text-2xl font-semibold tracking-tight"
-                    : "text-lg font-medium"
-                }
-              >
-                {value}
-              </li>
-            ))}
-          </ul>
-          {!values.length && (
-            <p className="text-sm text-neutral-500">
-              Add stories or refresh from your posts to learn your {label.toLowerCase()}.
-            </p>
-          )}
+          <ContentDocument
+            label={label}
+            value={values.map((value) => `- ${value}`).join("\n")}
+            placeholder={`Add or remove ${label.toLowerCase()}, one per line…`}
+            allowEmpty
+            onSave={(content) => {
+              const sourceRef = topicReference(label === "Pillars" ? "pillars" : "other");
+              const prior = items.find((item) => item.sourceRef === sourceRef);
+              return onSaveItem({
+                ...(prior ? { id: prior.id } : {}),
+                kind: "instruction",
+                title: label,
+                content: `# ${label}\n\n${content.trim()}`.trim(),
+                sourceRef,
+                provenance: "creator",
+                status: "confirmed",
+                locked: true,
+                tags: ["topic-preferences"],
+              });
+            }}
+          />
         </section>
       ))}
       <form

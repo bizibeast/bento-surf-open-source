@@ -1,3 +1,4 @@
+import { redirectPublicHostToAppHost } from "@/lib/app-host-handoff";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
@@ -16,6 +17,12 @@ export const Route = createFileRoute("/login")({
   pendingMs: 0,
   validateSearch: (s) => ({ redirect: sanitizeLocalRedirect(s.redirect) }),
   beforeLoad: async ({ search }) => {
+    if (
+      typeof window !== "undefined" &&
+      redirectPublicHostToAppHost(window.location, (url) => window.location.replace(url))
+    ) {
+      await new Promise<never>(() => undefined);
+    }
     await redirectAuthenticatedVisitor(search.redirect);
   },
   head: () => ({ meta: [{ title: "Sign in | bento.surf" }] }),

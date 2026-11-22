@@ -4,9 +4,16 @@
 export type PlanId = "free" | "store" | "creator" | "creator_plus";
 export type PaidPlanId = Exclude<PlanId, "free">;
 export type BillingPeriod = "monthly" | "yearly";
-export type BillingCatalog = "legacy" | "2026-10";
+export const FULLY_MANAGED_BILLING_CATALOG = "2026-11-managed";
+export const FULLY_MANAGED_DODO_PRODUCT_ENV = "DODO_FULLY_MANAGED_99_MONTHLY_PRODUCT_ID";
+export type BillingCatalog = "legacy" | "2026-10" | typeof FULLY_MANAGED_BILLING_CATALOG;
 export const CURRENT_BILLING_CATALOG: BillingCatalog = "2026-10";
 export const NEW_BILLING_PERIODS: readonly BillingPeriod[] = ["monthly", "yearly"];
+
+export function normalizeBillingCatalog(value: unknown): BillingCatalog {
+  if (value === "legacy" || value === FULLY_MANAGED_BILLING_CATALOG) return value;
+  return CURRENT_BILLING_CATALOG;
+}
 
 export type EntitlementKey =
   | "advancedAnalytics"
@@ -36,6 +43,7 @@ export type EntitlementKey =
   | "discover"
   | "brain"
   | "contentAgent"
+  | "bennyByok"
   | "contentRoutines"
   | "weeklyStrategyReview"
   | "mcpSocialAutomation";
@@ -122,6 +130,7 @@ const freeEntitlements: Record<EntitlementKey, boolean> = {
   discover: false,
   brain: false,
   contentAgent: false,
+  bennyByok: false,
   contentRoutines: false,
   weeklyStrategyReview: false,
   mcpSocialAutomation: false,
@@ -156,6 +165,7 @@ const creatorEntitlements: Record<EntitlementKey, boolean> = {
   emailMarketing: true,
   verifiedBadge: true,
   discover: true,
+  bennyByok: true,
   mcpSocialAutomation: true,
 };
 
@@ -222,7 +232,7 @@ export const PLAN_CONFIG: Record<PlanId, PlanDefinition> = {
   creator: {
     id: "creator",
     name: "Creator",
-    description: "Build, monetize, automate and grow.",
+    description: "Your own AI, Benny and tools to create and grow.",
     entitlements: creatorEntitlements,
     limits: {
       analyticsHistoryDays: null,
@@ -246,7 +256,10 @@ export const PLAN_CONFIG: Record<PlanId, PlanDefinition> = {
     highlights: [
       "Everything in Store",
       "50 GB file storage",
-      "Discover ideas for your next post",
+      "Benny with your own API keys and model choice",
+      "MCP access for your external AI agent",
+      "Discover and research in your niche",
+      "Carousels and reels with connected providers",
       "Follower counts on social cards",
       "Post scheduler",
       "In-depth social media analytics",
@@ -257,8 +270,8 @@ export const PLAN_CONFIG: Record<PlanId, PlanDefinition> = {
   },
   creator_plus: {
     id: "creator_plus",
-    name: "Creator Plus",
-    description: "A Brain that knows your business and helps you build it.",
+    name: "Creator+",
+    description: "Bento-managed AI and content workflows, with usage limits.",
     entitlements: {
       ...creatorEntitlements,
       brain: true,
@@ -276,6 +289,7 @@ export const PLAN_CONFIG: Record<PlanId, PlanDefinition> = {
       productAssetUploadMb: 1024,
     },
     pricing: {
+      // Historical Creator+ contracts only. New offers use newPlanPrice ($99).
       monthly: { amount: 49, label: "$49", cadence: "/month" },
       yearly: {
         amount: 490,
@@ -311,6 +325,29 @@ export const PLAN_PRICING: Record<PaidPlanId, Record<BillingPeriod, PlanPrice>> 
   creator: PLAN_CONFIG.creator.pricing!,
   creator_plus: PLAN_CONFIG.creator_plus.pricing!,
 };
+
+const FULLY_MANAGED_PRICE: PlanPrice = { amount: 99, label: "$99", cadence: "/month" };
+const FULLY_MANAGED_HIGHLIGHTS = [
+  "Everything in Creator",
+  "Bento-managed AI: no model API key required",
+  "Managed Benny, research and content creation",
+  "Carousel and reel workflows within your allowance",
+  "Scheduled routines and weekly strategy reviews",
+  "100 GB file storage",
+  "Weekly and monthly usage limits after your first payment",
+];
+
+export function newPlanBillingPeriod(plan: PaidPlanId, period: BillingPeriod): BillingPeriod {
+  return plan === "creator_plus" ? "monthly" : period;
+}
+
+export function newPlanPrice(plan: PaidPlanId, period: BillingPeriod): PlanPrice {
+  return plan === "creator_plus" ? FULLY_MANAGED_PRICE : PLAN_PRICING[plan][period];
+}
+
+export function newPlanHighlights(plan: PaidPlanId): readonly string[] {
+  return plan === "creator_plus" ? FULLY_MANAGED_HIGHLIGHTS : PLAN_CONFIG[plan].highlights;
+}
 
 export const PLAN_HIGHLIGHTS: Record<PlanId, readonly string[]> = {
   free: PLAN_CONFIG.free.highlights,
@@ -350,6 +387,15 @@ export const CURRENT_DODO_PRODUCT_ENV: Record<PaidPlanId, Record<BillingPeriod, 
   },
 };
 
+export function newCheckoutDodoProductKey(plan: PaidPlanId, period: BillingPeriod): string | null {
+  if (plan === "creator_plus") return period === "monthly" ? FULLY_MANAGED_DODO_PRODUCT_ENV : null;
+  return CURRENT_DODO_PRODUCT_ENV[plan][period];
+}
+
+export function newCheckoutCatalog(plan: PaidPlanId): BillingCatalog {
+  return plan === "creator_plus" ? FULLY_MANAGED_BILLING_CATALOG : CURRENT_BILLING_CATALOG;
+}
+
 export const ENTITLEMENT_LABELS: Record<EntitlementKey, string> = {
   advancedAnalytics: "Advanced analytics",
   customFonts: "Font selection",
@@ -378,6 +424,7 @@ export const ENTITLEMENT_LABELS: Record<EntitlementKey, string> = {
   discover: "Discover",
   brain: "Brain",
   contentAgent: "Agent",
+  bennyByok: "Benny with your own AI",
   contentRoutines: "Routines",
   weeklyStrategyReview: "Weekly strategy reviews",
   mcpSocialAutomation: "MCP posting and Auto DMs",
@@ -426,12 +473,26 @@ export const PLAN_FEATURES: Array<Record<PlanId, string> & { label: string }> = 
       creator: "Included",
       creator_plus: "Included",
     },
-    ...["Brain", "Agent", "Routines", "Weekly strategy reviews"].map((label) => ({
+    {
+      label: "Benny and creator memory",
+      free: "-",
+      store: "-",
+      creator: "Bring your own AI",
+      creator_plus: "Managed AI included",
+    },
+    {
+      label: "Research, carousels and reels",
+      free: "-",
+      store: "-",
+      creator: "Connected providers",
+      creator_plus: "Managed allowance",
+    },
+    ...["Bento-managed AI", "Routines", "Weekly strategy reviews"].map((label) => ({
       label,
       free: "-",
       store: "-",
       creator: "-",
-      creator_plus: "Included",
+      creator_plus: label === "Bento-managed AI" ? "Weekly and monthly limits" : "Included",
     })),
   ]);
 
@@ -504,7 +565,10 @@ export function minimumPlanForEntitlement(entitlement: EntitlementKey): PaidPlan
   return PAID_PLAN_IDS.find((plan) => planHasEntitlement(plan, entitlement)) ?? "creator_plus";
 }
 
-export function planName(plan: PlanId): string {
+export function planName(
+  plan: PlanId,
+  _catalog: BillingCatalog = FULLY_MANAGED_BILLING_CATALOG,
+): string {
   return PLAN_CONFIG[plan].name;
 }
 

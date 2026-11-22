@@ -7,6 +7,7 @@ import {
   isServerSecretEncryptionKeyValid,
 } from "./secret-crypto.server";
 import { McpHttpClient, type McpTool } from "./mcp-http.server";
+import { readResponseText } from "./request-security.server";
 import {
   ContentProviderAuthError,
   consumeContentOAuthState,
@@ -17,6 +18,14 @@ import {
 
 export const GRANOLA_MCP_ENDPOINT = "https://mcp.granola.ai/mcp";
 const GRANOLA_PROTECTED_RESOURCE = "https://mcp.granola.ai/.well-known/oauth-protected-resource";
+const GRANOLA_AUTH_ORIGIN = "https://mcp-auth.granola.ai";
+
+function granolaOAuthEndpoint(value: string) {
+  const url = new URL(value);
+  if (url.origin !== GRANOLA_AUTH_ORIGIN || url.username || url.password || url.search || url.hash)
+    throw new Error("Granola returned an unrecognized OAuth endpoint.");
+  return url;
+}
 
 const protectedResourceSchema = z.object({
   authorization_servers: z.array(z.string().url()).min(1),
@@ -42,21 +51,35 @@ export async function discoverGranolaOAuth(
 ): Promise<GranolaOAuthMetadata> {
   const resourceResponse = await fetcher(GRANOLA_PROTECTED_RESOURCE, {
     headers: { accept: "application/json" },
+    redirect: "error",
     signal: AbortSignal.timeout(15_000),
   });
   if (!resourceResponse.ok) throw new Error("Granola OAuth discovery failed.");
-  const resource = protectedResourceSchema.parse(await resourceResponse.json());
-  const issuer = resource.authorization_servers[0].replace(/\/$/, "");
-  const metadataResponse = await fetcher(`${issuer}/.well-known/oauth-authorization-server`, {
-    headers: { accept: "application/json" },
-    signal: AbortSignal.timeout(15_000),
-  });
+  const resource = protectedResourceSchema.parse(
+    JSON.parse(await readResponseText(resourceResponse, 32_768)),
+  );
+  if (
+    !resource.authorization_servers.some(
+      (value) => value.replace(/\/$/, "") === GRANOLA_AUTH_ORIGIN,
+    )
+  )
+    throw new Error("Granola OAuth discovery did not return the official issuer.");
+  const metadataResponse = await fetcher(
+    `${GRANOLA_AUTH_ORIGIN}/.well-known/oauth-authorization-server`,
+    {
+      headers: { accept: "application/json" },
+      redirect: "error",
+      signal: AbortSignal.timeout(15_000),
+    },
+  );
   if (!metadataResponse.ok) throw new Error("Granola authorization discovery failed.");
-  const metadata = authorizationMetadataSchema.parse(await metadataResponse.json());
+  const metadata = authorizationMetadataSchema.parse(
+    JSON.parse(await readResponseText(metadataResponse, 32_768)),
+  );
   return {
-    authorizationEndpoint: metadata.authorization_endpoint,
-    tokenEndpoint: metadata.token_endpoint,
-    registrationEndpoint: metadata.registration_endpoint,
+    authorizationEndpoint: granolaOAuthEndpoint(metadata.authorization_endpoint).href,
+    tokenEndpoint: granolaOAuthEndpoint(metadata.token_endpoint).href,
+    registrationEndpoint: granolaOAuthEndpoint(metadata.registration_endpoint).href,
   };
 }
 
@@ -73,7 +96,7 @@ export function granolaAuthorizationUrl(input: {
   codeChallenge: string;
   authorizationEndpoint: string;
 }) {
-  const url = new URL(input.authorizationEndpoint);
+  const url = granolaOAuthEndpoint(input.authorizationEndpoint);
   url.search = new URLSearchParams({
     response_type: "code",
     client_id: input.clientId,
@@ -106,8 +129,9 @@ export async function registerGranolaClient(
   registrationEndpoint: string,
   fetcher: typeof fetch = fetch,
 ) {
-  const response = await fetcher(registrationEndpoint, {
+  const response = await fetcher(granolaOAuthEndpoint(registrationEndpoint).href, {
     method: "POST",
+    redirect: "error",
     headers: { accept: "application/json", "content-type": "application/json" },
     body: JSON.stringify({
       client_name: "Bento Content",
@@ -156,8 +180,9 @@ export async function exchangeGranolaCode(
   },
   fetcher: typeof fetch = fetch,
 ): Promise<GranolaToken> {
-  const response = await fetcher(input.tokenEndpoint, {
+  const response = await fetcher(granolaOAuthEndpoint(input.tokenEndpoint).href, {
     method: "POST",
+    redirect: "error",
     headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       grant_type: "authorization_code",
@@ -239,6 +264,7 @@ async function saveGranolaConnection(userId: string, value: GranolaConnectionSav
       external_account_id: value.accountId,
       display_name: value.displayName,
       status: "active",
+      mcp_folders_enabled: false,
       scopes: value.scope.split(/\s+/).filter(Boolean),
       selected_resources: existing?.selected_resources || { ids: ["all"] },
       access_token_ciphertext: await encryptServerSecret(value.accessToken, "content"),
@@ -363,8 +389,9 @@ async function refreshGranolaAccessToken(
   const metadata = z
     .object({ clientId: z.string().min(1).max(2_000), tokenEndpoint: z.string().url() })
     .parse(connection.metadata);
-  const response = await fetcher(metadata.tokenEndpoint, {
+  const response = await fetcher(granolaOAuthEndpoint(metadata.tokenEndpoint).href, {
     method: "POST",
+    redirect: "error",
     headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       grant_type: "refresh_token",
@@ -379,7 +406,7 @@ async function refreshGranolaAccessToken(
   }
   if (!response.ok) throw new Error("Granola token refresh failed.");
   const token = granolaTokenFromResponse(await response.json());
-  const { error } = await (supabaseAdmin as any)
+  const { data: updated, error } = await (supabaseAdmin as any)
     .from("content_connections")
     .update({
       access_token_ciphertext: await encryptServerSecret(token.accessToken, "content"),
@@ -394,8 +421,11 @@ async function refreshGranolaAccessToken(
     })
     .eq("id", connection.id)
     .eq("user_id", connection.userId)
-    .eq("provider", "granola");
-  if (error) throw new Error("Granola refreshed credentials could not be saved.");
+    .eq("provider", "granola")
+    .eq("status", "active")
+    .select("id")
+    .maybeSingle();
+  if (error || !updated) throw new Error("Granola refreshed credentials could not be saved.");
   return token.accessToken;
 }
 
@@ -423,13 +453,19 @@ export function createGranolaAdapter(dependencies?: {
   refreshAccessToken?: (connection: ContentConnection) => Promise<string>;
   createClient?: (accessToken: string) => GranolaMcpClient;
   now?: () => Date;
+  maximumResponseBytes?: number;
 }): ContentProviderAdapter {
   const decrypt =
     dependencies?.decrypt || ((value: string) => decryptServerSecret(value, "content"));
   const refreshAccessToken = dependencies?.refreshAccessToken || refreshGranolaAccessToken;
   const createClient =
     dependencies?.createClient ||
-    ((accessToken: string) => new McpHttpClient({ endpoint: GRANOLA_MCP_ENDPOINT, accessToken }));
+    ((accessToken: string) =>
+      new McpHttpClient({
+        endpoint: GRANOLA_MCP_ENDPOINT,
+        accessToken,
+        maximumResponseBytes: dependencies?.maximumResponseBytes,
+      }));
   const now = dependencies?.now || (() => new Date());
 
   async function clientFor(connection: ContentConnection) {

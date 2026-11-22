@@ -1,3 +1,5 @@
+import { rewriteLegacyLocalMediaUrl } from "./media-variants";
+
 const PRIVATE_DOMAIN_SUFFIXES = [
   ".internal",
   ".intranet",
@@ -112,8 +114,9 @@ export function safeNavigationHref(value: unknown, options: { allowRelative?: bo
 /** Safe value for image, audio, or video resource attributes. */
 export function safeMediaUrl(value: unknown) {
   if (typeof value !== "string" || !value || value.length > 2_048) return null;
-  if (value.startsWith("/") && !value.startsWith("//")) return value;
-  return parsePublicHttpUrl(value)?.toString() ?? null;
+  const media = rewriteLegacyLocalMediaUrl(value);
+  if (media.startsWith("/") && !media.startsWith("//")) return media;
+  return parsePublicHttpUrl(media)?.toString() ?? null;
 }
 
 /** Safe public media value that can be emitted into server-rendered pages. */

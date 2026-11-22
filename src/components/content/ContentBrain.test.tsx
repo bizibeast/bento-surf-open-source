@@ -36,6 +36,30 @@ const handlers = () => ({
 });
 
 describe("ContentBrain", () => {
+  it("keeps background indexing failures out of My Human and explains recovery in Sources", () => {
+    render(
+      <ContentBrain
+        profile={profile}
+        items={[]}
+        sources={[]}
+        indexing={{
+          status: "error",
+          error: "AI generation timed out.",
+          indexedAt: null,
+          sourceCount: 0,
+          mediaCount: 0,
+        }}
+        {...handlers()}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "About You" })).toBeVisible();
+    expect(screen.queryByText(/AI generation timed out/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Your saved Brain is still available/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Sources" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Library" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/AI generation timed out/i)).not.toBeInTheDocument();
+  });
+
   it("expands Stories without navigating and opens its index explicitly", () => {
     render(
       <ContentBrain profile={profile} items={[suggestedStory]} sources={[]} {...handlers()} />,
@@ -43,7 +67,7 @@ describe("ContentBrain", () => {
     const stories = screen.getByRole("button", { name: "Stories" });
     fireEvent.click(stories);
     expect(stories).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("heading", { name: "My Human" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "About You" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Index" }));
     expect(screen.getByRole("heading", { name: "Stories", level: 2 })).toBeVisible();
     fireEvent.click(stories);
@@ -109,17 +133,17 @@ describe("ContentBrain", () => {
         {...handlers()}
       />,
     );
-    expect(screen.getByRole("textbox", { name: "Summary" })).toHaveTextContent("A short bio.");
-    expect(screen.getByRole("textbox", { name: "Profile" })).toHaveTextContent("My background.");
-    expect(screen.queryByRole("heading", { name: "My Human Profile" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "About You" })).toHaveTextContent("A short bio.");
+    expect(screen.getByRole("textbox", { name: "About You" })).toHaveTextContent("My background.");
+    expect(screen.getAllByRole("textbox")).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Instructions" }));
     expect(screen.getAllByRole("textbox")).toHaveLength(1);
-    expect(screen.getByRole("textbox", { name: "Writing voice" })).toHaveTextContent(
+    expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveTextContent(
       "Be conversational.",
     );
-    expect(
-      screen.queryByRole("heading", { name: "Writing Voice Instruction" }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveTextContent(
+      "Use short sentences.",
+    );
   });
 
   it("shows a story's point instead of Markdown heading syntax in the index", () => {
@@ -145,12 +169,12 @@ describe("ContentBrain", () => {
   it("uploads every selected photo instead of dropping all but the first", async () => {
     const actions = handlers();
     render(<ContentBrain profile={profile} items={[]} sources={[]} {...actions} />);
-    fireEvent.click(screen.getByRole("button", { name: "Media" }));
+    fireEvent.click(screen.getByRole("button", { name: "Files" }));
     const files = [
       new File(["one"], "one.webp", { type: "image/webp" }),
       new File(["two"], "two.webp", { type: "image/webp" }),
     ];
-    const input = screen.getByLabelText("Upload media");
+    const input = screen.getByLabelText("Upload files");
     expect(input).toHaveAttribute("multiple");
     fireEvent.change(input, { target: { files } });
     await waitFor(() => expect(actions.onUpload).toHaveBeenCalledTimes(2));
@@ -181,7 +205,7 @@ describe("ContentBrain", () => {
         {...actions}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Media" }));
+    fireEvent.click(screen.getByRole("button", { name: "Files" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Connected post link" }), {
       target: { value: "https://www.instagram.com/p/launch" },
     });
@@ -267,35 +291,18 @@ describe("ContentBrain", () => {
     expect(actions.onDelete).toHaveBeenCalledWith(suggestedStory.id);
   });
 
-  it("shows safe connected account summaries in Sources", () => {
+  it("keeps removed source and library navigation out of Memory", () => {
     render(
       <ContentBrain
         profile={profile}
         items={[]}
-        sources={[
-          {
-            id: "source",
-            provider: "linkedin",
-            handle: "creator",
-            displayName: "Creator",
-            status: "active",
-          },
-          {
-            id: "knowledge-source",
-            provider: "notion",
-            handle: "",
-            displayName: "Creator HQ",
-            status: "active",
-          },
-        ]}
+        sources={[]}
         {...handlers()}
+        initialSection="sources"
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Sources" }));
-    expect(screen.getByText("Creator")).toBeVisible();
-    expect(screen.getByText(/@creator/)).toBeVisible();
-    expect(screen.getByText("Creator HQ")).toBeVisible();
-    expect(screen.getByText(/^Notion/)).toBeVisible();
-    expect(document.body).not.toHaveTextContent("access_token");
+    expect(screen.getByRole("heading", { name: "About You" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Sources" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Library" })).not.toBeInTheDocument();
   });
 });

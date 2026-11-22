@@ -47,7 +47,8 @@ export async function getOrCreateNamedAgentThreadForWorkspace(
     p_user_id: workspaceId,
   });
   if (error || !data) throw new Error("Agent identity could not be loaded.");
-  return data;
+  // Historical custom names remain in storage; Benny's public identity is fixed.
+  return { ...data, preferences: { ...data.preferences, display_name: "Benny" } };
 }
 
 export async function getContentAgentPreferencesForWorkspace(

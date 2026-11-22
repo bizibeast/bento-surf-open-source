@@ -1,6 +1,22 @@
 import { configuredPublicOrigin } from "@/lib/application-urls";
+import {
+  answeredFields,
+  createOnboardingFunnel,
+  markOnboardingNavigationIntent,
+  onboardingStepProperties,
+} from "@/lib/onboarding/funnel-tracking";
+import { CheckoutRecoveryBanner } from "@/components/CheckoutRecoveryBanner";
+import {
+  rememberCheckoutForRecovery,
+  readRecoverableCheckout,
+  clearCheckoutRecovery,
+  dismissCheckoutRecovery,
+  checkoutRecoveryProperties,
+  type CheckoutRecovery,
+} from "@/lib/checkout-recovery";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   ArrowLeft,
@@ -27,6 +43,8 @@ import {
 import {
   ONBOARDING_OUTPUT_PLATFORMS,
   onboardingBriefSchema,
+  onboardingStrategyTitle,
+  resolveOnboardingPlatform,
   hasUnsupportedOnboardingDrafts,
   type OnboardingBrief,
   type OnboardingCandidates,
@@ -38,7 +56,8 @@ import { beginSocialConnection } from "@/lib/social-oauth.functions";
 import { createCheckout } from "@/lib/billing.functions";
 import {
   PAID_PLAN_IDS,
-  PLAN_PRICING,
+  newPlanBillingPeriod,
+  newPlanPrice,
   TRIAL_DAYS,
   planName,
   type BillingPeriod,
@@ -47,9 +66,15 @@ import {
 import { checkUsername } from "@/lib/profile.functions";
 import { usernameSchema } from "@/lib/username";
 import { clearOnboardedCache } from "@/lib/auth-entry";
+import { getWorkspaceSession, switchWorkspace } from "@/lib/workspace.functions";
 import { safeNavigationHref } from "@/lib/safe-url";
 import { publicProfileUrl } from "@/lib/application-urls";
 import { captureProductEvent } from "@/lib/posthog";
+import {
+  beginCheckoutTracking,
+  forceCheckoutReplay,
+  forceOnboardingReplay,
+} from "@/lib/checkout-tracking";
 import {
   checkoutFailureMessage,
   readCheckoutReturn,
@@ -75,6 +100,7 @@ import {
 } from "./OnboardingScreens";
 import { CapabilityShowcase } from "./CapabilityShowcase";
 import { brainDraftOutcome } from "@/lib/onboarding/draft-outcome";
+import { brainChapterSummary } from "@/lib/onboarding/brain-summary";
 import {
   ONBOARDING_DEFAULT_TRIAL_PLAN,
   onboardingPlanAftercare,
@@ -108,6 +134,7 @@ const normalizedStep = (session: OnboardingSession) =>
 
 export function OnboardingExperience() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const reduced = useReducedMotion();
   const [session, setSession] = useState<OnboardingSession | null>(null);
   const [brief, setBrief] = useState(() => onboardingBriefSchema.parse({}));
@@ -119,10 +146,13 @@ export function OnboardingExperience() {
   const [error, setError] = useState<string | null>(null);
   // Dodo sends people back with ?status=failed after a declined card. That is
   // never a success: show why and offer a fresh checkout.
+  const [recoverable, setRecoverable] = useState<CheckoutRecovery | null>(null);
   const [checkoutFailure, setCheckoutFailure] = useState<string | null>(null);
   const checkoutReturnRef = useRef<ReturnType<typeof readCheckoutReturn> | null>(null);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [switchingWorkspace, setSwitchingWorkspace] = useState(false);
   const [savedLabel, setSavedLabel] = useState("Saved");
-  const [plan, setPlan] = useState<PaidPlanId>(ONBOARDING_DEFAULT_TRIAL_PLAN);
+  const [selectedPlan, setPlan] = useState<PaidPlanId>(ONBOARDING_DEFAULT_TRIAL_PLAN);
   const [period, setPeriod] = useState<BillingPeriod>("monthly");
   const [usernameStatus, setUsernameStatus] = useState<"idle" | "checking" | "available" | "taken">(
     "idle",
@@ -132,21 +162,106 @@ export function OnboardingExperience() {
   const candidateEdits = useRef<OnboardingCandidates | null>(null);
   const saveQueue = useRef<Promise<OnboardingSession | null>>(Promise.resolve(null));
   const headingRef = useRef<HTMLHeadingElement>(null);
+  // True while this tab waits for its own preparation request, so the waiting screen can show
+  // the job's real progress before the request returns.
+  const [watchingPreparation, setWatchingPreparation] = useState(false);
+  const { data: workspaceSession } = useQuery({
+    queryKey: ["workspace-session"],
+    queryFn: () => getWorkspaceSession(),
+    staleTime: 60_000,
+  });
+  // Memberships are ordered oldest first; the original workspace never gets this exit.
+  const mainWorkspace = workspaceSession?.workspaces[0];
+  const returnWorkspace =
+    mainWorkspace &&
+    mainWorkspace.id !== workspaceSession?.workspaceId &&
+    mainWorkspace.status !== "pending"
+      ? mainWorkspace
+      : null;
   const query = useQuery({
     queryKey: ["onboarding"],
     queryFn: () => getOnboarding(),
     refetchInterval: (current) =>
+      watchingPreparation ||
       ["queued", "running"].includes(current.state.data?.session.jobStatus || "") ||
       current.state.data?.session.status === "prepared"
         ? 3000
         : false,
   });
+  const managedAvailable = query.data?.fullyManagedCheckoutAvailable === true;
+  const plan = !managedAvailable && selectedPlan === "creator_plus" ? "creator" : selectedPlan;
   const connections = (query.data?.connections || []) as OnboardingConnection[];
   const hasHostedAccess = Boolean(
     query.data?.selfHosted || (query.data?.plan && query.data.plan !== "free"),
   );
+  useEffect(() => {
+    if (!query.data) return;
+    setRecoverable(readRecoverableCheckout({ hasAccess: hasHostedAccess }));
+  }, [query.data, hasHostedAccess]);
   const trialEligible = query.data?.trialEligible !== false;
-  const building = busy || Boolean(session && ["queued", "running"].includes(session.jobStatus));
+  // True while this tab starts a preparation request. Kept apart from `busy` so other
+  // actions on the reveal (such as approving the draft) never bring back the Brain
+  // progress screen.
+  const [preparing, setPreparing] = useState(false);
+  // Only a real preparation shows the "Connecting the dots" screen.
+  const building =
+    preparing || Boolean(session && ["queued", "running"].includes(session.jobStatus));
+  // The polled session shows the running job's progress even before this tab accepts it.
+  const liveSession =
+    query.data?.session && session && query.data.session.revision === session.revision
+      ? query.data.session
+      : session;
+  const livePersonalization = liveSession?.candidates?.personalization;
+  const preparationProgress =
+    livePersonalization && livePersonalization.generation === liveSession?.generationCount
+      ? { status: livePersonalization.status, done: livePersonalization.progress ?? [] }
+      : null;
+
+  const [funnel] = useState(() => createOnboardingFunnel(Date.now()));
+  const draftStartedAt = useRef<number | null>(null);
+  const revisionResumed = useRef<boolean | null>(null);
+  const trackingSnapshot = useRef({});
+  trackingSnapshot.current = {
+    ...onboardingStepProperties(step),
+    question: step === 2 ? contextField : null,
+    building,
+    job_status: liveSession?.jobStatus ?? "idle",
+    answered_fields: answeredFields(brief),
+    has_connection: connections.length > 0,
+  };
+  useEffect(() => {
+    forceOnboardingReplay();
+  }, []);
+  useEffect(() => {
+    if (!session) return;
+    revisionResumed.current ??= session.revision > 0;
+    const properties = funnel.view(step, contextField, revisionResumed.current, Date.now());
+    if (properties) captureProductEvent("onboarding_step_viewed", properties);
+  }, [funnel, step, contextField, session]);
+  useEffect(() => {
+    const leave = () => {
+      const properties = funnel.leave(trackingSnapshot.current, Date.now());
+      if (properties) captureProductEvent("onboarding_left", properties);
+    };
+    const hidden = () => {
+      if (document.visibilityState === "hidden") leave();
+    };
+    window.addEventListener("pagehide", leave);
+    document.addEventListener("visibilitychange", hidden);
+    return () => {
+      window.removeEventListener("pagehide", leave);
+      document.removeEventListener("visibilitychange", hidden);
+    };
+  }, [funnel]);
+  function reportFailure(cause: unknown, source: string, fallback: string) {
+    const message = cause instanceof Error ? cause.message : fallback;
+    setError(message);
+    captureProductEvent("onboarding_step_failed", {
+      ...onboardingStepProperties(step),
+      message: message.slice(0, 160),
+      source,
+    });
+  }
 
   function updateBrief(value: OnboardingBrief) {
     briefRef.current = value;
@@ -176,6 +291,7 @@ export function OnboardingExperience() {
         trial: returned.trial,
       });
     } else {
+      clearCheckoutRecovery();
       captureProductEvent("onboarding_checkout_returned", {
         status: returned.status,
         outcome: returned.outcome,
@@ -247,6 +363,7 @@ export function OnboardingExperience() {
     } else if (
       next.revision === sessionRef.current.revision &&
       (["queued", "running"].includes(sessionRef.current.jobStatus) ||
+        (awaitingDraft.current && next.generationCount > sessionRef.current.generationCount) ||
         (next.status === "applied" && sessionRef.current.status !== "applied"))
     )
       accept(next);
@@ -261,7 +378,14 @@ export function OnboardingExperience() {
     if (!session) return;
     const previous = awaitingDraft.current ? "queued" : lastJobStatus.current;
     lastJobStatus.current = session.jobStatus;
-    const outcome = brainDraftOutcome(previous, session, brief.platform);
+    const outcome = brainDraftOutcome(
+      previous,
+      session,
+      brief.platform,
+      draftStartedAt.current === null
+        ? undefined
+        : Math.max(0, (Date.now() - draftStartedAt.current) / 1000),
+    );
     if (outcome) {
       awaitingDraft.current = false;
       captureProductEvent(outcome.event, outcome.properties);
@@ -326,6 +450,7 @@ export function OnboardingExperience() {
       !session ||
       session.status === "applied" ||
       busy ||
+      switchingWorkspace ||
       !onboardingBriefSchema.safeParse(brief).success ||
       (!candidateEdits.current && JSON.stringify(brief) === JSON.stringify(session.brief))
     )
@@ -334,22 +459,53 @@ export function OnboardingExperience() {
     const timer = window.setTimeout(() => {
       void save().catch((cause) => {
         setSavedLabel("Not saved yet");
-        setError(cause instanceof Error ? cause.message : "Could not save.");
+        reportFailure(cause, "save", "Could not save.");
       });
     }, 700);
     return () => window.clearTimeout(timer);
     // All writes are serialized against the latest server revision.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [brief, candidates, busy, step]);
+  }, [brief, candidates, busy, switchingWorkspace, step]);
   async function action(run: () => Promise<void>) {
+    if (switchingWorkspace) return;
     setBusy(true);
     setError(null);
     try {
       await run();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Please try again.");
+      reportFailure(cause, "action", "Please try again.");
     } finally {
       setBusy(false);
+    }
+  }
+  async function returnToWorkspace() {
+    if (!returnWorkspace || switchingWorkspace || (busy && !watchingPreparation)) return;
+    setSwitchingWorkspace(true);
+    setWorkspaceError(null);
+    try {
+      // Drain setup writes before changing the cookie that scopes server requests.
+      const current = sessionRef.current;
+      if (
+        current &&
+        current.status !== "applied" &&
+        onboardingBriefSchema.safeParse(briefRef.current).success &&
+        (candidateEdits.current ||
+          JSON.stringify(briefRef.current) !== JSON.stringify(current.brief))
+      )
+        await save();
+      else await saveQueue.current;
+      await queryClient.cancelQueries();
+      await switchWorkspace({ data: { workspaceId: returnWorkspace.id } });
+      clearOnboardedCache();
+      queryClient.clear();
+      // A new document discards setup state and runs the selected workspace's entry checks.
+      await navigate({ to: "/home", reloadDocument: true });
+    } catch (cause) {
+      setWorkspaceError(
+        cause instanceof Error ? cause.message : "Your workspace could not be opened. Try again.",
+      );
+    } finally {
+      setSwitchingWorkspace(false);
     }
   }
   async function activate() {
@@ -360,6 +516,10 @@ export function OnboardingExperience() {
     await queryClient.invalidateQueries({ queryKey: ["my-profile"] });
     captureProductEvent("onboarding_workspace_ready");
   }
+  useEffect(() => {
+    // The trial step is where people decide to pay: always record the session from here.
+    if (step === 5 && !hasHostedAccess) forceCheckoutReplay();
+  }, [step, hasHostedAccess]);
   useEffect(() => {
     if (session?.status === "prepared" && step === 5 && hasHostedAccess && !busy)
       void action(activate);
@@ -398,16 +558,48 @@ export function OnboardingExperience() {
       const href = safeNavigationHref(result.url);
       if (!href) throw new Error("The connection link was invalid.");
       window.sessionStorage.setItem("bentoOnboardingSocialReturn", "1");
+      markOnboardingNavigationIntent("connect_redirect");
       window.location.assign(href);
     });
   }
   async function prepare(value = briefRef.current, manual = false) {
+    // Write for the connected account's platform, or one the creator named in their answers.
+    const provider = connections.find((item) => item.id === value.primaryConnectionId)?.provider;
+    const platform = resolveOnboardingPlatform(value, provider);
+    if (platform !== value.platform) {
+      value = { ...value, platform };
+      updateBrief(value);
+    }
+    setPreparing(true);
+    try {
+      await prepareSteps(value, manual);
+    } finally {
+      setPreparing(false);
+    }
+  }
+  async function prepareSteps(value: OnboardingBrief, manual: boolean) {
     const latest = await save(3, value);
     setStep(3);
     setReveal(0);
-    if (!manual) awaitingDraft.current = true;
-    accept(await prepareOnboarding({ data: { revision: latest.revision, generate: !manual } }));
-    await query.refetch();
+    if (!manual) {
+      awaitingDraft.current = true;
+      draftStartedAt.current = Date.now();
+      captureProductEvent("brain_draft_started", {
+        platform: value.platform,
+        manual,
+        has_connection: connections.length > 0,
+        answered_fields: answeredFields(value),
+      });
+    }
+    setWatchingPreparation(!manual);
+    try {
+      accept(await prepareOnboarding({ data: { revision: latest.revision, generate: !manual } }));
+    } finally {
+      // The server may finish after the browser loses the preparation response.
+      // Recover its queued or completed job before deciding whether to stop polling.
+      await query.refetch();
+      setWatchingPreparation(false);
+    }
   }
   async function forward() {
     await action(async () => {
@@ -471,14 +663,17 @@ export function OnboardingExperience() {
       }
     });
   }
-  async function checkout() {
+  async function checkout(selection = { plan, period }, retry = Boolean(checkoutFailure)) {
+    const { plan } = selection;
+    if (plan === "creator_plus" && !managedAvailable) return;
+    const period = newPlanBillingPeriod(plan, selection.period);
     captureProductEvent("trial_cta_clicked", {
       source: "onboarding",
       surface: "onboarding_trial_step",
       plan,
       billing_interval: period,
       trial: trialEligible,
-      retry: Boolean(checkoutFailure),
+      retry,
     });
     await action(async () => {
       await saveQueue.current;
@@ -493,9 +688,18 @@ export function OnboardingExperience() {
         plan,
         billing_interval: period,
         trial: trialEligible,
+        ...(retry ? { retry: true } : {}),
       };
       captureProductEvent("onboarding_checkout_started", { plan });
       captureProductEvent("checkout_started", properties);
+      beginCheckoutTracking({ plan, trial: trialEligible, surface: "onboarding_trial_step" });
+      markOnboardingNavigationIntent("checkout_redirect");
+      rememberCheckoutForRecovery({
+        plan,
+        period,
+        trial: trialEligible,
+        surface: "onboarding_trial_step",
+      });
       window.location.assign(href);
     });
   }
@@ -517,7 +721,7 @@ export function OnboardingExperience() {
   ].filter(Boolean) as string[];
   const currentReveal = reveals[Math.min(reveal, reveals.length - 1)];
   const question = questions[contextField];
-  const price = PLAN_PRICING[plan][period];
+  const price = newPlanPrice(plan, period);
   const headings: Record<string, [string, string, string]> = {
     standout: [
       "A little proof of your potential",
@@ -554,7 +758,11 @@ export function OnboardingExperience() {
             "Connect the accounts that feel most like you. Bento will use their available profiles and posts to get to know your work.",
           ]
         : step === 2
-          ? ["One little thing", question.title, question.hint]
+          ? [
+              `Question ${["displayName", "expertise", "audience"].indexOf(contextField) + 1} of 3`,
+              question.title,
+              question.hint,
+            ]
           : step === 3
             ? building
               ? [
@@ -585,22 +793,47 @@ export function OnboardingExperience() {
                     "A home for your work. A Brain that grows with you. Your next idea starts here.",
                   ];
 
+  const workspaceReturn = returnWorkspace && (
+    <div className="ob-workspace-return">
+      <button
+        type="button"
+        disabled={switchingWorkspace || (busy && !watchingPreparation)}
+        onClick={() => void returnToWorkspace()}
+      >
+        <ArrowLeft aria-hidden="true" />
+        <span>
+          Back to {returnWorkspace.displayName || returnWorkspace.username || "your workspace"}
+        </span>
+      </button>
+      {workspaceError && <p role="alert">{workspaceError}</p>}
+    </div>
+  );
+
   if (query.isError && !session)
     return (
-      <main className="onboarding ob-main">
-        <AuthBrand />
-        <div className="ob-intro">
-          <h1>Your setup could not load.</h1>
-          <p>Your saved answers are safe.</p>
+      <main translate="no" className="notranslate onboarding">
+        <header className="ob-header">
+          <AuthBrand linked={false} />
+        </header>
+        {workspaceReturn}
+        <div className="ob-main">
+          <div className="ob-intro">
+            <h1>Your setup could not load.</h1>
+            <p>Your saved answers are safe.</p>
+          </div>
+          <button className="ob-primary" onClick={() => void query.refetch()}>
+            Try again
+          </button>
         </div>
-        <button className="ob-primary" onClick={() => void query.refetch()}>
-          Try again
-        </button>
       </main>
     );
   if (!session)
     return (
-      <main className="onboarding">
+      <main translate="no" className="notranslate onboarding">
+        <header className="ob-header">
+          <AuthBrand linked={false} />
+        </header>
+        {workspaceReturn}
         <div className="ob-main">
           <PreparationInProgress name="" accountCount={0} jobStatus="queued" />
         </div>
@@ -608,9 +841,12 @@ export function OnboardingExperience() {
     );
   if (session.status === "applied" && query.data?.plan === "free" && !query.data?.selfHosted)
     return (
-      <main className="onboarding">
+      <main translate="no" className="notranslate onboarding">
+        <header className="ob-header">
+          <AuthBrand linked={false} />
+        </header>
+        {workspaceReturn}
         <div className="ob-main ob-narrow">
-          <AuthBrand />
           <div className="ob-intro">
             <h1>Your work is saved.</h1>
             <p>Review your billing to restore hosted access.</p>
@@ -626,9 +862,9 @@ export function OnboardingExperience() {
     );
 
   return (
-    <main className="onboarding auth-light">
+    <main translate="no" className="notranslate onboarding auth-light">
       <header className="ob-header">
-        <AuthBrand />
+        <AuthBrand linked={false} />
         <nav className="ob-progress" aria-label="Setup progress">
           {["Your link", "Your socials", "Your Brain", "Your Bento"].map((label, index) => (
             <span
@@ -645,9 +881,38 @@ export function OnboardingExperience() {
           {savedLabel}
         </span>
       </header>
+      {workspaceReturn}
       <div
         className={`ob-main ${step === 3 ? "ob-reveal-main" : ""} ${step === 0 || step === 2 || step === 6 ? "ob-narrow" : ""}`}
       >
+        {recoverable &&
+          (managedAvailable || recoverable.plan !== "creator_plus") &&
+          !checkoutFailure &&
+          !hasHostedAccess &&
+          session?.status !== "applied" && (
+            <CheckoutRecoveryBanner
+              record={recoverable}
+              busy={busy}
+              variant="onboarding"
+              onRetry={() => {
+                captureProductEvent(
+                  "checkout_recovery_retry_clicked",
+                  checkoutRecoveryProperties(recoverable, "onboarding"),
+                );
+                setPlan(recoverable.plan);
+                setPeriod(recoverable.period);
+                void checkout(recoverable, true);
+              }}
+              onDismiss={() => {
+                dismissCheckoutRecovery();
+                captureProductEvent(
+                  "checkout_recovery_banner_dismissed",
+                  checkoutRecoveryProperties(recoverable, "onboarding"),
+                );
+                setRecoverable(null);
+              }}
+            />
+          )}
         <AnimatePresence mode="wait" initial={false}>
           <motion.section
             key={`${step}-${step === 2 ? contextField : step === 3 && !building ? currentReveal : ""}`}
@@ -748,6 +1013,8 @@ export function OnboardingExperience() {
                   maxLength={contextField === "displayName" ? 60 : 500}
                   value={brief[contextField]}
                   placeholder={question.placeholder}
+                  // Typing while the Brain is being prepared would change the answers it was built from.
+                  readOnly={building || busy}
                   onChange={(event) => patch(contextField, event.target.value)}
                 />
                 <p className="ob-question-hint">
@@ -763,7 +1030,9 @@ export function OnboardingExperience() {
                   <PreparationInProgress
                     name={brief.displayName}
                     accountCount={connections.length}
-                    jobStatus={session.jobStatus}
+                    jobStatus={liveSession?.jobStatus ?? session.jobStatus}
+                    progress={preparationProgress}
+                    strategyTitle={onboardingStrategyTitle(brief)}
                   />
                 ) : candidates ? (
                   <>
@@ -807,7 +1076,7 @@ export function OnboardingExperience() {
                             <button
                               className="ob-secondary"
                               type="button"
-                              disabled={building}
+                              disabled={building || busy}
                               onClick={() => void action(() => prepare())}
                             >
                               Try the draft again
@@ -817,7 +1086,7 @@ export function OnboardingExperience() {
                           <button
                             className="ob-secondary"
                             type="button"
-                            disabled={building}
+                            disabled={building || busy}
                             onClick={() => void action(() => prepare(briefRef.current, true))}
                           >
                             Continue without this draft
@@ -876,14 +1145,14 @@ export function OnboardingExperience() {
                     <span>
                       <strong>{brief.displayName}'s Bento</strong>
                       <small>
-                        {new URL(configuredPublicOrigin(import.meta.env.VITE_PUBLIC_URL)).host}/
-                        {brief.username} · {candidates?.brain.length || 0} personal Brain chapters
+                        {new URL(configuredPublicOrigin(import.meta.env.VITE_PUBLIC_URL)).host}/{brief.username} · {brainChapterSummary(candidates)}
                       </small>
                     </span>
                     <CheckCircle2 />
                   </div>
                   <OnboardingPlanChoices
                     plan={plan}
+                    managedAvailable={managedAvailable}
                     period={period}
                     onPlan={setPlan}
                     onPeriod={setPeriod}
@@ -969,7 +1238,7 @@ export function OnboardingExperience() {
                   </span>
                   <span>
                     <Check />
-                    {candidates?.brain.length || 0} Brain chapters saved
+                    {brainChapterSummary(candidates)} saved
                   </span>
                   <span>
                     <Check />
@@ -1012,8 +1281,8 @@ export function OnboardingExperience() {
                   query.data.plan !== "creator_plus" &&
                   !query.data.selfHosted && (
                     <p className="ob-center-note" data-testid="ready-aftercare">
-                      Brain and Agent are included with Creator Plus only. Your Brain chapters and
-                      starter drafts stay saved here, and you can download them below.
+                      Benny uses your own AI on Creator; Creator+ includes managed AI. Your Brain
+                      chapters and starter drafts stay saved here, and you can download them below.
                     </p>
                   )}
                 <button className="ob-text-link" onClick={() => void action(exportPreparation)}>
@@ -1058,7 +1327,7 @@ export function OnboardingExperience() {
             )}
             <button
               className="ob-primary"
-              disabled={building || (step === 0 && usernameStatus === "taken")}
+              disabled={building || busy || (step === 0 && usernameStatus === "taken")}
               onClick={() => void forward()}
             >
               {busy && <Loader2 className="motion-safe:animate-spin" />}

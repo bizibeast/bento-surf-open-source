@@ -10,18 +10,18 @@ beforeEach(() => vi.mocked(captureProductEvent).mockClear());
 it("shows the five capabilities with honest plan labels and trial copy", () => {
   render(<CapabilityShowcase brainChapters={4} onContinue={() => {}} onSkip={() => {}} />);
   for (const title of [
-    "Your Brain",
+    "Your creator memory",
     "Sell products",
     "Schedule and post",
     "Content ideas",
-    "AI that creates with you",
+    "Benny with your own AI",
   ])
     expect(screen.getByText(title)).toBeVisible();
   expect(screen.getByText(/chapters you just reviewed/)).toBeVisible();
-  // Brain and AI are Creator Plus only; never implied for Store or Creator.
-  expect(screen.getAllByText("Included with Creator Plus only")).toHaveLength(2);
-  expect(screen.getByText("Included with Store, Creator and Creator Plus")).toBeVisible();
-  expect(screen.getAllByText("Included with Creator and Creator Plus")).toHaveLength(2);
+  // Creator uses its own AI; managed AI and routines remain a Creator+ capability.
+  expect(screen.queryByText("Included with Creator+ only")).not.toBeInTheDocument();
+  expect(screen.getByText("Included with Store, Creator and Creator+")).toBeVisible();
+  expect(screen.getAllByText("Included with Creator and Creator+")).toHaveLength(4);
   expect(screen.getByText(/Your trial includes only the plan you pick/)).toHaveTextContent(
     "Card, UPI or wallet required.",
   );

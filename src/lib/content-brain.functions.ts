@@ -1,3 +1,5 @@
+import { activeBrainItems } from "./benny-memory-documents";
+import { loadBrainMemoryDocuments } from "./benny-memory-documents.server";
 /* eslint-disable @typescript-eslint/no-explicit-any -- New tables ship with the paired migration. */
 import { createServerFn } from "@tanstack/react-start";
 import { normalizeDashes } from "./text/dashes";
@@ -5,8 +7,10 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { requireContentWorkspace } from "./content-access.server";
+import { hasPlanEntitlement } from "./plan.server";
 import {
   brainItemFromRow,
+  type BrainItem,
   brainItemInputSchema,
   contentProfileFromRow,
   contentProfileSchema,
@@ -37,6 +41,7 @@ export async function loadContentBrain(userId: string, itemLimit = 1000) {
     fathomSourcesResult,
     indexResult,
     identityResult,
+    memoryDocuments,
   ] = await Promise.all([
     db
       .from("creator_content_profiles")
@@ -77,6 +82,7 @@ export async function loadContentBrain(userId: string, itemLimit = 1000) {
       .eq("user_id", userId)
       .maybeSingle(),
     db.from("profiles").select("display_name,bio").eq("id", userId).maybeSingle(),
+    loadBrainMemoryDocuments(db, userId),
   ]);
   if (
     profileResult.error ||
@@ -93,7 +99,13 @@ export async function loadContentBrain(userId: string, itemLimit = 1000) {
   const profile = profileResult.data
     ? contentProfileFromRow(profileResult.data)
     : contentProfileSchema.parse({});
-  const items = (itemsResult.data || []).map(brainItemFromRow);
+  const documentIds = new Set(memoryDocuments.map((item: any) => item.id));
+  const items = activeBrainItems<BrainItem>([
+    ...memoryDocuments.map(brainItemFromRow),
+    ...(itemsResult.data || [])
+      .filter((item: any) => !documentIds.has(item.id))
+      .map(brainItemFromRow),
+  ]);
   const socialSources = (sourcesResult.data || [])
     .filter((source: any) => isPublicSocialProvider(String(source.provider)))
     .map((source: any) => ({
@@ -179,7 +191,7 @@ function contentBrainMediaRows(rows: any[]) {
 export const recordContentBrainVisit = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    await requireContentWorkspace(context.userId);
+    await requireContentWorkspace(context.userId, "discover");
     const { error } = await (supabaseAdmin as any).from("founder_brain_daily_usage").upsert(
       {
         user_id: context.userId,
@@ -195,7 +207,7 @@ export const recordContentBrainVisit = createServerFn({ method: "POST" })
 export const getContentBrain = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    await requireContentWorkspace(context.userId);
+    await requireContentWorkspace(context.userId, "discover");
     return loadContentBrain(context.userId);
   });
 
@@ -207,7 +219,7 @@ export const getContentBrainMedia = createServerFn({ method: "GET" })
   });
 
 export async function loadContentBrainMedia(userId: string, page: number) {
-  await requireContentWorkspace(userId);
+  await requireContentWorkspace(userId, "discover");
   const db = supabaseAdmin as any;
   const [media, hero, folders, pending, manual, usage, budget] = await Promise.all([
     db
@@ -296,7 +308,7 @@ export const searchContentBrainMedia = createServerFn({ method: "GET" })
   });
 
 export async function searchContentBrainMediaForUser(userId: string, search: string) {
-  await requireContentWorkspace(userId);
+  await requireContentWorkspace(userId, "discover");
   const terms = contentMediaSearchTerms(search);
   let query = (supabaseAdmin as any)
     .from("creator_content_media")
@@ -319,7 +331,7 @@ export const saveContentProfile = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) => contentProfileSchema.parse(input))
   .handler(async ({ context, data }) => {
-    await requireContentWorkspace(context.userId);
+    await requireContentWorkspace(context.userId, "discover");
     const profile = contentProfileToRow(data);
     const { error } = await (supabaseAdmin as any).from("creator_content_profiles").upsert({
       user_id: context.userId,
@@ -329,7 +341,8 @@ export const saveContentProfile = createServerFn({ method: "POST" })
       updated_at: new Date().toISOString(),
     });
     if (error) throw new Error("The Content profile could not be saved.");
-    await requestContentIndex(context.userId);
+    if (await hasPlanEntitlement(context.userId, "brain"))
+      await requestContentIndex(context.userId);
     return loadContentBrain(context.userId);
   });
 
@@ -337,7 +350,7 @@ export const saveBrainItem = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) => brainItemInputSchema.parse(input))
   .handler(async ({ context, data }) => {
-    await requireContentWorkspace(context.userId);
+    await requireContentWorkspace(context.userId, "discover");
     const db = supabaseAdmin as any;
     const row = {
       user_id: context.userId,
@@ -353,6 +366,18 @@ export const saveBrainItem = createServerFn({ method: "POST" })
       updated_at: new Date().toISOString(),
     };
     let itemId = data.id;
+    if (!itemId && data.sourceRef?.startsWith("benny:")) {
+      const { data: prior, error } = await db
+        .from("creator_brain_items")
+        .select("id")
+        .eq("user_id", context.userId)
+        .eq("source_ref", data.sourceRef)
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw new Error("The memory document could not be loaded for saving.");
+      itemId = prior?.id;
+    }
     if (
       !itemId &&
       ["My Human", "Bento Memories", "Writing voice", "X Strategy", "LinkedIn Strategy"].includes(
@@ -388,7 +413,7 @@ export const confirmBrainItem = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) => brainItemIdSchema.parse(input))
   .handler(async ({ context, data }) => {
-    await requireContentWorkspace(context.userId);
+    await requireContentWorkspace(context.userId, "discover");
     const { data: updated, error } = await (supabaseAdmin as any)
       .from("creator_brain_items")
       .update({ status: "confirmed", locked: true, updated_at: new Date().toISOString() })
@@ -405,7 +430,7 @@ export const setBrainItemLocked = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) => lockBrainItemSchema.parse(input))
   .handler(async ({ context, data }) => {
-    await requireContentWorkspace(context.userId);
+    await requireContentWorkspace(context.userId, "discover");
     const { data: updated, error } = await (supabaseAdmin as any)
       .from("creator_brain_items")
       .update({ locked: data.locked, updated_at: new Date().toISOString() })
@@ -421,7 +446,7 @@ export const deleteBrainItem = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) => brainItemIdSchema.parse(input))
   .handler(async ({ context, data }) => {
-    await requireContentWorkspace(context.userId);
+    await requireContentWorkspace(context.userId, "discover");
     const { data: deleted, error } = await (supabaseAdmin as any)
       .from("creator_brain_items")
       .delete()

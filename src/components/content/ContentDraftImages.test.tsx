@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 const m = vi.hoisted(() => ({
   settings: vi.fn(),
@@ -96,4 +96,74 @@ it("offers an explicit all-background removal path when multiple assets are miss
   await waitFor(() => expect(m.clear).toHaveBeenCalledWith({ data: ref }));
   expect(ready).toHaveBeenLastCalledWith(false);
   expect(changed).toHaveBeenCalled();
+});
+
+it("pauses image polling while hidden and resumes when visible", async () => {
+  let visibility: DocumentVisibilityState = "visible";
+  const visibilitySpy = vi
+    .spyOn(document, "visibilityState", "get")
+    .mockImplementation(() => visibility);
+  try {
+    const view = render(<ContentDraftImages draftRef={ref} slideCount={3} onAssets={vi.fn()} />);
+    await waitFor(() => expect(m.settings).toHaveBeenCalledTimes(1));
+    vi.useFakeTimers();
+    visibility = "hidden";
+    fireEvent(document, new Event("visibilitychange"));
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    expect(m.draft).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+    visibility = "visible";
+    fireEvent(document, new Event("visibilitychange"));
+    await waitFor(() => expect(m.draft).toHaveBeenCalledTimes(2));
+    view.unmount();
+  } finally {
+    vi.useRealTimers();
+    visibilitySpy.mockRestore();
+  }
+});
+
+it("stops polling after a finished draft and does not refetch settings on later ticks", async () => {
+  m.draft.mockResolvedValue({
+    assets: {},
+    jobs: [{ id: "job", status: "ready", mediaId: "media" }],
+  });
+  const view = render(<ContentDraftImages draftRef={ref} slideCount={3} onAssets={vi.fn()} />);
+  await waitFor(() => expect(m.draft).toHaveBeenCalledTimes(1));
+  expect(m.settings).toHaveBeenCalledTimes(1);
+  vi.useFakeTimers();
+  try {
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    expect(m.draft).toHaveBeenCalledTimes(1);
+    expect(m.settings).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+    view.unmount();
+  }
+});
+
+it("keeps polling in-progress image jobs while visible, without repeating settings", async () => {
+  m.draft.mockResolvedValue({
+    assets: {},
+    jobs: [{ id: "job", status: "submitted", detail: "Generating" }],
+  });
+  vi.useFakeTimers();
+  const view = render(<ContentDraftImages draftRef={ref} slideCount={3} onAssets={vi.fn()} />);
+  try {
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(m.draft).toHaveBeenCalledTimes(1);
+    expect(m.settings).toHaveBeenCalledTimes(1);
+    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(m.draft).toHaveBeenCalledTimes(2);
+    expect(m.settings).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+    view.unmount();
+  }
 });

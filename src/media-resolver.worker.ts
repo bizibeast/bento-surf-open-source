@@ -1,3 +1,5 @@
+import { BASIC_MEDIA_PATH } from "./lib/basic-media";
+import { PUBLIC_SOCIAL_MEDIA_PATH } from "./lib/media-tools";
 import mediaResolver, {
   releaseWhenStreamEnds,
   StreamConcurrencyGate,
@@ -9,7 +11,10 @@ export default {
   async fetch(request: Request, env: Parameters<typeof mediaResolver.fetch>[1]) {
     const pathname = new URL(request.url).pathname;
     if (
+      pathname !== BASIC_MEDIA_PATH &&
       pathname !== "/image" &&
+      pathname !== PUBLIC_SOCIAL_MEDIA_PATH &&
+      pathname !== "/instagram-media" &&
       pathname !== "/youtube-stream" &&
       !/^(?:\/(?:youtube-session|webshare))?\/tunnel(?:\/|$)/u.test(pathname)
     ) {

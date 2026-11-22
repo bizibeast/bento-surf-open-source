@@ -4,7 +4,7 @@ import { avatarDeliveryUrl, mediaPreviewUrl } from "./media-variants";
 describe("mediaPreviewUrl", () => {
   it("requests a sized preview for Bento user media", () => {
     expect(mediaPreviewUrl("http://localhost:8080/cdn/users/123/image/photo.png", 640)).toBe(
-      "http://localhost:8080/cdn/users/123/image/photo.png?w=640",
+      "/cdn/users/123/image/photo.png?w=640",
     );
     expect(mediaPreviewUrl("/cdn/users/123/image/photo.png", 320)).toBe(
       "/cdn/users/123/image/photo.png?w=320",
@@ -22,7 +22,7 @@ describe("mediaPreviewUrl", () => {
 
   it("serves avatars through a resized URL", () => {
     expect(mediaPreviewUrl("http://localhost:8080/cdn/avatars/user/avatar.png", 512)).toBe(
-      "http://localhost:8080/cdn/avatars/user/avatar.png?w=512",
+      "/cdn/avatars/user/avatar.png?w=512",
     );
     expect(
       avatarDeliveryUrl(
@@ -33,6 +33,21 @@ describe("mediaPreviewUrl", () => {
     );
     expect(avatarDeliveryUrl("https://cdn.bento.surf/avatar.webp")).toBe(
       "https://cdn.bento.surf/avatar.webp",
+    );
+  });
+
+  it("rewrites legacy localhost CDN URLs onto the same-origin media path", () => {
+    expect(mediaPreviewUrl("http://localhost:8080/cdn/avatars/user/avatar.png", 512)).toBe(
+      "/cdn/avatars/user/avatar.png?w=512",
+    );
+    expect(avatarDeliveryUrl("http://127.0.0.1:8080/cdn/avatars/user/avatar.png")).toBe(
+      "/cdn/avatars/user/avatar.png?w=512",
+    );
+    expect(avatarDeliveryUrl("http://[::1]:8080/cdn/avatars/user/avatar.png")).toBe(
+      "/cdn/avatars/user/avatar.png?w=512",
+    );
+    expect(mediaPreviewUrl("https://external.example/cdn/avatars/user/avatar.png", 512)).toBe(
+      "https://external.example/cdn/avatars/user/avatar.png",
     );
   });
 });

@@ -101,3 +101,42 @@ it("shows saved captions after a reload and submits the current revision", async
   });
   expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
 });
+
+it("shows creation summaries instead of raw document fields or JSON receipts", async () => {
+  const creation = {
+    id,
+    tool: "save_content_studio_project",
+    title: "Save Content Studio project",
+    arguments: {
+      title: "A stronger opening",
+      document: {
+        schemaVersion: 1,
+        scenes: [{ avatarJobId: "private-internal-id" }],
+        caption: "Original story",
+      },
+    },
+  };
+  mocks.states.mockResolvedValue([
+    {
+      id,
+      status: "completed",
+      revision,
+      message: '{"entry":{"document":{"schemaVersion":1}}}',
+      arguments: creation.arguments,
+    },
+  ]);
+  render(
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <ContentAgentAppActions messageId={id} actions={[creation]} accounts={[]} />
+    </QueryClientProvider>,
+  );
+  await screen.findByText("Completed");
+  expect(screen.getByText("A stronger opening")).toBeVisible();
+  expect(screen.getByText("Original story")).toBeVisible();
+  expect(
+    screen.queryByText(/schemaVersion|private-internal-id|Content Studio/),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByText("Review details")).not.toBeInTheDocument();
+});

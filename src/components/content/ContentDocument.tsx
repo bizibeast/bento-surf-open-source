@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Eye, PencilLine } from "lucide-react";
 import { parsePublicHttpUrl } from "@/lib/safe-url";
 
 function inline(text: string): ReactNode[] {
@@ -221,16 +220,18 @@ export function ContentDocument({
   value,
   placeholder,
   onSave,
+  allowEmpty = false,
 }: {
   label: string;
   value: string;
   placeholder?: string;
   onSave: (value: string) => void | Promise<void>;
   initiallyEditing?: boolean;
+  allowEmpty?: boolean;
 }) {
   const [display, setDisplay] = useState(value);
   const [draft, setDraft] = useState(value);
-  const [preview, setPreview] = useState(false);
+  const [selectionVisible, setSelectionVisible] = useState(false);
   const [status, setStatus] = useState("Saved");
   const [error, setError] = useState("");
   const input = useRef<HTMLDivElement>(null);
@@ -246,7 +247,7 @@ export function ContentDocument({
     clearTimeout(timer.current);
     if (saving.current || latest.current === saved.current) return;
     const text = latest.current;
-    if (!text.trim() || text.length > 20_000) {
+    if ((!allowEmpty && !text.trim()) || text.length > 20_000) {
       if (mounted.current)
         setError(
           !text.trim()
@@ -280,6 +281,22 @@ export function ContentDocument({
   };
   const saveRef = useRef(save);
   saveRef.current = save;
+  useEffect(() => {
+    const updateSelection = () => {
+      const selection = window.getSelection();
+      setSelectionVisible(
+        Boolean(
+          selection &&
+          !selection.isCollapsed &&
+          selection.toString().trim() &&
+          input.current?.contains(selection.anchorNode) &&
+          input.current?.contains(selection.focusNode),
+        ),
+      );
+    };
+    document.addEventListener("selectionchange", updateSelection);
+    return () => document.removeEventListener("selectionchange", updateSelection);
+  }, []);
   useEffect(() => {
     // Refetches must not replace text the creator is still typing.
     if (latest.current === saved.current && document.activeElement !== input.current) {
@@ -322,18 +339,12 @@ export function ContentDocument({
   return (
     <section className="content-document" aria-label={`${label} document`}>
       <div className="content-document-toolbar">
-        <button
-          type="button"
-          aria-label={`Edit ${label}`}
-          onClick={() => {
-            setPreview(false);
-            requestAnimationFrame(() => input.current?.focus());
-          }}
-        >
-          Edit
-        </button>
-        {!preview && (
-          <div className="flex gap-1" aria-label="Document formatting">
+        {selectionVisible && (
+          <div
+            className="content-document-formatting flex gap-1"
+            role="toolbar"
+            aria-label="Document formatting"
+          >
             <button
               type="button"
               aria-label="Heading 1"
@@ -380,18 +391,6 @@ export function ContentDocument({
           <span role="status" aria-live="polite">
             {status}
           </span>
-          <button
-            type="button"
-            aria-label={preview ? `Write ${label}` : `Preview ${label}`}
-            aria-pressed={preview}
-            onClick={() => {
-              void saveRef.current();
-              setDisplay(latest.current);
-              setPreview(!preview);
-            }}
-          >
-            {preview ? <PencilLine className="size-4" /> : <Eye className="size-4" />}
-          </button>
         </div>
       </div>
       <div
@@ -399,8 +398,7 @@ export function ContentDocument({
         role="textbox"
         aria-label={label}
         aria-multiline="true"
-        aria-readonly={preview}
-        contentEditable={!preview}
+        contentEditable
         suppressContentEditableWarning
         tabIndex={0}
         data-placeholder={placeholder || "Click here and start writing…"}

@@ -77,6 +77,25 @@ describe("Granola OAuth", () => {
     expect(url.searchParams.get("resource")).toBe("https://mcp.granola.ai/mcp");
   });
 
+  it("refuses an unrecognized issuer or token origin before making credentialed requests", async () => {
+    const issuer = vi.fn(async () =>
+      json({ authorization_servers: ["https://relay.example.invalid"] }),
+    );
+    await expect(discoverGranolaOAuth(issuer)).rejects.toThrow("official issuer");
+    expect(issuer).toHaveBeenCalledOnce();
+    const metadata = vi.fn(async (input: RequestInfo | URL) =>
+      String(input).includes("oauth-protected-resource")
+        ? json({ authorization_servers: ["https://mcp-auth.granola.ai"] })
+        : json({
+            authorization_endpoint: "https://mcp-auth.granola.ai/authorize",
+            token_endpoint: "https://relay.example.invalid/token",
+            registration_endpoint: "https://mcp-auth.granola.ai/register",
+          }),
+    );
+    await expect(discoverGranolaOAuth(metadata)).rejects.toThrow("unrecognized OAuth endpoint");
+    expect(metadata).toHaveBeenCalledTimes(2);
+  });
+
   it("stores encrypted PKCE state and returns the official authorization URL", async () => {
     const createState = vi.fn(async () => "11111111-1111-4111-8111-111111111111");
     const result = await beginGranolaConnectionForUser("owner", {

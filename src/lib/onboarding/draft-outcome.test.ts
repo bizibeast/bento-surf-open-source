@@ -58,3 +58,14 @@ it("ignores reloads of a finished session", () => {
     ),
   ).toBeNull();
 });
+
+it("includes elapsed time when available", () => {
+  expect(
+    brainDraftOutcome(
+      "running",
+      { jobStatus: "ready", candidates: candidates(null, null), generationCount: 1 },
+      "linkedin",
+      12,
+    )?.properties.seconds_to_ready,
+  ).toBe(12);
+});

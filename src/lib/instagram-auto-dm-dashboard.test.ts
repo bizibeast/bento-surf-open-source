@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("Instagram Auto-DM activity", () => {
-  it("filters ignored webhook events before limiting recent activity", () => {
+  it("keeps safety skips visible while filtering unrelated ignored events", () => {
     const source = readFileSync(
       resolve(process.cwd(), "src/lib/instagram-auto-dm.functions.ts"),
       "utf8",
@@ -16,7 +16,9 @@ describe("Instagram Auto-DM activity", () => {
       ),
     );
 
-    expect(query).toContain('.neq("status", "ignored")');
-    expect(query.indexOf('.neq("status", "ignored")')).toBeLessThan(query.indexOf(".limit(50)"));
+    expect(query).toContain(
+      "error_code.in.(recipient_preference_updated,recipient_opted_out,recipient_cooldown,account_budget,account_paused,recipient_missing)",
+    );
+    expect(query.indexOf(".or(")).toBeLessThan(query.indexOf(".limit(50)"));
   });
 });

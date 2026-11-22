@@ -1,10 +1,21 @@
+import type { ManagedSpendStatus } from "@/lib/provider-budget.server";
+import { BENNY_EDITING_MODELS, type BentoModelOption } from "@/lib/benny-models";
 import userEvent from "@testing-library/user-event";
+import type { BennyProviderPreferences } from "@/lib/benny-byok";
 import type { ContentDiscoverData } from "@/lib/content-discovery.functions";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const routeState = vi.hoisted(() => ({
   identityError: false,
+  bennySettings: null as
+    | (BennyProviderPreferences & {
+        managedAvailable: boolean;
+        searchConnected?: boolean;
+        bentoModels?: BentoModelOption[];
+        managedUsage?: ManagedSpendStatus;
+      })
+    | null,
   retryIdentity: vi.fn(),
   tab: "discover" as "discover" | "agent" | "brain",
   trends: [] as ContentDiscoverData["trends"],
@@ -36,9 +47,14 @@ const routeState = vi.hoisted(() => ({
   loadMore: vi.fn(),
   messages: [] as Array<{ id: string; role: "assistant"; content: string; payload?: unknown }>,
   mediaEnabled: false,
+  referencesEnabled: false,
+  studioWorkspaceId: null as string | null,
 }));
 beforeEach(() => {
   routeState.identityError = false;
+  routeState.referencesEnabled = false;
+  routeState.studioWorkspaceId = null;
+  routeState.bennySettings = null;
   routeState.retryIdentity.mockClear();
   routeState.trends = [];
   routeState.send.mockClear();
@@ -59,43 +75,49 @@ vi.mock("@tanstack/react-query", () => ({
     isError: queryKey[0] === "content-agent-identity" && routeState.identityError,
     refetch: routeState.retryIdentity,
     data:
-      queryKey[0] === "content-agent-identity"
-        ? routeState.identityError
-          ? undefined
-          : routeState.identity
-        : ["content-routines", "content-routine-activity"].includes(queryKey[0])
-          ? []
-          : queryKey[0] === "content-agent-threads"
+      queryKey[0] === "benny-ai-settings"
+        ? routeState.bennySettings
+        : queryKey[0] === "content-agent-identity"
+          ? routeState.identityError
+            ? undefined
+            : routeState.identity
+          : ["content-routines", "content-routine-activity"].includes(queryKey[0])
             ? []
-            : queryKey[0] === "content-agent-thread"
-              ? {
-                  thread: {
-                    id: queryKey[1],
-                    title: queryKey[1] === "old-chat" ? "Legacy chat" : "Milo",
-                  },
-                  messages: routeState.messages,
-                }
-              : queryKey[0] === "content-discover"
+            : queryKey[0] === "content-agent-threads"
+              ? []
+              : queryKey[0] === "content-agent-thread"
                 ? {
-                    winners: [],
-                    patterns: [],
-                    trends: routeState.trends,
-                    status: "fresh",
-                    ideas: [],
-                    warnings: [],
-                  }
-                : {
-                    profile: {
-                      goal: "consistent_publishing",
-                      nicheKeywords: [],
-                      language: "en",
-                      region: "global",
-                      timezone: "UTC",
-                      platformFrequencies: {},
+                    thread: {
+                      id: queryKey[1],
+                      title: queryKey[1] === "old-chat" ? "Legacy chat" : "Milo",
                     },
-                    items: [],
-                    sources: [],
-                  },
+                    messages: routeState.messages,
+                  }
+                : queryKey[0] === "content-discover"
+                  ? {
+                      winners: [],
+                      patterns: [],
+                      trends: routeState.trends,
+                      status: "fresh",
+                      ideas: [],
+                      warnings: [],
+                    }
+                  : {
+                      profile: {
+                        goal: "consistent_publishing",
+                        nicheKeywords: [],
+                        language: "en",
+                        region: "global",
+                        timezone: "UTC",
+                        platformFrequencies: {},
+                      },
+                      items: [],
+                      sources: [],
+                    },
+    ...(queryKey[0] === "content-reference-capability"
+      ? { data: routeState.referencesEnabled }
+      : {}),
+    ...(queryKey[0] === "content-studio-access" ? { data: routeState.studioWorkspaceId } : {}),
   }),
   useInfiniteQuery: ({ queryKey, enabled }: { queryKey: string[]; enabled: boolean }) => {
     if (queryKey[0] === "content-brain-media") {
@@ -148,6 +170,11 @@ vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({ invalidateQueries: vi.fn(), setQueryData: routeState.setQueryData }),
 }));
 vi.mock("@/lib/upload", () => ({ uploadFileResult: vi.fn() }));
+vi.mock("@/components/content/ContentReferences", () => ({
+  ContentReferences: ({ initialId }: { initialId?: string }) => (
+    <div>Reference detail {initialId}</div>
+  ),
+}));
 vi.mock("@/lib/content-brain.functions", () => ({
   getContentBrain: vi.fn(),
   getContentBrainMedia: vi.fn(),
@@ -188,6 +215,27 @@ vi.mock("@/lib/content-routines.functions", () => ({
 import { ContentPage } from "./content";
 
 describe("Content workspace", () => {
+  it("hides the References button and a direct link when the server capability is disabled", () => {
+    render(
+      <ContentPage initialTab="agent" initialReference="00000000-0000-4000-8000-000000000010" />,
+    );
+    expect(screen.queryByRole("button", { name: "References" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Content references" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Reference detail/)).not.toBeInTheDocument();
+  });
+
+  it("opens the deep-linked References dialog when the server capability is enabled", () => {
+    routeState.referencesEnabled = true;
+    routeState.studioWorkspaceId = "00000000-0000-4000-8000-000000000011";
+    const id = "00000000-0000-4000-8000-000000000010";
+    render(<ContentPage initialTab="agent" initialReference={id} />);
+    expect(screen.getByRole("button", { name: "References", hidden: true })).toHaveAttribute(
+      "data-reference-workspace-id",
+      routeState.studioWorkspaceId,
+    );
+    expect(screen.getByRole("dialog", { name: "Content references" })).toBeVisible();
+    expect(screen.getByText(`Reference detail ${id}`)).toBeVisible();
+  });
   it("keeps an old deep-linked chat usable when named identity fails", async () => {
     routeState.identityError = true;
     routeState.messages = [
@@ -197,9 +245,9 @@ describe("Content workspace", () => {
     render(<ContentPage initialTab="agent" initialThread="old-chat" />);
     expect(screen.getByText("Existing chat is still here.")).toBeVisible();
     expect(screen.queryByText("Your agent could not load.")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Agent settings" })).toBeDisabled();
-    expect(screen.getByRole("status")).toHaveTextContent("Agent settings unavailable");
-    await user.click(screen.getByRole("button", { name: "Retry agent settings" }));
+    expect(screen.queryByRole("button", { name: "Agent settings" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Benny preferences unavailable");
+    await user.click(screen.getByRole("button", { name: "Retry Benny preferences" }));
     expect(routeState.retryIdentity).toHaveBeenCalled();
     await user.type(screen.getByLabelText("Message Agent"), "Keep working");
     await user.click(screen.getByRole("button", { name: "Send message" }));
@@ -240,6 +288,153 @@ describe("Content workspace", () => {
       data: { threadId: null, text: "A fresh chat", attachmentIds: [] },
     });
     expect(onThreadChange).toHaveBeenCalledWith("test-thread");
+  });
+
+  it("uses a saved OpenRouter default and switches models without changing the conversation", async () => {
+    routeState.bennySettings = {
+      providers: [
+        { id: "provider-a", name: "First", model: "author/one" },
+        { id: "provider-b", name: "Second", model: "author/two" },
+      ],
+      defaultProviderId: "provider-a",
+      managedAvailable: false,
+    };
+    routeState.send.mockResolvedValueOnce({ threadId: "old-chat" });
+    const user = userEvent.setup();
+    render(<ContentPage initialTab="agent" initialThread="old-chat" />);
+    const model = screen.getByRole("button", { name: "Benny model" });
+    const composer = screen.getByLabelText("Message Agent");
+    expect(model).toHaveTextContent("author/one");
+    expect(model.closest("form")).toBe(composer.closest("form"));
+    expect(screen.queryByRole("option", { name: "Default model" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add attachments" })).toBeDisabled();
+    await user.type(composer, "First turn");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await user.click(model);
+    await user.click(screen.getByRole("menuitemradio", { name: "author/two · Your key" }));
+    await user.type(composer, "Follow-up");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(routeState.send.mock.calls).toEqual([
+      [
+        {
+          data: {
+            aiProviderId: "provider-a",
+            threadId: "old-chat",
+            text: "First turn",
+            attachmentIds: [],
+          },
+        },
+      ],
+      [
+        {
+          data: {
+            aiProviderId: "provider-b",
+            threadId: "old-chat",
+            text: "Follow-up",
+            attachmentIds: [],
+          },
+        },
+      ],
+    ]);
+  });
+
+  it("offers all named managed models and sends the selected ID with native tools enabled", async () => {
+    routeState.bennySettings = {
+      providers: [],
+      defaultProviderId: null,
+      managedAvailable: true,
+      bentoModels: BENNY_EDITING_MODELS.map(({ id, name, available }) => ({ id, name, available })),
+      managedUsage: {
+        eligible: true,
+        weekly: {
+          limitMicrousd: 6250000,
+          remainingMicrousd: 6250000,
+          resetsAt: "2026-11-23T00:00:00Z",
+        },
+        monthly: {
+          limitMicrousd: 25000000,
+          remainingMicrousd: 25000000,
+          resetsAt: "2026-12-01T00:00:00Z",
+        },
+      },
+    };
+    const user = userEvent.setup();
+    render(<ContentPage initialTab="agent" />);
+    const model = screen.getByRole("button", { name: "Benny model" });
+    expect(
+      screen.queryByText(/this week ·|this month|Allowance running low/),
+    ).not.toBeInTheDocument();
+    expect(model).toHaveTextContent("GPT 6.1 Sol");
+    await user.click(model);
+    for (const item of BENNY_EDITING_MODELS)
+      expect(screen.getByRole("menuitemradio", { name: item.name })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(
+      screen.queryByRole("button", { name: /Connect a model|Manage AI providers/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add attachments" })).toBeEnabled();
+    await user.click(model);
+    await user.click(screen.getByRole("menuitemradio", { name: "Opus 5.5" }));
+    await user.type(screen.getByLabelText("Message Agent"), "Edit my reel");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(routeState.send).toHaveBeenCalledWith({
+      data: {
+        threadId: "named-agent",
+        text: "Edit my reel",
+        attachmentIds: [],
+        aiModel: "anthropic/claude-opus-5.5",
+      },
+    });
+  });
+
+  it("preserves the legacy model route with its actual name", async () => {
+    routeState.bennySettings = {
+      providers: [],
+      defaultProviderId: null,
+      managedAvailable: true,
+      bentoModels: [{ id: "bento", name: "GLM 5.3 Flash" }],
+    };
+    const user = userEvent.setup();
+    render(<ContentPage initialTab="agent" />);
+    expect(screen.getByRole("button", { name: "Benny model" })).toHaveTextContent("GLM 5.3 Flash");
+    await user.type(screen.getByLabelText("Message Agent"), "A question");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(routeState.send).toHaveBeenCalledWith({
+      data: { threadId: "named-agent", text: "A question", attachmentIds: [] },
+    });
+  });
+
+  it("keeps unconfigured BYOK creators from sending without an inline connection dialog", async () => {
+    routeState.bennySettings = {
+      providers: [],
+      defaultProviderId: null,
+      managedAvailable: false,
+      bentoModels: [],
+    };
+    const user = userEvent.setup();
+    render(<ContentPage initialTab="agent" />);
+    await user.type(screen.getByLabelText("Message Agent"), "A question");
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: /Connect a model|Manage AI providers/ }),
+    ).not.toBeInTheDocument();
+    expect(routeState.send).not.toHaveBeenCalled();
+  });
+
+  it("keeps Enter in web search configuration from submitting the message form", async () => {
+    routeState.bennySettings = {
+      providers: [],
+      defaultProviderId: null,
+      managedAvailable: true,
+      searchConnected: true,
+    };
+    const user = userEvent.setup();
+    render(<ContentPage initialTab="agent" />);
+    await user.type(screen.getByLabelText("Message Agent"), "Research my next post");
+    await user.click(screen.getByRole("button", { name: "Web search" }));
+    await user.type(screen.getByLabelText("Public web search query"), "Creator trends{Enter}");
+    expect(routeState.send).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Message Agent")).toHaveValue("Research my next post");
   });
 
   it("preserves old deep links and follows a changed thread URL", async () => {
@@ -286,13 +481,15 @@ describe("Content workspace", () => {
     expect(routeState.pin).toHaveBeenCalledWith({ data: { threadId: "old-chat", pinned: true } });
     await user.click(screen.getByRole("button", { name: "Load more chats" }));
     expect(routeState.loadMore).toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Agent settings" }));
-    await user.clear(screen.getByLabelText("Agent name"));
-    await user.type(screen.getByLabelText("Agent name"), "Sage");
-    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(screen.queryByRole("button", { name: "Agent settings" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Edit memory" }));
+    const memory = screen.getByRole("dialog", { name: "Memory" });
+    await user.click(within(memory).getByRole("button", { name: "Preferences" }));
+    expect(screen.queryByLabelText("Benny’s name")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save preferences" }));
     expect(routeState.savePreferences).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        displayName: "Sage",
+        displayName: "Benny",
         generateImages: false,
         useFaceReferences: false,
       }),
@@ -301,8 +498,10 @@ describe("Content workspace", () => {
       ["content-agent-identity"],
       routeState.identity,
     );
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Agent settings" })).toHaveFocus();
+    expect(memory).toBeVisible();
+    expect(within(memory).getByRole("status")).toHaveTextContent("Saved to memory.");
+    await user.click(within(memory).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Edit memory" })).toHaveFocus());
   });
 
   it("uses the app sidebar instead of repeating Content tabs above the workspace", () => {
@@ -313,8 +512,19 @@ describe("Content workspace", () => {
 
   it("renders the Brain destination selected by the sidebar route", () => {
     render(<ContentPage initialTab="brain" />);
-    expect(screen.getByRole("heading", { name: "My Human" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "About You" })).toBeVisible();
     expect(routeState.mediaEnabled).toBe(false);
+  });
+
+  it("opens existing instruction links inside Memory", () => {
+    render(<ContentPage initialTab="brain" initialBrainSection="instruction" />);
+    expect(screen.getByRole("dialog", { name: "Memory" })).toBeVisible();
+    expect(
+      screen
+        .getByRole("navigation", { name: "Brain sections" })
+        .querySelector('[aria-current="page"]'),
+    ).toHaveTextContent("Instructions");
+    expect(screen.queryByRole("button", { name: "Edit instructions" })).not.toBeInTheDocument();
   });
 
   it("loads Media only when its Brain section opens", () => {
@@ -322,23 +532,66 @@ describe("Content workspace", () => {
     expect(routeState.mediaEnabled).toBe(true);
   });
 
+  it.each([
+    ["memory", "Memory"],
+    ["schedule", "Schedule"],
+  ])("opens %s in a centered editor above the conversation", (section, title) => {
+    render(<ContentPage initialTab="agent" initialThread="old-chat" />);
+    fireEvent.click(screen.getByRole("button", { name: `Edit ${section}` }));
+    expect(screen.getByRole("dialog", { name: title })).toBeVisible();
+    expect(document.querySelector('[aria-label="Content chat"]')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Close$/ }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Message Agent")).toBeVisible();
+  });
+
+  it("keeps source files inside Memory without a separate Context entry", () => {
+    render(<ContentPage initialTab="agent" />);
+    expect(screen.queryByRole("button", { name: "Context" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit context" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit memory" }));
+    const memory = screen.getByRole("dialog", { name: "Memory" });
+    fireEvent.click(within(memory).getByRole("button", { name: "Files" }));
+    expect(within(memory).getByLabelText("Upload files")).toBeInTheDocument();
+    expect(within(memory).getByRole("button", { name: "Preferences" })).toBeVisible();
+  });
+
+  it("opens legacy file links within Memory and retains its navigation", () => {
+    render(<ContentPage initialTab="brain" initialBrainSection="file" />);
+    const memory = screen.getByRole("dialog", { name: "Memory" });
+    expect(within(memory).getByLabelText("Upload files")).toBeInTheDocument();
+    fireEvent.click(within(memory).getByRole("button", { name: "Preferences" }));
+    expect(within(memory).getByRole("heading", { name: "Benny preferences" })).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: "Context" })).not.toBeInTheDocument();
+  });
+
   it("opens Routines directly from its sidebar destination", () => {
     const onRoutinesChange = vi.fn();
     render(<ContentPage initialTab="agent" initialRoutines onRoutinesChange={onRoutinesChange} />);
 
-    expect(screen.getByRole("heading", { name: "Routines" })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Close Routines" }));
+    expect(screen.getByRole("heading", { name: "Schedule" })).toBeVisible();
+    const schedule = screen.getByRole("dialog", { name: "Schedule" });
+    expect(
+      within(schedule).queryByRole("button", { name: "Close Routines" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(schedule).queryByRole("button", { name: "Memory preferences" }),
+    ).not.toBeInTheDocument();
+    expect(within(schedule).getByRole("button", { name: "New Routine" })).toBeVisible();
+    fireEvent.click(within(schedule).getByRole("button", { name: "Close" }));
     expect(onRoutinesChange).toHaveBeenCalledWith(false);
   });
 });
 
 describe("Discover to Agent integration", () => {
   it.each([
-    ["Chat with this post", "Help me explore this idea"],
-    ["Variations", "Generate fresh angles"],
-    ["Reverse Engineer", "Reverse engineer why this post works"],
-    ["Replicate", "Create an original draft with my own perspective and wording"],
-  ])("%s opens the real composer with the selected source", async (label, prompt) => {
+    ["Send to Benny", "Help me explore the selected Discover post", "chat"],
+    ["Variations", "Generate fresh angles", "variations"],
+    ["Generate stronger hooks", "Write five original hooks", "hooks"],
+    ["Reverse Engineer", "Reverse engineer why this post works", "reverse-engineer"],
+    ["Remix", "Create an original draft with my own perspective and wording", "replicate"],
+    ["Create content brief", "Create an original content brief", "brief"],
+  ])("%s opens the real composer with the selected source", async (label, prompt, action) => {
     routeState.trends = [
       {
         id: "11111111-1111-4111-8111-111111111111",
@@ -363,17 +616,23 @@ describe("Discover to Agent integration", () => {
     await user.click(
       within(screen.getByRole("article", { name: "An original creator post" })).getByRole(
         "button",
-        { name: "Boost in chat" },
+        { name: "Post actions" },
       ),
     );
     await user.click(screen.getByRole("menuitem", { name: new RegExp(label) }));
     const composer = screen.getByRole("textbox", { name: "Message Agent" }) as HTMLTextAreaElement;
     expect(composer.value).toContain(prompt);
-    expect(composer.value).toContain("https://example.com/post");
-    expect(composer.value).toContain("Full source context");
+    expect(composer.value).not.toContain("https://example.com/post");
+    expect(composer.value).not.toContain("Full source context");
+    expect(screen.getByRole("button", { name: "Remove Discover source" })).toHaveTextContent(
+      "An original creator post",
+    );
     await user.click(screen.getByRole("button", { name: "Send message" }));
     expect(routeState.send).toHaveBeenCalledWith({
-      data: expect.objectContaining({ text: expect.stringContaining(prompt) }),
+      data: expect.objectContaining({
+        text: expect.stringContaining(prompt),
+        discoverPost: { recommendationId: "11111111-1111-4111-8111-111111111111", action },
+      }),
     });
   });
 });
@@ -405,4 +664,12 @@ it("connects proactive rationale and feedback to the actual Agent message", asyn
   expect(routeState.feedback).toHaveBeenCalledWith({
     data: { messageId: "proactive-message", feedback: "not_relevant" },
   });
+});
+
+it("opens legacy studio links in chat without an editor dialog or saved-project navigation", () => {
+  render(<ContentPage initialTab="studio" />);
+  expect(screen.getByLabelText("Message Agent")).toBeVisible();
+  expect(screen.queryByRole("dialog", { name: "Content editor" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Open saved projects" })).not.toBeInTheDocument();
+  expect(screen.queryByText(/Content Studio|Loading Studio/)).not.toBeInTheDocument();
 });

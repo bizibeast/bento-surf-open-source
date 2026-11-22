@@ -3,7 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { requireContentWorkspace } from "./content-access.server";
+import { requireBennyChatAccess } from "./benny-byok.server";
 import { SOCIAL_CONNECTION_LIST_LIMIT } from "./large-table-columns";
 import { agentBrandingSchema } from "./content-agent-branding";
 import {
@@ -21,19 +21,7 @@ export const contentAgentPreferencesInputSchema = z.object({
       instagram: z.string().uuid().optional(),
     })
     .optional(),
-  displayName: z
-    .string()
-    .refine(
-      (name) =>
-        Array.from(name).every(
-          (character) => character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127,
-        ),
-      "Choose a name without control characters.",
-    )
-    .trim()
-    .min(1)
-    .max(80)
-    .optional(),
+  displayName: z.literal("Benny").optional(),
   proactivePaused: z.boolean().optional(),
   generateImages: z.boolean().optional(),
   useFaceReferences: z.boolean().optional(),
@@ -50,20 +38,20 @@ export type ContentAgentPreferencesInput = z.infer<typeof contentAgentPreference
 export const getOrCreateNamedAgentThread = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    await requireContentWorkspace(context.userId);
+    await requireBennyChatAccess(context.userId);
     return getOrCreateNamedAgentThreadForWorkspace(context.userId);
   });
 export const getContentAgentPreferences = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    await requireContentWorkspace(context.userId);
+    await requireBennyChatAccess(context.userId);
     return getContentAgentPreferencesForWorkspace(context.userId);
   });
 export const updateContentAgentPreferences = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input) => contentAgentPreferencesInputSchema.parse(input))
   .handler(async ({ context, data }): Promise<ContentAgentIdentity> => {
-    await requireContentWorkspace(context.userId);
+    await requireBennyChatAccess(context.userId);
     if (data.branding?.heroPhotoId) {
       const { resolveOwnedAgentMedia } = await import("./content-agent-media.server");
       await resolveOwnedAgentMedia(context.userId, [data.branding.heroPhotoId]);
@@ -137,7 +125,7 @@ export const getContentPublishingAccounts = createServerFn({ method: "GET" })
         provider_handle: string | null;
       }>
     > => {
-      await requireContentWorkspace(context.userId);
+      await requireBennyChatAccess(context.userId);
       const { data, error } = await (supabaseAdmin as any)
         .from("social_connections")
         .select("id,provider,provider_handle")

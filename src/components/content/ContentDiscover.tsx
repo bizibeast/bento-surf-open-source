@@ -27,6 +27,7 @@ import {
   platformName,
   recommendationMatches,
   type DiscoverBoostAction,
+  type DiscoverStudioSource,
 } from "./discover-utils";
 import "./discover.css";
 import {
@@ -70,6 +71,7 @@ export function ContentDiscover({
   onReject,
   onAskAgent,
   onCreateDraft,
+  onCreateStudio,
   onResolveCreator,
   refreshing = false,
   refreshError = null,
@@ -90,6 +92,7 @@ export function ContentDiscover({
   onReject: (id: string) => void | Promise<void>;
   onAskAgent: (item: DiscoverRecommendation, action?: DiscoverBoostAction) => void;
   onCreateDraft: (item: DiscoverRecommendation) => void;
+  onCreateStudio?: (source: DiscoverStudioSource) => void;
   onResolveCreator?: (item: DiscoverRecommendation) => Promise<DiscoverCreator>;
   refreshing?: boolean;
   refreshError?: string | null;
@@ -424,6 +427,7 @@ export function ContentDiscover({
     onReject: (id) => void updateFeedback(id, "not_relevant", onReject),
     onAskAgent,
     onCreateDraft,
+    onCreateStudio,
     onResolveCreator: onResolveCreator ? resolveCreator : undefined,
     pending,
     onShowSaved: () => {

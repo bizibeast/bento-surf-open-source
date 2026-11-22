@@ -292,7 +292,22 @@ describe("R2 media storage paths", () => {
 
   it("creates same-origin CDN URLs without carrying query strings", () => {
     expect(mediaObjectUrl("cache/instagram/bizibeast/POST_1.jpg", "http://localhost:8080/")).toBe(
-      "http://localhost:8080/cdn/cache/instagram/bizibeast/POST_1.jpg",
+      "/cdn/cache/instagram/bizibeast/POST_1.jpg",
+    );
+  });
+
+  it("stores a root-relative CDN path when the upload origin is loopback", () => {
+    expect(mediaObjectUrl("avatars/user/avatar.png", "http://localhost:8080")).toBe(
+      "/cdn/avatars/user/avatar.png",
+    );
+    expect(mediaObjectUrl("avatars/user/avatar.png", "http://127.0.0.1:8080")).toBe(
+      "/cdn/avatars/user/avatar.png",
+    );
+    expect(mediaObjectUrl("avatars/user/avatar.png", "http://[::1]:8080")).toBe(
+      "/cdn/avatars/user/avatar.png",
+    );
+    expect(mediaObjectUrl("avatars/user/avatar.png", "https://app.bento.surf")).toBe(
+      "https://app.bento.surf/cdn/avatars/user/avatar.png",
     );
   });
 });
@@ -729,11 +744,12 @@ describe("R2 upload boundary", () => {
       { waitUntil: vi.fn() },
       { authenticate: async () => "user-123", isPro: async () => false },
     );
-    const payload = (await response?.json()) as { key: string; size: number };
+    const payload = (await response?.json()) as { key: string; size: number; mimeType: string };
 
     expect(response?.status).toBe(201);
     expect(payload.key).toMatch(/^avatars\/user-123\/.+\.webp$/);
     expect(payload.size).toBe(output.byteLength);
+    expect(payload.mimeType).toBe("image/webp");
     expect(putContentType(put.mock.calls[0][2])).toBe("image/webp");
     expect(transform).toHaveBeenCalledWith({ width: 512, height: 512, fit: "scale-down" });
     expect(reserveProviderUsage).toHaveBeenCalledWith("image_transformations", 1, {
@@ -818,7 +834,7 @@ describe("R2 upload boundary", () => {
     const payload = (await response?.json()) as { key: string; publicUrl: string };
     expect(response?.status).toBe(201);
     expect(payload.key).toMatch(/^users\/user-123\/image\/.+\.png$/);
-    expect(payload.publicUrl).toBe(`http://localhost:8080/cdn/${payload.key}`);
+    expect(payload.publicUrl).toBe(`/cdn/${payload.key}`);
     expect(put).toHaveBeenCalledOnce();
   });
 
@@ -1449,10 +1465,11 @@ describe("R2 upload boundary", () => {
       { waitUntil: vi.fn() },
       { authenticate: async () => "user-123" },
     );
-    const payload = (await response?.json()) as { size: number };
+    const payload = (await response?.json()) as { size: number; mimeType: string };
 
     expect(response?.status).toBe(201);
     expect(payload.size).toBe(output.byteLength);
+    expect(payload.mimeType).toBe("image/webp");
     expect(put).toHaveBeenCalledOnce();
     expect(transform).toHaveBeenCalledWith({ width: 2_000, height: 2_000, fit: "scale-down" });
     expect(putContentType(put.mock.calls[0][2])).toBe("image/webp");

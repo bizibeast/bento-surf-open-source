@@ -9,9 +9,10 @@ describe("contextual app setup", () => {
       expect(app.steps.every((step) => step.title && step.instruction && step.proof)).toBe(true);
     }
   });
-  it("resolves content subapps without mixing their progress", () => {
-    expect(appGuideForLocation("/content", { tab: "agent", routines: true })?.id).toBe("routines");
-    expect(appGuideForLocation("/content", { tab: "brain" })?.id).toBe("brain");
+  it("uses the Benny guide throughout its unified workspace", () => {
+    expect(appGuideForLocation("/content", { tab: "agent", routines: true })?.id).toBe("agent");
+    expect(appGuideForLocation("/content", { tab: "brain" })?.id).toBe("agent");
+    expect(appGuideForLocation("/content", { tab: "studio" })?.name).toBe("Benny");
     expect(appGuideForLocation("/content", {})?.id).toBe("discover");
     expect(appGuideForLocation("/onboarding", {})).toBeUndefined();
     expect(appGuideForLocation("/email-marketing/posts/123", {})?.id).toBe("newsletter");

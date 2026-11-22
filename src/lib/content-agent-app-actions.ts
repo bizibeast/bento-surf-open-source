@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { chatArtifactSchema } from "./content-chat-artifact";
 export const agentStockPhotoSchema = z.object({
   id: z.number().int().positive(),
   provider: z.enum(["pixabay", "pexels", "commons"]),
@@ -20,6 +21,7 @@ export const agentAppActionStateSchema = z.object({
   id: z.string().uuid(),
   status: z.enum(["pending", "running", "completed", "failed", "dismissed"]),
   message: z.string().nullable().optional(),
+  artifact: chatArtifactSchema.optional(),
   revision: z.string().optional(),
   arguments: z.record(z.string(), z.json()).optional(),
 });

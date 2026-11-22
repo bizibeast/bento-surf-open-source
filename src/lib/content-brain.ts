@@ -295,6 +295,21 @@ export function writingVoiceDocument(items: readonly BrainItem[]) {
 }
 
 export function contentTopics(profile: ContentProfile, items: readonly BrainItem[]) {
+  const override = (section: "pillars" | "other") => {
+    const item = items.find(
+      (entry) =>
+        entry.sourceRef === `benny:topics:${section}:v1` &&
+        entry.provenance === "creator" &&
+        entry.status === "confirmed",
+    );
+    return item
+      ? item.content
+          .split("\n")
+          .filter((line) => line.trim() && !/^#{1,6}\s/.test(line))
+          .map((line) => line.replace(/^\s*[-*•]\s+/, "").trim())
+          .filter(Boolean)
+      : undefined;
+  };
   const distinct = (values: string[]) =>
     [...new Map(values.map((value) => [value.trim().toLowerCase(), value.trim()])).values()].filter(
       Boolean,
@@ -319,10 +334,12 @@ export function contentTopics(profile: ContentProfile, items: readonly BrainItem
     .map(([tag]) => tag);
   const primary = pillars.length ? pillars : learned.slice(0, 6);
   return {
-    pillars: primary,
-    other: distinct(learned)
-      .filter((tag) => !primary.some((pillar) => pillar.toLowerCase() === tag.toLowerCase()))
-      .slice(0, 20),
+    pillars: override("pillars") ?? primary,
+    other:
+      override("other") ??
+      distinct(learned)
+        .filter((tag) => !primary.some((pillar) => pillar.toLowerCase() === tag.toLowerCase()))
+        .slice(0, 20),
     interests: profile.nicheKeywords,
   };
 }

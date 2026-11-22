@@ -5,6 +5,7 @@ import { dodo } from "./client.server";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { Json } from "@/integrations/supabase/types";
 import { captureServerEvent, captureServerException } from "@/lib/posthog.server";
+import { isTestEmail } from "@/lib/analytics-identity";
 import {
   verifiedDodoAddonState,
   type DodoAddonCartItem,
@@ -18,6 +19,7 @@ import { syncWorkspaceBillingLifecycle } from "@/lib/billing-lifecycle.server";
 import { BILLING_DAY_MS, type BillingLifecycle } from "@/lib/billing-lifecycle";
 import {
   BASE_MARKETING_CONTACTS,
+  FULLY_MANAGED_BILLING_CATALOG,
   highestPlan,
   isPaidPlan,
   normalizePlan,
@@ -99,7 +101,12 @@ function planFromEvent(data: JsonRecord): PaidPlanId | null {
   // fallback for events that carry no product reference at all.
   const productId = asString(data.product_id) ?? firstProductId(data);
   if (productId) return resolveBillingProduct(productId, process.env)?.plan ?? null;
-  if (asRecord(data.metadata).billing_catalog === "2026-10") return null;
+  if (
+    ["2026-10", FULLY_MANAGED_BILLING_CATALOG].includes(
+      String(asRecord(data.metadata).billing_catalog),
+    )
+  )
+    return null;
 
   const metadataPlan = normalizePlan(asRecord(data.metadata).plan);
   return isPaidPlan(metadataPlan) ? metadataPlan : null;
@@ -313,9 +320,36 @@ async function findPaymentUser(paymentId: string | null): Promise<string | null>
 }
 
 async function recordPayment(event: DodoEvent, userId: string | null) {
-  const data = event.data;
+  let data = event.data;
   const paymentId = asString(data.payment_id);
   if (!paymentId) throw new Error(`${event.type} has no payment_id`);
+  const managed =
+    asRecord(data.metadata).billing_catalog === FULLY_MANAGED_BILLING_CATALOG ||
+    resolveBillingProduct(firstProductId(data), process.env)?.catalog ===
+      FULLY_MANAGED_BILLING_CATALOG;
+  const subscriptionId = asString(data.subscription_id);
+  if (
+    managed &&
+    event.type === "payment.succeeded" &&
+    subscriptionId &&
+    (!asString(data.charge_type) ||
+      asNumber(data.settlement_amount) === null ||
+      !asString(data.settlement_currency) ||
+      (data.currency !== "USD" &&
+        (asNumber(data.tax) ?? 0) > 0 &&
+        asNumber(data.settlement_tax) === null))
+  ) {
+    // Some webhook payloads omit settlement evidence. Supplement only a
+    // signed managed payment event with its matching provider payment detail.
+    const payment = asRecord(await dodo.payments.retrieve(paymentId));
+    if (
+      payment.payment_id !== paymentId ||
+      payment.subscription_id !== subscriptionId ||
+      payment.status !== "succeeded"
+    )
+      throw new Error("Managed payment evidence could not be verified.");
+    data = { ...data, ...payment };
+  }
 
   const { error } = await supabaseAdmin.from("payments").upsert(
     {
@@ -329,7 +363,10 @@ async function recordPayment(event: DodoEvent, userId: string | null) {
       settlement_amount: asNumber(data.settlement_amount),
       currency: asString(data.currency) ?? "USD",
       settlement_currency: asString(data.settlement_currency),
+      settlement_tax: asNumber(data.settlement_tax),
       tax: asNumber(data.tax),
+      dodo_charge_type: asString(data.charge_type),
+      billing_contract_catalog: managed ? FULLY_MANAGED_BILLING_CATALOG : null,
       refund_status: asString(data.refund_status),
       payment_method: asString(data.payment_method),
       occurred_at: occurredAt(event),
@@ -442,9 +479,11 @@ async function syncSubscriptionUnderLease(
     process.env,
   );
   const isCurrentCatalog =
-    incomingProduct?.catalog === "2026-10" ||
-    asRecord(data.metadata).billing_catalog === "2026-10" ||
-    (!differentSubscription && current?.billing_catalog === "2026-10");
+    (incomingProduct && incomingProduct.catalog !== "legacy") ||
+    ["2026-10", FULLY_MANAGED_BILLING_CATALOG].includes(
+      String(asRecord(data.metadata).billing_catalog),
+    ) ||
+    (!differentSubscription && current?.billing_catalog && current.billing_catalog !== "legacy");
   if (isCurrentCatalog || incomingProduct || current?.dodo_subscription_id === subscriptionId) {
     if (!subscriptionId) throw new Error("Missing subscription identity.");
     const remote = await dodo.subscriptions.retrieve(subscriptionId);
@@ -543,7 +582,7 @@ async function syncSubscriptionUnderLease(
   const requestedTrial = Boolean(trialCheckoutKey);
   const trialTerms =
     state.active &&
-    catalog === "2026-10" &&
+    catalog !== "legacy" &&
     (requestedTrial || (asNumber(data.trial_period_days) ?? 0) > 0)
       ? await readTrialTerms({
           workspaceId: userId,
@@ -553,10 +592,10 @@ async function syncSubscriptionUnderLease(
         })
       : null;
   let trialEndsAt =
-    state.active && catalog === "2026-10" && trialTerms
+    state.active && catalog !== "legacy" && trialTerms
       ? verifiedTrialEnd(data, 0, trialTerms.days, trialTerms.approvedExtensionEnd)
       : null;
-  if (state.active && catalog === "2026-10") {
+  if (state.active && catalog !== "legacy") {
     // Card-optional subscriptions are also reported as active. An invalid trial
     // must never fall through to paid access or consume the owner's trial claim.
     if (data.has_payment_method !== true)
@@ -793,6 +832,7 @@ async function markEvent(
 }
 
 export function buildBillingAnalyticsProperties(event: DodoEvent, webhookId: string) {
+  const customerEmail = asString(asRecord(event.data.customer).email);
   const isPayment = event.type === "payment.succeeded";
   const isRefund = event.type === "refund.succeeded";
   const amount =
@@ -814,13 +854,28 @@ export function buildBillingAnalyticsProperties(event: DodoEvent, webhookId: str
     payment_id: asString(event.data.payment_id),
     refund_id: asString(event.data.refund_id),
     billing_status: eventStatus(event.type, event.data),
+    // Dodo reports card-optional trials as "active"; the trial length tells them apart.
+    trial:
+      (asNumber(event.data.trial_period_days) ?? 0) > 0 ||
+      Boolean(asString(asRecord(event.data.metadata).trial_checkout_key)),
+    // Only the boolean is sent; the customer email never reaches analytics.
+    is_test_account: customerEmail ? isTestEmail(customerEmail) : undefined,
   };
 }
 
+/**
+ * Billing events belong to the person who checked out. Workspace ids equal the owner id
+ * for personal workspaces, but team workspaces differ, so prefer the auth user id.
+ */
+export function billingAnalyticsDistinctId(event: DodoEvent, userId: string | null) {
+  return asString(asRecord(event.data.metadata).auth_user_id) ?? userId;
+}
+
 async function captureBillingEvent(event: DodoEvent, userId: string | null, webhookId: string) {
-  if (!userId) return;
+  const distinctId = userId ? billingAnalyticsDistinctId(event, userId) : null;
+  if (!distinctId) return;
   await captureServerEvent(
-    userId,
+    distinctId,
     event.type.replaceAll(".", "_"),
     buildBillingAnalyticsProperties(event, webhookId),
   );

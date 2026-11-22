@@ -1,0 +1,44 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "bento-basic-media",
+  "main": "scripts/basic-media-resolver/cloudflare.ts",
+  "compatibility_date": "2026-11-21",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "BASIC_MEDIA_ENABLED": "false",
+  },
+  "secrets": {
+    "required": ["BASIC_MEDIA_TOKEN"],
+  },
+  "containers": [
+    {
+      "class_name": "BasicMedia",
+      "image": "./scripts/basic-media-resolver/Dockerfile",
+      "image_build_context": ".",
+      "max_instances": 1,
+      "instance_type": "standard-1",
+      "constraints": {
+        "regions": ["enam"],
+      },
+    },
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "BASIC_MEDIA",
+        "class_name": "BasicMedia",
+      },
+    ],
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["BasicMedia"],
+    },
+  ],
+  "observability": {
+    "enabled": true,
+  },
+}

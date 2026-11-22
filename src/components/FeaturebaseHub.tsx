@@ -7,9 +7,11 @@ import { captureProductEvent } from "@/lib/posthog";
 export function FeaturebaseHub({
   portalUrl,
   inAppShell = false,
+  inline = false,
 }: {
   portalUrl?: string | null;
   inAppShell?: boolean;
+  inline?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -69,9 +71,11 @@ export function FeaturebaseHub({
     <>
       <div
         className={
-          inAppShell
-            ? "fixed right-3 top-1 z-50 lg:bottom-5 lg:right-5 lg:top-auto"
-            : "fixed bottom-[calc(5.25rem+env(safe-area-inset-bottom))] right-3 z-50 sm:bottom-5 sm:right-5"
+          inline
+            ? "relative shrink-0"
+            : inAppShell
+              ? "fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-3 z-50 lg:bottom-5 lg:right-5"
+              : "fixed bottom-[calc(5.25rem+env(safe-area-inset-bottom))] right-3 z-50 sm:bottom-5 sm:right-5"
         }
       >
         <Popover open={open} onOpenChange={setOpen}>
@@ -81,9 +85,13 @@ export function FeaturebaseHub({
               aria-label="Help, feedback and updates"
               title="Help, feedback and updates"
               onClick={() => captureProductEvent("customer_hub_opened")}
-              className="relative inline-flex size-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-[0_18px_45px_-16px_rgba(0,0,0,0.55)] ring-1 ring-white/30 transition hover:-translate-y-0.5 hover:brightness-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              className={
+                inline
+                  ? "relative inline-flex size-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  : "relative inline-flex size-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-[0_18px_45px_-16px_rgba(0,0,0,0.55)] ring-1 ring-white/30 transition hover:-translate-y-0.5 hover:brightness-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              }
             >
-              <HeartHandshake className="size-5" aria-hidden="true" />
+              <HeartHandshake className={inline ? "size-4" : "size-5"} aria-hidden="true" />
               {unreadCount > 0 && (
                 <span className="absolute -right-1.5 -top-1.5 grid min-w-5 place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-bold leading-5 text-white ring-2 ring-background">
                   {unreadCount > 99 ? "99+" : unreadCount}

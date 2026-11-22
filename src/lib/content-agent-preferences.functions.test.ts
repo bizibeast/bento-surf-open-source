@@ -1,7 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 
-const mocks = vi.hoisted(() => ({ rpc: vi.fn(), access: vi.fn(), validatePhotos: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  rpc: vi.fn(),
+  access: vi.fn(),
+  chatAccess: vi.fn(),
+  imageAvailable: vi.fn(),
+  validatePhotos: vi.fn(),
+}));
 vi.mock("@tanstack/react-start", () => ({
   createServerOnlyFn: (handler: unknown) => handler,
   createServerFn: () => {
@@ -23,9 +29,10 @@ vi.mock("@tanstack/react-start", () => ({
 vi.mock("@/integrations/supabase/auth-middleware", () => ({ requireSupabaseAuth: {} }));
 vi.mock("@/integrations/supabase/client.server", () => ({ supabaseAdmin: { rpc: mocks.rpc } }));
 vi.mock("./content-access.server", () => ({ requireContentWorkspace: mocks.access }));
+vi.mock("./benny-byok.server", () => ({ requireBennyChatAccess: mocks.chatAccess }));
 
 vi.mock("./content-agent-images.server", () => ({
-  imageProviderAvailable: () => true,
+  imageProviderAvailable: mocks.imageAvailable,
   validateReferenceSelection: mocks.validatePhotos,
 }));
 // Namespace import lets missing new exports fail as assertions in the red run.
@@ -44,6 +51,8 @@ const state = {
 };
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.chatAccess.mockResolvedValue(undefined);
+  mocks.imageAvailable.mockReturnValue(true);
   mocks.rpc.mockResolvedValue({ data: state, error: null });
 });
 
@@ -54,10 +63,14 @@ describe("content agent identity and preferences", () => {
     expect(mocks.rpc).toHaveBeenCalledWith("ensure_content_named_agent", {
       p_user_id: "workspace",
     });
-    expect(mocks.access).toHaveBeenCalledWith("workspace");
+    expect(mocks.chatAccess).toHaveBeenCalledWith("workspace");
   });
-  it("returns persisted preferences for the active workspace", async () => {
-    await expect(preferences.getContentAgentPreferences()).resolves.toEqual(state.preferences);
+  it("returns preferences with Benny's fixed name without rewriting historical names", async () => {
+    await expect(preferences.getContentAgentPreferences()).resolves.toEqual({
+      ...state.preferences,
+      display_name: "Benny",
+    });
+    expect(state.preferences.display_name).toBe("Bento");
     expect(mocks.rpc).toHaveBeenCalledWith("ensure_content_named_agent", {
       p_user_id: "workspace",
     });
@@ -66,15 +79,15 @@ describe("content agent identity and preferences", () => {
     expect(identity.getOrCreateNamedAgentThreadForWorkspace).toBeTypeOf("function");
     await expect(
       identity.getOrCreateNamedAgentThreadForWorkspace("job-workspace"),
-    ).resolves.toEqual(state);
+    ).resolves.toEqual({ ...state, preferences: { ...state.preferences, display_name: "Benny" } });
     expect(mocks.rpc).toHaveBeenCalledWith("ensure_content_named_agent", {
       p_user_id: "job-workspace",
     });
   });
-  it("trims a rename and scopes preference updates to auth workspace", async () => {
+  it("saves Benny's fixed identity and scopes preference updates to auth workspace", async () => {
     await preferences.updateContentAgentPreferences({
       data: {
-        displayName: "  Miso  ",
+        displayName: "Benny",
         generateImages: true,
         useFaceReferences: false,
         userId: "intruder",
@@ -82,7 +95,7 @@ describe("content agent identity and preferences", () => {
     } as never);
     expect(mocks.rpc).toHaveBeenCalledWith("update_content_agent_preferences", {
       p_user_id: "workspace",
-      p_patch: { display_name: "Miso", generate_images: true, use_face_references: false },
+      p_patch: { display_name: "Benny", generate_images: true, use_face_references: false },
     });
   });
   it.each(["", "   ", "x".repeat(81), "Bad\nName", "Bento\n"])(
@@ -193,4 +206,35 @@ it("revokes image/photo consent with unchanged unavailable selected photos witho
       references_confirmed: false,
     },
   });
+});
+
+it("lets a chat-authorized BYOK creator read and save manual preferences", async () => {
+  await preferences.getContentAgentPreferences();
+  await preferences.updateContentAgentPreferences({ data: { displayName: "Benny" } });
+  expect(mocks.chatAccess).toHaveBeenCalledWith("workspace");
+  expect(mocks.access).not.toHaveBeenCalled();
+  expect(mocks.rpc).toHaveBeenCalledWith("update_content_agent_preferences", {
+    p_user_id: "workspace",
+    p_patch: { display_name: "Benny" },
+  });
+});
+
+it("still rejects image enablement when a BYOK creator has no managed image access", async () => {
+  mocks.imageAvailable.mockReturnValue(false);
+  await expect(
+    preferences.updateContentAgentPreferences({
+      data: { generateImages: true },
+    }),
+  ).rejects.toThrow("Image generation is not available");
+  expect(mocks.rpc).not.toHaveBeenCalledWith("update_content_agent_preferences", expect.anything());
+});
+
+it("rejects manual saves when Benny chat access is denied", async () => {
+  mocks.chatAccess.mockRejectedValueOnce(new Error("Benny access denied"));
+  await expect(
+    preferences.updateContentAgentPreferences({
+      data: { displayName: "Benny" },
+    }),
+  ).rejects.toThrow("Benny access denied");
+  expect(mocks.rpc).not.toHaveBeenCalled();
 });

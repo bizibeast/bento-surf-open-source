@@ -1,4 +1,5 @@
 import * as providerBudget from "./provider-budget.server";
+import type { AiProviderTransport } from "./ai-json.server";
 import { describe, expect, it, vi } from "vitest";
 import { loadAgentAttachments } from "./content-agent-attachments.server";
 vi.mock("./content-agent-attachments.server", () => ({
@@ -126,6 +127,84 @@ function dependencies(): ContentAgentDependencies {
 }
 
 describe("content Agent server", () => {
+  it("keeps thread context on a BYOK turn and does not forward attachments, tool outcomes or business data", async () => {
+    const d = dependencies();
+    const base = await d.loadContext("creator", threadId);
+    vi.mocked(d.loadContext).mockResolvedValue({
+      ...base,
+      history: [
+        {
+          messageId: "prior-answer",
+          role: "assistant",
+          content: "Previous answer",
+          attachments: [{ id: "private-attachment" }],
+          proposedActions: [{ tool: "private-tool-data" }],
+        },
+      ],
+      performance: { business: "private-business-data", recentPosts: [] },
+    });
+    d.saveMemories = vi.fn();
+    const transport = vi.fn<AiProviderTransport>().mockResolvedValue({
+      provider: "openrouter",
+      response: {
+        response: JSON.stringify({
+          action: "answer",
+          message: "Here's a follow-up.",
+          cards: [],
+          memories: [{ title: "Follow up", sourceQuote: "Follow up on this" }],
+        }),
+      },
+    });
+    const result = await runContentAgentTurn(
+      {
+        userId: "creator",
+        threadId,
+        text: "Follow up on this",
+        byokTransport: transport,
+      },
+      d,
+    );
+    expect(d.loadContext).toHaveBeenLastCalledWith(
+      "creator",
+      threadId,
+      "Follow up on this",
+      "bennyByok",
+    );
+    expect(result.threadId).toBe(threadId);
+    const prompt = transport.mock.calls[0]![0].messages.find(
+      (item) => item.role === "user",
+    )!.content;
+    expect(prompt).toContain("Previous answer");
+    expect(prompt).not.toContain("private-");
+    expect(d.generate).not.toHaveBeenCalled();
+    expect(d.saveMemories).not.toHaveBeenCalled();
+    expect(d.saveMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: "assistant",
+        skipAutomaticPreparation: true,
+      }),
+    );
+  });
+
+  it("fails before provider work when a BYOK-only turn includes an attachment", async () => {
+    const d = dependencies();
+    const transport = vi.fn<AiProviderTransport>();
+    await expect(
+      runContentAgentTurn(
+        {
+          userId: "creator",
+          threadId,
+          text: "Summarize this",
+          byokTransport: transport,
+          attachmentIds: [threadId],
+        },
+        d,
+      ),
+    ).rejects.toThrow("accepts text only");
+    expect(d.loadContext).not.toHaveBeenCalled();
+    expect(transport).not.toHaveBeenCalled();
+  });
+
   it("passes an attached reference to both the conversational model and the editorial evidence checker", async () => {
     const attachment = {
       id: "00000000-0000-4000-8000-000000000001",

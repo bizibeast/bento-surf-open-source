@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { AppHeader } from "@/components/AppHeader";
+import { HomeWeeklyPulse } from "@/components/HomeWeeklyPulse";
 import { publicProfileUrl } from "@/lib/application-urls";
 import { formatCommerceMoney } from "@/lib/commerce";
 import { getHomeDashboard } from "@/lib/home-dashboard.functions";
@@ -42,7 +43,7 @@ function HomePage() {
     queryFn: () => getMyProfile(),
     staleTime: 60_000,
   });
-  const { data } = useQuery({
+  const { data, isPending } = useQuery({
     queryKey: ["home-dashboard"],
     queryFn: () => getHomeDashboard(),
     staleTime: 30_000,
@@ -53,7 +54,7 @@ function HomePage() {
     : null;
 
   return (
-    <main className={micro.shell}>
+    <main className={`${micro.shell} dark:bg-background dark:text-foreground`}>
       <AppHeader
         title="Home"
         actions={
@@ -82,6 +83,32 @@ function HomePage() {
               Last 7 days
             </span>
           </div>
+
+          <HomeWeeklyPulse data={data?.weekly ?? null} loading={isPending} />
+          {Boolean(data?.reels?.length) && (
+            <div className="border-b border-white/10 px-5 py-4 sm:px-6" aria-label="Reel activity">
+              <h4 className="mb-2 text-sm font-semibold">Benny’s production queue</h4>
+              {data!.reels!.map((reel) => (
+                <Link
+                  key={reel.id}
+                  to="/content"
+                  search={{ tab: "agent", project: reel.entryId }}
+                  className="flex items-center justify-between gap-3 rounded-lg py-2 text-sm hover:bg-white/5"
+                >
+                  <span className="min-w-0 truncate">{reel.title}</span>
+                  <span className="shrink-0 text-xs text-white/65">
+                    {reel.status === "awaiting_approval"
+                      ? "Approve estimate"
+                      : reel.status === "ready"
+                        ? "Review video"
+                        : ["failed", "needs_revision"].includes(reel.status)
+                          ? "Needs attention"
+                          : "In production"}
+                  </span>
+                </Link>
+              ))}
+            </div>
+          )}
 
           <div className="mt-5 grid grid-cols-2 sm:grid-cols-4">
             <PulseMetric
@@ -220,7 +247,7 @@ function HomePage() {
                         href={call.meetingUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex items-center gap-1 rounded-lg border border-black/[0.07] bg-white/55 px-2.5 py-1.5 text-xs font-semibold text-foreground transition-colors hover:bg-white"
+                        className="inline-flex items-center gap-1 rounded-lg border border-black/[0.07] bg-white/55 px-2.5 py-1.5 text-xs font-semibold text-foreground transition-colors hover:bg-white dark:border-border dark:bg-muted/55 dark:hover:bg-muted"
                       >
                         <Video className="size-3.5" /> Join
                       </a>
@@ -309,7 +336,7 @@ function DashboardCard({
   children: ReactNode;
 }) {
   return (
-    <section className="min-w-0 min-h-[275px] rounded-2xl border border-black/[0.06] bg-white p-4 shadow-[0_14px_35px_-30px_rgba(23,33,58,0.45)] sm:p-5">
+    <section className="min-w-0 min-h-[275px] rounded-2xl border border-black/[0.06] bg-white p-4 shadow-[0_14px_35px_-30px_rgba(23,33,58,0.45)] sm:p-5 dark:border-border dark:bg-card">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
           <span className={`flex size-8 items-center justify-center rounded-lg ${tone}`}>
@@ -352,7 +379,7 @@ function ActivityRow({
 
 function StatusLabel({ children }: { children: ReactNode }) {
   return (
-    <span className="rounded-md border border-black/[0.07] bg-white/50 px-2 py-1 text-xs font-medium capitalize text-muted-foreground">
+    <span className="rounded-md border border-black/[0.07] bg-white/50 px-2 py-1 text-xs font-medium capitalize text-muted-foreground dark:border-border dark:bg-muted/50">
       {children}
     </span>
   );

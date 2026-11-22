@@ -4,7 +4,10 @@ const mocks = vi.hoisted(() => ({
   calls: [] as Array<{ table: string; method: string; args: unknown[] }>,
   requireContentWorkspace: vi.fn(),
   requestIndex: vi.fn(),
+  entitlement: vi.fn().mockResolvedValue(true),
   indexJob: null as Record<string, unknown> | null,
+  brainItems: [] as Record<string, unknown>[],
+  brainDocuments: {} as Record<string, Record<string, unknown>[]>,
 }));
 
 function resultFor(table: string) {
@@ -25,7 +28,7 @@ function resultFor(table: string) {
   if (table === "creator_content_media") return { data: [], error: null };
   if (table === "creator_media_folders") return { data: [], error: null };
   if (table === "social_content_insights") return { data: [], error: null };
-  if (table === "creator_brain_items") return { data: [], error: null };
+  if (table === "creator_brain_items") return { data: mocks.brainItems, error: null };
   if (table === "social_connections") {
     return {
       data: [
@@ -73,6 +76,7 @@ function resultFor(table: string) {
 
 function queryFor(table: string) {
   const query: Record<string, unknown> = {};
+  let sourceRef: string | undefined;
   for (const method of [
     "select",
     "eq",
@@ -88,13 +92,18 @@ function queryFor(table: string) {
   ] as const) {
     query[method] = vi.fn((...args: unknown[]) => {
       mocks.calls.push({ table, method, args });
+      if (method === "eq" && args[0] === "source_ref") sourceRef = String(args[1]);
       return query;
     });
   }
   query.maybeSingle = vi.fn(async () => resultFor(table));
   query.single = vi.fn(async () => resultFor(table));
   query.then = (resolve: (value: unknown) => unknown) =>
-    Promise.resolve(resultFor(table)).then(resolve);
+    Promise.resolve(
+      table === "creator_brain_items" && sourceRef
+        ? { data: mocks.brainDocuments[sourceRef] || [], error: null }
+        : resultFor(table),
+    ).then(resolve);
   return query;
 }
 
@@ -123,6 +132,7 @@ vi.mock("@/integrations/supabase/client.server", () => ({
     rpc: vi.fn().mockResolvedValue({ data: 0, error: null }),
   },
 }));
+vi.mock("./plan.server", () => ({ hasPlanEntitlement: mocks.entitlement }));
 vi.mock("./content-index.server", () => ({ requestContentIndex: mocks.requestIndex }));
 vi.mock("./content-access.server", () => ({
   requireContentWorkspace: mocks.requireContentWorkspace,
@@ -141,10 +151,42 @@ import {
 beforeEach(() => {
   mocks.calls.length = 0;
   mocks.indexJob = null;
+  mocks.brainItems = [];
+  mocks.brainDocuments = {};
+  mocks.entitlement.mockResolvedValue(true);
+  mocks.requestIndex.mockClear();
   mocks.requireContentWorkspace.mockReset().mockResolvedValue("creator");
 });
 
 describe("content Brain server functions", () => {
+  it("keeps an older cleared document authoritative when recent imports fill the page", async () => {
+    const reference = "benny:memory-document:profile:v1";
+    const canonical = {
+      id: "11111111-1111-4111-8111-111111111111",
+      kind: "profile",
+      title: "About You",
+      content: "# About You",
+      provenance: "creator",
+      status: "confirmed",
+      locked: true,
+      source_ref: reference,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-02T00:00:00Z",
+    };
+    mocks.brainDocuments[reference] = [canonical];
+    mocks.brainItems = [
+      {
+        ...canonical,
+        id: "22222222-2222-4222-8222-222222222222",
+        source_ref: null,
+        provenance: "social_post",
+        content: "Previously deleted claim",
+        updated_at: "2026-11-18T00:00:00Z",
+      },
+    ];
+    const result = await getContentBrain();
+    expect(result.items.map((item) => item.content)).toEqual(["# About You"]);
+  });
   it("never forwards caller-supplied evidence receipts through service-role writes", async () => {
     const data = {
       id: "11111111-1111-4111-8111-111111111111",
@@ -188,7 +230,7 @@ describe("content Brain server functions", () => {
 
   it("loads only safe creator-owned Brain and connection summaries", async () => {
     const result = await getContentBrain();
-    expect(mocks.requireContentWorkspace).toHaveBeenCalledWith("owner");
+    expect(mocks.requireContentWorkspace).toHaveBeenCalledWith("owner", "discover");
     expect(mocks.calls).toContainEqual({
       table: "creator_brain_items",
       method: "eq",
@@ -242,6 +284,22 @@ describe("content Brain server functions", () => {
     expect(upsert?.args[0]).toMatchObject({ user_id: "owner", goal: "reach_growth" });
   });
 
+  it("saves BYOK creator preferences without queuing Bento-funded indexing", async () => {
+    mocks.entitlement.mockResolvedValue(false);
+    await saveContentProfile({
+      data: {
+        goal: "consistent_publishing",
+        nicheKeywords: ["AI"],
+        language: "en",
+        region: "global",
+        timezone: "UTC",
+        platformFrequencies: {},
+      },
+    });
+    expect(mocks.requireContentWorkspace).toHaveBeenCalledWith("owner", "discover");
+    expect(mocks.requestIndex).not.toHaveBeenCalled();
+  });
+
   it("scopes Brain locking and deletion to the authenticated creator", async () => {
     const id = "11111111-1111-4111-8111-111111111111";
     await setBrainItemLocked({ data: { id, locked: true } });
@@ -254,12 +312,13 @@ describe("content Brain server functions", () => {
           call.args[0] === "user_id" &&
           call.args[1] === "owner",
       ),
-    ).toHaveLength(4);
+      // Mutations, recent-item reads and both authoritative document reads stay tenant scoped.
+    ).toHaveLength(8);
   });
 
   it("checks the Creator-plan entitlement for every operation", async () => {
     const id = "11111111-1111-4111-8111-111111111111";
     await setBrainItemLocked({ data: { id, locked: false } });
-    expect(mocks.requireContentWorkspace).toHaveBeenCalledWith("owner");
+    expect(mocks.requireContentWorkspace).toHaveBeenCalledWith("owner", "discover");
   });
 });

@@ -2,6 +2,8 @@ import {
   CURRENT_DODO_PRODUCT_ENV,
   DODO_PRODUCT_ENV,
   EXTENDED_TRIAL_DAYS,
+  FULLY_MANAGED_BILLING_CATALOG,
+  FULLY_MANAGED_DODO_PRODUCT_ENV,
   PAID_PLAN_IDS,
   TRIAL_DAYS,
   type BillingCatalog,
@@ -15,6 +17,20 @@ export function resolveBillingProduct(
 ) {
   if (!productId) return null;
   const matches: Array<{ plan: PaidPlanId; period: BillingPeriod; catalog: BillingCatalog }> = [];
+  if (env[FULLY_MANAGED_DODO_PRODUCT_ENV]?.trim() === productId) {
+    matches.push({
+      plan: "creator_plus",
+      period: "monthly",
+      catalog: FULLY_MANAGED_BILLING_CATALOG,
+    });
+  }
+  // The pre-October annual Creator Plus product may still be renewing.
+  if (
+    env[DODO_PRODUCT_ENV.creator_plus.yearly]?.trim() === productId &&
+    env[CURRENT_DODO_PRODUCT_ENV.creator_plus.yearly]?.trim() !== productId
+  ) {
+    matches.push({ plan: "creator_plus", period: "yearly", catalog: "legacy" });
+  }
   for (const plan of PAID_PLAN_IDS) {
     for (const period of ["monthly", "yearly"] as const) {
       if (env[CURRENT_DODO_PRODUCT_ENV[plan][period]]?.trim() === productId) {

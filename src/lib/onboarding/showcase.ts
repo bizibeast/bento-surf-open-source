@@ -20,9 +20,9 @@ export function plansIncluding(entitlement: EntitlementKey): PaidPlanId[] {
   return PAID_PLAN_IDS.slice(PAID_PLAN_IDS.indexOf(minimum));
 }
 
-/** "Creator Plus only" or "Included with Creator and Creator Plus". Never implies a lower plan. */
+/** "Creator+ only" or "Included with Creator and Creator+". Never implies a lower plan. */
 export function planAvailabilityLabel(entitlement: EntitlementKey) {
-  const plans = plansIncluding(entitlement).map(planName);
+  const plans = plansIncluding(entitlement).map((plan) => planName(plan));
   if (plans.length === 1) return `Included with ${plans[0]} only`;
   return `Included with ${plans.slice(0, -1).join(", ")} and ${plans[plans.length - 1]}`;
 }
@@ -32,18 +32,18 @@ export function showcaseItems(brainChapters: number): ShowcaseItem[] {
   return [
     {
       id: "brain",
-      title: "Your Brain",
+      title: "Your creator memory",
       body:
         brainChapters > 0
           ? `The chapters you just reviewed: your voice, audience and strategy, in one place you control.`
           : "Your voice, audience and strategy, in one place you control.",
-      entitlement: "brain",
+      entitlement: "bennyByok",
     },
     {
       id: "ai",
-      title: "AI that creates with you",
-      body: "An Agent and routines that draft posts from your Brain and real sources. You review everything before it goes out.",
-      entitlement: "contentAgent",
+      title: "Benny with your own AI",
+      body: "Use your own model and API key on Creator. Creator+ includes Bento-managed AI and routines within usage limits. You review content before publishing.",
+      entitlement: "bennyByok",
     },
     {
       id: "sell",

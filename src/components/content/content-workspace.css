@@ -38,11 +38,12 @@
   color: var(--foreground);
 }
 .content-document-toolbar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
   min-height: 32px;
-  margin-bottom: 20px;
+  margin-bottom: 6px;
   color: #737373;
   font-size: 12px;
 }
@@ -188,8 +189,12 @@
 
 .content-document-editor {
   position: relative;
-  min-height: 80px;
-  padding: 4px 0;
+  min-height: 180px;
+  padding: 20px 24px;
+  margin-bottom: 24px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--background);
   cursor: text;
   overflow-wrap: anywhere;
 }
@@ -202,7 +207,19 @@
   line-height: 1.8;
 }
 .content-document-editor:focus {
-  outline: none;
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.content-document-formatting {
+  position: absolute;
+  z-index: 5;
+  bottom: 0;
+  left: 0;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--background);
+  box-shadow: 0 4px 16px #00000014;
 }
 .content-document:focus-within .content-document-toolbar {
   color: var(--foreground);
@@ -574,24 +591,62 @@
   padding: 8px 28px 24px;
   background: var(--card);
 }
-.agent-composer-field {
+.agent-composer {
+  border: 1px solid var(--border);
+  border-radius: 28px;
+  background: color-mix(in srgb, var(--muted) 65%, var(--card));
+  padding: 16px 12px 12px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 3%);
+}
+.agent-composer:focus-within {
+  border-color: var(--muted-foreground);
+}
+.agent-composer .agent-composer-input {
+  display: block;
+  width: 100%;
+  max-height: 176px;
+  resize: none;
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  line-height: 24px;
+  outline: none;
+}
+.agent-composer .agent-composer-input:focus-visible {
+  outline: none;
+}
+.agent-composer:has(.agent-composer-input:focus-visible) {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.agent-composer-toolbar {
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  border: 1px solid var(--border);
-  border-radius: 26px;
-  background: var(--muted);
-  padding: 10px 10px 10px 20px;
+  margin-top: 12px;
 }
-.agent-composer-field:focus-within {
-  border-color: var(--muted-foreground);
+/* Important shared app controls live in this layer, so their composer-specific
+   overrides must share the layer as well. */
+@layer components {
+  .agent-composer .agent-composer-input {
+    min-height: 64px !important;
+    padding: 4px 8px !important;
+    font-size: 16px !important;
+  }
+  .agent-composer :is(.agent-add, .agent-send) {
+    border-radius: 50% !important;
+  }
+}
+.agent-composer :is(.agent-add, .agent-send):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 .agent-send {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 42px;
-  height: 42px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   flex-shrink: 0;
   background: var(--foreground);
@@ -682,5 +737,162 @@
 @media (prefers-reduced-motion: reduce) {
   .agent-mobile-drawer {
     animation: none;
+  }
+}
+
+/* Benny keeps conversations, creator context and creation tools in one workspace. */
+.benny-unified {
+  grid-template-columns: 216px minmax(0, 1fr);
+}
+.benny-unified.agent-collapsed {
+  grid-template-columns: 64px minmax(0, 1fr);
+}
+.benny-desktop-inspector {
+  display: none;
+}
+.benny-inspector {
+  padding: 28px 20px;
+}
+.benny-inspector-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 64px;
+  border-bottom: 1px solid var(--border);
+}
+.benny-inspector-row:last-child {
+  border-bottom: 0;
+}
+.benny-inspector-label {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 500;
+}
+.benny-inspector-count {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 400;
+}
+.benny-inspector-edit {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: var(--muted-foreground);
+}
+.benny-inspector-edit:hover,
+.benny-inspector-label:hover {
+  color: var(--foreground);
+}
+.benny-inspector-edit:hover {
+  background: var(--muted);
+}
+.benny-unified .agent-messages {
+  padding-top: 28px;
+}
+.benny-model-controls {
+  min-width: 0;
+  flex: 1;
+}
+.benny-composer-options {
+  justify-content: flex-end;
+}
+.benny-model-select {
+  max-width: min(100%, 260px);
+  background-color: var(--card);
+}
+@media (max-width: 767px) {
+  .agent-composer {
+    padding: 12px 8px 8px;
+    border-radius: 24px;
+  }
+  .agent-composer-toolbar {
+    gap: 4px;
+  }
+  .benny-composer-options {
+    justify-content: flex-start;
+  }
+  .benny-model-select {
+    width: 100%;
+  }
+}
+.benny-editor-dialog {
+  width: min(1120px, calc(100vw - 48px));
+  max-width: 1120px;
+  max-height: calc(100dvh - 48px);
+  overflow-x: hidden;
+  gap: 16px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+}
+.benny-editor-dialog section[aria-label="Content Brain"] {
+  height: min(68dvh, 720px);
+}
+.benny-editor-dialog section[aria-label="Content routines"] {
+  min-height: 0;
+  padding: 16px 0;
+}
+.benny-editor-dialog .studio-shell {
+  width: 100%;
+  padding: 0;
+}
+.benny-memory-navigation {
+  display: flex;
+  gap: 8px;
+  padding-bottom: 16px;
+}
+.benny-creative-memory {
+  display: grid;
+  gap: 24px;
+  max-width: 700px;
+  margin: 0 auto;
+  padding: 12px 8px 24px;
+}
+.benny-mobile-inspector {
+  max-width: 380px;
+}
+.benny-mobile-inspector .benny-inspector {
+  padding: 0;
+}
+@media (min-width: 1280px) {
+  .benny-unified {
+    grid-template-columns: 216px minmax(0, 1fr) 256px;
+  }
+  .benny-unified.agent-collapsed {
+    grid-template-columns: 64px minmax(0, 1fr) 256px;
+  }
+  .benny-desktop-inspector {
+    display: block;
+    min-width: 0;
+    overflow-y: auto;
+    border-left: 1px solid var(--border);
+    background: var(--card);
+  }
+  .benny-desktop-inspector .benny-inspector {
+    /* Align Memory with New chat below the conversation sidebar's collapse control. */
+    padding-top: 49px;
+  }
+  .benny-details-trigger {
+    display: none;
+  }
+}
+@media (max-width: 767px) {
+  .benny-unified,
+  .benny-unified.agent-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .benny-editor-dialog {
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+    padding: 20px 16px;
+    border-radius: 16px;
   }
 }

@@ -1,9 +1,14 @@
 import { createServerFn } from "@tanstack/react-start";
-import { isHomepageNewsletterSignup, reconcileNewsletterPageVisibility } from "./pages.functions";
+import {
+  invalidateCreatorPageCaches,
+  isHomepageNewsletterSignup,
+  reconcileNewsletterPageVisibility,
+} from "./pages.functions";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getPlan } from "./plan.server";
 import { blockEntitlement, entitlementUpgradeMessage, planHasEntitlement } from "./plans";
+import { normalizeStoredSocialLink } from "./platform-detection";
 import { safeMediaUrl } from "./safe-url";
 import { nextEmptyGridRow } from "./grid-geometry";
 
@@ -59,6 +64,25 @@ function unsafeStoredValue(value: unknown, depth = 0): boolean {
     );
   }
   return false;
+}
+
+function normalizeSocialBlockContent<T extends Record<string, unknown>>(type: string, content: T): T {
+  if (typeof content.handle !== "string") return content;
+  const platformKey =
+    typeof content.platform === "string"
+      ? content.platform
+      : type === "video" && content.liveProvider === "youtube"
+        ? "youtube"
+        : null;
+  if (!platformKey) return content;
+  if (type !== "social_link" && type !== "image_gallery" && content.liveProvider !== "youtube") {
+    return content;
+  }
+  const stored = normalizeStoredSocialLink(platformKey, content.handle);
+  if (typeof content.platform === "string") {
+    return { ...content, platform: stored.platform, handle: stored.handle };
+  }
+  return { ...content, handle: stored.handle };
 }
 
 export const blockContentSchema = z
@@ -146,7 +170,7 @@ export const createBlock = createServerFn({ method: "POST" })
       .insert({
         user_id: userId,
         type: data.type,
-        content: data.content,
+        content: normalizeSocialBlockContent(data.type, data.content),
         cover_url: data.cover_url ?? null,
         w: data.w,
         h: data.h,
@@ -159,6 +183,7 @@ export const createBlock = createServerFn({ method: "POST" })
       .single();
     if (error) throw new Error(error.message);
     if (isHomepageNewsletterSignup(row)) await reconcileNewsletterPageVisibility(supabase, userId);
+    await invalidateCreatorPageCaches(supabase, userId);
     return row;
   });
 
@@ -192,7 +217,11 @@ export const updateBlock = createServerFn({ method: "POST" })
     }
     const { data: row, error } = await supabase
       .from("blocks")
-      .update(patch)
+      .update(
+        patch.content
+          ? { ...patch, content: normalizeSocialBlockContent(existing.type, patch.content) }
+          : patch,
+      )
       .eq("id", id)
       .eq("user_id", userId)
       .select("*")
@@ -200,6 +229,7 @@ export const updateBlock = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     if (isHomepageNewsletterSignup(existing) || isHomepageNewsletterSignup(row))
       await reconcileNewsletterPageVisibility(supabase, userId);
+    await invalidateCreatorPageCaches(supabase, userId);
     return row;
   });
 
@@ -225,7 +255,7 @@ export const updateBlockLayout = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    await Promise.all(
+    const updates = await Promise.all(
       data.items.map((item) =>
         supabase
           .from("blocks")
@@ -234,6 +264,9 @@ export const updateBlockLayout = createServerFn({ method: "POST" })
           .eq("user_id", userId),
       ),
     );
+    await invalidateCreatorPageCaches(supabase, userId);
+    const failedUpdate = updates.find(({ error }) => error);
+    if (failedUpdate?.error) throw new Error(failedUpdate.error.message);
     return { ok: true };
   });
 
@@ -252,5 +285,6 @@ export const deleteBlock = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     if (deleted && isHomepageNewsletterSignup(deleted))
       await reconcileNewsletterPageVisibility(supabase, userId);
+    if (deleted) await invalidateCreatorPageCaches(supabase, userId);
     return { ok: true };
   });

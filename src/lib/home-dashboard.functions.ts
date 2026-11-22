@@ -5,8 +5,12 @@ import "@tanstack/react-start";
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { parseHomeWeeklyPulse, type HomeWeeklyPulse } from "./home-weekly-pulse";
+import { reelProductionActivity } from "./content-reel-production.server";
 
 export type HomeDashboard = {
+  reels?: Awaited<ReturnType<typeof reelProductionActivity>>;
+  weekly?: HomeWeeklyPulse | null;
   pulse: {
     sales: { current: number; previous: number };
     impressions: { current: number; previous: number };
@@ -69,7 +73,7 @@ export function homeDashboardFromRows(
   postRows: any[],
   callRows: any[],
   saleRows: any[],
-  options: { now?: number; upcomingCalls?: number } = {},
+  options: { now?: number; upcomingCalls?: number; weekly?: unknown } = {},
 ): HomeDashboard {
   const now = options.now ?? Date.now();
   const weekAgo = now - 7 * 86_400_000;
@@ -176,6 +180,7 @@ export function homeDashboardFromRows(
         };
 
   return {
+    weekly: parseHomeWeeklyPulse(options.weekly),
     pulse: {
       sales: metric(sales, (sale) => sale.occurredAt),
       impressions: metric(
@@ -205,52 +210,72 @@ export const getHomeDashboard = createServerFn({ method: "GET" })
     const now = Date.now();
     const nowIso = new Date(now).toISOString();
     const fortnightAgo = new Date(now - 14 * 86_400_000).toISOString();
-    const [insightsResult, postsResult, callsResult, salesResult] = await Promise.all([
-      db
-        .from("social_content_insights")
-        .select("id,provider,caption,content_type,published_at,views,impressions,engagements")
-        .eq("user_id", context.userId)
-        .gte("published_at", fortnightAgo)
-        .order("published_at", { ascending: false })
-        .limit(1_000),
-      db
-        .from("social_posts")
-        .select(
-          "id,title,body,status,scheduled_at,published_at,created_at,social_post_targets(provider)",
-        )
-        .eq("user_id", context.userId)
-        .gte("created_at", fortnightAgo)
-        .order("created_at", { ascending: false })
-        .limit(500),
-      db
-        .from("commerce_bookings")
-        .select("id,buyer_name,buyer_email,starts_at,meeting_url", { count: "exact" })
-        .eq("creator_id", context.userId)
-        .eq("status", "confirmed")
-        .gte("starts_at", nowIso)
-        .order("starts_at", { ascending: true })
-        .limit(4),
-      db
-        .from("commerce_orders")
-        .select(
-          "id,buyer_name,buyer_email,status,gross_amount,refunded_amount,currency,paid_at,created_at,commerce_products(title)",
-        )
-        .eq("creator_id", context.userId)
-        .in("status", ["paid", "partially_refunded", "refunded"])
-        .gte("created_at", fortnightAgo)
-        .order("created_at", { ascending: false })
-        .limit(1_000),
-    ]);
+    const [insightsResult, postsResult, callsResult, salesResult, weeklyResult, reels] =
+      await Promise.all([
+        db
+          .from("social_content_insights")
+          .select("id,provider,caption,content_type,published_at,views,impressions,engagements")
+          .eq("user_id", context.userId)
+          .gte("published_at", fortnightAgo)
+          .order("published_at", { ascending: false })
+          .limit(1_000),
+        db
+          .from("social_posts")
+          .select(
+            "id,title,body,status,scheduled_at,published_at,created_at,social_post_targets(provider)",
+          )
+          .eq("user_id", context.userId)
+          .gte("created_at", fortnightAgo)
+          .order("created_at", { ascending: false })
+          .limit(500),
+        db
+          .from("commerce_bookings")
+          .select("id,buyer_name,buyer_email,starts_at,meeting_url", { count: "exact" })
+          .eq("creator_id", context.userId)
+          .eq("status", "confirmed")
+          .gte("starts_at", nowIso)
+          .order("starts_at", { ascending: true })
+          .limit(4),
+        db
+          .from("commerce_orders")
+          .select(
+            "id,buyer_name,buyer_email,status,gross_amount,refunded_amount,currency,paid_at,created_at,commerce_products(title)",
+          )
+          .eq("creator_id", context.userId)
+          .in("status", ["paid", "partially_refunded", "refunded"])
+          .gte("created_at", fortnightAgo)
+          .order("created_at", { ascending: false })
+          .limit(1_000),
+        db.rpc("get_home_weekly_pulse", { p_user_id: context.userId, p_now: nowIso }),
+        reelProductionActivity({
+          workspaceId: context.workspaceId,
+          authUserId: context.authUserId,
+          clientId: "bento-browser",
+        }).catch(() => {
+          console.warn("[Home] Reel activity unavailable");
+          return [];
+        }),
+      ]);
 
     const error =
       insightsResult.error || postsResult.error || callsResult.error || salesResult.error;
     if (error) throw new Error(`Home activity could not be loaded: ${error.message}`);
+    if (weeklyResult.error) {
+      console.warn("[Home] weekly summary unavailable", { code: weeklyResult.error.code });
+    }
 
-    return homeDashboardFromRows(
-      insightsResult.data || [],
-      postsResult.data || [],
-      callsResult.data || [],
-      salesResult.data || [],
-      { now, upcomingCalls: callsResult.count ?? undefined },
-    );
+    return {
+      ...homeDashboardFromRows(
+        insightsResult.data || [],
+        postsResult.data || [],
+        callsResult.data || [],
+        salesResult.data || [],
+        {
+          now,
+          upcomingCalls: callsResult.count ?? undefined,
+          weekly: weeklyResult.error ? null : weeklyResult.data,
+        },
+      ),
+      reels,
+    };
   });

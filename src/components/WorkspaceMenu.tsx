@@ -87,7 +87,7 @@ export function WorkspaceMenu({
           <button
             type="button"
             aria-label="Open workspace menu"
-            className={`mt-2 flex w-full items-center gap-2 rounded-lg border border-border bg-card p-1.5 text-left hover:bg-accent ${
+            className={`mt-2 flex w-full items-center gap-2 rounded-lg border border-border bg-card p-1.5 pr-3 text-left hover:bg-accent ${
               collapsed ? "lg:justify-center" : ""
             }`}
           >

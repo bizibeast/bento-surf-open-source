@@ -376,7 +376,7 @@ export function createContentAgentWebMcpTools({
         signal.throwIfAborted();
         await requireWebMcpUserConfirmation(
           action.action === "prepare"
-            ? "Prepare visuals; enabled settings may send owned media to API Mart"
+            ? "Prepare visuals; enabled settings may send owned media to the image generation service"
             : "Manage Agent draft visuals",
           action,
         );

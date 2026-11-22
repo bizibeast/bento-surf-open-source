@@ -182,12 +182,12 @@ export const contentAgentResponseFormat = {
           type: "array",
           maxItems: 20,
           items: {
-            oneOf: [
+            anyOf: [
               {
                 type: "object",
                 additionalProperties: false,
                 properties: {
-                  type: { const: "source" },
+                  type: { type: "string", const: "source" },
                   cardId: { type: "string" },
                   title: { type: "string" },
                   url: { type: "string" },
@@ -209,7 +209,7 @@ export const contentAgentResponseFormat = {
                 type: "object",
                 additionalProperties: false,
                 properties: {
-                  type: { const: "idea" },
+                  type: { type: "string", const: "idea" },
                   cardId: { type: "string" },
                   title: { type: "string" },
                   premise: { type: "string" },
@@ -231,7 +231,7 @@ export const contentAgentResponseFormat = {
                 type: "object",
                 additionalProperties: false,
                 properties: {
-                  type: { const: "draft" },
+                  type: { type: "string", const: "draft" },
                   cardId: { type: "string" },
                   platform: {
                     type: "string",
@@ -274,7 +274,7 @@ export const contentAgentResponseFormat = {
                 type: "object",
                 additionalProperties: false,
                 properties: {
-                  type: { const: "brain_proposal" },
+                  type: { type: "string", const: "brain_proposal" },
                   cardId: { type: "string" },
                   kind: {
                     type: "string",
@@ -291,7 +291,7 @@ export const contentAgentResponseFormat = {
                 type: "object",
                 additionalProperties: false,
                 properties: {
-                  type: { const: "weekly_plan" },
+                  type: { type: "string", const: "weekly_plan" },
                   cardId: { type: "string" },
                   days: {
                     type: "array",
@@ -327,7 +327,7 @@ export const contentAgentResponseFormat = {
                 type: "object",
                 additionalProperties: false,
                 properties: {
-                  type: { const: "schedule_proposal" },
+                  type: { type: "string", const: "schedule_proposal" },
                   cardId: { type: "string" },
                   draftCardId: { type: "string" },
                   connectionId: { type: "string" },

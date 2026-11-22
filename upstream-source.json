@@ -1,6 +1,6 @@
 {
   "source": "Bento shared application",
-  "syncedAt": "2026-10-20T05:11:46.314355Z",
+  "syncedAt": "2026-11-22T20:09:49.360925+00:00",
   "features": [
     "proactive content agent",
     "Brain and Discover editorial context",
@@ -22,7 +22,17 @@
     "bounded social reads and X DM delivery caps",
     "simplified Brain and personalized Topics",
     "mixed personal and trend routine drafts with explicit outcomes",
-    "browser-safe server primitives and first-run setup"
+    "browser-safe server primitives and first-run setup",
+    "chat-first content creation and private inline previews",
+    "editable creator memory and reusable MCP skills",
+    "reference-to-content jobs and all-frame video collages",
+    "public social downloaders with bounded 5 GiB streaming",
+    "self-hostable HyperFrames and FFmpeg container services",
+    "avatar-scene production and asynchronous provider jobs",
+    "Instagram audio catalog capability checks and volume controls",
+    "LinkedIn workflow with upstream MIT attribution",
+    "managed billing entitlements and atomic weekly/monthly spending caps",
+    "production fixes for MCP metadata and annotations"
   ],
   "editionDifferences": [
     "Configurable instance URLs and self-hosted setup",
@@ -30,5 +40,5 @@
     "No hosted credentials or customer data",
     "AGPL license and public release tooling retained"
   ],
-  "sharedSourceCommit": "2772b1b739dd1ef67952f69ae5a13ffd32d41ecf"
+  "sharedSourceCommit": "50979afd0d2d2327b0b1837986a95e0a1cc22d66"
 }

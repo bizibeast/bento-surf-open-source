@@ -684,7 +684,7 @@ describe("media resolver Worker", () => {
     expect(payload.picker).toHaveLength(1);
     expect(payload.picker[0].filename).toBe("tiktok-1234567890123456789-cover.jpg");
     expect(new URL(payload.picker[0].url).searchParams.get("src")).toBe(thumbnail);
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(3);
   });
 
   it("never sends the Oracle API key to a metadata origin outside the Cobalt origin", async () => {
@@ -715,8 +715,9 @@ describe("media resolver Worker", () => {
       status: "error",
       error: { code: "error.api.cover.unavailable" },
     });
-    expect(fetcher).toHaveBeenCalledOnce();
-    expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).get("authorization")).toBeNull();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    for (const [, options] of fetcher.mock.calls)
+      expect(new Headers(options?.headers).get("authorization")).toBeNull();
   });
 
   it("probes YouTube thumbnail sizes and streams a signed image as a download", async () => {
@@ -804,7 +805,7 @@ describe("media resolver Worker", () => {
   it("rejects oversized and active tunnel responses before streaming", async () => {
     const oversized = vi.fn().mockResolvedValue(
       new Response("media", {
-        headers: { "content-length": String(512 * 1024 * 1024 + 1), "content-type": "video/mp4" },
+        headers: { "content-length": String(5 * 1024 ** 3 + 1), "content-type": "video/mp4" },
       }),
     );
     const active = vi

@@ -1,8 +1,11 @@
+import { BASIC_MEDIA_PATH } from "./basic-media";
 import {
   MEDIA_DOWNLOAD_EXPIRES_IN_SECONDS,
   MEDIA_DOWNLOAD_MAX_ITEMS,
   MEDIA_TOOLS_API_PATH,
+  PUBLIC_SOCIAL_MEDIA_PATH,
   isMediaDownloadQuality,
+  isMediaToolDownloadResult,
   isMediaToolSlug,
   mediaToolSpecsBySlug,
   type MediaDownloadQuality,
@@ -23,7 +26,11 @@ import {
   readResponseBytes,
   readResponseText,
 } from "./request-security.server";
+import { isPublicMediaType, publicMediaTypes } from "./public-social-fetch";
+import { isPublicSocialPlatform, normalizePublicSocialPost } from "./public-social-url";
 import { parsePublicHttpUrl } from "./safe-url";
+import { instagramMediaFilenameContentType } from "./instagram-embed";
+import { ProviderBudgetError, reserveProviderUsage } from "./provider-budget.server";
 import { socialEmbedSourceUrl, tiktokPhotoSourceUrl } from "./social-embeds";
 import {
   canonicalAudioContentType,
@@ -70,6 +77,8 @@ export type MediaToolsDependencies = {
   providerTimeoutMs?: number;
   transcriptDownloadTimeoutMs?: number;
   transcribeAudio?: MediaTranscriber;
+  /** Set only after the remote MCP bearer and workspace membership are verified. */
+  trustedMcpWorkspaceId?: string;
 };
 
 export type ParsedMediaToolRequest = MediaToolRequest & {
@@ -180,6 +189,8 @@ function normalizedUrlString(url: URL) {
 }
 
 function normalizeResolvedMediaSourceUrl(platform: ResolvedMediaToolPlatform, input: string) {
+  if (isPublicSocialPlatform(platform)) return normalizePublicSocialPost(platform, input);
+
   const url = parsePublicHttpUrl(input, {
     requireHttps: true,
     allowNonStandardPort: false,
@@ -201,7 +212,14 @@ function normalizeResolvedMediaSourceUrl(platform: ResolvedMediaToolPlatform, in
   return normalizedUrlString(normalized);
 }
 
-const detectedMediaPlatforms = ["youtube", "instagram", "tiktok", "twitter"] as const;
+const detectedMediaPlatforms = [
+  "youtube",
+  "instagram",
+  "tiktok",
+  "twitter",
+  "pinterest",
+  "linkedin",
+] as const;
 
 export function detectMediaToolPlatform(input: string): ResolvedMediaToolPlatform | null {
   return (
@@ -260,6 +278,7 @@ async function enforceMediaToolRateLimit(
   request: Request,
   env: MediaToolsEnv,
   operation: MediaToolOperation,
+  trustedMcpWorkspaceId?: string,
 ) {
   const limiter =
     operation === "transcript"
@@ -267,7 +286,9 @@ async function enforceMediaToolRateLimit(
       : env.FREE_TOOLS_MEDIA_RATE_LIMITER;
   if (!limiter) return !isProductionLike(env);
 
-  const clientAddress = request.headers.get("cf-connecting-ip")?.trim() || "missing-cloudflare-ip";
+  const clientAddress = trustedMcpWorkspaceId
+    ? `mcp:${trustedMcpWorkspaceId}`
+    : request.headers.get("cf-connecting-ip")?.trim() || "missing-cloudflare-ip";
   const scope = operation === "transcript" ? "free-tool-transcription" : "free-tool-media";
   const result = await limiter.limit({ key: `${scope}:${clientAddress}`.slice(0, 512) });
   return result.success;
@@ -305,7 +326,15 @@ function cobaltRequestBody(request: ResolvedMediaToolRequest, sourceUrl: string)
       url: sourceUrl,
       ...(request.mediaFilter === "image"
         ? {}
-        : { videoQuality: cobaltVideoQuality(request.quality) }),
+        : {
+            videoQuality: cobaltVideoQuality(request.quality),
+            ...(request.platform === "tiktok" ? { allowH265: false } : {}),
+          }),
+      ...(isPublicSocialPlatform(request.platform) &&
+      request.mediaFilter &&
+      request.mediaFilter !== "all"
+        ? { mediaFilter: request.mediaFilter }
+        : {}),
       downloadMode: "auto",
       alwaysProxy: true,
       localProcessing: "disabled",
@@ -329,13 +358,22 @@ async function requestCobaltMedia(
   requestSignal: AbortSignal,
   dependencies: MediaToolsDependencies,
 ) {
-  const timeoutSignal = AbortSignal.timeout(timeoutMilliseconds(dependencies.providerTimeoutMs));
+  const timeoutSignal = AbortSignal.timeout(
+    timeoutMilliseconds(
+      dependencies.providerTimeoutMs ??
+        ((mediaRequest.platform === "youtube" || mediaRequest.platform === "tiktok") &&
+        mediaRequest.operation !== "cover"
+          ? 60_000
+          : undefined),
+    ),
+  );
   const signal = AbortSignal.any([requestSignal, timeoutSignal]);
   try {
     const response = await (dependencies.fetcher ?? fetch)(
       mediaRequest.operation === "cover" ? config.coverUrl : config.apiUrl,
       {
         method: "POST",
+        redirect: "manual",
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
@@ -387,7 +425,10 @@ function validatedTunnelUrl(value: unknown, cobaltOrigin: string) {
     url.origin !== cobaltOrigin ||
     !(
       url.pathname === "/image" ||
+      url.pathname === "/instagram-media" ||
+      url.pathname === PUBLIC_SOCIAL_MEDIA_PATH ||
       url.pathname === "/youtube-stream" ||
+      url.pathname === BASIC_MEDIA_PATH ||
       /^(?:\/(?:youtube-session|webshare))?\/tunnel(?:\/|$)/u.test(url.pathname)
     )
   ) {
@@ -472,11 +513,76 @@ function tunnelKey(value: string) {
   return url.toString();
 }
 
-function withBentoFilename(value: string, filename: string) {
-  const url = new URL(value);
+function withBentoFilename(url: URL, filename: string) {
   url.searchParams.set("bento_filename", filename);
   const result = url.toString();
   return result.length <= 2_048 ? result : null;
+}
+
+function signedInstagramFilename(
+  url: URL,
+  filename: unknown,
+  mediaType: MediaToolDownloadItem["mediaType"],
+) {
+  if (
+    typeof filename !== "string" ||
+    (mediaType !== "image" && mediaType !== "video") ||
+    !instagramMediaFilenameContentType(filename, mediaType)
+  )
+    return null;
+  const names = url.searchParams.getAll("bento_filename");
+  const kinds = url.searchParams.getAll("kind");
+  return names.length === 1 && names[0] === filename && kinds.length === 1 && kinds[0] === mediaType
+    ? filename
+    : null;
+}
+
+function downloadItemFromTunnel(
+  validatedUrl: string,
+  rawFilename: unknown,
+  filenameFallback: string,
+  mediaType: MediaToolDownloadItem["mediaType"],
+  platform: ResolvedMediaToolPlatform,
+): MediaToolDownloadItem | null {
+  const candidateUrl = new URL(validatedUrl);
+  if (candidateUrl.pathname === "/instagram-media") {
+    const filename = signedInstagramFilename(candidateUrl, rawFilename, mediaType);
+    return filename ? { url: validatedUrl, filename, mediaType } : null;
+  }
+  if (candidateUrl.pathname === PUBLIC_SOCIAL_MEDIA_PATH) {
+    const params = candidateUrl.searchParams;
+    const mimeType = params.get("type");
+    if (
+      !isPublicSocialPlatform(platform) ||
+      params.getAll("platform").length !== 1 ||
+      params.get("platform") !== platform ||
+      !isPublicMediaType(mimeType) ||
+      params.getAll("type").length !== 1 ||
+      (publicMediaTypes[mimeType].pickerType === "photo"
+        ? "image"
+        : publicMediaTypes[mimeType].pickerType) !== mediaType ||
+      typeof rawFilename !== "string" ||
+      !rawFilename.endsWith(`.${publicMediaTypes[mimeType].extension}`) ||
+      params.get("bento_filename") !== rawFilename
+    )
+      return null;
+    const candidate: MediaToolDownloadItem = {
+      url: validatedUrl,
+      filename: rawFilename,
+      mediaType,
+    };
+    return isMediaToolDownloadResult({
+      kind: "download",
+      items: [candidate],
+      expiresInSeconds: MEDIA_DOWNLOAD_EXPIRES_IN_SECONDS,
+    })
+      ? candidate
+      : null;
+  }
+  if (mediaType === "document") return null;
+  const filename = safeDownloadFilename(rawFilename, filenameFallback, mediaType);
+  const url = withBentoFilename(candidateUrl, filename);
+  return url ? { url, filename, mediaType } : null;
 }
 
 function downloadItemsFromCobalt(
@@ -490,20 +596,14 @@ function downloadItemsFromCobalt(
     if (!validatedUrl) return [];
     const mediaType = coverRequest ? "image" : downloadMediaType(payload.filename);
     if (!coverRequest && !matchesMediaFilter(mediaType, request.mediaFilter)) return [];
-    const filename = safeDownloadFilename(
+    const item = downloadItemFromTunnel(
+      validatedUrl,
       payload.filename,
       `${request.platform}-${coverRequest ? "cover" : mediaType}`,
       mediaType,
+      request.platform,
     );
-    const url = withBentoFilename(validatedUrl, filename);
-    if (!url) return [];
-    return [
-      {
-        url,
-        filename,
-        mediaType,
-      },
-    ];
+    return item ? [item] : [];
   }
   if (payload.status !== "picker" || !Array.isArray(payload.picker)) return [];
 
@@ -516,7 +616,8 @@ function downloadItemsFromCobalt(
       !coverRequest &&
       candidate.type !== "photo" &&
       candidate.type !== "video" &&
-      candidate.type !== "gif"
+      candidate.type !== "gif" &&
+      candidate.type !== "document"
     )
       continue;
     const mediaType: MediaToolDownloadItem["mediaType"] =
@@ -524,51 +625,82 @@ function downloadItemsFromCobalt(
         ? "image"
         : candidate.type === "gif"
           ? "gif"
-          : "video";
+          : candidate.type === "document"
+            ? "document"
+            : "video";
     if (!coverRequest && !matchesMediaFilter(mediaType, request.mediaFilter)) continue;
     const validatedUrl = validatedTunnelUrl(candidate.url, cobaltOrigin);
     if (!validatedUrl) continue;
     const key = tunnelKey(validatedUrl);
     if (seen.has(key)) continue;
-    const filename = safeDownloadFilename(
+    const item = downloadItemFromTunnel(
+      validatedUrl,
       candidate.filename,
       `${request.platform}-${coverRequest ? "cover" : mediaType}-${String(items.length + 1).padStart(2, "0")}`,
       mediaType,
+      request.platform,
     );
-    const url = withBentoFilename(validatedUrl, filename);
-    if (!url) continue;
+    if (!item) continue;
     seen.add(key);
-    items.push({
-      url,
-      filename,
-      mediaType,
-    });
+    items.push(item);
     if (items.length === MAX_MEDIA_DOWNLOAD_ITEMS) break;
   }
   return items;
 }
 
 function audioTunnelFromCobalt(payload: CobaltPayload, cobaltOrigin: string) {
-  if (payload.status === "tunnel" || payload.status === "redirect") {
-    const validatedUrl = validatedTunnelUrl(payload.url, cobaltOrigin);
-    if (!validatedUrl) return null;
-    const filename = safeAudioFilename(payload.filename);
-    const url = withBentoFilename(validatedUrl, filename);
-    return url ? { url, filename } : null;
-  }
-  if (payload.status !== "picker") return null;
-  const validatedUrl = validatedTunnelUrl(payload.audio, cobaltOrigin);
+  const picker = payload.status === "picker";
+  if (!picker && payload.status !== "tunnel" && payload.status !== "redirect") return null;
+  const validatedUrl = validatedTunnelUrl(picker ? payload.audio : payload.url, cobaltOrigin);
   if (!validatedUrl) return null;
-  const filename = safeAudioFilename(payload.audioFilename);
-  const url = withBentoFilename(validatedUrl, filename);
+  const rawFilename = picker ? payload.audioFilename : payload.filename;
+  const candidateUrl = new URL(validatedUrl);
+  if (candidateUrl.pathname === "/instagram-media") {
+    const signedFilename = signedInstagramFilename(candidateUrl, rawFilename, "video");
+    return signedFilename
+      ? { url: validatedUrl, filename: `${signedFilename.slice(0, -4)}.mp3` }
+      : null;
+  }
+  if (candidateUrl.pathname === PUBLIC_SOCIAL_MEDIA_PATH) return null;
+  const filename = safeAudioFilename(rawFilename);
+  const url = withBentoFilename(candidateUrl, filename);
   return url ? { url, filename } : null;
 }
 
 function cobaltPayloadError(payload: CobaltPayload) {
   if (payload.status !== "error") return null;
   const providerError = isPlainJsonObject(payload.error) ? payload.error.code : undefined;
+  const publicMediaErrors: Record<string, string> = {
+    public_media_missing:
+      "That post is missing or no longer public. Check the link or ask the owner for the original file.",
+    public_media_blocked:
+      "The platform restricted access to this post. Open the link to check whether it is public, or ask the owner for the original file.",
+    public_media_unsupported:
+      "Bento found no supported downloadable files in that post. Try another public post or use the original file.",
+    public_media_stream_only:
+      "This pin is available only as a streaming playlist. Try another public pin or ask the owner for the original video.",
+    public_media_file_unavailable:
+      "Bento could not download the file from that post. Try again or ask the owner for the original file.",
+    public_media_unavailable:
+      "Bento could not retrieve this post or its files. Check that the post opens publicly and try again.",
+  };
+  if (typeof providerError === "string" && Object.hasOwn(publicMediaErrors, providerError)) {
+    return new MediaToolHttpError(422, publicMediaErrors[providerError]);
+  }
+  if (
+    providerError === "error.api.basic_media.busy" ||
+    providerError === "error.api.basic_media.limit"
+  ) {
+    return new MediaToolHttpError(429, "The media service is busy. Please try again later.");
+  }
   if (providerError === "error.api.content.too_long") {
-    return new MediaToolHttpError(422, "This video is longer than Bento's 25-minute limit");
+    return new MediaToolHttpError(422, "This video exceeds the supported processing duration");
+  }
+  if (providerError === "error.api.instagram.video_unavailable") {
+    return new MediaToolHttpError(
+      422,
+      "Instagram did not provide a downloadable video for that link",
+    );
   }
   const status =
     typeof providerError === "string" && /rate[_-]?limit/iu.test(providerError) ? 429 : 422;
@@ -693,7 +825,12 @@ export async function handleFreeToolMediaRequest(
 
     let rateLimitAllowed = false;
     try {
-      rateLimitAllowed = await enforceMediaToolRateLimit(request, env, parsed.operation);
+      rateLimitAllowed = await enforceMediaToolRateLimit(
+        request,
+        env,
+        parsed.operation,
+        dependencies.trustedMcpWorkspaceId,
+      );
     } catch {
       throw new MediaToolHttpError(503, "Media tools are temporarily unavailable");
     }
@@ -708,13 +845,42 @@ export async function handleFreeToolMediaRequest(
       throw new MediaToolHttpError(429, "Too many media requests. Please wait a minute.");
     }
 
-    try {
-      await enforceTurnstileRequest(request, env);
-    } catch (error) {
-      if (error instanceof RequestHttpError) {
-        throw new MediaToolHttpError(error.statusCode, error.message);
+    if (dependencies.trustedMcpWorkspaceId) {
+      try {
+        await reserveProviderUsage(
+          "mcp_media_resolutions",
+          parsed.operation === "transcript" ? 2 : 1,
+          { workspaceId: dependencies.trustedMcpWorkspaceId },
+        );
+      } catch (error) {
+        if (error instanceof ProviderBudgetError) throw new MediaToolHttpError(429, error.message);
+        throw error;
       }
-      throw error;
+    } else {
+      try {
+        await enforceTurnstileRequest(request, env);
+      } catch (error) {
+        if (error instanceof RequestHttpError) {
+          throw new MediaToolHttpError(error.statusCode, error.message);
+        }
+        throw error;
+      }
+    }
+
+    if (
+      !dependencies.trustedMcpWorkspaceId &&
+      (parsed.platform === "youtube" || parsed.platform === "tiktok") &&
+      parsed.operation !== "cover"
+    ) {
+      try {
+        await reserveProviderUsage(
+          "mcp_media_resolutions",
+          parsed.operation === "transcript" ? 2 : 1,
+        );
+      } catch (error) {
+        if (error instanceof ProviderBudgetError) throw new MediaToolHttpError(429, error.message);
+        throw error;
+      }
     }
 
     const cobaltPayload = await requestCobaltMedia(
