@@ -60,6 +60,12 @@ it("saves independently chosen song and original-video volume levels with the se
   fireEvent.change(screen.getByRole("slider", { name: "Music volume" }), {
     target: { value: "25" },
   });
+  fireEvent.change(screen.getByRole("spinbutton", { name: "Preview starts at (seconds)" }), {
+    target: { value: "12.5" },
+  });
+  const preview = screen.getByLabelText("Track preview") as HTMLAudioElement;
+  expect(preview.currentTime).toBe(12.5);
+  expect(preview.volume).toBe(0.25);
   fireEvent.change(screen.getByRole("slider", { name: "Original audio volume" }), {
     target: { value: "90" },
   });

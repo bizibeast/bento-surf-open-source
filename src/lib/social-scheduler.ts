@@ -1061,6 +1061,7 @@ export const instagramReelAudioSchema = z.object({
   sourceKey: z.string().min(1).max(500),
   video: schedulerMediaSchema.extend({ mimeType: z.literal("video/mp4") }),
   trackName: z.string().trim().min(1).max(255).nullable(),
+  trackStartSeconds: z.number().finite().min(0).optional(),
   originalVolume: z.number().int().min(0).max(100),
   trackVolume: z.number().int().min(0).max(100),
 });
@@ -1083,6 +1084,15 @@ export const instagramCatalogAudioSchema = z.object({
   sourceKey: z.string().min(1).max(500),
   connectionId: z.string().uuid(),
   audioId: z.string().regex(/^\d{1,30}$/),
+  trackStartSeconds: z
+    .number()
+    .finite()
+    .min(0)
+    .max(
+      0,
+      "Instagram catalog audio does not support a custom start time. Upload a licensed track instead.",
+    )
+    .optional(),
   title: z.string().trim().min(1).max(255),
   creator: z.string().max(255).nullable(),
   originalVolume: z.number().int().min(1).max(100),

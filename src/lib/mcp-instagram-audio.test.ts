@@ -89,6 +89,35 @@ it("exposes scoped audio discovery in Benny's real registry and advertises typed
       providerSettings: { instagram: { catalogAudio: { ...catalogAudio, trackVolume: 101 } } },
     }).success,
   ).toBe(false);
+  expect(
+    input.safeParse({
+      body: "Hello",
+      connectionIds: [CONNECTION],
+      media: [media],
+      mode: "draft",
+      providerSettings: { instagram: { catalogAudio: { ...catalogAudio, trackStartSeconds: 12 } } },
+    }).success,
+  ).toBe(false);
+  expect(
+    input.parse({
+      body: "Hello",
+      connectionIds: [CONNECTION],
+      media: [media],
+      mode: "draft",
+      providerSettings: {
+        instagram: {
+          reelAudio: {
+            sourceKey: media.key,
+            video: { ...media, key: "image/owner/mix.mp4", url: "https://cdn.bento.surf/mix.mp4" },
+            trackName: "Owned track.wav",
+            trackStartSeconds: 12.5,
+            originalVolume: 90,
+            trackVolume: 25,
+          },
+        },
+      },
+    }),
+  ).toMatchObject({ providerSettings: { instagram: { reelAudio: { trackStartSeconds: 12.5 } } } });
   const saved = socialPostInputSchema.parse({
     body: "Hello",
     scheduledAt: null,
@@ -165,6 +194,18 @@ it("lets ChatGPT discover audio and retain the chosen track through its strict d
   expect(response.structuredContent).toMatchObject({ catalog: { mode: "trending" } });
   for (const name of ["draft_social_post", "schedule_social_post", "update_social_post"]) {
     const entry = entries.get(name)!;
+    expect(
+      entry.config.inputSchema.safeParse({
+        id: FOREIGN,
+        body: "Hello",
+        connectionIds: [CONNECTION],
+        media: [media],
+        scheduledAt: "2030-01-01T00:00:00Z",
+        providerSettings: {
+          instagram: { catalogAudio: { ...catalogAudio, trackStartSeconds: 12 } },
+        },
+      }).success,
+    ).toBe(false);
     const args = entry.config.inputSchema.parse({
       id: FOREIGN,
       body: "Hello",

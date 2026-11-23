@@ -1,6 +1,6 @@
 {
   "source": "Bento shared application",
-  "syncedAt": "2026-11-22T20:09:49.360925+00:00",
+  "syncedAt": "2026-11-23T17:31:46.992045+00:00",
   "features": [
     "proactive content agent",
     "Brain and Discover editorial context",
@@ -32,7 +32,8 @@
     "Instagram audio catalog capability checks and volume controls",
     "LinkedIn workflow with upstream MIT attribution",
     "managed billing entitlements and atomic weekly/monthly spending caps",
-    "production fixes for MCP metadata and annotations"
+    "production fixes for MCP metadata and annotations",
+    "uploaded Reel audio start selection and mixed previews"
   ],
   "editionDifferences": [
     "Configurable instance URLs and self-hosted setup",
@@ -40,5 +41,5 @@
     "No hosted credentials or customer data",
     "AGPL license and public release tooling retained"
   ],
-  "sharedSourceCommit": "50979afd0d2d2327b0b1837986a95e0a1cc22d66"
+  "sharedSourceCommit": "8a0c69a8395217d1e5b7c289282f0de872e5cd19"
 }

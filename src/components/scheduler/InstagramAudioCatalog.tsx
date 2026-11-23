@@ -1,3 +1,4 @@
+import { AudioTrackPreview } from "./AudioTrackPreview";
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, Music2, Search } from "lucide-react";
@@ -198,14 +199,7 @@ export function InstagramAudioCatalog({
         <div className="space-y-3 rounded-xl border border-border p-3">
           <p className="text-sm font-semibold">{active?.title || selected?.title}</p>
           {active?.previewUrl ? (
-            <audio
-              key={active.id}
-              src={active.previewUrl}
-              controls
-              preload="none"
-              className="w-full"
-              aria-label="Track preview"
-            />
+            <AudioTrackPreview key={active.id} src={active.previewUrl} volume={trackVolume} />
           ) : (
             active?.instagramUrl && (
               <a
@@ -218,6 +212,10 @@ export function InstagramAudioCatalog({
               </a>
             )
           )}
+          <p className="text-xs text-muted-foreground">
+            Preview timing is for listening only. Instagram controls catalog audio’s published
+            start. Upload a track you have rights to use for a custom start and mixed Reel preview.
+          </p>
           <label className="block text-sm">
             <span className="flex justify-between">
               Music <span>{trackVolume}%</span>

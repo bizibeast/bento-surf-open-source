@@ -13,6 +13,7 @@ import {
   type InputAudioTrack,
 } from "mediabunny";
 import { ensureAacEncoder } from "./video-optimization";
+import { reelAudioTrackStart } from "./reel-audio-timing";
 
 export const REEL_AUDIO_MAX_DURATION = 180;
 export const REEL_AUDIO_MAX_TRACK_BYTES = 25 * 1024 ** 2;
@@ -22,6 +23,7 @@ type ReelMixOptions = {
   originalVolume: number;
   trackVolume: number;
   track: File | null;
+  trackStartSeconds?: number;
   maxBytes: number;
   signal: AbortSignal;
 };
@@ -55,7 +57,13 @@ async function addAudio(
 }
 
 export async function mixInstagramReelAudio(videoUrl: string, options: ReelMixOptions) {
-  const { track, originalVolume, trackVolume, maxBytes, signal } = options;
+  const { track, originalVolume, trackVolume, maxBytes, signal, trackStartSeconds = 0 } = options;
+  if (
+    !Number.isFinite(trackStartSeconds) ||
+    trackStartSeconds < 0 ||
+    (!track && trackStartSeconds !== 0)
+  )
+    throw new Error("Choose a valid start time for an uploaded audio track.");
   if (track && (track.size === 0 || track.size > REEL_AUDIO_MAX_TRACK_BYTES))
     throw new Error("Choose a non-empty audio file up to 25 MB.");
   const input = new Input({
@@ -93,11 +101,17 @@ export async function mixInstagramReelAudio(videoUrl: string, options: ReelMixOp
     if (duration <= 0 || !Number.isFinite(duration) || duration > REEL_AUDIO_MAX_DURATION)
       throw new Error("Audio mixing supports Reels up to 3 minutes.");
     if (!configuration) throw new Error("Bento could not read this video's format.");
+    const musicStart = music
+      ? reelAudioTrackStart(
+          await music.getFirstTimestamp(),
+          await music.computeDuration(),
+          trackStartSeconds,
+        )
+      : 0;
     const mixer = new OfflineAudioContext(2, Math.ceil(duration * SAMPLE_RATE), SAMPLE_RATE);
     await Promise.all([
       original && addAudio(mixer, original, originalVolume, first, duration, signal),
-      music &&
-        addAudio(mixer, music, trackVolume, await music.getFirstTimestamp(), duration, signal),
+      music && addAudio(mixer, music, trackVolume, musicStart, duration, signal),
       ensureAacEncoder(true),
     ]);
     const mixed = await mixer.startRendering();

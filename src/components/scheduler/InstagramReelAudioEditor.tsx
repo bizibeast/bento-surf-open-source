@@ -1,3 +1,4 @@
+import { AudioTrackPreview } from "./AudioTrackPreview";
 import { InstagramAudioCatalog } from "./InstagramAudioCatalog";
 import { Music2, SlidersHorizontal, Upload, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -48,7 +49,25 @@ export function InstagramReelAudioEditor({
   const [trackVolume, setTrackVolume] = useState(saved?.trackVolume ?? 40);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
-  const audioRef = useRef<HTMLAudioElement>(null);
+  const [trackStartSeconds, setTrackStartSeconds] = useState(saved?.trackStartSeconds ?? 0);
+  const [rendered, setRendered] = useState<{
+    file: File;
+    track: File | null;
+    sourceKey: string;
+    originalVolume: number;
+    trackVolume: number;
+    start: number;
+  } | null>(null);
+  const [mixedPreview, setMixedPreview] = useState<string | null>(null);
+  const reusableMix =
+    rendered &&
+    rendered.track === track &&
+    rendered.sourceKey === video.key &&
+    rendered.originalVolume === originalVolume &&
+    rendered.trackVolume === trackVolume &&
+    rendered.start === (track ? trackStartSeconds : 0)
+      ? rendered.file
+      : null;
   const controllerRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -62,8 +81,14 @@ export function InstagramReelAudioEditor({
     return () => URL.revokeObjectURL(url);
   }, [track]);
   useEffect(() => {
-    if (audioRef.current) audioRef.current.volume = trackVolume / 100;
-  }, [trackVolume, preview, open]);
+    if (!reusableMix) {
+      setMixedPreview(null);
+      return;
+    }
+    const url = URL.createObjectURL(reusableMix);
+    setMixedPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [reusableMix]);
   useEffect(
     () => () => {
       if (controllerRef.current) {
@@ -74,22 +99,35 @@ export function InstagramReelAudioEditor({
     [onProcessing],
   );
 
-  async function apply() {
+  async function prepareMix(mode: "preview" | "apply") {
     if (controllerRef.current) return;
     const controller = new AbortController();
     controllerRef.current = controller;
     setError("");
-    setProgress("Mixing Reel audio…");
+    setProgress(mode === "preview" ? "Preparing preview…" : "Mixing Reel audio…");
     onProcessing(true);
     try {
       const { mixInstagramReelAudio } = await import("@/lib/instagram-reel-audio");
-      const file = await mixInstagramReelAudio(video.url, {
+      const file =
+        reusableMix ||
+        (await mixInstagramReelAudio(video.url, {
+          originalVolume,
+          trackVolume,
+          track,
+          trackStartSeconds: track ? trackStartSeconds : 0,
+          maxBytes,
+          signal: controller.signal,
+        }));
+      controller.signal.throwIfAborted();
+      setRendered({
+        file,
+        track,
+        sourceKey: video.key,
         originalVolume,
         trackVolume,
-        track,
-        maxBytes,
-        signal: controller.signal,
+        start: track ? trackStartSeconds : 0,
       });
+      if (mode === "preview") return;
       setProgress("Uploading mixed Reel…");
       const mixed = await upload(file, controller.signal);
       controller.signal.throwIfAborted();
@@ -97,6 +135,7 @@ export function InstagramReelAudioEditor({
         sourceKey: video.key,
         video: { ...mixed, mimeType: "video/mp4" },
         trackName: track?.name.slice(0, 255) || null,
+        trackStartSeconds: track ? trackStartSeconds : 0,
         originalVolume,
         trackVolume: track ? trackVolume : 0,
       });
@@ -190,6 +229,7 @@ export function InstagramReelAudioEditor({
                 accept="audio/mpeg,audio/mp4,audio/wav,.mp3,.m4a,.wav"
                 onChange={(event) => {
                   setTrack(event.currentTarget.files?.[0] || null);
+                  setTrackStartSeconds(0);
                   setTrackVolume((volume) => volume || 40);
                   event.currentTarget.value = "";
                 }}
@@ -209,23 +249,30 @@ export function InstagramReelAudioEditor({
                     type="button"
                     aria-label="Remove selected track"
                     disabled={Boolean(progress)}
-                    onClick={() => setTrack(null)}
+                    onClick={() => {
+                      setTrack(null);
+                      setTrackStartSeconds(0);
+                    }}
                   >
                     <X className="size-4" />
                   </button>
                 )}
               </div>
               {preview && (
-                <audio
-                  ref={audioRef}
+                <AudioTrackPreview
+                  key={preview}
                   src={preview}
-                  controls
-                  preload="metadata"
-                  className="w-full"
+                  volume={trackVolume}
+                  startSeconds={trackStartSeconds}
+                  onStartChange={setTrackStartSeconds}
+                  startLabel="Audio starts at (seconds)"
+                  disabled={Boolean(progress)}
                 />
               )}
               <p className="text-xs text-muted-foreground">
                 Upload a track you have rights to use, or adjust the Reel’s original audio.
+                {track &&
+                  " The selected section plays from the beginning of your Reel and stops when the track ends."}
               </p>
               {!track && saved?.trackName && (
                 <p className="text-xs text-muted-foreground">
@@ -265,13 +312,13 @@ export function InstagramReelAudioEditor({
                   </label>
                 )}
               </fieldset>
-              {saved && (
+              {(mixedPreview || saved) && (
                 <video
-                  src={saved.video.url}
+                  src={mixedPreview || saved!.video.url}
                   controls
                   preload="metadata"
                   className="mx-auto max-h-52 w-full rounded-lg bg-black"
-                  aria-label="Saved Reel audio preview"
+                  aria-label={mixedPreview ? "Reel audio mix preview" : "Saved Reel audio preview"}
                 />
               )}
               {error && (
@@ -279,7 +326,7 @@ export function InstagramReelAudioEditor({
                   {error}
                 </p>
               )}
-              <div className="flex items-center justify-end gap-2">
+              <div className="flex flex-wrap items-center justify-end gap-2">
                 {progress && (
                   <button
                     type="button"
@@ -289,6 +336,17 @@ export function InstagramReelAudioEditor({
                     Cancel
                   </button>
                 )}
+                <button
+                  type="button"
+                  className={micro.btnSoft}
+                  disabled={
+                    Boolean(progress) ||
+                    (!track && (originalVolume === 100 || Boolean(saved?.trackName)))
+                  }
+                  onClick={() => void prepareMix("preview")}
+                >
+                  Preview Reel mix
+                </button>
                 {saved && (
                   <button
                     type="button"
@@ -299,6 +357,8 @@ export function InstagramReelAudioEditor({
                       setOriginalVolume(100);
                       setTrackVolume(40);
                       setTrack(null);
+                      setTrackStartSeconds(0);
+                      setRendered(null);
                       setOpen(false);
                     }}
                   >
@@ -312,7 +372,7 @@ export function InstagramReelAudioEditor({
                     Boolean(progress) ||
                     (!track && (originalVolume === 100 || Boolean(saved?.trackName)))
                   }
-                  onClick={() => void apply()}
+                  onClick={() => void prepareMix("apply")}
                 >
                   {progress || "Apply to Reel"}
                 </button>

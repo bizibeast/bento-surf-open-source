@@ -29,3 +29,16 @@ Instagram audio availability depends on the connected account, login method and 
 Run `bun run typecheck`, `bun run test:run`, `bun run build`, `bun run check:boundary` and `bun run check:history`. Database integration tests are under `supabase/tests`; offline renderer checks use `test:studio-hyperframes:offline`. Validate downloaded output with FFprobe, Pillow or a PDF parser.
 
 Cloudflare Workers, Containers, R2 and Supabase incur your own infrastructure usage. LLM, avatar, voice and other generation services charge separately. No provider or rendering allowance is unlimited. A successful sample does not guarantee every public social post can be downloaded; failed or restricted sources must return a clear error.
+
+## Reel audio start and preview
+
+Uploaded tracks support a fractional start time, a listening preview at the music
+volume, and a local preview of the mixed Reel before applying it. Applying reuses
+the previewed MP4; changing the start or volumes invalidates that preview.
+Native and ChatGPT MCP retain optional `reelAudio.trackStartSeconds` metadata for
+an already mixed MP4. This field does not start a remote render.
+
+Instagram catalog previews can be sought for listening, but Meta currently exposes
+no catalog start-offset parameter or finished-mix preview. Nonzero catalog offsets
+are rejected and temporary preview URLs are never used as publishing assets.
+No migration, extra provider or credentials are required.
