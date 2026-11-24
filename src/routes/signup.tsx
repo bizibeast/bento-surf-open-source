@@ -1,7 +1,12 @@
-import { createSignupTracking, redactSignupMessage, signupFailureReason } from "@/lib/signup-tracking";
+import { pricingCheckoutDestination, pricingOnboardingDestination } from "@/lib/pricing-selection";
+import {
+  createSignupTracking,
+  redactSignupMessage,
+  signupFailureReason,
+} from "@/lib/signup-tracking";
 import { forceOnboardingReplay } from "@/lib/checkout-tracking";
 import { redirectPublicHostToAppHost } from "@/lib/app-host-handoff";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { ArrowLeft, ArrowRight, Check, Eye, EyeOff, Mail, RotateCw } from "lucide-react";
@@ -22,11 +27,18 @@ export const Route = createFileRoute("/signup")({
   validateSearch: (
     search: Record<string, unknown>,
   ): {
+    plan?: "store" | "creator" | "creator_plus";
+    period?: "monthly" | "yearly";
     utm_source?: string;
     utm_medium?: string;
     utm_campaign?: string;
     utm_content?: string;
   } => ({
+    plan:
+      search.plan === "store" || search.plan === "creator" || search.plan === "creator_plus"
+        ? search.plan
+        : undefined,
+    period: search.period === "yearly" ? "yearly" : "monthly",
     utm_source: typeof search.utm_source === "string" ? search.utm_source : undefined,
     utm_medium: typeof search.utm_medium === "string" ? search.utm_medium : undefined,
     utm_campaign: typeof search.utm_campaign === "string" ? search.utm_campaign : undefined,
@@ -34,14 +46,14 @@ export const Route = createFileRoute("/signup")({
   }),
   ssr: false,
   pendingMs: 0,
-  beforeLoad: async () => {
+  beforeLoad: async ({ search }) => {
     if (
       typeof window !== "undefined" &&
       redirectPublicHostToAppHost(window.location, (url) => window.location.replace(url))
     ) {
       await new Promise<never>(() => undefined);
     }
-    await redirectAuthenticatedVisitor();
+    await redirectAuthenticatedVisitor(pricingCheckoutDestination(search.plan, search.period));
   },
   head: () => ({
     meta: [
@@ -53,7 +65,8 @@ export const Route = createFileRoute("/signup")({
 });
 
 function SignupPage() {
-  const navigate = useNavigate();
+  const { plan, period } = Route.useSearch();
+  const onboardingDestination = pricingOnboardingDestination(plan, period);
   const [step, setStep] = useState<1 | 2>(1);
   const { username, setUsername, available, availabilityError, retry } =
     useUsernameAvailability(lookupUsername);
@@ -151,7 +164,7 @@ function SignupPage() {
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
-          options: { emailRedirectTo: `${authOrigin}/onboarding` },
+          options: { emailRedirectTo: `${authOrigin}${onboardingDestination}` },
         });
         if (error) throw error;
         // Supabase returns an obfuscated user with no identities for an existing email.
@@ -167,7 +180,7 @@ function SignupPage() {
         });
         if (data.session) {
           tracking.succeeded();
-          await navigate({ to: "/onboarding", replace: true });
+          window.location.assign(onboardingDestination);
           return { ok: true, message: "Account created. Opening Bento onboarding." };
         }
         setConfirmationEmail(email.trim());
@@ -197,7 +210,7 @@ function SignupPage() {
       const { error } = await supabase.auth.resend({
         type: "signup",
         email: confirmationEmail,
-        options: { emailRedirectTo: `${authOrigin}/onboarding` },
+        options: { emailRedirectTo: `${authOrigin}${onboardingDestination}` },
       });
       if (error) throw error;
       toast.success("A fresh confirmation link is on its way.");
@@ -223,7 +236,7 @@ function SignupPage() {
       );
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
-        options: { redirectTo: `${authOrigin}/onboarding` },
+        options: { redirectTo: `${authOrigin}${onboardingDestination}` },
       });
       if (error) throw error;
       // The browser redirects to Google on success; nothing runs after this.
@@ -355,7 +368,7 @@ function SignupPage() {
             Already have a Bento?{" "}
             <Link
               to="/login"
-              search={{ redirect: "/link" }}
+              search={{ redirect: pricingCheckoutDestination(plan, period) }}
               className="font-medium text-black hover:underline"
             >
               Sign in

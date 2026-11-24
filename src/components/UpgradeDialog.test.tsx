@@ -37,9 +37,15 @@ describe("paid hosted plans", () => {
     expect(screen.getByText("$190")).toBeVisible();
     expect(screen.getByText("$390")).toBeVisible();
     expect(screen.getByText("$99")).toBeVisible();
+    expect(screen.getByText(/Billed monthly/)).toBeVisible();
     expect(screen.getByText(/then \$190\/year plus applicable tax/)).toBeVisible();
     expect(screen.getByText(/Card, UPI or wallet required. \$0 today/)).toBeVisible();
     expect(screen.getByText(/after 3 full days/)).toBeVisible();
+  });
+  it("does not report Creator+ unavailable while the offer loads", () => {
+    vi.mocked(getCheckoutOffer).mockReturnValueOnce(new Promise(() => {}));
+    render(<UpgradeDialog trigger={null} open feature="brain" />);
+    expect(screen.queryByText("Currently unavailable")).not.toBeInTheDocument();
   });
   it("recommends the plan that actually includes Brain", async () => {
     render(<UpgradeDialog trigger={null} open feature="brain" />);

@@ -199,7 +199,7 @@ export function registerMcpFreeTools(
     {
       title: "List Bento free tools",
       description:
-        "List all 59 runnable Bento free tools, their slugs, required fields, and which MCP runner to call. No provider request is made.",
+        "List runnable Bento free tools, their slugs, required fields, and runners. No provider request is made.",
       inputSchema: z.object({}),
       annotations: {
         readOnlyHint: true,
@@ -216,7 +216,7 @@ export function registerMcpFreeTools(
     {
       title: "Run a free text or link tool",
       description:
-        "Run Bento's UTM builder, character counters, formatters, Unicode styler, or thread splitter. Use list_free_tools to choose an exact slug.",
+        "Run Bento's UTM builder, character counters, formatters, Unicode styler, or thread splitter.",
       inputSchema: z.object({
         workspaceId: z.uuid().optional(),
         toolSlug: z.enum(deterministicFreeToolSlugs),
@@ -252,7 +252,7 @@ export function registerMcpFreeTools(
     {
       title: "Run a free AI writing tool",
       description:
-        "Run one of Bento's 29 free AI writing tools. List tools first, pass its exact slug, platform, and listed fields. Uses the existing free-tool AI budget and one bounded provider attempt.",
+        "Run one of Bento's 29 free AI writing tools. Accepts a slug, platform, and tool-specific fields. Uses the existing free-tool AI budget and one bounded provider attempt.",
       inputSchema: z.object({
         workspaceId: z.uuid().optional(),
         toolSlug: z.enum(aiSlugs),
@@ -283,7 +283,7 @@ export function registerMcpFreeTools(
     {
       title: "Run a public media free tool",
       description:
-        "Resolve public YouTube, Instagram, TikTok, X, Pinterest, and LinkedIn media. Use social-media-downloader for Pinterest pins and LinkedIn posts, including PDFs. Cover and transcript tools have their own slugs. Require the user's ownership or permission and use the returned download URLs promptly.",
+        "Resolve a public YouTube, Instagram, TikTok, X, Pinterest, or LinkedIn video, image, cover, carousel, or URL transcript. Download URLs expire quickly. No private or login-only media.",
       inputSchema: z.object({
         workspaceId: z.uuid().optional(),
         toolSlug: z.enum(mediaSlugs),
@@ -316,7 +316,7 @@ export function registerMcpFreeTools(
     {
       title: "Run a free image tool",
       description:
-        "Resize, compress, flip, split, or remove an image background. Provide base64 or a mediaKey owned by the selected workspace. Outputs are returned as MCP images, with no file stored by this tool. Input up to 20 MB; output up to 8 MB total.",
+        "Resize, compress, flip, split, or remove an image background. Accepts base64 or a mediaKey owned by the selected workspace. Outputs are returned as MCP images, with no file stored by this tool. Input up to 20 MB; output up to 8 MB total.",
       inputSchema: z.object({
         workspaceId: z.uuid().optional(),
         toolSlug: z.enum(imageFreeToolSlugs),
@@ -364,6 +364,19 @@ export function registerMcpFreeTools(
       };
     },
   );
+
+  registerMcpFreeAudioTranscription(server, authInfo, operations);
+}
+
+export function registerMcpFreeAudioTranscription(
+  server: Pick<McpServer, "registerTool">,
+  authInfo: AuthInfo,
+  operations: McpFreeToolOperations,
+) {
+  const authUserId = authInfo.extra?.userId;
+  if (typeof authUserId !== "string") throw new Error("Bento authorization is missing.");
+  const workspace = (workspaceId?: string) =>
+    operations.resolveMcpWorkspaceId(authUserId, workspaceId);
 
   server.registerTool(
     "transcribe_free_audio",

@@ -1,3 +1,4 @@
+import { pricingOnboardingDestination } from "./pricing-selection";
 import { setCookie } from "@tanstack/react-start/server";
 import {
   signWorkspaceCookie,
@@ -292,7 +293,9 @@ export const createCheckout = createServerFn({ method: "POST" })
         preparation?.status !== "prepared" ||
         preparation.approved_revision !== preparation.revision
       ) {
-        return { url: `${process.env.VITE_APP_URL || "http://localhost:8080"}/onboarding` };
+        return {
+          url: `${process.env.VITE_APP_URL || "http://localhost:8080"}${pricingOnboardingDestination(data.plan, data.period)}`,
+        };
       }
     }
     const email = typeof claims.email === "string" ? claims.email : undefined;

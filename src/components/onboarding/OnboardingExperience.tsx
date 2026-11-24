@@ -354,7 +354,10 @@ export function OnboardingExperience() {
       if (next.status === "prepared" && checkoutReturnRef.current?.outcome === "failed") setStep(5);
       setContextField(missingContext(initial) || "audience");
       try {
-        const choice = JSON.parse(window.sessionStorage.getItem("bentoPricingSelection") || "null");
+        const params = new URLSearchParams(window.location.search);
+        const choice = params.has("plan")
+          ? { plan: params.get("plan"), period: params.get("period") }
+          : JSON.parse(window.sessionStorage.getItem("bentoPricingSelection") || "null");
         if (choice?.plan && PAID_PLAN_IDS.includes(choice.plan)) setPlan(choice.plan);
         if (choice?.period === "yearly") setPeriod("yearly");
       } catch {
@@ -665,6 +668,8 @@ export function OnboardingExperience() {
   }
   async function checkout(selection = { plan, period }, retry = Boolean(checkoutFailure)) {
     const { plan } = selection;
+    clearCheckoutRecovery();
+    setRecoverable(null);
     if (plan === "creator_plus" && !managedAvailable) return;
     const period = newPlanBillingPeriod(plan, selection.period);
     captureProductEvent("trial_cta_clicked", {
@@ -694,12 +699,13 @@ export function OnboardingExperience() {
       captureProductEvent("checkout_started", properties);
       beginCheckoutTracking({ plan, trial: trialEligible, surface: "onboarding_trial_step" });
       markOnboardingNavigationIntent("checkout_redirect");
-      rememberCheckoutForRecovery({
-        plan,
-        period,
-        trial: trialEligible,
-        surface: "onboarding_trial_step",
-      });
+      if (!new URL(href, window.location.origin).pathname.startsWith("/onboarding"))
+        rememberCheckoutForRecovery({
+          plan,
+          period,
+          trial: trialEligible,
+          surface: "onboarding_trial_step",
+        });
       window.location.assign(href);
     });
   }

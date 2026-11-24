@@ -346,24 +346,6 @@ async function listedTools(operations = fakeOperations().operations) {
 }
 
 const samples: Record<string, Record<string, unknown>> = {
-  list_free_tools: {},
-  run_free_text_tool: { toolSlug: "social-post-formatter", text: "Hello" },
-  run_free_ai_tool: {
-    toolSlug: "instagram-bio-generator",
-    platform: "Instagram",
-    values: { role: "Creator" },
-  },
-  run_free_media_tool: {
-    toolSlug: "youtube-video-downloader",
-    url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-    rightsConfirmed: true,
-  },
-  run_free_image_tool: {
-    toolSlug: "image-compressor",
-    fileName: "a.png",
-    mimeType: "image/png",
-    base64: "AQIDBA==",
-  },
   transcribe_free_audio: { fileName: "a.wav", mimeType: "audio/wav", base64: "UklGRg==" },
   get_bento_overview: {},
   list_workspaces: {},
@@ -424,7 +406,16 @@ describe("ChatGPT MCP catalog", () => {
     const tools = await listedTools();
     const names = tools.map((tool) => tool.name);
     expect(new Set(names).size).toBe(names.length);
-    expect(names).toHaveLength(41);
+    expect(names).toContain("transcribe_free_audio");
+    expect(names).not.toEqual(
+      expect.arrayContaining([
+        "list_free_tools",
+        "run_free_text_tool",
+        "run_free_ai_tool",
+        "run_free_media_tool",
+        "run_free_image_tool",
+      ]),
+    );
     expect(names.filter((name) => COMMERCE_NAMES.test(name))).toEqual([]);
     expect(names.some((name) => name.startsWith("manage_"))).toBe(false);
 
@@ -453,13 +444,6 @@ describe("ChatGPT MCP catalog", () => {
         if (tool.annotations.openWorldHint !== (tool.name === "get_instagram_audio_catalog"))
           problems.push(`${tool.name} read has an incorrect open-world hint`);
       }
-      if (
-        /^(delete_|cancel_|update_|reorder_|schedule_|create_|set_auto_dm_enabled$)/.test(
-          tool.name,
-        ) &&
-        tool.annotations?.destructiveHint !== true
-      )
-        problems.push(`${tool.name} is not marked destructive`);
     }
     expect(problems).toEqual([]);
 
@@ -473,7 +457,7 @@ describe("ChatGPT MCP catalog", () => {
       "reorder_page_blocks",
       "delete_page_block",
     ]) {
-      expect(tools.find((tool) => tool.name === name)?.annotations?.openWorldHint).toBe(false);
+      expect(tools.find((tool) => tool.name === name)?.annotations?.openWorldHint).toBe(true);
     }
 
     const blockTool = tools.find((tool) => tool.name === "create_page_block");
@@ -495,9 +479,29 @@ describe("ChatGPT MCP catalog", () => {
       destructiveHint: false,
     });
     expect(tools.find((tool) => tool.name === "cancel_social_post")?.annotations).toMatchObject({
-      destructiveHint: true,
+      destructiveHint: false,
       openWorldHint: false,
     });
+    for (const name of [
+      "create_page",
+      "update_page",
+      "reorder_pages",
+      "create_page_block",
+      "reorder_page_blocks",
+      "create_auto_dm_automation",
+      "set_auto_dm_enabled",
+    ]) {
+      expect(tools.find((tool) => tool.name === name)?.annotations?.destructiveHint).toBe(false);
+    }
+    for (const name of [
+      "delete_page",
+      "delete_page_block",
+      "update_page_block",
+      "update_social_post",
+      "delete_auto_dm_automation",
+    ]) {
+      expect(tools.find((tool) => tool.name === name)?.annotations?.destructiveHint).toBe(true);
+    }
   });
 
   it("adds creator intelligence to the Brain tool without growing the curated catalog", async () => {
@@ -948,7 +952,6 @@ describe("ChatGPT MCP catalog", () => {
         "manage_product",
         "manage_discount_code",
         "manage_order_bump",
-        "manage_earn",
         "get_store_workspace",
         "list_bookings",
         "create_social_post",

@@ -22,7 +22,16 @@ vi.mock("./request-security.server", async () => ({
   enforceRequestRateLimit: vi.fn(),
 }));
 
-import { createBentoMcpServer } from "./mcp.server";
+vi.mock("./external-tools.server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./external-tools.server")>()),
+  externalToolsEnabled: () => true,
+}));
+vi.mock("./granola-mcp-gateway.server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./granola-mcp-gateway.server")>()),
+  granolaGatewayEnabled: () => true,
+}));
+
+import { createBentoMcpServer, createChatGptMcpServer } from "./mcp.server";
 
 process.env.SUPABASE_URL ||= "https://test.supabase.co";
 process.env.SUPABASE_PUBLISHABLE_KEY ||= "test-publishable-key";
@@ -146,6 +155,107 @@ function rpc(id: number | string | null, method: string, params: unknown, protoc
 }
 
 describe("production MCP catalog", () => {
+  it("serves neutral tool and parameter descriptions in both catalogs", async () => {
+    vi.stubEnv("BENTO_V2_STUDIO_ENABLED", "true");
+    vi.stubEnv("BENTO_V2_CREATOR_INTELLIGENCE_ENABLED", "true");
+    try {
+      for (const factory of [createBentoMcpServer, createChatGptMcpServer]) {
+        const handler = createMcpHandler(() => factory(authInfo, "http://localhost:8080"));
+        const response = await handler.fetch(rpc(1, "tools/list", {}), { authInfo });
+        const tools = (await payload(response)).result.tools as Array<{
+          name: string;
+          description?: string;
+          inputSchema: unknown;
+          annotations?: Record<string, unknown>;
+        }>;
+        expect(tools.length).toBeGreaterThan(10);
+        const names = tools.map(({ name }) => name);
+        expect(names.filter((name) => /heygen|earn/.test(name))).toEqual([]);
+        if (factory === createChatGptMcpServer) {
+          expect(names).toContain("transcribe_free_audio");
+          expect(
+            names.filter((name) =>
+              /^(list_free_tools|run_free_.*|.*content_studio.*|.*reel_production.*|list_reel_avatars|list_reel_voices)$/.test(
+                name,
+              ),
+            ),
+          ).toEqual([]);
+        }
+        if (factory === createBentoMcpServer) {
+          for (const name of [
+            "list_reel_avatars",
+            "list_reel_voices",
+            "prepare_reel_production",
+            "manage_content_agent",
+          ]) {
+            expect(names).not.toContain(name);
+          }
+          expect(names).toContain("get_content_agent");
+          expect(names).toContain("get_reel_production");
+        }
+        for (const tool of tools) {
+          expect(tool.annotations?.title, tool.name).toBeTruthy();
+          for (const hint of [
+            "readOnlyHint",
+            "destructiveHint",
+            "openWorldHint",
+            "idempotentHint",
+          ]) {
+            expect(typeof tool.annotations?.[hint], `${tool.name}.${hint}`).toBe("boolean");
+          }
+        }
+
+        const problems: string[] = [];
+        function check(description: string, owner: string, path: string) {
+          if (
+            /(?:^|[.\n])\s*(?:use|prefer|never|always|must|should|do not|don't|call)\b/i.test(
+              description,
+            )
+          )
+            problems.push(`${path}: imperative`);
+          if (
+            /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/u.test(
+              description,
+            )
+          )
+            problems.push(`${path}: invisible character`);
+          if (/(?:^|[^A-Za-z0-9+/])[A-Za-z0-9+/]{48,}={0,2}(?:$|[^A-Za-z0-9+/])/.test(description))
+            problems.push(`${path}: encoded text`);
+          if (
+            /skill:\/\/|<!--|\b(?:see|read|follow) (?:the )?(?:docs|documentation|skill|server instructions)\b/i.test(
+              description,
+            )
+          )
+            problems.push(`${path}: external or hidden text`);
+          for (const { name } of tools) {
+            if (
+              name !== owner &&
+              new RegExp(`(?<![A-Za-z0-9_])${name}(?![A-Za-z0-9_])`).test(description)
+            )
+              problems.push(`${path}: references ${name}`);
+          }
+        }
+        function scan(value: unknown, owner: string, path: string) {
+          if (Array.isArray(value))
+            return value.forEach((item, i) => scan(item, owner, `${path}[${i}]`));
+          if (!isRecord(value)) return;
+          for (const [key, child] of Object.entries(value)) {
+            if (key === "description" && typeof child === "string")
+              check(child, owner, `${path}.${key}`);
+            else if (key !== "annotations") scan(child, owner, `${path}.${key}`);
+          }
+        }
+        for (const tool of tools) {
+          if (tool.description) check(tool.description, tool.name, tool.name);
+          scan(tool.inputSchema, tool.name, `${tool.name}.inputSchema`);
+        }
+        expect(problems).toEqual([]);
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("serves a strict-client initialize and tools/list", async () => {
     const handler = createMcpHandler(() => createBentoMcpServer(authInfo, "http://localhost:8080"));
     const initializeResponse = await handler.fetch(
