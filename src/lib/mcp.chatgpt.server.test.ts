@@ -48,6 +48,7 @@ const AUTO = "00000000-0000-4000-8000-000000000014";
 const READ_OPS = new Set([
   "listMcpFreeTools",
   "runMcpFreeTextTool",
+  "getMcpPublicPostStats",
   "listMcpWorkspaces",
   "getBentoOverview",
   "getProfileWorkspace",
@@ -208,6 +209,10 @@ function fakeOperations() {
     ],
   };
   const operations = {
+    getMcpPublicPostStats: record("getMcpPublicPostStats", {
+      status: "partial",
+      metrics: [{ key: "likes", value: 0 }],
+    }),
     listMcpFreeTools: () => {
       calls.push({ name: "listMcpFreeTools", args: [] });
       return [];
@@ -346,6 +351,7 @@ async function listedTools(operations = fakeOperations().operations) {
 }
 
 const samples: Record<string, Record<string, unknown>> = {
+  get_public_post_stats: { url: "https://instagram.com/reel/exact" },
   transcribe_free_audio: { fileName: "a.wav", mimeType: "audio/wav", base64: "UklGRg==" },
   get_bento_overview: {},
   list_workspaces: {},
@@ -416,6 +422,7 @@ describe("ChatGPT MCP catalog", () => {
         "run_free_image_tool",
       ]),
     );
+    expect(names).toContain("get_public_post_stats");
     expect(names.filter((name) => COMMERCE_NAMES.test(name))).toEqual([]);
     expect(names.some((name) => name.startsWith("manage_"))).toBe(false);
 
@@ -441,7 +448,10 @@ describe("ChatGPT MCP catalog", () => {
           problems.push(`${tool.name} read is destructive`);
         if (tool.annotations.idempotentHint !== true)
           problems.push(`${tool.name} read is not idempotent`);
-        if (tool.annotations.openWorldHint !== (tool.name === "get_instagram_audio_catalog"))
+        if (
+          tool.annotations.openWorldHint !==
+          ["get_instagram_audio_catalog", "get_public_post_stats"].includes(tool.name)
+        )
           problems.push(`${tool.name} read has an incorrect open-world hint`);
       }
     }
@@ -479,7 +489,9 @@ describe("ChatGPT MCP catalog", () => {
       destructiveHint: false,
     });
     expect(tools.find((tool) => tool.name === "cancel_social_post")?.annotations).toMatchObject({
-      destructiveHint: false,
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
       openWorldHint: false,
     });
     for (const name of [

@@ -52,6 +52,28 @@ export const updateContentAgentPreferences = createServerFn({ method: "POST" })
   .validator((input) => contentAgentPreferencesInputSchema.parse(input))
   .handler(async ({ context, data }): Promise<ContentAgentIdentity> => {
     await requireBennyChatAccess(context.userId);
+    const presenter = data.branding?.presenter;
+    if (presenter?.billing === "managed") {
+      const current = await getContentAgentPreferencesForWorkspace(context.userId);
+      const previous = current.branding?.presenter;
+      if (
+        !previous ||
+        (["avatarId", "voiceId", "billing", "scope"] as const).some(
+          (key) => previous[key] !== presenter[key],
+        )
+      ) {
+        const { requireManagedHeyGenAssets } = await import("./external-tools.server");
+        await requireManagedHeyGenAssets(
+          {
+            workspaceId: context.workspaceId,
+            authUserId: context.authUserId,
+            clientId: "bento-browser",
+          },
+          presenter.avatarId,
+          presenter.voiceId ?? undefined,
+        );
+      }
+    }
     if (data.branding?.heroPhotoId) {
       const { resolveOwnedAgentMedia } = await import("./content-agent-media.server");
       await resolveOwnedAgentMedia(context.userId, [data.branding.heroPhotoId]);

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { AvatarLookGallery } from "./avatar-look-gallery";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   approveHeyGenGeneration,
@@ -196,29 +197,19 @@ export function StudioAvatarPanel({
               HeyGen connection
             </a>
           </div>
-          <div className="studio-dual">
+          <div className="space-y-4">
             <div>
-              <StudioLabel label="Avatar look">
-                <StudioSelect
-                  value={document.avatarId}
+              {avatars && (
+                <AvatarLookGallery
+                  looks={avatars.avatars}
+                  selectedId={document.avatarId}
                   disabled={pending || disabled}
-                  onChange={(event) => {
-                    const avatar = avatars?.avatars.find((item) => item.id === event.target.value);
-                    select(event.target.value, avatar?.defaultVoiceId || document.voiceId);
+                  onSelect={(id) => {
+                    const avatar = avatars.avatars.find((item) => item.id === id);
+                    select(id, avatar?.defaultVoiceId || document.voiceId);
                   }}
-                >
-                  <option value="">Choose a look</option>
-                  {document.avatarId &&
-                    !avatars?.avatars.some(({ id }) => id === document.avatarId) && (
-                      <option value={document.avatarId}>Previously selected look</option>
-                    )}
-                  {avatars?.avatars.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-                </StudioSelect>
-              </StudioLabel>
+                />
+              )}
               {avatars?.nextToken && (
                 <button
                   className="content-action"

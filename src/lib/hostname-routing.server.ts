@@ -100,12 +100,19 @@ function redirectToPath(origin: string, pathname: string, search: string, status
   return Response.redirect(destination.toString(), status);
 }
 
-export function trailingSlashRedirect(request: Request, environment?: { VITE_APP_URL?: unknown; VITE_PUBLIC_URL?: unknown }) {
+export function trailingSlashRedirect(
+  request: Request,
+  environment?: { VITE_APP_URL?: unknown; VITE_PUBLIC_URL?: unknown },
+) {
   if (request.method !== "GET" && request.method !== "HEAD") return null;
   const url = new URL(request.url);
   const hostname = url.hostname.toLowerCase();
-  const app = configuredAppOrigin(typeof environment?.VITE_APP_URL === "string" ? environment.VITE_APP_URL : undefined);
-  const publicOrigin = configuredPublicOrigin(typeof environment?.VITE_PUBLIC_URL === "string" ? environment.VITE_PUBLIC_URL : undefined);
+  const app = configuredAppOrigin(
+    typeof environment?.VITE_APP_URL === "string" ? environment.VITE_APP_URL : undefined,
+  );
+  const publicOrigin = configuredPublicOrigin(
+    typeof environment?.VITE_PUBLIC_URL === "string" ? environment.VITE_PUBLIC_URL : undefined,
+  );
   if (app !== publicOrigin && hostname === new URL(app).hostname) return null;
   const pathname = publicPathWithoutTrailingSlash(url.pathname);
   if (pathname === url.pathname) return null;
@@ -203,6 +210,9 @@ export function routeCanonicalHostname(
   }
 
   if (hostname === appHost) {
+    // The checker has an authenticated mode on the origin holding the app session.
+    if (url.pathname.replace(/\/+$/, "") === "/tools/social-media-post-stats")
+      return url.protocol === "https:" ? null : redirectTo(appOrigin, url);
     const canonicalPath = canonicalApplicationPath(url.pathname);
     if (canonicalPath) return redirectToPath(appOrigin, canonicalPath, url.search);
     if (url.pathname === "/") return redirectToPath(appOrigin, "/link", url.search, 307);

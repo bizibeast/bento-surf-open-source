@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Plus } from "lucide-react";
+import { CarouselStyleGallery } from "@/components/content/CarouselStyleGallery";
 import {
   CAROUSEL_STARTERS,
   STUDIO_CAROUSEL_LAYOUTS,
@@ -104,6 +105,16 @@ export function StudioCarouselEditor({
         </div>
       </section>
       <section className="studio-inspector">
+        <details className="rounded-xl border p-3">
+          <summary className="cursor-pointer text-sm font-medium">Browse carousel looks</summary>
+          <div className="mt-4">
+            <CarouselStyleGallery
+              brand={document.brand}
+              layout={document.layout}
+              onChange={(brand) => onChange({ ...document, brand })}
+            />
+          </div>
+        </details>
         <StudioLabel label="Layout">
           <StudioSelect
             value={document.layout}

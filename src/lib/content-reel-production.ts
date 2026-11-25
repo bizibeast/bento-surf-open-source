@@ -109,6 +109,19 @@ export function conformReelNarration(document: StudioReel, audio: Map<string, Pr
     throw new Error(
       "The narration is longer than the approved Reel. Shorten the script before generating avatars.",
     );
+  // Preserve the approved holds before assigning any extra avatar padding.
+  // Otherwise short narration collapses later cards and creates a long dead
+  // pause on the first one, even when every spoken line fits its planned beat.
+  for (let index = 0; index < scenes.length; index++) {
+    const scene = scenes[index];
+    if (scene.kind === "avatar") continue;
+    const hold = Math.min(
+      Math.max(0, spare),
+      Math.max(0, document.scenes[index].duration - scene.duration),
+    );
+    scene.duration += hold;
+    spare -= hold;
+  }
   // Hold B-roll/cards between beats; do not buy additional avatar seconds for silent padding.
   for (const scene of scenes.filter((scene) => scene.kind !== "avatar")) {
     const extra = Math.min(Math.max(0, spare), 20 - scene.duration);

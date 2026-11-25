@@ -18,42 +18,48 @@ import { deterministicFreeToolSlugs } from "./mcp-free-text";
 import { mediaToolSpecsBySlug, mediaDownloadQualities } from "./media-tools";
 import type { AuthInfo, McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod-v4";
+import { handlePublicPostStatsRequest, type PublicPostStatsEnv } from "./public-post-stats.server";
+import { PUBLIC_POST_STATS_PATH } from "./public-post-stats";
 
 export function listMcpFreeTools() {
   return freeTools.map((tool) => {
     const runWith = isAiFreeToolKind(tool.kind)
       ? "run_free_ai_tool"
-      : ["utm", "counter", "formatter", "line-breaker", "unicode", "thread-splitter"].includes(
-            tool.kind,
-          )
-        ? "run_free_text_tool"
-        : tool.kind === "transcript"
-          ? "transcribe_free_audio"
-          : [
-                "image-resizer",
-                "image-compressor",
-                "image-flipper",
-                "image-splitter",
-                "background-remover",
-              ].includes(tool.kind)
-            ? "run_free_image_tool"
-            : "run_free_media_tool";
+      : tool.kind === "post-stats"
+        ? "get_public_post_stats"
+        : ["utm", "counter", "formatter", "line-breaker", "unicode", "thread-splitter"].includes(
+              tool.kind,
+            )
+          ? "run_free_text_tool"
+          : tool.kind === "transcript"
+            ? "transcribe_free_audio"
+            : [
+                  "image-resizer",
+                  "image-compressor",
+                  "image-flipper",
+                  "image-splitter",
+                  "background-remover",
+                ].includes(tool.kind)
+              ? "run_free_image_tool"
+              : "run_free_media_tool";
     const inputHints =
-      runWith === "run_free_ai_tool"
-        ? ["platform", "values", ...(tool.fields ?? []).map((field) => `values.${field.key}`)]
-        : runWith === "run_free_media_tool"
-          ? [
-              "url",
-              "rightsConfirmed",
-              ...(tool.kind === "video-downloader" ? ["quality (optional)"] : []),
-            ]
-          : runWith === "run_free_image_tool"
-            ? ["fileName", "base64 or mediaKey", "mimeType for base64", "mode options as needed"]
-            : runWith === "transcribe_free_audio"
-              ? ["fileName", "base64 or mediaKey", "mimeType for base64"]
-              : tool.kind === "utm"
-                ? ["url", "source", "campaign", "medium/term/content (optional)"]
-                : ["text", ...(tool.kind === "counter" ? ["platform (optional)"] : [])];
+      runWith === "get_public_post_stats"
+        ? ["url"]
+        : runWith === "run_free_ai_tool"
+          ? ["platform", "values", ...(tool.fields ?? []).map((field) => `values.${field.key}`)]
+          : runWith === "run_free_media_tool"
+            ? [
+                "url",
+                "rightsConfirmed",
+                ...(tool.kind === "video-downloader" ? ["quality (optional)"] : []),
+              ]
+            : runWith === "run_free_image_tool"
+              ? ["fileName", "base64 or mediaKey", "mimeType for base64", "mode options as needed"]
+              : runWith === "transcribe_free_audio"
+                ? ["fileName", "base64 or mediaKey", "mimeType for base64"]
+                : tool.kind === "utm"
+                  ? ["url", "source", "campaign", "medium/term/content (optional)"]
+                  : ["text", ...(tool.kind === "counter" ? ["platform (optional)"] : [])];
     return {
       slug: tool.slug,
       name: tool.name,
@@ -155,6 +161,30 @@ export async function transcribeMcpFreeAudio(workspaceId: string, input: McpFree
 export { runMcpFreeImageTool };
 export type { McpFreeImageInput };
 
+export async function getMcpPublicPostStats(
+  workspaceId: string,
+  input: { url: string; includeConnected?: boolean },
+) {
+  const request = new Request(`http://localhost:8080${PUBLIC_POST_STATS_PATH}`, {
+    method: "POST",
+    headers: { origin: "http://localhost:8080", "content-type": "application/json" },
+    body: JSON.stringify({ url: input.url }),
+  });
+  return withProviderBudgetWorkspace(workspaceId, async () =>
+    responseData(
+      await handlePublicPostStatsRequest(
+        request,
+        (globalThis.__env__ ?? {}) as PublicPostStatsEnv,
+        {
+          trustedMcpWorkspaceId: workspaceId,
+          useConnectedAccounts: input.includeConnected === true,
+        },
+      ),
+      "Public post stats could not be read.",
+    ),
+  );
+}
+
 export const defaultMcpFreeToolOperations = {
   listMcpFreeTools,
   runMcpFreeTextTool,
@@ -162,6 +192,7 @@ export const defaultMcpFreeToolOperations = {
   runMcpFreeMediaTool,
   runMcpFreeImageTool,
   transcribeMcpFreeAudio,
+  getMcpPublicPostStats,
 };
 
 export type McpFreeToolOperations = typeof defaultMcpFreeToolOperations & {
@@ -182,6 +213,48 @@ function result(message: string, data: Record<string, unknown>) {
     ],
     structuredContent: data,
   };
+}
+
+export const PUBLIC_POST_STATS_MCP_DESCRIPTION =
+  "Read counters for one public Instagram, YouTube, TikTok, LinkedIn, X, Facebook, Threads or Reddit post. Returns available values, sources, observation times, precision and definitions. Public reads use signed-out metadata and a bounded anonymous browser; missing counters remain unavailable. Set includeConnected=true for authorized owner analytics in the selected workspace. Private results are not shared-cached. No media download or publishing. Existing request and compute limits apply.";
+
+export function registerMcpPublicPostStats(
+  server: Pick<McpServer, "registerTool">,
+  authInfo: AuthInfo,
+  operations: Pick<McpFreeToolOperations, "resolveMcpWorkspaceId" | "getMcpPublicPostStats">,
+) {
+  const authUserId = authInfo.extra?.userId;
+  if (typeof authUserId !== "string") throw new Error("Bento authorization is missing.");
+  const workspace = (workspaceId?: string) =>
+    operations.resolveMcpWorkspaceId(authUserId, workspaceId);
+  server.registerTool(
+    "get_public_post_stats",
+    {
+      title: "Get public social post stats",
+      description: PUBLIC_POST_STATS_MCP_DESCRIPTION,
+      inputSchema: z.object({
+        workspaceId: z.uuid().optional(),
+        url: z.string().min(1).max(2048),
+        includeConnected: z.boolean().optional(),
+      }),
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async ({ workspaceId, url, includeConnected }) => {
+      const selectedId = await workspace(workspaceId);
+      return result("Read public post stats.", {
+        workspaceId: selectedId,
+        ...(await operations.getMcpPublicPostStats(selectedId, {
+          url,
+          ...(includeConnected !== undefined ? { includeConnected } : {}),
+        })),
+      });
+    },
+  );
 }
 
 export function registerMcpFreeTools(
@@ -210,6 +283,8 @@ export function registerMcpFreeTools(
     },
     async () => result("Loaded Bento free tools.", { tools: await operations.listMcpFreeTools() }),
   );
+
+  registerMcpPublicPostStats(server, authInfo, operations);
 
   server.registerTool(
     "run_free_text_tool",

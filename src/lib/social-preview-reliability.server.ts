@@ -1,4 +1,4 @@
-import { reserveProviderUsage } from "./provider-budget.server";
+import { hasManagedProviderBudget, reserveProviderUsage } from "./provider-budget.server";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { readResponseText } from "./request-security.server";
 
@@ -59,13 +59,46 @@ async function claimBudget(
   return !error && data === true;
 }
 
-async function reconcileBrowserBudget(actualMs: number | undefined) {
+async function reconcileBrowserBudget(
+  actualMs: number | undefined,
+  reservationMs = BROWSER_RESERVATION_MS,
+  periodStart = utcPeriodStart("day"),
+) {
   if (actualMs === undefined) return;
   await supabaseAdmin.rpc("adjust_social_preview_budget", {
     p_provider: "browser_run",
-    p_period_start: utcPeriodStart("day"),
-    p_delta: Math.round(actualMs) - BROWSER_RESERVATION_MS,
+    p_period_start: periodStart,
+    p_delta: Math.round(actualMs) - reservationMs,
   });
+}
+
+/** One bounded anonymous session; shares the existing social-preview allowance. */
+export async function withPublicPostBrowserBudget<T>(
+  work: (binding: BrowserRun) => Promise<{ value: T; browserClosed: boolean }>,
+): Promise<T> {
+  const env = globalThis.__env__ as ReliabilityEnv | undefined;
+  if (!env?.BROWSER) throw new SocialPreviewSourceError("Browser Run is not configured", "blocked");
+  const reservedMs = 40_000,
+    periodStart = utcPeriodStart("day");
+  if (!(await claimBudget("browser_run", periodStart, reservedMs, BROWSER_DAILY_BUDGET_MS)))
+    throw new SocialPreviewSourceError("Browser Run daily budget exhausted", "blocked");
+  try {
+    await reserveProviderUsage(
+      "browser_milliseconds",
+      reservedMs,
+      hasManagedProviderBudget() ? { managedCostMicrousd: 1000 } : {},
+    );
+  } catch (error) {
+    // No browser was started: this feature hold can be released deterministically.
+    await reconcileBrowserBudget(0, reservedMs, periodStart);
+    throw error;
+  }
+  const start = Date.now();
+  const result = await work(env.BROWSER);
+  const elapsed = Date.now() - start;
+  if (result.browserClosed && elapsed >= 1 && elapsed <= reservedMs)
+    await reconcileBrowserBudget(elapsed, reservedMs, periodStart);
+  return result.value;
 }
 
 function classifyError(error: unknown): Exclude<SocialPreviewOutcome, "success"> {

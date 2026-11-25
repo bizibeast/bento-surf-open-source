@@ -264,8 +264,9 @@ function SettingsPage() {
         contactTier: 500,
       },
     })
-      .then(({ url }) => {
-        const destination = safeNavigationHref(url);
+      .then((result) => {
+        if (result.alreadyOnPlan) return toast.success(result.message);
+        const destination = safeNavigationHref(result.url);
         if (!destination) throw new Error("Checkout returned an invalid destination.");
         window.location.assign(destination);
       })
@@ -651,8 +652,9 @@ function SettingsPage() {
       createCheckout({
         data: { plan: target, period: billing?.billingPeriod ?? "monthly", returnTo: "dashboard" },
       }),
-    onSuccess: ({ url }) => {
-      const destination = safeNavigationHref(url);
+    onSuccess: (result) => {
+      if (result.alreadyOnPlan) return toast.success(result.message);
+      const destination = safeNavigationHref(result.url);
       if (!destination) return toast.error("Checkout returned an invalid destination.");
       window.location.assign(destination);
     },

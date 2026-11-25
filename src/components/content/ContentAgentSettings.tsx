@@ -4,6 +4,7 @@ import type { ContentAgentPreferences } from "@/lib/content-agent-identity.serve
 import type { ContentAgentPreferencesInput } from "@/lib/content-agent-preferences.functions";
 import { agentBranding, agentBrandingSchema } from "@/lib/content-agent-branding";
 import { ContentAgentBranding } from "./ContentAgentBranding";
+import { BennyPresenterSettings } from "./BennyPresenterSettings";
 
 import {
   getContentImageSettings,
@@ -145,6 +146,7 @@ export function ContentAgentSettings({
           ))}
         </fieldset>
         <ContentAgentBranding brand={branding} onChange={setBranding} />
+        <BennyPresenterSettings brand={branding} onChange={setBranding} />
         <div className="agent-settings-section space-y-4">
           <label className="agent-setting-option">
             <input

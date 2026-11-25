@@ -21,6 +21,8 @@ const ENV_KEYS = [
   "REDDIT_CLIENT_SECRET",
   "LINKEDIN_CLIENT_ID",
   "LINKEDIN_COMMENT_ACCESS_APPROVED",
+  "LINKEDIN_ANALYTICS_ACCESS_APPROVED",
+  "META_INSTAGRAM_BUSINESS_DISCOVERY_APPROVED",
   "LINKEDIN_CLIENT_SECRET",
   "SOCIAL_CONNECTION_ENCRYPTION_KEY",
   "THREADS_PROFILE_DISCOVERY_APPROVED",
@@ -124,6 +126,19 @@ describe("social provider credential readiness", () => {
       "profile",
       "w_member_social",
     ]);
+  });
+
+  it("adds analytics and Business Discovery scopes only after explicit app approval", () => {
+    delete process.env.LINKEDIN_ANALYTICS_ACCESS_APPROVED;
+    delete process.env.META_INSTAGRAM_BUSINESS_DISCOVERY_APPROVED;
+    expect(socialProviderRequestedScopes("linkedin")).not.toContain("r_member_postAnalytics");
+    expect(socialProviderRequestedScopes("facebook")).not.toContain("instagram_basic");
+    setEnvironment("LINKEDIN_ANALYTICS_ACCESS_APPROVED", "true");
+    setEnvironment("META_INSTAGRAM_BUSINESS_DISCOVERY_APPROVED", "true");
+    expect(socialProviderRequestedScopes("linkedin")).toEqual(
+      expect.arrayContaining(["r_member_social", "r_member_postAnalytics"]),
+    );
+    expect(socialProviderRequestedScopes("facebook")).toContain("instagram_basic");
   });
 
   it("requests YouTube channel analytics access", () => {

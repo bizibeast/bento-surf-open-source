@@ -129,10 +129,15 @@ export function UpgradeDialog({
     if (offer.trialEligible) captureProductEvent("trial_cta_clicked", properties);
     setLoading(true);
     try {
-      const { url } = await createCheckout({
+      const result = await createCheckout({
         data: { plan, period, returnTo: "dashboard", storageUnits: 0, contactTier: 500 },
       });
-      const destination = safeNavigationHref(url);
+      if (result.alreadyOnPlan) {
+        toast.success(result.message);
+        setLoading(false);
+        return;
+      }
+      const destination = safeNavigationHref(result.url);
       if (!destination) throw new Error("Checkout returned an invalid destination.");
       captureProductEvent("checkout_started", properties);
       beginCheckoutTracking({ plan, trial: offer.trialEligible, surface: "upgrade_dialog" });
@@ -173,7 +178,7 @@ export function UpgradeDialog({
             Room for your next chapter.
           </DialogTitle>
           <DialogDescription className="mt-2 text-white/65">
-            Choose the tools your business needs. Cancel anytime.
+            Choose the tools your business needs.
           </DialogDescription>
         </div>
         <div className="px-6 pb-6">

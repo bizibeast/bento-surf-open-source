@@ -1,5 +1,14 @@
 export type PublicSocialPlatform = "twitter" | "pinterest" | "linkedin";
 
+/** Official anonymous X embed endpoint; this is not the paid X API. */
+export function twitterSyndicationUrl(id: string) {
+  if (!/^\d{1,24}$/.test(id)) return null;
+  const token = ((Number(id) / 1e15) * Math.PI).toString(36).replace(/[0.]/gu, "");
+  const endpoint = new URL("https://cdn.syndication.twimg.com/tweet-result");
+  endpoint.search = new URLSearchParams({ id, token, lang: "en" }).toString();
+  return endpoint;
+}
+
 export function isPublicSocialPlatform(value: unknown): value is PublicSocialPlatform {
   return value === "twitter" || value === "pinterest" || value === "linkedin";
 }

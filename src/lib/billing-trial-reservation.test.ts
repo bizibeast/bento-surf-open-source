@@ -111,6 +111,79 @@ describe("verified trial reservations", () => {
       expect.objectContaining({ url: null }),
     );
   });
+  it.each([null, "requires_payment_method"])(
+    "supersedes a recent unpaid checkout for a different plan: %s",
+    async (status) => {
+      mocks.retrieve.mockResolvedValueOnce({
+        created_at: new Date().toISOString(),
+        payment_status: status,
+      });
+      const result = await reserveTrialCheckout("owner", "owner", "store", verified);
+      expect(result.checkoutKey).toMatch(/^[0-9a-f-]{36}$/);
+      expect(result.url).toBeNull();
+      expect(mocks.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          plan_id: "store",
+          checkout_key: result.checkoutKey,
+          checkout_url: null,
+          checkout_session_id: null,
+          trial_verification_key: verified,
+          trial_days: 3,
+          created_at: expect.any(String),
+        }),
+      );
+    },
+  );
+  it.each([null, "requires_payment_method"])(
+    "resumes a recent unpaid checkout for the same plan: %s",
+    async (status) => {
+      mocks.retrieve.mockResolvedValueOnce({
+        created_at: new Date().toISOString(),
+        payment_status: status,
+      });
+      await expect(reserveTrialCheckout("owner", "owner", "creator", verified)).resolves.toEqual({
+        url: "https://checkout.dodopayments.com/existing",
+        checkoutKey: null,
+      });
+      expect(mocks.update).not.toHaveBeenCalled();
+    },
+  );
+  it("rotates an expired checkout awaiting a payment method for the same plan", async () => {
+    mocks.retrieve.mockResolvedValueOnce({
+      created_at: new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString(),
+      payment_status: "requires_payment_method",
+    });
+    await expect(reserveTrialCheckout("owner", "owner", "creator", verified)).resolves.toEqual(
+      expect.objectContaining({ url: null, checkoutKey: expect.any(String) }),
+    );
+    expect(mocks.update).toHaveBeenCalledOnce();
+  });
+  it.each([
+    "succeeded",
+    "processing",
+    "requires_customer_action",
+    "requires_merchant_action",
+    "requires_confirmation",
+    "requires_capture",
+    "partially_captured",
+    "partially_captured_and_capturable",
+  ])("rejects a different plan for an in-flight or completed checkout: %s", async (status) => {
+    mocks.retrieve.mockResolvedValueOnce({
+      created_at: new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString(),
+      payment_status: status,
+    });
+    await expect(reserveTrialCheckout("owner", "owner", "store", verified)).rejects.toThrow(
+      "Your previous checkout is for a different plan.",
+    );
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+  it("rejects a different plan when Dodo cannot be reached", async () => {
+    mocks.retrieve.mockRejectedValueOnce(new Error("network"));
+    await expect(reserveTrialCheckout("owner", "owner", "store", verified)).rejects.toThrow(
+      "Your previous checkout is for a different plan.",
+    );
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
   it.each(["processing", "succeeded", "requires_customer_action"])(
     "keeps a %s checkout instead of opening a second trial",
     async (status) => {

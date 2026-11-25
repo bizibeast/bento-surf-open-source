@@ -428,8 +428,8 @@ export function studioStarter(
       format,
       style,
       brand,
-      avatarId: "",
-      voiceId: "",
+      avatarId: brand.presenter?.avatarId ?? "",
+      voiceId: brand.presenter?.voiceId ?? "",
       scenes: starter.scenes.map((scene) => newReelScene(scene)),
     },
   };

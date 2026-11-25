@@ -30,7 +30,7 @@ export function discoverPostKey(item: {
       if (id) return `youtube:${id}`;
     }
     if (host === "instagram.com") {
-      const id = path.match(/^\/(?:p|reel|reels)\/([^/]+)/)?.[1];
+      const id = path.match(/^\/(?:[A-Za-z0-9._]{1,30}\/)?(?:p|reel|reels)\/([^/]+)/)?.[1];
       if (id) return `instagram:${id}`;
     }
     if (host === "reddit.com") {
@@ -43,7 +43,9 @@ export function discoverPostKey(item: {
     }
     if (host === "facebook.com") {
       const id =
-        path.match(/\/(?:posts|videos|reel)\/([^/]+)/)?.[1] || url.searchParams.get("story_fbid");
+        path.match(/\/(?:posts|videos|reel)\/([^/]+)/)?.[1] ||
+        url.searchParams.get("story_fbid") ||
+        (path === "/watch" ? url.searchParams.get("v") : null);
       if (id) return `facebook:${id}`;
     }
     if (host === "tiktok.com") {

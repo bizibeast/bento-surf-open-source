@@ -279,6 +279,18 @@ export const createCheckout = createServerFn({ method: "POST" })
     await enforceRequestRateLimit("EXPENSIVE_API_RATE_LIMITER", "billing-checkout", userId);
     if (data.storageUnits > 0 || data.contactTier !== BASE_MARKETING_CONTACTS)
       throw new Error("Add-ons can be added after your trial. There is no charge today.");
+    const grant = await supabaseAdmin
+      .from("complimentary_plan_grants")
+      .select("plan_id")
+      .eq("user_id", userId)
+      .eq("status", "active")
+      .gt("expires_at", new Date().toISOString())
+      .maybeSingle();
+    if (grant.error) throw new Error("Your complimentary access could not be loaded.");
+    const grantPlan = normalizePlan(grant.data?.plan_id);
+    if (PLAN_ORDER.indexOf(grantPlan) >= PLAN_ORDER.indexOf(data.plan)) {
+      return { alreadyOnPlan: true as const, message: `You're already on ${planName(grantPlan)}` };
+    }
     const eligibility = await checkoutEligibility(authUserId, userId);
     if (eligibility.active)
       throw new Error(

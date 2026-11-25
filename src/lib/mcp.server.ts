@@ -117,6 +117,7 @@ import { withProviderBudgetWorkspace } from "./provider-budget.server";
 import {
   defaultMcpFreeToolOperations,
   registerMcpFreeTools,
+  registerMcpPublicPostStats,
   registerMcpFreeAudioTranscription,
 } from "./mcp-free-tools.server";
 import { listMcpWorkspaces, resolveMcpWorkspaceId } from "./mcp-workspace.server";
@@ -1868,7 +1869,7 @@ function registerBentoTools(
     {
       title: "Read a Benny creator skill",
       description:
-        "Read a preloaded workflow and the selected workspace's saved customization. Execute its real tools only when authorized; reading a skill does not execute it.",
+        "Read a preloaded workflow and the selected workspace's saved customization. Loading a skill does not execute tools.",
       inputSchema: z.object({
         id: z.enum(BENNY_SKILLS.map((skill) => skill.id)),
         workspaceId: z.uuid().optional(),
@@ -2470,7 +2471,7 @@ function registerBentoTools(
       annotations: {
         readOnlyHint: false,
         openWorldHint: false,
-        destructiveHint: false,
+        destructiveHint: true,
         idempotentHint: true,
       },
     },
@@ -3009,7 +3010,7 @@ function registerBentoTools(
     {
       title: "Get integrations",
       description:
-        "Load safe connection state for social profiles, Google Calendar, Fathom, and creator payment providers. Secrets are never returned.",
+        "Load safe connection state for social profiles, Google Calendar, Fathom, and creator payment providers. This tool does not return secrets.",
       inputSchema: z.object({}),
       annotations: {
         readOnlyHint: true,
@@ -3140,7 +3141,7 @@ export function createBentoMcpServer(
       skill.uri,
       {
         title: skill.title,
-        description: "Built-in creator workflow. Use get_benny_skill for workspace customizations.",
+        description: "Built-in creator workflow.",
         mimeType: "text/markdown",
       },
       async () => ({
@@ -3217,6 +3218,7 @@ export function createChatGptMcpServer(
   const chatGptToolOperations = operations ?? chatGptOperations(defaultBentoMcpOperations);
   registerChatGptTools(server, authInfo, origin, chatGptToolOperations, creatorContext);
   registerMcpFreeAudioTranscription(server, authInfo, chatGptToolOperations);
+  registerMcpPublicPostStats(server, authInfo, chatGptToolOperations);
   return server;
 }
 
@@ -3300,7 +3302,6 @@ function protectedResourceMetadata(request: Request, path = MCP_PATH) {
     { headers: { "cache-control": "public, max-age=3600" } },
   );
 }
-
 
 function applyMcpCors(response: Response, request: Request) {
   const vary = response.headers.get("vary");

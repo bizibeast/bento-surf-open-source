@@ -1,6 +1,9 @@
 const INSTAGRAM_ORIGIN = "https://www.instagram.com";
 const SHORTCODE_PATTERN = "[A-Za-z0-9_-]{1,64}";
-const POST_PATH = new RegExp(`^/(p|reel|reels|tv)/(${SHORTCODE_PATTERN})/?$`, "u");
+const POST_PATH = new RegExp(
+  `^/(?:[A-Za-z0-9._]{1,30}/)?(p|reel|reels|tv)/(${SHORTCODE_PATTERN})/?$`,
+  "u",
+);
 const MAX_URL_LENGTH = 2_048;
 const MAX_ITEMS = 20;
 const MAX_REDIRECTS = 3;
@@ -186,7 +189,7 @@ function mediaFromNode(node: Record<string, unknown> | undefined, requiresVideo:
   return { kind: "image", source } satisfies InstagramMediaSource;
 }
 
-export function parseInstagramEmbed(html: string, post: InstagramPost) {
+function instagramEmbedContext(html: string, post: InstagramPost) {
   // Match a complete JSON string literal, including its quotes, and decode both JSON layers.
   const contextLiteral = /"contextJSON"\s*:\s*("(?:\\[^]|[^"\\])*")/u.exec(html)?.[1];
   if (!contextLiteral) throw new Error("missing-instagram-embed-context");
@@ -201,6 +204,30 @@ export function parseInstagramEmbed(html: string, post: InstagramPost) {
   ) {
     throw new Error("invalid-instagram-embed-context");
   }
+  return { media, owner };
+}
+
+/** The same root metadata used by downloads, without requiring a playable media URL. */
+export function parseInstagramEmbedStats(html: string, post: InstagramPost) {
+  const { media } = instagramEmbedContext(html, post);
+  const counts: Record<string, number> = {};
+  const candidates = {
+    views: media.video_play_count ?? media.play_count ?? media.video_view_count,
+    likes: countFrom(media.edge_liked_by ?? media.edge_media_preview_like) ?? media.like_count,
+    comments:
+      countFrom(media.edge_media_to_comment ?? media.edge_media_to_parent_comment) ??
+      media.comment_count,
+    shares: media.reshare_count ?? media.share_count,
+    reposts: media.media_repost_count ?? media.repost_count,
+    saves: media.save_count,
+  };
+  for (const [key, value] of Object.entries(candidates))
+    if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) counts[key] = value;
+  return counts;
+}
+
+export function parseInstagramEmbed(html: string, post: InstagramPost) {
+  const { media, owner } = instagramEmbedContext(html, post);
 
   const children = edgesOf(media.edge_sidecar_to_children);
   if (
@@ -235,4 +262,11 @@ export function parseInstagramEmbed(html: string, post: InstagramPost) {
     },
     items,
   };
+}
+
+export function parseInstagramEmbedAuthor(html: string, post: InstagramPost) {
+  const { owner } = instagramEmbedContext(html, post);
+  return typeof owner?.username === "string" && /^[A-Za-z0-9._]{1,30}$/.test(owner.username)
+    ? owner.username
+    : undefined;
 }

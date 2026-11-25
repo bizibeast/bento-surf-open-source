@@ -11,9 +11,10 @@ function assertProductPrice(product: unknown, amount: number, interval: "Month" 
       price: z.literal(amount * 100),
       payment_frequency_count: z.literal(1),
       payment_frequency_interval: z.literal(interval),
-      subscription_period_count: z.literal(1),
-      subscription_period_interval: z.literal(interval),
-      discount: z.literal(0),
+      subscription_period_count: z.number().int().positive(),
+      subscription_period_interval: z.enum(["Day", "Week", "Month", "Year"]),
+      discount: z.literal(0).optional(),
+      discount_bps: z.literal(0).nullable().optional(),
     }),
   }).parse(product);
 }
@@ -25,7 +26,9 @@ export async function verifyFullyManagedProduct(productId: string) {
       throw new Error("Product mismatch.");
     assertProductPrice(product, newPlanPrice("creator_plus", "monthly").amount, "Month");
   } catch {
-    throw new Error("Creator+ checkout could not be verified. Contact your instance administrator.");
+    throw new Error(
+      "Creator+ checkout could not be verified. Contact your instance administrator.",
+    );
   }
 }
 

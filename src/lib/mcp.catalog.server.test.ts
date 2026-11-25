@@ -156,6 +156,7 @@ function rpc(id: number | string | null, method: string, params: unknown, protoc
 
 describe("production MCP catalog", () => {
   it("serves neutral tool and parameter descriptions in both catalogs", async () => {
+    vi.stubEnv("BENTO_V2_REFERENCE_ANALYSIS_ENABLED", "true");
     vi.stubEnv("BENTO_V2_STUDIO_ENABLED", "true");
     vi.stubEnv("BENTO_V2_CREATOR_INTELLIGENCE_ENABLED", "true");
     try {
@@ -171,6 +172,16 @@ describe("production MCP catalog", () => {
         expect(tools.length).toBeGreaterThan(10);
         const names = tools.map(({ name }) => name);
         expect(names.filter((name) => /heygen|earn/.test(name))).toEqual([]);
+        const referenceNames = [
+          "analyze_content_reference",
+          "create_video_frame_grid",
+          "get_content_reference",
+          "create_content_from_reference",
+        ];
+        for (const name of referenceNames) {
+          if (factory === createBentoMcpServer) expect(names).toContain(name);
+          else expect(names).not.toContain(name);
+        }
         if (factory === createChatGptMcpServer) {
           expect(names).toContain("transcribe_free_audio");
           expect(
@@ -207,6 +218,8 @@ describe("production MCP catalog", () => {
 
         const problems: string[] = [];
         function check(description: string, owner: string, path: string) {
+          if (/\b(?:must|never|always|do not|don't)\b/i.test(description))
+            problems.push(`${path}: steering`);
           if (
             /(?:^|[.\n])\s*(?:use|prefer|never|always|must|should|do not|don't|call)\b/i.test(
               description,
@@ -248,6 +261,18 @@ describe("production MCP catalog", () => {
         for (const tool of tools) {
           if (tool.description) check(tool.description, tool.name, tool.name);
           scan(tool.inputSchema, tool.name, `${tool.name}.inputSchema`);
+        }
+        if (factory === createBentoMcpServer) {
+          const resourceResponse = await handler.fetch(rpc(2, "resources/list", {}), { authInfo });
+          const resources = (await payload(resourceResponse)).result.resources as Array<{
+            name: string;
+            description?: string;
+          }>;
+          expect(resources).toHaveLength(16);
+          for (const resource of resources) {
+            if (resource.description)
+              check(resource.description, resource.name, `resource.${resource.name}`);
+          }
         }
         expect(problems).toEqual([]);
       }

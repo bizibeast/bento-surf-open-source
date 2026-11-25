@@ -729,7 +729,7 @@ export function registerChatGptTools(
     "Cancel one scheduled social post so Bento does not publish it. The post remains in the workspace with a cancelled status.",
     {
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: false,
     },

@@ -108,6 +108,7 @@ type SecurityEnv = {
   PUBLIC_API_RATE_LIMITER?: RateLimitBinding;
   EXPENSIVE_API_RATE_LIMITER?: RateLimitBinding;
   FREE_TOOLS_AI_RATE_LIMITER?: RateLimitBinding;
+  FREE_TOOLS_MEDIA_RATE_LIMITER?: RateLimitBinding;
   UPLOAD_RATE_LIMITER?: RateLimitBinding;
 };
 type RateLimitBindingName = Exclude<keyof SecurityEnv, "APP_ENV">;

@@ -26,6 +26,16 @@ export const agentBrandingSchema = z
     textColor: color.default("#17213a"),
     coverStyle: z.enum(["text", "portrait"]).default("text"),
     heroPhotoId: z.string().uuid().nullable().default(null),
+    presenter: z
+      .object({
+        avatarId: z.string().trim().min(1).max(200),
+        name: z.string().trim().min(1).max(200),
+        voiceId: z.string().trim().min(1).max(200).nullable(),
+        billing: z.enum(["managed", "byok"]),
+        scope: z.enum(["public", "private"]),
+      })
+      .nullable()
+      .optional(),
   })
   .refine((brand) => contrastRatio(brand.backgroundColor, brand.textColor) >= 4.5, {
     message: "Choose text and background colors with stronger contrast (at least 4.5:1).",

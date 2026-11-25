@@ -366,6 +366,7 @@ const readOnlyAnnotations = {
 /** Pins the hints OpenAI reads from tools/list. Idempotence is explicit. */
 const bentoMcpToolAnnotations = {
   list_free_tools: { ...readOnlyAnnotations, idempotentHint: true },
+  get_public_post_stats: { ...readOnlyAnnotations, openWorldHint: true },
   run_free_text_tool: { ...readOnlyAnnotations, idempotentHint: true },
   run_free_ai_tool: {
     readOnlyHint: false,
@@ -474,7 +475,7 @@ const bentoMcpToolAnnotations = {
   set_auto_dm_delay: {
     readOnlyHint: false,
     openWorldHint: false,
-    destructiveHint: false,
+    destructiveHint: true,
     idempotentHint: true,
   },
   save_auto_dm_automation: {
@@ -713,6 +714,7 @@ describe("Bento MCP tools", () => {
     expect(toolsPayload.result.tools.map((tool: { name: string }) => tool.name)).toEqual(
       expect.arrayContaining([
         "list_free_tools",
+        "get_public_post_stats",
         "run_free_text_tool",
         "run_free_ai_tool",
         "run_free_media_tool",
@@ -782,6 +784,7 @@ describe("Bento MCP tools", () => {
               "begin_media_upload",
               "list_workspaces",
               "list_free_tools",
+              "get_public_post_stats",
               "run_free_text_tool",
               "run_free_ai_tool",
               "run_free_media_tool",

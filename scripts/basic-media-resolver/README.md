@@ -42,9 +42,11 @@ secret on both staging Workers. Missing configuration fails closed.
 Install the Netscape cookie export only as `YOUTUBE_COOKIE_JAR` on the private
 Worker, using Cloudflare's secret interface. Never paste cookies into source,
 GitHub variables, logs, build arguments, or container application configuration.
-Only YouTube metadata extraction receives the jar. A temporary mode-0600 file is
-removed after extraction; the environment entries are removed from the Python
-process environment. TikTok receives no account cookies. Google can rotate or
+Only authorized YouTube download preparation and transfer receive the jar. Public
+statistics always pass an empty cookie jar to their isolated child, including
+YouTube metadata reads. A temporary mode-0600 download cookie file is removed
+after extraction; environment entries are removed from the Python process
+environment. TikTok receives no account cookies. Google can rotate or
 reject an otherwise valid session; replacing this one Worker secret is sufficient.
 The DO persists only its random internal bridge token (never the Google jar), so
 job links survive Worker-isolate eviction and delayed stop callbacks. Restart the

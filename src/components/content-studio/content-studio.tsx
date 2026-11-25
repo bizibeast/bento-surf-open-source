@@ -39,6 +39,7 @@ import { uploadFileResult } from "@/lib/upload";
 import { reviewHeyGenGeneration } from "@/lib/external-tools.functions";
 import { optimizeImageUpload } from "@/lib/image-upload";
 import { StudioCarouselEditor } from "./studio-carousel";
+import { CarouselLayoutPreview } from "./carousel-layout-preview";
 import { StudioCarouselBackground } from "./studio-carousel-background";
 import { StudioReelEditor } from "./studio-reel";
 import { StudioAvatarPanel } from "./studio-avatar";
@@ -880,16 +881,23 @@ function StudioWorkspace({
                         )
                       }
                     >
-                      <span
-                        className="studio-starter-art"
-                        data-style={index % 3}
-                        data-format={format}
-                        aria-hidden="true"
-                      >
-                        <i />
-                        <i />
-                        <i />
-                      </span>
+                      {format === "carousel" ? (
+                        <CarouselLayoutPreview
+                          layout={key as keyof typeof CAROUSEL_STARTERS}
+                          brand={query.data?.brand || DEFAULT_AGENT_BRANDING}
+                        />
+                      ) : (
+                        <span
+                          className="studio-starter-art"
+                          data-style={index % 3}
+                          data-format={format}
+                          aria-hidden="true"
+                        >
+                          <i />
+                          <i />
+                          <i />
+                        </span>
+                      )}
                       <span className="studio-starter-copy">
                         <strong>{starter.name}</strong>
                         <span className="studio-muted">{starter.description}</span>

@@ -2,6 +2,7 @@ import { defineConfig } from "vitest/config";
 import tsconfigPaths from "vite-tsconfig-paths";
 
 export default defineConfig({
+  assetsInclude: ["**/*.py"],
   plugins: [tsconfigPaths({ projects: ["./tsconfig.json"] })],
   test: {
     environment: "jsdom",
