@@ -106,6 +106,139 @@ it("reads Instagram audio in chat and keeps the selected track in a publishing a
   expect(post.execute).not.toHaveBeenCalled();
 });
 describe("Agent tool execution", () => {
+  it("bounds retrievable background data while retaining the creator's script, approved edits and source trust boundary", async () => {
+    const save = tool("save_content_studio_project", false);
+    const script = "Use these exact words: One clear brief.";
+    const generate = vi.fn(async (request) => {
+      expect(request.input.context.request).toBe(script);
+      expect(request.input.context.recentConversation[0].content).toBe(script);
+      expect(request.input.context.actionOutcomes[0].arguments.body).toBe("Approved caption");
+      expect(request.input.context.confirmedBrain[0].content).toBe(
+        "Never change my approved wording.",
+      );
+      expect(request.input.context.performance.recentPosts).toHaveLength(5);
+      expect(request.input.context.connectedKnowledge).toMatch(/^BEGIN UNTRUSTED/);
+      expect(request.input.context.connectedKnowledge).toMatch(/END UNTRUSTED SOURCE MATERIAL$/);
+      expect(request.input.context.contextTruncated).toBe(true);
+      expect(request.input.schemas.save_content_studio_project).toBeDefined();
+      expect(new TextEncoder().encode(JSON.stringify(request.input)).byteLength).toBeLessThan(
+        110000,
+      );
+      return reply;
+    });
+    await generateAgentWithTools(
+      JSON.stringify({
+        request: script,
+        confirmedBrain: [{ content: "Never change my approved wording." }],
+        recentConversation: [{ role: "user", content: script }],
+        actionOutcomes: [{ id, arguments: { body: "Approved caption" } }],
+        performance: {
+          recentPosts: Array.from({ length: 100 }, () => ({
+            caption: "retrievable history ".repeat(500),
+          })),
+        },
+        recommendations: Array.from({ length: 50 }, () => ({
+          summary: "recommendation ".repeat(200),
+        })),
+        connectedKnowledge: [
+          "BEGIN UNTRUSTED SOURCE MATERIAL",
+          JSON.stringify(
+            Array.from({ length: 30 }, () => ({ text: "source material ".repeat(1000) })),
+          ),
+          "END UNTRUSTED SOURCE MATERIAL",
+        ].join("\n"),
+      }),
+      context,
+      "rules",
+      {},
+      { tools: new Map([[save.name, save]]), generate },
+    );
+  });
+
+  it("defers large schemas before dropping the earlier exact script in a short conversation", async () => {
+    const save = tool("save_content_studio_project", false);
+    const social = tool("create_social_post", false);
+    social.inputSchema = z.object({ detail: z.string().describe("large schema ".repeat(10000)) });
+    const generate = vi.fn(async (request) => {
+      expect(request.input.context.recentConversation).toHaveLength(4);
+      expect(request.input.context.recentConversation[0].content).toBe(
+        "Exact approved script: One clear brief.",
+      );
+      expect(request.input.schemas.create_social_post).toBeUndefined();
+      expect(request.input.schemas.save_content_studio_project).toBeDefined();
+      return reply;
+    });
+    await generateAgentWithTools(
+      JSON.stringify({
+        request: "Create a new editable Reel draft",
+        recentConversation: [
+          { role: "user", content: "Exact approved script: One clear brief." },
+          { role: "assistant", content: "Ready for review" },
+          { role: "user", content: "Keep that script" },
+          { role: "assistant", content: "Understood" },
+        ],
+      }),
+      context,
+      "rules",
+      {},
+      {
+        tools: new Map([
+          [save.name, save],
+          [social.name, social],
+        ]),
+        generate,
+      },
+    );
+  });
+
+  it("fits a fresh chat with large eager schemas and retains the tool inspected on demand", async () => {
+    const names = ["save_content_studio_project", "create_social_post", "prepare_reel_production"];
+    const tools = new Map(
+      names.map((name) => {
+        const entry = tool(name, false);
+        entry.inputSchema = z.object({
+          document: z.string().describe("schema details ".repeat(4000)),
+        });
+        return [name, entry] as const;
+      }),
+    );
+    let inspected = "";
+    const generate = vi.fn(async (request) => {
+      const bytes = new TextEncoder().encode(
+        JSON.stringify({
+          system: request.system,
+          input: JSON.stringify(request.input),
+          responseFormat: request.responseFormat,
+        }),
+      ).byteLength;
+      expect(bytes).toBeLessThan(128000);
+      expect(request.input.context.request).toBe("Create my short Reel");
+      expect(request.input.context.actionOutcomes[0].arguments.body).toBe("Approved exact words");
+      expect(request.input.catalog.map((entry: { name: string }) => entry.name)).toEqual(
+        expect.arrayContaining(names),
+      );
+      if (!inspected) {
+        inspected = names.find((name) => !request.input.schemas[name])!;
+        expect(inspected).toBeTruthy();
+        return call("inspect_tool", { name: inspected });
+      }
+      expect(request.input.schemas[inspected]).toBeDefined();
+      return reply;
+    });
+    await generateAgentWithTools(
+      JSON.stringify({
+        request: "Create my short Reel",
+        actionOutcomes: [{ id, arguments: { body: "Approved exact words" } }],
+        recentConversation: [],
+      }),
+      context,
+      "rules",
+      {},
+      { tools, generate },
+    );
+    expect(generate).toHaveBeenCalledTimes(2);
+  });
+
   it("fits a long conversation without dropping the newest request or approved edits", async () => {
     const latest = {
       id,

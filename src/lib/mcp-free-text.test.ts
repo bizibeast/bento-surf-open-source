@@ -5,7 +5,10 @@ import { deterministicFreeToolSlugs, runDeterministicFreeTool } from "./mcp-free
 describe("MCP deterministic free tools", () => {
   it("covers every public link, measure, and format tool", () => {
     const slugs = freeTools
-      .filter((tool) => ["Links", "Measure", "Format"].includes(tool.category))
+      .filter(
+        (tool) =>
+          ["Links", "Measure", "Format"].includes(tool.category) && tool.kind !== "post-stats",
+      )
       .map((tool) => tool.slug)
       .sort();
     expect([...deterministicFreeToolSlugs].sort()).toEqual(slugs);

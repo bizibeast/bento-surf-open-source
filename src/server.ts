@@ -1,3 +1,5 @@
+import { handlePublicPostStatsRequest } from "./lib/public-post-stats.server";
+import { PUBLIC_POST_STATS_PATH } from "./lib/public-post-stats";
 import { deferAutoDmDelivery } from "./lib/auto-dm-delay.server";
 import { guardCreatorDocument } from "./lib/creator-document-auth.server";
 import { handleFaviconRequest } from "./lib/favicon.server";
@@ -911,7 +913,6 @@ function leakedRouteTemplateResponse(request: Request) {
   });
 }
 
-
 export default {
   async fetch(request: CloudflareRequest) {
     const env = hydrateRuntimeEnv(request.runtime?.cloudflare?.env ?? globalThis.__env__);
@@ -1031,6 +1032,11 @@ export default {
     if (path === "/api/mcp-media-upload") {
       const { handleMcpMediaUpload } = await import("./lib/mcp-media-upload.server");
       return withDeploymentHeaders(await handleMcpMediaUpload(request, env, ctx), env, request);
+    }
+
+    if (path === PUBLIC_POST_STATS_PATH) {
+      const response = await handlePublicPostStatsRequest(request, env ?? {});
+      if (response) return withDeploymentHeaders(response, env, request);
     }
 
     const creatorRedirect = await guardCreatorDocument(request);

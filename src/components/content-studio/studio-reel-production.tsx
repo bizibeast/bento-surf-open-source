@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { AvatarLookGallery } from "./avatar-look-gallery";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -184,28 +185,19 @@ export function StudioReelProduction({
             </button>
           </div>
           {choices && (
-            <div className="studio-dual">
-              <label className="grid gap-2 text-sm">
-                Avatar
-                <select
-                  className="content-field"
-                  value={document.avatarId}
-                  onChange={(event) =>
-                    onChange({
-                      ...document,
-                      avatarId: event.target.value,
-                      scenes: document.scenes.map((scene) => ({ ...scene, avatarJobId: null })),
-                    })
-                  }
-                >
-                  <option value="">Choose an avatar</option>
-                  {choices.avatars.avatars.map((avatar) => (
-                    <option key={avatar.id} value={avatar.id}>
-                      {avatar.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+            <div className="space-y-4">
+              <AvatarLookGallery
+                looks={choices.avatars.avatars}
+                selectedId={document.avatarId}
+                disabled={busy}
+                onSelect={(id) =>
+                  onChange({
+                    ...document,
+                    avatarId: id,
+                    scenes: document.scenes.map((scene) => ({ ...scene, avatarJobId: null })),
+                  })
+                }
+              />
               <label className="grid gap-2 text-sm">
                 Voice
                 <select

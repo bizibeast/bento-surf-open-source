@@ -160,6 +160,8 @@ import { useWebMcpTools } from "@/lib/webmcp";
 export const Route = createFileRoute("/_authenticated/settings")({
   head: () => ({ meta: [{ title: "Settings | bento.surf" }] }),
   validateSearch: z.object({
+    checkoutPlan: z.enum(["store", "creator", "creator_plus"]).optional().catch(undefined),
+    checkoutPeriod: z.enum(["monthly", "yearly"]).optional().catch(undefined),
     section: z
       .enum([
         "overview",
@@ -240,12 +242,38 @@ function SettingsPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const {
+    checkoutPlan,
+    checkoutPeriod,
     section: requestedSection,
     polar: polarResult,
     stripe: stripeResult,
     paypal: paypalResult,
     integration: requestedIntegration,
   } = Route.useSearch();
+  const checkoutStarted = useRef(false);
+  useEffect(() => {
+    if (!checkoutPlan || checkoutStarted.current) return;
+    checkoutStarted.current = true;
+    window.history.replaceState(window.history.state, "", "/settings?section=plan");
+    void createCheckout({
+      data: {
+        plan: checkoutPlan,
+        period: checkoutPlan === "creator_plus" ? "monthly" : (checkoutPeriod ?? "monthly"),
+        returnTo: "dashboard",
+        storageUnits: 0,
+        contactTier: 500,
+      },
+    })
+      .then((result) => {
+        if (result.alreadyOnPlan) return toast.success(result.message);
+        const destination = safeNavigationHref(result.url);
+        if (!destination) throw new Error("Checkout returned an invalid destination.");
+        window.location.assign(destination);
+      })
+      .catch((error) =>
+        toast.error(error instanceof Error ? error.message : "Could not start checkout."),
+      );
+  }, [checkoutPlan, checkoutPeriod]);
   const active =
     requestedSection === "payments" ||
     requestedSection === "overview" ||
@@ -624,8 +652,9 @@ function SettingsPage() {
       createCheckout({
         data: { plan: target, period: billing?.billingPeriod ?? "monthly", returnTo: "dashboard" },
       }),
-    onSuccess: ({ url }) => {
-      const destination = safeNavigationHref(url);
+    onSuccess: (result) => {
+      if (result.alreadyOnPlan) return toast.success(result.message);
+      const destination = safeNavigationHref(result.url);
       if (!destination) return toast.error("Checkout returned an invalid destination.");
       window.location.assign(destination);
     },
@@ -2201,7 +2230,7 @@ function PlanOptionCard({
         </button>
       );
     }
-  } else if (plan === "creator_plus" && billing?.fullyManagedCheckoutAvailable !== true) {
+  } else if (plan === "creator_plus" && billing?.fullyManagedCheckoutAvailable === false) {
     action = (
       <button type="button" disabled className={`${buttonClass} bg-[#f2f5fb] text-[#17213a]/52`}>
         Creator+ checkout is currently unavailable

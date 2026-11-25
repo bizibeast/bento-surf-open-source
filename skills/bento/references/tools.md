@@ -2,13 +2,15 @@
 
 ## Run the public free tools
 
-`list_free_tools` returns all 59 slugs, required fields, and the correct runner. Call it before choosing a tool. The five runners are:
+`list_free_tools` returns all 60 slugs, required fields, and the correct runner. Call it before choosing a tool. The six runners are:
 
 - `run_free_text_tool`: 9 UTM, counter, formatter, Unicode, and thread tools. Results are deterministic.
 - `run_free_ai_tool`: 29 writing tools. Supply the exact `toolSlug`, listed `platform`, and `values` keys. One bounded AI attempt is charged to the selected workspace and shared public AI budget.
 - `run_free_media_tool`: 15 public video, image, cover, carousel, and URL transcript tools. Supply a public URL and `rightsConfirmed: true` only after ownership or permission is confirmed. Login-only media is unsupported. Returned media URLs are short-lived.
 - `run_free_image_tool`: 5 resize, compress, flip, split, and background-removal tools. Supply inline base64 or an owned `mediaKey`, plus `fileName`; JPG, PNG, and WebP inputs can be up to 20 MB. The result is returned as MCP image content, up to 8 MB total. No output is saved to Bento storage.
 - `transcribe_free_audio`: supply inline base64 or an owned `mediaKey`, plus `fileName`; supported audio inputs can be up to 12 MB. Returns text and timestamped segments without saving a transcript.
+
+- `get_public_post_stats`: pass one public post/video URL to read platform-specific public views, likes, comments and other exposed counters. Returns source and retrieval time; missing values stay null. Shared five-minute cache and the existing MCP media-resolution cap apply. No private analytics or paid scraping fallback.
 
 Use `list_workspaces` and pass the chosen `workspaceId` to a runner when the user names a brand. A `mediaKey` must belong to that workspace. Provider and rate limits still apply; a failed or capped call is not a successful tool result. For persistent output, save or upload it through the appropriate Bento flow after the user asks.
 

@@ -79,6 +79,10 @@ export function socialProviderRequestedScopes(provider: GenericProvider) {
     scopes.push("threads_profile_discovery");
   if (provider === "linkedin" && process.env.LINKEDIN_COMMENT_ACCESS_APPROVED === "true")
     scopes.push("w_member_social_feed");
+  if (provider === "linkedin" && process.env.LINKEDIN_ANALYTICS_ACCESS_APPROVED === "true")
+    scopes.push("r_member_social", "r_member_postAnalytics");
+  if (provider === "facebook" && process.env.META_INSTAGRAM_BUSINESS_DISCOVERY_APPROVED === "true")
+    scopes.push("instagram_basic");
   return scopes;
 }
 

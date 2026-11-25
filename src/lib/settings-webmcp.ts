@@ -950,6 +950,12 @@ export function createSettingsWebMcpTools({
           const result = await createCheckout({
             data: { plan: input.plan, period: input.period, returnTo: "dashboard" },
           });
+          if (result.alreadyOnPlan) {
+            return {
+              message: result.message,
+              data: { ok: true, action: input.action, alreadyOnPlan: true },
+            };
+          }
           return {
             destination: safeDestination(result.url),
             message: "Opening secure Bento checkout.",

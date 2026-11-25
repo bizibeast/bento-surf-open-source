@@ -14,6 +14,7 @@ import {
   pinterestPinId,
   pinterestShortUrl,
   publicSocialHttpsUrl,
+  twitterSyndicationUrl,
   type PublicSocialPlatform,
 } from "./public-social-url";
 
@@ -129,9 +130,8 @@ async function twitterSource(
   maxHeight: number,
 ): Promise<Source> {
   const id = post.pathname.split("/").at(-1) ?? "";
-  const token = ((Number(id) / 1e15) * Math.PI).toString(36).replace(/[0.]/gu, "");
-  const endpoint = new URL("https://cdn.syndication.twimg.com/tweet-result");
-  endpoint.search = new URLSearchParams({ id, token, lang: "en" }).toString();
+  const endpoint = twitterSyndicationUrl(id);
+  if (!endpoint) throw new PublicSocialError("unavailable");
   const { body } = await client.text(endpoint, (url) => url.href === endpoint.href, jsonType);
   const payload = record(json(body));
   if (payload.__typename === "TweetTombstone" || payload.__typename === "TweetUnavailable") {

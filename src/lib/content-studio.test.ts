@@ -21,6 +21,25 @@ function reel(patch: Partial<StudioReel> = {}): StudioReel {
 }
 
 describe("Studio projects", () => {
+  it("uses saved presenter defaults only for new Reel drafts", () => {
+    const brand = {
+      ...DEFAULT_AGENT_BRANDING,
+      presenter: {
+        avatarId: "look",
+        name: "Annie",
+        voiceId: "voice",
+        billing: "managed" as const,
+        scope: "public" as const,
+      },
+    };
+    const entry = studioStarter("reel", "captions", brand);
+    expect(entry.document).toMatchObject({ avatarId: "look", voiceId: "voice" });
+    expect(studioDocumentSchema.safeParse(entry.document).success).toBe(true);
+    expect(studioStarter("reel", "captions", DEFAULT_AGENT_BRANDING).document).toMatchObject({
+      avatarId: "",
+      voiceId: "",
+    });
+  });
   it("starts nine editable layouts and nine valid Reel timelines", () => {
     for (const layout of STUDIO_CAROUSEL_LAYOUTS) {
       const entry = studioStarter("carousel", layout, DEFAULT_AGENT_BRANDING);

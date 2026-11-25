@@ -1,6 +1,7 @@
 import { CheckoutRecoveryBanner } from "./CheckoutRecoveryBanner";
 import {
   rememberCheckoutForRecovery,
+  clearCheckoutRecovery,
   readRecoverableCheckout,
   dismissCheckoutRecovery,
   checkoutRecoveryProperties,
@@ -109,6 +110,8 @@ export function UpgradeDialog({
   }, [isOpen]);
   async function startCheckout(selection = { plan, period }) {
     const { plan } = selection;
+    clearCheckoutRecovery();
+    setRecoverable(null);
     if (plan === "creator_plus" && !managedAvailable) return;
     const period = newPlanBillingPeriod(plan, selection.period);
     if (!offer) return;
@@ -126,19 +129,25 @@ export function UpgradeDialog({
     if (offer.trialEligible) captureProductEvent("trial_cta_clicked", properties);
     setLoading(true);
     try {
-      const { url } = await createCheckout({
+      const result = await createCheckout({
         data: { plan, period, returnTo: "dashboard", storageUnits: 0, contactTier: 500 },
       });
-      const destination = safeNavigationHref(url);
+      if (result.alreadyOnPlan) {
+        toast.success(result.message);
+        setLoading(false);
+        return;
+      }
+      const destination = safeNavigationHref(result.url);
       if (!destination) throw new Error("Checkout returned an invalid destination.");
       captureProductEvent("checkout_started", properties);
       beginCheckoutTracking({ plan, trial: offer.trialEligible, surface: "upgrade_dialog" });
-      rememberCheckoutForRecovery({
-        plan,
-        period,
-        trial: offer.trialEligible,
-        surface: "upgrade_dialog",
-      });
+      if (!new URL(destination, window.location.origin).pathname.startsWith("/onboarding"))
+        rememberCheckoutForRecovery({
+          plan,
+          period,
+          trial: offer.trialEligible,
+          surface: "upgrade_dialog",
+        });
       window.location.href = destination;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not start checkout.");
@@ -169,7 +178,7 @@ export function UpgradeDialog({
             Room for your next chapter.
           </DialogTitle>
           <DialogDescription className="mt-2 text-white/65">
-            Choose the tools your business needs. Cancel anytime.
+            Choose the tools your business needs.
           </DialogDescription>
         </div>
         <div className="px-6 pb-6">
@@ -229,7 +238,10 @@ export function UpgradeDialog({
                     {newPlanPrice(value, period).cadence}
                   </span>
                 </span>
-                {value === "creator_plus" && !managedAvailable && (
+                {value === "creator_plus" && period === "yearly" && (
+                  <span className="mt-2 block text-xs text-muted-foreground">Billed monthly</span>
+                )}
+                {value === "creator_plus" && offer?.fullyManagedCheckoutAvailable === false && (
                   <span className="mt-2 block text-xs text-muted-foreground">
                     Currently unavailable
                   </span>

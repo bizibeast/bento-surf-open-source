@@ -217,6 +217,17 @@ describe("canonical hostname routing", () => {
     });
   });
 
+  it("keeps the account-aware stats checker on either HTTPS origin", () => {
+    expect(
+      destination("https://app.bento.surf/tools/social-media-post-stats?connected=1"),
+    ).toBeNull();
+    expect(destination("https://bento.surf/tools/social-media-post-stats")).toBeNull();
+    expect(destination("http://app.bento.surf/tools/social-media-post-stats")).toEqual({
+      status: 308,
+      location: "https://app.bento.surf/tools/social-media-post-stats",
+    });
+  });
+
   it("uses temporary navigation for the app root and mirrors staging origins", () => {
     expect(destination("https://app.bento.surf/?from=bookmark")).toEqual({
       status: 307,

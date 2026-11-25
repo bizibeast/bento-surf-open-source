@@ -81,6 +81,83 @@ const metaPayloadSchema = z
   })
   .passthrough();
 
+export function normalizeInstagramOAuthPayload(value: unknown) {
+  const root = z.record(z.string(), z.unknown()).parse(value);
+  let payload = root;
+  if ("data" in root) {
+    if (root.access_token !== undefined || !Array.isArray(root.data) || root.data.length !== 1)
+      throw new Error(
+        "Instagram did not return an unambiguous access token. Start a new connection.",
+      );
+    payload = z.record(z.string(), z.unknown()).parse(root.data[0]);
+  }
+  const permissions =
+    typeof payload.permissions === "string"
+      ? [
+          ...new Set(
+            payload.permissions
+              .split(/[,\s]+/)
+              .map((scope) => scope.trim())
+              .filter(Boolean),
+          ),
+        ]
+      : payload.permissions;
+  return metaPayloadSchema.parse({
+    ...payload,
+    ...(permissions !== undefined ? { permissions } : {}),
+  });
+}
+
+/** Meta uses both Graph-style nested errors and flat OAuth errors. Never expose
+ * or log raw descriptions: they can contain credentials or authorization codes. */
+export function instagramOAuthProviderFailure(value: unknown, status: number) {
+  const root =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const error =
+    root.error && typeof root.error === "object" ? (root.error as Record<string, unknown>) : {};
+  if (status < 400 && !root.error && !root.error_type && !root.error_message) return null;
+  const text = String(error.message ?? root.error_message ?? "").toLowerCase();
+  const reason = /client.secret|client.id|invalid.client|invalid platform app/.test(text)
+    ? "invalid_client"
+    : /redirect|callback/.test(text)
+      ? "redirect_mismatch"
+      : /matching code|authorization code|verification code|already used|code.*expir/.test(text)
+        ? "invalid_code"
+        : /tester|developer role|app.*(inactive|not active)|not available to this user/.test(text)
+          ? "account_not_eligible"
+          : /scope|permission|not approved|app review/.test(text)
+            ? "permission_denied"
+            : status === 429 || /rate.limit|too many/.test(text)
+              ? "rate_limited"
+              : "provider_rejected";
+  const rawType = String(error.type ?? root.error_type ?? "");
+  const code = Number(error.code ?? root.code);
+  const messages = {
+    invalid_client:
+      "Bento's Instagram app credentials could not be verified. The app configuration needs to be checked before reconnecting.",
+    redirect_mismatch:
+      "Bento's Instagram callback configuration was rejected. The app configuration needs to be checked before reconnecting.",
+    invalid_code:
+      "This Instagram authorization code expired or was already used. Start a new connection from Integrations.",
+    account_not_eligible:
+      "This Instagram account is not eligible to authorize Bento while app access is restricted. Check its Meta tester access.",
+    permission_denied:
+      "Instagram did not grant the permissions Bento needs. Check app approval and approve the requested permissions when reconnecting.",
+    rate_limited:
+      "Too many Instagram connection attempts were made. Wait a moment, then try again.",
+    provider_rejected:
+      "Instagram rejected the connection request. Start a new connection from Integrations.",
+  };
+  return {
+    reason,
+    message: messages[reason],
+    ...(Number.isSafeInteger(code) ? { code } : {}),
+    ...(/^[A-Za-z_]{1,64}$/.test(rawType) ? { type: rawType } : {}),
+  };
+}
+
 type SocialConnectionRow = Pick<
   Database["public"]["Tables"]["social_connections"]["Row"],
   "id" | "provider_user_id" | "provider_handle" | "metadata" | "created_at"
@@ -119,17 +196,25 @@ async function metaJson(url: URL, stage: string, failureMessage: string) {
     headers: { Accept: "application/json", "User-Agent": "bento.surf-instagram-connect" },
     signal: AbortSignal.timeout(10_000),
   });
-  const data = metaPayloadSchema.parse(JSON.parse(await readResponseText(response, 256 * 1024)));
-  if (!response.ok || data.error) {
+  const payload: unknown = JSON.parse(await readResponseText(response, 256 * 1024));
+  const failure = instagramOAuthProviderFailure(payload, response.status);
+  if (failure) {
     console.warn("Meta connection request failed", {
       stage,
       status: response.status,
-      code: data.error?.code,
-      type: data.error?.type,
+      code: failure.code,
+      type: failure.type,
+      reason: failure.reason,
     });
-    throw new Error(failureMessage);
+    throw new Error(failure.reason === "provider_rejected" ? failureMessage : failure.message);
   }
-  return data;
+  return normalizeInstagramOAuthPayload(payload);
+}
+
+export function instagramTokenExchangeForm(fields: Record<string, string>) {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(fields)) form.set(key, value);
+  return form;
 }
 
 async function metaForm(
@@ -142,23 +227,24 @@ async function metaForm(
     method: "POST",
     headers: {
       Accept: "application/json",
-      "Content-Type": "application/x-www-form-urlencoded",
       "User-Agent": "bento.surf-instagram-connect",
     },
-    body: new URLSearchParams(fields),
+    body: instagramTokenExchangeForm(fields),
     signal: AbortSignal.timeout(10_000),
   });
-  const data = metaPayloadSchema.parse(JSON.parse(await readResponseText(response, 256 * 1024)));
-  if (!response.ok || data.error) {
+  const payload: unknown = JSON.parse(await readResponseText(response, 256 * 1024));
+  const failure = instagramOAuthProviderFailure(payload, response.status);
+  if (failure) {
     console.warn("Meta connection request failed", {
       stage,
       status: response.status,
-      code: data.error?.code,
-      type: data.error?.type,
+      code: failure.code,
+      type: failure.type,
+      reason: failure.reason,
     });
-    throw new Error(failureMessage);
+    throw new Error(failure.reason === "provider_rejected" ? failureMessage : failure.message);
   }
-  return data;
+  return normalizeInstagramOAuthPayload(payload);
 }
 
 export function missingInstagramConnectionScopes(
@@ -368,8 +454,7 @@ export const completeInstagramConnection = createServerFn({ method: "POST" })
         value: account.profilePictureUrl,
       });
       completionStage = "connection_storage";
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Connection health fields are ahead of generated database types.
-      const { data: savedConnection, error } = await (supabaseAdmin as any)
+      const { data: savedConnection, error } = await supabaseAdmin
         .from("social_connections")
         .upsert(
           {

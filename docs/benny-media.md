@@ -42,3 +42,30 @@ Instagram catalog previews can be sought for listening, but Meta currently expos
 no catalog start-offset parameter or finished-mix preview. Nonzero catalog offsets
 are rejected and temporary preview URLs are never used as publishing assets.
 No migration, extra provider or credentials are required.
+
+## Styles, previews and public post statistics
+
+Memory preferences include carousel cover/inner-page style previews and a presenter
+and voice gallery. Choosing a style does not authorize generation or publication.
+Approved non-avatar scene holds are retained when narration fits, and large
+retrievable context is bounded before recent creator edits are discarded.
+
+`get_public_post_stats` is available through native and ChatGPT MCP. It accepts a
+public Instagram, YouTube, TikTok, LinkedIn, X, Facebook, Threads or Reddit post URL.
+Each returned counter includes availability, evidence, observation time and precision.
+Missing values remain null. Optional connected-owner analytics requires explicit
+opt-in and authorization to the selected workspace; it is separate from public data.
+
+Public retrieval stays signed out, including the private metadata service. Downloader
+cookies are never passed to post-statistics extraction. Configure your own media
+gateway with `COBALT_API_URL` and `COBALT_API_KEY`; the bounded browser fallback uses
+the `BROWSER` binding and existing atomic provider budgets. No hosted service access
+or paid-data subscription is included. `POST_STATS_MANAGED_ENABLED=false` is the
+committed default. Corporate free-tool marketing pages are outside this repository.
+
+Some Instagram shares/reposts and LinkedIn video views/reposts are unavailable
+without authenticated platform access. Business Discovery and owner analytics need
+the operator's eligible platform permissions. No every-link/every-counter guarantee
+is implied. Text-carousel background export remains disabled by default; provision
+your queue and rendering service, then explicitly set
+`BENTO_V2_STUDIO_SERVER_CAROUSELS=true` after verifying your own cost controls.

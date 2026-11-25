@@ -1,3 +1,4 @@
+import { seoPublicOrigin } from "./application-urls";
 import { publicProductUrl, publicProfileUrl } from "./application-urls";
 import {
   creatorIndexingMeta,
@@ -26,7 +27,11 @@ type PublicCalendarSeoData = {
 };
 
 export function publicCalendarHead(data: PublicCalendarSeoData, baseUrl?: string) {
-  const canonical = publicProfileUrl(data.profile.username, "calendar", baseUrl);
+  const canonical = publicProfileUrl(
+    data.profile.username,
+    "calendar",
+    seoPublicOrigin(baseUrl, import.meta.env.VITE_APP_ENV === "staging"),
+  );
   const base = new URL(canonical).origin;
   const creatorName = data.profile.displayName || data.profile.username;
   const calendarName = data.pages.find((page) => page.system === "calendar")?.name || "Calendar";

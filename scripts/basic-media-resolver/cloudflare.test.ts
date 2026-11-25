@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+vi.mock("./service.py", () => ({ default: "# reviewed test service\n" }));
 
 vi.mock("@cloudflare/containers", () => ({
   Container: class {
@@ -18,6 +19,12 @@ vi.mock("@cloudflare/containers", () => ({
     }
     renewActivityTimeout() {}
     async containerFetch(request: Request) {
+      if (new URL(request.url).pathname === "/stats")
+        return Response.json({
+          platform: "youtube",
+          id: "dQw4w9WgXcQ",
+          counts: { views: 10, likes: 2, comments: 0 },
+        });
       if (new URL(request.url).pathname === "/resolve")
         return Response.json({
           id: "a".repeat(32),
@@ -61,6 +68,32 @@ function request(path: string) {
   });
 }
 describe("container job handoff", () => {
+  it("reserves a bounded metadata attempt and never consumes media-transfer bytes", async () => {
+    const { create, values } = setup();
+    const response = await create().fetch(
+      new Request("https://private-media/stats", {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ url: "https://youtu.be/dQw4w9WgXcQ" }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ counts: { views: 10, likes: 2, comments: 0 } });
+    expect(values.has("attempts")).toBe(true);
+    expect(values.has("transfer")).toBe(false);
+    expect(values.get("serviceRevision")).toMatch(/^[a-f0-9]{64}$/);
+    expect(create().entrypoint?.[2]).toContain("runpy.run_path");
+    const warm = create();
+    const destroy = vi.spyOn(warm, "destroy");
+    await warm.fetch(
+      new Request("https://private-media/stats", {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ url: "https://youtu.be/dQw4w9WgXcQ" }),
+      }),
+    );
+    expect(destroy).not.toHaveBeenCalled();
+  });
   it("reports private usage without consuming attempts or exposing credentials", async () => {
     const { create, values } = setup();
     const attempts = { day: "2026-11-21", month: "2026-11", daily: 50, monthly: 50 };

@@ -1,3 +1,4 @@
+import { seoPublicOrigin } from "@/lib/application-urls";
 import { PublicCreatorShell } from "@/components/public/PublicCreatorShell";
 import { PublicSystemPageCanvas } from "@/components/public/PublicSystemPageCanvas";
 import { PublicStoreProductCard } from "@/components/commerce/PublicStoreProductCard";
@@ -55,7 +56,10 @@ export const Route = createFileRoute("/$username_/store")({
             href: publicProfileUrl(
               loaderData.profile.username,
               "store",
-              import.meta.env.VITE_PUBLIC_URL,
+              seoPublicOrigin(
+                import.meta.env.VITE_PUBLIC_URL,
+                import.meta.env.VITE_APP_ENV === "staging",
+              ),
             ),
           },
         ]

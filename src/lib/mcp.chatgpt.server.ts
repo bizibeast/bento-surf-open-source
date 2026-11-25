@@ -20,7 +20,8 @@ import type { getInstagramAudioCatalogForMcp } from "./instagram-audio.server";
 export const CHATGPT_MCP_PATH = "/chatgpt/mcp";
 export const CHATGPT_MCP_INSTRUCTIONS =
   "For social posts across brands, call list_workspaces, then pass each active workspaceId to account, media, scheduling, and verification tools. Create and verify a separate post in each workspace; connection IDs and media keys cannot cross workspaces. Omission uses the original workspace. " +
-  "Use list tools to read IDs before creating or updating. Counts are summaries, not proof of individual posts; paginate list_social_posts and retain publication and metric timestamps. Page tools edit the creator's public link-in-bio. Social tools save a draft or a scheduled post in Bento. Create Auto-DM starts paused unless enabled is true. This server has no store, product, discount, checkout, payment, booking, or referral tools.";
+  "Use list tools to read IDs before creating or updating. Counts are summaries, not proof of individual posts; paginate list_social_posts and retain publication and metric timestamps. Page tools edit the creator's public link-in-bio. Social tools save a draft or a scheduled post in Bento. Create Auto-DM starts paused unless enabled is true. This server has no store, product, discount, checkout, payment, booking, or referral tools. " +
+  "For one workspace, create one post with all selected connectionIds and complete media objects from upload_media or upload completion. For separate workspaces create separate posts. For local videos over 8 MB use begin_media_upload and do not compress merely to fit MCP. Stock photos are not proof of the creator’s own product, face, customer, or event. Never refresh providers merely to read. For TikTok scheduling select an allowed privacy level and provide one video or up to 10 ordered JPEG or WebP images. For YouTube Shorts set the format to short; thumbnails may need YouTube Studio. Confirm ownership or permission for downloaded media. Publish, delete, or send only when explicitly requested by the user.";
 
 /** Checkout, paid booking, and tip blocks stay on the full MCP server. */
 const HIDDEN_BLOCK_TYPES = new Set(["booking", "commerce", "tip_jar"]);
@@ -79,7 +80,7 @@ const tiktokPostSettingsSchema = z
       .min(1)
       .optional()
       .describe(
-        "Required when scheduling a TikTok post. Use a privacy level allowed for the connected account.",
+        "Privacy level allowed for the connected account, required when scheduling a TikTok post.",
       ),
     disableComment: z.boolean().optional(),
     disableDuet: z.boolean().optional(),
@@ -320,7 +321,7 @@ export function registerChatGptTools(
   register(
     "list_workspaces",
     "List Bento workspaces",
-    "List workspaces owned by this login. Use an active workspace ID when scheduling for another brand.",
+    "List workspaces owned by this login.",
     READ,
     z.object({}),
     async () =>
@@ -376,9 +377,9 @@ export function registerChatGptTools(
     "Create a secondary Bento page with a name and an optional public URL.",
     {
       readOnlyHint: false,
-      destructiveHint: true,
+      destructiveHint: false,
       idempotentHint: false,
-      openWorldHint: false,
+      openWorldHint: true,
     },
     z.object({
       name: z.string().min(1).max(40),
@@ -396,9 +397,9 @@ export function registerChatGptTools(
     "Rename one Bento page the creator owns.",
     {
       readOnlyHint: false,
-      destructiveHint: true,
+      destructiveHint: false,
       idempotentHint: true,
-      openWorldHint: false,
+      openWorldHint: true,
     },
     z.object({ id: z.uuid(), name: z.string().min(1).max(40) }),
     async (input) =>
@@ -410,12 +411,12 @@ export function registerChatGptTools(
   register(
     "reorder_pages",
     "Reorder pages",
-    "Set the order of the creator's visible pages. Pass every visible page ID once.",
+    "Set the order of the creator's visible pages from a complete list of page IDs.",
     {
       readOnlyHint: false,
-      destructiveHint: true,
+      destructiveHint: false,
       idempotentHint: true,
-      openWorldHint: false,
+      openWorldHint: true,
     },
     z.object({ pageIds: z.array(z.uuid()).min(1).max(100) }),
     async ({ pageIds }) =>
@@ -432,7 +433,7 @@ export function registerChatGptTools(
       readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: true,
-      openWorldHint: false,
+      openWorldHint: true,
     },
     z.object({ id: z.uuid() }),
     async ({ id }) =>
@@ -444,7 +445,7 @@ export function registerChatGptTools(
   register(
     "list_page_blocks",
     "List page blocks",
-    "List link, media, text, and layout blocks. Pass pageId to limit the list to one page. Omit pageId to include home-page blocks.",
+    "List link, media, text, and layout blocks, optionally filtered by page ID.",
     READ,
     z.object({ pageId: z.uuid().optional() }),
     async ({ pageId }) => {
@@ -470,12 +471,12 @@ export function registerChatGptTools(
   register(
     "create_page_block",
     "Create page block",
-    "Add a link, image, video, audio, file, heading, note, quote, map, Spotify, email-capture, contact, divider, or section block to a page. Omit pageId to place it on the home page.",
+    "Add a link, image, video, audio, file, heading, note, quote, map, Spotify, email-capture, contact, divider, or section block to a page. The default location is the home page.",
     {
       readOnlyHint: false,
-      destructiveHint: true,
+      destructiveHint: false,
       idempotentHint: false,
-      openWorldHint: false,
+      openWorldHint: true,
     },
     z.object({
       type: pageBlockTypeSchema,
@@ -501,7 +502,7 @@ export function registerChatGptTools(
       readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: true,
-      openWorldHint: false,
+      openWorldHint: true,
     },
     z.object({
       id: z.uuid(),
@@ -521,12 +522,12 @@ export function registerChatGptTools(
   register(
     "reorder_page_blocks",
     "Reorder page blocks",
-    "Move blocks on the creator's page grid. Pass the new x, y, width, height, and position for each block you want to place.",
+    "Move blocks on the creator's page grid with coordinates, dimensions, and positions.",
     {
       readOnlyHint: false,
-      destructiveHint: true,
+      destructiveHint: false,
       idempotentHint: true,
-      openWorldHint: false,
+      openWorldHint: true,
     },
     z.object({ items: z.array(blockLayoutItemSchema).max(200) }),
     async ({ items }) => {
@@ -545,7 +546,7 @@ export function registerChatGptTools(
       readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: true,
-      openWorldHint: false,
+      openWorldHint: true,
     },
     z.object({ id: z.uuid() }),
     async ({ id }) => {
@@ -559,7 +560,7 @@ export function registerChatGptTools(
   register(
     "list_social_accounts",
     "List social accounts",
-    "List connected social profiles in one workspace and whether each one can publish or run Auto-DMs. Use list_workspaces before selecting another brand.",
+    "List connected social profiles in one workspace and whether each one can publish or run Auto-DMs.",
     READ,
     z.object({ workspaceId: z.uuid().optional(), provider: socialProviderSchema.optional() }),
     async ({ workspaceId, provider }) => {
@@ -593,7 +594,7 @@ export function registerChatGptTools(
   register(
     "list_social_posts",
     "List social posts",
-    "List stored Scheduler posts with full captions and destination settings. Follow pagination.nextCursor using cursor. status is parent state; targetStatus is platform state; date bounds default to destination published_at. No provider refresh.",
+    "List stored Scheduler posts with full captions and destination settings. Pagination is available through cursor and pagination.nextCursor. status is parent state; targetStatus is platform state; date bounds default to destination published_at. No provider refresh.",
     READ,
     z.object({
       workspaceId: z.uuid().optional(),
@@ -614,7 +615,7 @@ export function registerChatGptTools(
   register(
     "draft_social_post",
     "Draft social post",
-    "Save a new social post as a draft in Bento. Pass uploaded media objects in media. TikTok accepts one video or up to 10 ordered JPEG or WebP images; set providerSettings.tiktok.privacyLevel before scheduling. For Instagram Reel music, first read get_instagram_audio_catalog, then set providerSettings.instagram.catalogAudio with the selected track and exact video/account. For YouTube Shorts set providerSettings.youtube.youtubeFormat to short. This does not publish or schedule it.",
+    "Save a new social post as a draft in Bento with media objects and platform settings. TikTok accepts one video or up to 10 ordered JPEG or WebP images. This does not publish or schedule it.",
     {
       readOnlyHint: false,
       destructiveHint: false,
@@ -649,7 +650,7 @@ export function registerChatGptTools(
   register(
     "schedule_social_post",
     "Schedule social post",
-    "Create a social post, or schedule an existing draft when id is set, for a future time on the selected accounts. Pass uploaded media objects in media. For TikTok pass one video or up to 10 ordered JPEG or WebP images and set providerSettings.tiktok.privacyLevel. For Instagram Reel music, first read get_instagram_audio_catalog, then set providerSettings.instagram.catalogAudio with the selected track and exact video/account. For YouTube Shorts set providerSettings.youtube.youtubeFormat to short; YouTube may require setting the thumbnail in Studio. This does not publish immediately.",
+    "Create a social post or schedule an existing draft for selected accounts. Supports uploaded media objects and platform settings. TikTok accepts one video or up to 10 ordered JPEG or WebP images; YouTube may require Shorts thumbnails to be set in Studio. This does not publish immediately.",
     {
       readOnlyHint: false,
       destructiveHint: true,
@@ -685,7 +686,7 @@ export function registerChatGptTools(
   register(
     "update_social_post",
     "Update social post",
-    "Replace the caption, title, destinations, media, and provider settings of one existing social post. Pass scheduledAt to keep or set a future publish time. For TikTok photo carousels pass up to 10 ordered JPEG or WebP images and providerSettings.tiktok.privacyLevel. For Instagram Reel music, first read get_instagram_audio_catalog, then set providerSettings.instagram.catalogAudio with the selected track and exact video/account. For YouTube Shorts set providerSettings.youtube.youtubeFormat to short. Omit scheduledAt to store it as a draft. This does not publish immediately.",
+    "Replace the caption, title, destinations, media, and provider settings of one existing social post. An optional scheduledAt sets a future publish time; otherwise the post is stored as a draft. TikTok photo carousels accept up to 10 ordered JPEG or WebP images. This does not publish immediately.",
     {
       readOnlyHint: false,
       destructiveHint: true,
@@ -899,7 +900,7 @@ export function registerChatGptTools(
   register(
     "list_uploaded_media",
     "List uploaded media",
-    "Recover existing public image, video, and file media objects from the creator's Bento workspace without uploading them again. Follow nextCursor until null. Pass a returned media object directly to a social post; private product files are excluded.",
+    "Recover existing public image, video, and file media objects from the creator's Bento workspace without uploading them again. Results include a pagination cursor; private product files are excluded.",
     {
       readOnlyHint: true,
       destructiveHint: false,
@@ -974,10 +975,10 @@ export function registerChatGptTools(
   register(
     "create_auto_dm_automation",
     "Create Auto-DM automation",
-    "Create an Instagram, Facebook, or X Auto-DM automation. It stays paused unless enabled is true. Use set_auto_dm_enabled to turn a paused automation on.",
+    "Create an Instagram, Facebook, or X Auto-DM automation. It stays paused unless enabled is true.",
     {
       readOnlyHint: false,
-      destructiveHint: true,
+      destructiveHint: false,
       idempotentHint: false,
       openWorldHint: true,
     },
@@ -1039,7 +1040,7 @@ export function registerChatGptTools(
     "Enable or pause one Instagram, Facebook, or X Auto-DM automation. Enabling lets that automation message people on the connected account.",
     {
       readOnlyHint: false,
-      destructiveHint: true,
+      destructiveHint: false,
       idempotentHint: true,
       openWorldHint: true,
     },

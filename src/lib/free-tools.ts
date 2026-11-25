@@ -24,6 +24,7 @@ export type FreeToolKind =
   | "video-downloader"
   | "cover-downloader"
   | "url-transcript"
+  | "post-stats"
   | "transcript";
 
 export const aiFreeToolKinds = [
@@ -414,6 +415,50 @@ const platformCaptionTools: FreeTool[] = [
 ];
 
 export const freeTools: FreeTool[] = [
+  {
+    slug: "social-media-post-stats",
+    name: "Free social media post stats checker",
+    shortName: "Post stats",
+    description:
+      "Paste a public social post or video link to check the counts its platform exposes.",
+    category: "Measure",
+    kind: "post-stats",
+    seoTitle: "Free Social Media Post Stats Checker | Bento",
+    seoDescription:
+      "Check public likes, views, comments and shares from a social post link. See platform-specific counts, source and retrieval time. Also available through MCP.",
+    howItWorks: [
+      "Paste a public post or video link.",
+      "Bento reads that post's publicly exposed counters.",
+      "Review the available counts and retrieval time, or copy the results.",
+    ],
+    tips: [
+      "Supports Instagram, YouTube, TikTok, LinkedIn, X, Facebook, Threads and Reddit post links.",
+      "Unavailable counts are not zero. Platforms may hide counts or restrict public access.",
+      "Public snapshots can be cached for five minutes. Signed-in users can opt into their workspace's connected-account analytics.",
+    ],
+    faqs: [
+      {
+        question: "Can I check any social post?",
+        answer:
+          "Use a public post link from a supported platform. Private, deleted, login-only or restricted posts may return no counts. Profile pages and unsupported websites are not accepted.",
+      },
+      {
+        question: "Why are some counts unavailable?",
+        answer:
+          "Each platform exposes different counters. Shares, saves and video views may be hidden. Bento returns only observed public counts and does not infer missing data.",
+      },
+      {
+        question: "Can I use this through MCP?",
+        answer:
+          "Yes. Connect Bento MCP and call get_public_post_stats with the post URL. It uses the same public-data rules and cache as this tool.",
+      },
+    ],
+    relatedSlugs: [
+      "social-media-downloader",
+      "youtube-to-transcript",
+      "instagram-caption-generator",
+    ],
+  },
   {
     slug: "utm-link-builder",
     name: "Free UTM Link Builder",
@@ -2161,7 +2206,7 @@ export const freeTools: FreeTool[] = [
     relatedSlugs: [
       "youtube-video-downloader",
       "instagram-carousel-downloader",
-      "twitter-image-downloader",
+      "social-media-post-stats",
     ],
   },
   {

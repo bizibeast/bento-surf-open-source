@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   chatAccess: vi.fn(),
   imageAvailable: vi.fn(),
   validatePhotos: vi.fn(),
+  managedAssets: vi.fn(),
 }));
 vi.mock("@tanstack/react-start", () => ({
   createServerOnlyFn: (handler: unknown) => handler,
@@ -19,9 +20,17 @@ vi.mock("@tanstack/react-start", () => ({
         return fn;
       },
       handler:
-        (handler: (input: { context: { userId: string }; data: unknown }) => unknown) =>
+        (
+          handler: (input: {
+            context: { userId: string; workspaceId: string; authUserId: string };
+            data: unknown;
+          }) => unknown,
+        ) =>
         async (input?: { data?: unknown }) =>
-          handler({ context: { userId: "workspace" }, data: validate(input?.data) }),
+          handler({
+            context: { userId: "workspace", workspaceId: "workspace", authUserId: "login" },
+            data: validate(input?.data),
+          }),
     };
     return fn;
   },
@@ -30,6 +39,7 @@ vi.mock("@/integrations/supabase/auth-middleware", () => ({ requireSupabaseAuth:
 vi.mock("@/integrations/supabase/client.server", () => ({ supabaseAdmin: { rpc: mocks.rpc } }));
 vi.mock("./content-access.server", () => ({ requireContentWorkspace: mocks.access }));
 vi.mock("./benny-byok.server", () => ({ requireBennyChatAccess: mocks.chatAccess }));
+vi.mock("./external-tools.server", () => ({ requireManagedHeyGenAssets: mocks.managedAssets }));
 
 vi.mock("./content-agent-images.server", () => ({
   imageProviderAvailable: mocks.imageAvailable,
@@ -53,10 +63,56 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.chatAccess.mockResolvedValue(undefined);
   mocks.imageAvailable.mockReturnValue(true);
+  mocks.managedAssets.mockResolvedValue(undefined);
   mocks.rpc.mockResolvedValue({ data: state, error: null });
 });
 
 describe("content agent identity and preferences", () => {
+  it("saves an assigned presenter only after checking the authenticated workspace", async () => {
+    const presenter = {
+      avatarId: "look",
+      name: "Annie",
+      voiceId: "voice",
+      billing: "managed",
+      scope: "public",
+    };
+    await preferences.updateContentAgentPreferences({ data: { branding: { presenter } } } as never);
+    expect(mocks.managedAssets).toHaveBeenCalledWith(
+      { workspaceId: "workspace", authUserId: "login", clientId: "bento-browser" },
+      "look",
+      "voice",
+    );
+    expect(mocks.rpc).toHaveBeenCalledWith(
+      "update_content_agent_preferences",
+      expect.objectContaining({
+        p_user_id: "workspace",
+        p_patch: expect.objectContaining({ branding: expect.objectContaining({ presenter }) }),
+      }),
+    );
+  });
+  it("rejects an unauthorized managed presenter before saving preferences", async () => {
+    mocks.managedAssets.mockRejectedValueOnce(
+      new Error("This presenter is not assigned to your workspace"),
+    );
+    await expect(
+      preferences.updateContentAgentPreferences({
+        data: {
+          branding: {
+            presenter: {
+              avatarId: "foreign",
+              name: "Foreign",
+              voiceId: null,
+              billing: "managed",
+              scope: "public",
+            },
+          },
+        },
+      } as never),
+    ).rejects.toThrow("not assigned");
+    expect(mocks.rpc.mock.calls.some(([name]) => name === "update_content_agent_preferences")).toBe(
+      false,
+    );
+  });
   it("uses the active workspace when creating the named agent", async () => {
     expect(preferences.getOrCreateNamedAgentThread).toBeTypeOf("function");
     await preferences.getOrCreateNamedAgentThread();

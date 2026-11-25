@@ -61,6 +61,19 @@ describe("reference tools on both MCP endpoints", () => {
       }
       const listed = await rpc("tools/list", {});
       const names = listed.result.tools.map((t: { name: string }) => t.name);
+      if (factory === createChatGptMcpServer) {
+        expect(names).toContain("get_public_post_stats");
+        expect(names).toContain("transcribe_free_audio");
+        for (const name of [
+          "run_free_media_tool",
+          "analyze_content_reference",
+          "create_video_frame_grid",
+          "get_content_reference",
+          "create_content_from_reference",
+        ])
+          expect(names).not.toContain(name);
+        return;
+      }
       expect(names).toEqual(
         expect.arrayContaining([
           "run_free_media_tool",
@@ -94,7 +107,8 @@ describe("reference tools on both MCP endpoints", () => {
     vi.stubEnv("APP_ENV", "staging");
     vi.stubEnv("SUPABASE_URL", "https://pjraekywkqilhaqrxzpe.supabase.co");
     const response = await handleBentoMcpRequest(
-      new Request("https://mcp.test.bento.surf/.well-known/oauth-protected-resource/chatgpt/mcp"), "https://mcp.test.bento.surf",
+      new Request("https://mcp.test.bento.surf/.well-known/oauth-protected-resource/chatgpt/mcp"),
+      "https://mcp.test.bento.surf",
     );
     expect(response?.status).toBe(200);
     expect(await response?.json()).toMatchObject({

@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { createCheckout, getCheckoutOffer, getMyBillingOverview } from "./billing.functions";
 import { captureProductEvent } from "./posthog";
 import { getCreatorPaymentSettings } from "./payment-connections.functions";
@@ -33,8 +34,12 @@ export async function requestConnectPayments(input: { plan: PlanId; locked: bool
     trialEligible: offer.trialEligible,
   });
   captureProductEvent("connect_payments_clicked", { plan: input.plan, outcome });
-  const { url } = await createCheckout({ data: STORE_PAYMENTS_CHECKOUT });
-  const destination = safeNavigationHref(url);
+  const result = await createCheckout({ data: STORE_PAYMENTS_CHECKOUT });
+  if (result.alreadyOnPlan) {
+    toast.success(result.message);
+    return { outcome: "already_on_plan" as const, url: null };
+  }
+  const destination = safeNavigationHref(result.url);
   if (!destination) throw new Error("Checkout returned an invalid destination.");
   return { outcome, url: destination };
 }
@@ -57,7 +62,7 @@ export async function followConnectPayments(input: {
     window.location.assign(result.url);
     return result;
   }
-  await input.connect();
+  if (result.outcome !== "already_on_plan") await input.connect();
   return result;
 }
 
