@@ -107,3 +107,8 @@ export function publicProductUrl(
     productSlug,
   )}`;
 }
+
+// Self-hosted SEO uses the operator's configured public origin in every environment.
+export function seoPublicOrigin(value?: string, _staging = false) {
+  return configuredPublicOrigin(value).replace(/\/$/, "");
+}

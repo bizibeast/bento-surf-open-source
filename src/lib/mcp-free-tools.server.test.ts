@@ -41,9 +41,33 @@ function registry() {
 }
 
 describe("Bento MCP free tool catalog", () => {
+  it("checks workspace ownership before reading public post stats", async () => {
+    const { server, tools } = registry();
+    const getMcpPublicPostStats = vi.fn(async () => ({
+      status: "partial",
+      metrics: [{ key: "likes", value: 0 }],
+    }));
+    registerMcpFreeTools(server, authInfo, {
+      ...defaultMcpFreeToolOperations,
+      getMcpPublicPostStats,
+      resolveMcpWorkspaceId: async (_user, id) => {
+        if (id === foreignId) throw new Error("Workspace is unavailable.");
+        return id ?? ownerId;
+      },
+    });
+    const tool = tools.get("get_public_post_stats")!;
+    await expect(
+      tool.execute({ workspaceId: foreignId, url: "https://instagram.com/reel/exact" }),
+    ).rejects.toThrow("Workspace is unavailable");
+    expect(getMcpPublicPostStats).not.toHaveBeenCalled();
+    await tool.execute({ workspaceId: brandId, url: "https://instagram.com/reel/exact" });
+    expect(getMcpPublicPostStats).toHaveBeenCalledWith(brandId, {
+      url: "https://instagram.com/reel/exact",
+    });
+  });
   it("maps every public free tool to a runnable MCP operation", () => {
     const listed = listMcpFreeTools();
-    expect(listed).toHaveLength(59);
+    expect(listed).toHaveLength(60);
     expect(listed.map((tool) => tool.slug).sort()).toEqual(
       freeTools.map((tool) => tool.slug).sort(),
     );
@@ -55,6 +79,7 @@ describe("Bento MCP free tool catalog", () => {
           "run_free_media_tool",
           "run_free_image_tool",
           "transcribe_free_audio",
+          "get_public_post_stats",
         ].map((name) => [name, listed.filter((tool) => tool.runWith === name).length]),
       ),
     ).toEqual({
@@ -63,6 +88,7 @@ describe("Bento MCP free tool catalog", () => {
       run_free_media_tool: 15,
       run_free_image_tool: 5,
       transcribe_free_audio: 1,
+      get_public_post_stats: 1,
     });
     expect(listed.every((tool) => tool.inputHints.length && tool.url.endsWith(tool.slug))).toBe(
       true,

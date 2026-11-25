@@ -1,6 +1,7 @@
 """Private, bounded public-video extraction. Credentials never enter responses/logs."""
 import contextlib
 import hmac
+import hashlib
 import html
 import json
 import math
@@ -9,6 +10,8 @@ from pathlib import Path
 import re
 import secrets
 import subprocess
+import sys
+import signal
 import tempfile
 import threading
 import time
@@ -18,6 +21,7 @@ from urllib.parse import parse_qs, urlsplit, urljoin
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 AUTH = os.environ.pop('INTERNAL_TOKEN', '')
+SERVICE_REVISION = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 COOKIE_JAR = os.environ.pop('YOUTUBE_COOKIE_JAR', '')
 MAX_BYTES = 5 * 1024 ** 3
 MAX_SECONDS = 24 * 60 * 60
@@ -162,6 +166,7 @@ def tiktok_embed_info(video_id, page_url=None):
 
 def tiktok_item_info(video_id, item):
     if not isinstance(item, dict) or str(item.get('id')) != video_id:raise Failure('error.api.content.unavailable')
+    if item.get('privateItem') or item.get('isSecret') or (item.get('author') or {}).get('privateAccount'):raise Failure('error.api.content.video.private')
     video = item.get('video') or {}
     formats = []
     for name in ('playAddr', 'downloadAddr'):
@@ -170,7 +175,36 @@ def tiktok_item_info(video_id, item):
         for url in urls[:5]:
             if not isinstance(url, str):continue
             formats.append({'url': url, 'protocol': 'https', 'vcodec': 'h264', 'acodec': 'aac', 'width': video.get('width'), 'height': video.get('height')})
-    return {'id': video_id, 'extractor_key': 'TikTok', 'duration': video.get('duration'), 'availability': 'public', 'formats': formats, 'http_headers': {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.tiktok.com/'}}
+    stats = item.get('statsV2') or item.get('stats') or {}
+    counters = {key: int(stats[field]) for key, field in [('view_count','playCount'),('like_count','diggCount'),('comment_count','commentCount'),('repost_count','shareCount'),('save_count','collectCount')] if isinstance(stats.get(field),(int,str)) and not isinstance(stats.get(field),bool) and re.fullmatch(r'\d+',str(stats[field]))}
+    return {'id': video_id, 'extractor_key': 'TikTok', 'duration': video.get('duration'), 'availability': 'public', 'formats': formats, 'http_headers': {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.tiktok.com/'}, **counters}
+
+
+def extraction_options(platform, temp, statistics=False):
+    options = {'compat_opts': {'no-certifi'}, 'quiet': True, 'no_warnings': True, 'logger': Quiet(), 'noplaylist': True, 'cachedir': False, 'socket_timeout': 8, 'retries': 1, 'extractor_retries': 1, 'fragment_retries': 1, 'js_runtimes': {'node': {'path': '/usr/local/bin/node'}}}
+    if platform == 'youtube' and COOKIE_JAR and not statistics:
+        # Only YouTube-domain entries are allowed; never use this jar for TikTok.
+        lines = []
+        for raw in COOKIE_JAR.splitlines():
+            line = raw.removeprefix('#HttpOnly_')
+            if not line or line.startswith('#'):
+                continue
+            fields = line.split('\t')
+            if len(fields) != 7 or fields[0] not in ('.youtube.com', 'youtube.com', 'www.youtube.com') or fields[2] != '/' or any('\r' in f or '\x00' in f for f in fields):
+                raise Failure('error.api.youtube.login')
+            lines.append(line)
+        path = os.path.join(temp, 'cookies.txt')
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, 'w') as out:
+            out.write('# Netscape HTTP Cookie File\n' + '\n'.join(lines) + '\n')
+        options['cookiefile'] = path
+    if statistics:
+        options.update({"skip_download": True, "ignore_no_formats_error": True, "retries": 0, "extractor_retries": 0, "fragment_retries": 0})
+        if platform == 'youtube':
+            # Counters need neither playback manifests nor JavaScript signature
+            # solving. Avoid CDN reads entirely instead of widening the guard.
+            options['extractor_args'] = {'youtube': {'skip': ['hls', 'dash'], 'player_skip': ['js']}}
+    return options
 
 
 def extract(value):
@@ -183,23 +217,7 @@ def extract(value):
         # identity and media before any response bytes are sent to the caller.
         return register_job(platform, expected, mode, [], native_source=url, quality=quality)
     with tempfile.TemporaryDirectory(prefix='media-auth-') as temp:
-        options = {'compat_opts': {'no-certifi'}, 'quiet': True, 'no_warnings': True, 'logger': Quiet(), 'noplaylist': True, 'cachedir': False, 'socket_timeout': 8, 'retries': 1, 'extractor_retries': 1, 'fragment_retries': 1, 'js_runtimes': {'node': {'path': '/usr/local/bin/node'}}}
-        if platform == 'youtube' and COOKIE_JAR:
-            # Only YouTube-domain entries are allowed; never use this jar for TikTok.
-            lines = []
-            for raw in COOKIE_JAR.splitlines():
-                line = raw.removeprefix('#HttpOnly_')
-                if not line or line.startswith('#'):
-                    continue
-                fields = line.split('\t')
-                if len(fields) != 7 or fields[0] not in ('.youtube.com', 'youtube.com', 'www.youtube.com') or fields[2] != '/' or any('\r' in f or '\x00' in f for f in fields):
-                    raise Failure('error.api.youtube.login')
-                lines.append(line)
-            path = os.path.join(temp, 'cookies.txt')
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(fd, 'w') as out:
-                out.write('# Netscape HTTP Cookie File\n' + '\n'.join(lines) + '\n')
-            options['cookiefile'] = path
+        options = extraction_options(platform, temp)
         try:
             with yt_dlp.YoutubeDL(options) as ydl:
                 info = ydl.extract_info(url, download=False)
@@ -219,6 +237,95 @@ def extract(value):
                     headers[key] = val
             inputs.append({'url': media_url(platform, f['url']), 'headers': headers, 'acodec': str(f.get('acodec', ''))})
         return register_job(platform, info['id'], mode, inputs, **({'native_source': url, 'quality': quality} if platform == 'tiktok' else {}))
+
+
+def statistics_source(url):
+    try:return source(url)
+    except Failure:pass
+    if not isinstance(url, str) or len(url) > 2048:raise Failure('error.api.link.invalid')
+    p = urlsplit(url)
+    if p.scheme != 'https' or p.username or p.password or p.port or p.hostname not in ('www.facebook.com','facebook.com','m.facebook.com'):raise Failure('error.api.link.invalid')
+    match = re.fullmatch(r'/(?:reel|[A-Za-z0-9._-]+/videos)/(\d{1,24})/?',p.path)
+    identity = match[1] if match else parse_qs(p.query).get('v',[''])[0] if p.path.rstrip('/') == '/watch' else ''
+    if not re.fullmatch(r'\d{1,24}',identity):raise Failure('error.api.link.invalid')
+    return 'facebook',identity,'https://www.facebook.com/watch?v='+identity
+
+
+def statistics_info(platform, expected, info):
+    if not isinstance(info, dict) or str(info.get('id', '')) != str(expected):
+        raise Failure('error.api.content.unavailable')
+    extractor = str(info.get('extractor_key', '')).lower()
+    if extractor != platform and not (platform == 'facebook' and extractor.startswith('facebook')):
+        raise Failure('error.api.content.unavailable')
+    if not re.fullmatch(r'[A-Za-z0-9_-]{11}' if platform == 'youtube' else r'\d{1,24}', str(info.get('id', ''))):
+        raise Failure('error.api.content.unavailable')
+    if (platform == 'youtube' and info.get('availability') != 'public') or info.get('availability') not in (None, 'public') or info.get('is_private') or info.get('is_unlisted') or info.get('age_limit', 0):
+        raise Failure('error.api.content.video.private')
+    counts = {}
+    for output, field in [('views', 'view_count'), ('likes', 'like_count'), ('comments', 'comment_count'), ('shares' if platform in ('tiktok','facebook') else 'reposts', 'repost_count'), ('saves', 'save_count')]:
+        value = info.get(field)
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0 and int(value) == value and value <= 9007199254740991:
+            counts[output] = int(value)
+    return {'platform': platform, 'id': str(info['id']), 'counts': counts}
+
+
+def extract_statistics(url, folder):
+    import yt_dlp
+    platform, expected, canonical = statistics_source(url)
+    options = extraction_options(platform, folder, statistics=True)
+    with yt_dlp.YoutubeDL(options) as ydl:
+        original = ydl.urlopen
+        requests = 0
+        def guarded(req):
+            nonlocal requests
+            requests += 1
+            target = req if isinstance(req, str) else req.url
+            parsed = urlsplit(target)
+            host = parsed.hostname or ''
+            domains = ('youtube.com', 'youtu.be', 'youtube-nocookie.com', 'ytimg.com', 'googleapis.com') if platform == 'youtube' else ('facebook.com','facebook.net','fbcdn.net') if platform == 'facebook' else ('tiktok.com', 'tiktokv.com', 'tiktokapis.com')
+            if requests > 16 or parsed.scheme != 'https' or parsed.username or parsed.password or parsed.port not in (None, 443) or not any(host == d or host.endswith('.' + d) for d in domains):
+                raise Failure('error.api.fetch.fail')
+            response = original(req)
+            final = urlsplit(response.url)
+            if final.scheme != 'https' or final.username or final.password or not any(final.hostname == d or (final.hostname or '').endswith('.' + d) for d in domains):
+                response.close()
+                raise Failure('error.api.fetch.fail')
+            return response
+        ydl.urlopen = guarded
+        try:info = ydl.extract_info(canonical, download=False)
+        except Exception as error:
+            if platform == 'youtube':
+                message = str(error).lower()
+                raise Failure('error.api.youtube.login' if any(s in message for s in ('sign in', 'login', 'cookies', 'bot')) else 'error.api.youtube.metadata') from None
+            if platform != 'tiktok' or not expected:raise
+            info = tiktok_embed_info(expected, canonical)
+    return statistics_info(platform, expected or info.get('id'), info)
+
+
+def statistics(value):
+    platform, _, canonical = statistics_source(value.get('url'))
+    with tempfile.TemporaryDirectory(prefix='metadata-only-') as folder:
+        payload = {'url': canonical, 'directory': folder, 'cookieJar': ''}
+        env = {k: v for k, v in os.environ.items() if k in ('PATH', 'LANG', 'LC_ALL', 'SSL_CERT_FILE')}
+        proc = subprocess.Popen([sys.executable, str(Path(__file__)), '--stats-child'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, env=env, start_new_session=True)
+        try:
+            out, _ = proc.communicate(json.dumps(payload), timeout=38)
+            if proc.returncode:
+                raise Failure('error.api.metadata.child_exit')
+            if len(out.encode()) > 8192:
+                raise Failure('error.api.metadata.child_output')
+            result = json.loads(out)
+            if result.get('error'):
+                raise Failure(result['error'])
+            return result
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError):os.killpg(proc.pid, signal.SIGKILL)
+            proc.communicate()
+            raise Failure('error.api.fetch.fail') from None
+        finally:
+            if proc.poll() is None:
+                with contextlib.suppress(ProcessLookupError):os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
 
 
 def register_job(platform, identity, mode, inputs, **native):
@@ -313,7 +420,7 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
     def log_message(self, *_): pass
     def reply(self, status, value):
-        body = json.dumps(value).encode(); self.send_response(status); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(body))); self.send_header('Cache-Control', 'no-store'); self.end_headers(); self.wfile.write(body)
+        body = json.dumps(value).encode(); self.send_response(status); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(body))); self.send_header('Cache-Control', 'no-store'); self.send_header('X-Bento-Service-Revision', SERVICE_REVISION); self.end_headers(); self.wfile.write(body)
     def authorized(self):
         return bool(AUTH) and hmac.compare_digest(self.headers.get('Authorization', ''), 'Bearer ' + AUTH)
     def do_GET(self):
@@ -328,7 +435,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(404, {'error': 'Expired media'})
         self.stream(job)
     def do_POST(self):
-        if self.path != '/resolve' or not self.authorized():
+        if self.path not in ('/resolve', '/stats') or not self.authorized():
             return self.reply(401, {'error': 'Unauthorized'})
         try:
             length = int(self.headers.get('Content-Length', '0'))
@@ -337,11 +444,13 @@ class Handler(BaseHTTPRequestHandler):
             value = json.loads(self.rfile.read(length))
             if not isinstance(value, dict):
                 raise Failure('error.api.link.invalid')
-            self.reply(200, extract(value))
+            if self.path == '/stats' and set(value) != {'url'}:
+                raise Failure('error.api.link.invalid')
+            self.reply(200, statistics(value) if self.path == '/stats' else extract(value))
         except Failure as error:
             self.reply(422, {'code': error.code})
-        except Exception:
-            self.reply(502, {'code': 'error.api.fetch.fail'})
+        except Exception as error:
+            self.reply(502, {'code': 'error.api.metadata.handler.' + type(error).__name__ if self.path == '/stats' else 'error.api.fetch.fail'})
     def stream(self, job):
         proc = None
         sent = False
@@ -411,5 +520,16 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == '__main__':
+    if sys.argv[1:] == ['--stats-child']:
+        try:
+            value = json.load(sys.stdin)
+            COOKIE_JAR = value.get('cookieJar', '')
+            result = extract_statistics(value['url'], value['directory'])
+        except Failure as error:
+            result = {'error': error.code}
+        except Exception as error:
+            result = {'error': 'error.api.metadata.child.' + type(error).__name__}
+        print(json.dumps(result), flush=True)
+        raise SystemExit(0)
     if not AUTH:raise SystemExit('Missing service authentication')
     server = ThreadingHTTPServer(('0.0.0.0', 8080), Handler);server.daemon_threads = True;server.serve_forever()

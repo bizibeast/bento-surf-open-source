@@ -14,6 +14,22 @@ const voice = { voice_id: "voice_1", name: "Narrator", status: "ACTIVE" };
 const rpc = (id: number, result: unknown) => Response.json({ jsonrpc: "2.0", id, result });
 
 describe("HeyGen provider adapter", () => {
+  it("returns only safe public HTTPS image previews from the existing look catalog", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json({
+        data: [
+          { ...avatar, id: "good", preview_image_url: "https://cdn.heygen.com/preview.jpg" },
+          { ...avatar, id: "bad", preview_image_url: "https://127.0.0.1/secret" },
+        ],
+      }),
+    );
+    const result = await createHeyGenClient("fixture-key", fetcher).avatars({ scope: "private" });
+    expect(result.avatars.map((a) => a.previewImageUrl)).toEqual([
+      "https://cdn.heygen.com/preview.jpg",
+      null,
+    ]);
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
   it("reads catalogs with Workers-compatible redirect rejection", async () => {
     const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
       if (init?.redirect === "error") throw new TypeError("Unsupported redirect mode: error");

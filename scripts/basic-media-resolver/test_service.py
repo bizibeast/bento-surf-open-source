@@ -3,6 +3,7 @@ import unittest
 import sys
 import io
 import time
+import tempfile
 import types
 from unittest.mock import patch, MagicMock
 from pathlib import Path
@@ -11,6 +12,42 @@ spec = importlib.util.spec_from_file_location('basic_media_service', Path(__file
 service = importlib.util.module_from_spec(spec);spec.loader.exec_module(service)
 
 class PublicMediaPolicy(unittest.TestCase):
+    def test_statistics_are_signed_out_even_when_downloads_have_a_saved_session(self):
+        jar='.youtube.com\tTRUE\t/\tTRUE\t2147483647\tSID\tfixture-only-session'
+        with patch.object(service,'COOKIE_JAR',jar),tempfile.TemporaryDirectory() as folder:
+            options=service.extraction_options('youtube',folder,statistics=True)
+            self.assertNotIn('cookiefile',options)
+            self.assertEqual(list(Path(folder).iterdir()),[])
+            download=service.extraction_options('youtube',folder)
+            self.assertIn('cookiefile',download)
+            self.assertIn('fixture-only-session',Path(download['cookiefile']).read_text())
+    def test_youtube_statistics_child_never_receives_download_cookies(self):
+        proc=MagicMock();proc.returncode=0;proc.poll.return_value=0;proc.communicate.return_value=('{"counts":{"views":1}}',None)
+        with patch.object(service,'COOKIE_JAR','fixture-only-download-session'),patch.object(service.subprocess,'Popen',return_value=proc):
+            service.statistics({'url':'https://youtube.com/watch?v=jNQXAC9IVRw'})
+        payload=__import__('json').loads(proc.communicate.call_args.args[0])
+        self.assertEqual(payload['cookieJar'],'')
+    def test_statistics_skip_playback_manifests_and_keep_download_options_unchanged(self):
+        with tempfile.TemporaryDirectory() as folder:
+            options=service.extraction_options('youtube',folder,statistics=True)
+            self.assertEqual(options['extractor_args']['youtube']['skip'],['hls','dash'])
+            self.assertEqual(options['extractor_args']['youtube']['player_skip'],['js'])
+            self.assertNotIn('extractor_args',service.extraction_options('youtube',folder))
+    def test_metadata_is_complete_without_downloading_and_never_returns_credentials(self):
+        result=service.statistics_info('youtube','jNQXAC9IVRw',{'id':'jNQXAC9IVRw','extractor_key':'Youtube','availability':'public','view_count':100,'like_count':0,'comment_count':5,'http_headers':{'Cookie':'private'},'formats':[{'url':'private-cdn-query'}]})
+        self.assertEqual(result['counts'],{'views':100,'likes':0,'comments':5})
+        self.assertNotIn('private',str(result))
+    def test_tiktok_metadata_retains_shares_and_saves(self):
+        result=service.statistics_info('tiktok','7039716639834656002',{'id':'7039716639834656002','extractor_key':'TikTok','view_count':100,'like_count':2,'comment_count':3,'repost_count':4,'save_count':0})
+        self.assertEqual(result['counts'],{'views':100,'likes':2,'comments':3,'shares':4,'saves':0})
+    def test_stats_never_use_google_cookies_for_tiktok(self):
+        proc=MagicMock();proc.returncode=0;proc.poll.return_value=0;proc.communicate.return_value=('{"counts":{"views":1}}',None)
+        with patch.object(service,'COOKIE_JAR','private-google-session'),patch.object(service.subprocess,'Popen',return_value=proc):
+            service.statistics({'url':'https://www.tiktok.com/@artist/video/7039716639834656002'})
+        payload=__import__('json').loads(proc.communicate.call_args.args[0]);self.assertEqual(payload['cookieJar'],'');self.assertNotIn('private-google-session',str(proc.call_args));self.assertFalse(Path(payload['directory']).exists())
+    def test_metadata_cannot_expose_private_or_unlisted_cookie_results(self):
+        for change in [{'availability':'private'},{'availability':'unlisted'},{'is_private':True},{'id':'foreign'},{'extractor_key':'Generic'}]:
+            with self.subTest(change=change),self.assertRaises(service.Failure):service.statistics_info('youtube','jNQXAC9IVRw',{'id':'jNQXAC9IVRw','extractor_key':'Youtube','availability':'public','view_count':100,**change})
     def test_only_supported_source_hosts_and_ids(self):
         self.assertEqual(service.source('https://youtu.be/jNQXAC9IVRw')[2], 'https://www.youtube.com/watch?v=jNQXAC9IVRw')
         for url in ['http://www.youtube.com/watch?v=jNQXAC9IVRw', 'https://youtube.com.evil/watch?v=jNQXAC9IVRw', 'https://user@youtube.com/watch?v=jNQXAC9IVRw', 'https://youtube.com/playlist?list=private', 'https://127.0.0.1/a', 'https://www.tiktok.com/@a/video/not-id']:

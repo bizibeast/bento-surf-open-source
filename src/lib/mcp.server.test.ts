@@ -366,6 +366,7 @@ const readOnlyAnnotations = {
 /** Pins the hints OpenAI reads from tools/list. Idempotence is explicit. */
 const bentoMcpToolAnnotations = {
   list_free_tools: { ...readOnlyAnnotations, idempotentHint: true },
+  get_public_post_stats: { ...readOnlyAnnotations, openWorldHint: true },
   run_free_text_tool: { ...readOnlyAnnotations, idempotentHint: true },
   run_free_ai_tool: {
     readOnlyHint: false,
@@ -396,26 +397,6 @@ const bentoMcpToolAnnotations = {
   get_github_mcp_pull_request: { ...readOnlyAnnotations, openWorldHint: true },
   list_granola_mcp_connections: readOnlyAnnotations,
   list_granola_mcp_folders: { ...readOnlyAnnotations, openWorldHint: true },
-  list_heygen_avatars: { ...readOnlyAnnotations, openWorldHint: true },
-  list_heygen_voices: { ...readOnlyAnnotations, openWorldHint: true },
-  prepare_heygen_generation: {
-    readOnlyHint: false,
-    destructiveHint: false,
-    openWorldHint: true,
-    idempotentHint: true,
-  },
-  start_heygen_generation: {
-    readOnlyHint: false,
-    destructiveHint: false,
-    openWorldHint: true,
-    idempotentHint: true,
-  },
-  get_heygen_generation: {
-    readOnlyHint: false,
-    destructiveHint: true,
-    openWorldHint: true,
-    idempotentHint: true,
-  },
   get_content_studio_projects: readOnlyAnnotations,
   get_content_studio_render: readOnlyAnnotations,
   get_creator_intelligence: readOnlyAnnotations,
@@ -452,12 +433,6 @@ const bentoMcpToolAnnotations = {
     idempotentHint: false,
   },
   get_content_agent: readOnlyAnnotations,
-  manage_content_agent: {
-    readOnlyHint: false,
-    openWorldHint: true,
-    destructiveHint: true,
-    idempotentHint: false,
-  },
   get_content_discover: readOnlyAnnotations,
   manage_content_discover: {
     readOnlyHint: false,
@@ -512,7 +487,7 @@ const bentoMcpToolAnnotations = {
   set_auto_dm_enabled: {
     readOnlyHint: false,
     openWorldHint: false,
-    destructiveHint: true,
+    destructiveHint: false,
     idempotentHint: true,
   },
   delete_auto_dm_automation: {
@@ -523,14 +498,6 @@ const bentoMcpToolAnnotations = {
   },
   list_pages: readOnlyAnnotations,
   get_reel_production: readOnlyAnnotations,
-  list_reel_avatars: { ...readOnlyAnnotations, openWorldHint: true },
-  list_reel_voices: { ...readOnlyAnnotations, openWorldHint: true },
-  prepare_reel_production: {
-    readOnlyHint: false,
-    destructiveHint: false,
-    idempotentHint: true,
-    openWorldHint: true,
-  },
   revise_content_studio_copy: {
     readOnlyHint: false,
     destructiveHint: true,
@@ -549,7 +516,7 @@ const bentoMcpToolAnnotations = {
   set_priority_dm_closed: {
     readOnlyHint: false,
     openWorldHint: false,
-    destructiveHint: true,
+    destructiveHint: false,
     idempotentHint: true,
   },
   get_scheduler_workspace: readOnlyAnnotations,
@@ -561,20 +528,20 @@ const bentoMcpToolAnnotations = {
   },
   manage_page: {
     readOnlyHint: false,
-    openWorldHint: false,
+    openWorldHint: true,
     destructiveHint: true,
     idempotentHint: false,
   },
   manage_block: {
     readOnlyHint: false,
-    openWorldHint: false,
+    openWorldHint: true,
     destructiveHint: true,
     idempotentHint: false,
   },
   get_store_workspace: readOnlyAnnotations,
   manage_product: {
     readOnlyHint: false,
-    openWorldHint: false,
+    openWorldHint: true,
     destructiveHint: true,
     idempotentHint: false,
   },
@@ -599,7 +566,7 @@ const bentoMcpToolAnnotations = {
   get_calendar_workspace: readOnlyAnnotations,
   manage_calendar: {
     readOnlyHint: false,
-    openWorldHint: false,
+    openWorldHint: true,
     destructiveHint: true,
     idempotentHint: false,
   },
@@ -613,24 +580,17 @@ const bentoMcpToolAnnotations = {
   get_profile_workspace: {
     ...readOnlyAnnotations,
     readOnlyHint: false,
-    destructiveHint: true,
+    destructiveHint: false,
     idempotentHint: false,
   },
   update_profile: {
     readOnlyHint: false,
-    openWorldHint: false,
+    openWorldHint: true,
     destructiveHint: true,
     idempotentHint: false,
   },
   get_analytics_workspace: readOnlyAnnotations,
   get_integration_workspace: readOnlyAnnotations,
-  get_earn_workspace: { ...readOnlyAnnotations, readOnlyHint: false },
-  manage_earn: {
-    readOnlyHint: false,
-    openWorldHint: false,
-    destructiveHint: true,
-    idempotentHint: false,
-  },
 };
 
 describe("Bento MCP tools", () => {
@@ -754,6 +714,7 @@ describe("Bento MCP tools", () => {
     expect(toolsPayload.result.tools.map((tool: { name: string }) => tool.name)).toEqual(
       expect.arrayContaining([
         "list_free_tools",
+        "get_public_post_stats",
         "run_free_text_tool",
         "run_free_ai_tool",
         "run_free_media_tool",
@@ -774,8 +735,6 @@ describe("Bento MCP tools", () => {
         "update_profile",
         "get_analytics_workspace",
         "get_integration_workspace",
-        "get_earn_workspace",
-        "manage_earn",
         "list_products",
         "list_bookings",
         "get_priority_dm_conversations",
@@ -790,7 +749,6 @@ describe("Bento MCP tools", () => {
         "get_content_routines",
         "manage_content_routine",
         "get_content_agent",
-        "manage_content_agent",
         "get_content_discover",
         "manage_content_discover",
       ]),
@@ -803,7 +761,20 @@ describe("Bento MCP tools", () => {
       },
       "https://app.bento.surf",
     );
-    expect([...appTools.keys()].sort()).toEqual(
+    expect(
+      [...appTools.keys()]
+        .filter(
+          (name) =>
+            ![
+              "get_earn_workspace",
+              "manage_earn",
+              "list_reel_avatars",
+              "list_reel_voices",
+              "prepare_reel_production",
+            ].includes(name),
+        )
+        .sort(),
+    ).toEqual(
       toolsPayload.result.tools
         .map((tool: { name: string }) => tool.name)
         .filter(
@@ -811,9 +782,9 @@ describe("Bento MCP tools", () => {
             ![
               "upload_media",
               "begin_media_upload",
-              "manage_content_agent",
               "list_workspaces",
               "list_free_tools",
+              "get_public_post_stats",
               "run_free_text_tool",
               "run_free_ai_tool",
               "run_free_media_tool",

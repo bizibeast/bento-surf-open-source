@@ -1,4 +1,5 @@
 import {
+  seoPublicOrigin,
   publicNewsletterPostPath,
   publicNewsletterPublicationPath,
   publicNewslettersPath,
@@ -101,7 +102,7 @@ export const LANDING_OPEN_GRAPH_IMAGE_WIDTH = 1_200;
 export const LANDING_OPEN_GRAPH_IMAGE_HEIGHT = 630;
 
 function publicBaseUrl(value?: string) {
-  return (value || "http://localhost:8080").replace(/\/$/, "");
+  return seoPublicOrigin(value, import.meta.env.VITE_APP_ENV === "staging");
 }
 
 export function landingPageCanonicalUrl(baseUrl?: string) {

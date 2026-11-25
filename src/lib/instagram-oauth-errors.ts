@@ -5,6 +5,10 @@ type InstagramOAuthFailure = {
 };
 
 const SAFE_SERVER_MESSAGES = [
+  "Bento's Instagram app credentials could not be verified.",
+  "Bento's Instagram callback configuration was rejected.",
+  "This Instagram authorization code expired or was already used.",
+  "This Instagram account is not eligible to authorize Bento while app access is restricted.",
   "This Instagram connection link expired.",
   "This Instagram account is already connected",
   "Instagram did not grant the permissions Bento needs.",

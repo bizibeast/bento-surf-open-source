@@ -6,6 +6,7 @@ import {
   type HeyGenCatalogInput,
 } from "./external-tools";
 import { readResponseText } from "./request-security.server";
+import { parsePublicHttpUrl } from "./safe-url";
 
 const origin = "https://api.heygen.com";
 // HeyGen's videos:write grant also authorizes videos:read endpoints.
@@ -36,6 +37,7 @@ const lookSchema = z.object({
   status: z.string().optional(),
   default_voice_id: heyGenIdSchema.nullish(),
   supported_api_engines: z.array(z.string()).nullish(),
+  preview_image_url: z.string().max(2048).nullish(),
 });
 
 const voiceSchema = z.object({
@@ -66,6 +68,11 @@ function avatarOption(look: z.infer<typeof lookSchema>) {
     avatarType: look.avatar_type,
     defaultVoiceId: look.default_voice_id ?? null,
     estimatedUsdPerMinute: look.avatar_type === "photo_avatar" ? 2.31 : 4.83,
+    previewImageUrl:
+      parsePublicHttpUrl(look.preview_image_url, {
+        requireHttps: true,
+        allowNonStandardPort: false,
+      })?.href ?? null,
   };
 }
 

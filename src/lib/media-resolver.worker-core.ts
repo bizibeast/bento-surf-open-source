@@ -22,6 +22,7 @@ import {
   type PublicMediaType,
 } from "./public-social-fetch";
 import { resolvePublicSocialAssets } from "./public-social-media";
+import { extractPublicPostStats, PostStatsExtractionError } from "./public-post-extractors";
 import {
   isPublicSocialPlatform,
   normalizePublicSocialPost,
@@ -2003,6 +2004,29 @@ export default {
   async fetch(request: Request, env: MediaResolverEnv) {
     const url = new URL(request.url);
     if (url.pathname === "/health" && request.method === "GET") return health(request, env);
+    if (url.pathname === "/post-stats" && request.method === "POST") {
+      if (!isAuthorized(request, env)) return noStoreJson({ error: "Unauthorized" }, 401);
+      try {
+        const body = JSON.parse(new TextDecoder().decode(await readBoundedBytes(request, 4096)));
+        if (!body || Object.keys(body).length !== 1 || typeof body.url !== "string")
+          return noStoreJson({ error: "Invalid post link" }, 400);
+        return noStoreJson(await extractPublicPostStats(body.url, env, { signal: request.signal }));
+      } catch (error) {
+        console.warn("Public post metadata extraction failed", {
+          code: error instanceof PostStatsExtractionError ? error.message : "unknown",
+          status: error instanceof PostStatsExtractionError ? error.status : 502,
+        });
+        return noStoreJson(
+          {
+            error:
+              error instanceof PostStatsExtractionError
+                ? error.message
+                : "Post statistics extraction failed",
+          },
+          error instanceof PostStatsExtractionError ? error.status : 502,
+        );
+      }
+    }
     if (url.pathname === "/cover" && request.method === "POST") {
       return resolveCover(request, env, url);
     }

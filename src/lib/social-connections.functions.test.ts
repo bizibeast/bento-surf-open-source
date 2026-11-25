@@ -6,6 +6,9 @@ import {
   instagramConnectionScopes,
   instagramPermissionFailureMessage,
   missingInstagramConnectionScopes,
+  normalizeInstagramOAuthPayload,
+  instagramOAuthProviderFailure,
+  instagramTokenExchangeForm,
 } from "./social-connections.functions";
 
 const connectionSource = readFileSync(
@@ -14,6 +17,78 @@ const connectionSource = readFileSync(
 );
 
 describe("Instagram connection scopes", () => {
+  it("encodes the short-token exchange as Meta's documented multipart form without changing the code", async () => {
+    const form = instagramTokenExchangeForm({
+      client_id: "client",
+      client_secret: "secret",
+      code: "raw+code/-_=",
+      redirect_uri: "https://app.test.bento.surf/integrations/instagram/callback",
+      grant_type: "authorization_code",
+    });
+    const request = new Request("https://api.instagram.com/oauth/access_token", {
+      method: "POST",
+      body: form,
+    });
+    expect(request.headers.get("content-type")).toMatch(/^multipart\/form-data; boundary=/);
+    const parsed = await request.formData();
+    expect(parsed.get("code")).toBe("raw+code/-_=");
+    expect(parsed.get("redirect_uri")).toBe(
+      "https://app.test.bento.surf/integrations/instagram/callback",
+    );
+    expect(parsed.get("grant_type")).toBe("authorization_code");
+  });
+  it("accepts Meta's documented single-entry token response with comma-separated permissions", () => {
+    const result = normalizeInstagramOAuthPayload({
+      data: [
+        {
+          access_token: "test-token",
+          user_id: "123",
+          permissions: "instagram_business_basic,instagram_business_manage_insights",
+        },
+      ],
+    });
+    expect(result).toMatchObject({
+      access_token: "test-token",
+      user_id: "123",
+      permissions: ["instagram_business_basic", "instagram_business_manage_insights"],
+    });
+  });
+  it("accepts legacy flat responses and rejects ambiguous account/token responses", () => {
+    expect(
+      normalizeInstagramOAuthPayload({
+        access_token: "test-token",
+        permissions: ["instagram_business_basic"],
+      }).access_token,
+    ).toBe("test-token");
+    for (const payload of [
+      { data: [] },
+      { data: [{ access_token: "one" }, { access_token: "two" }] },
+      { access_token: "root", data: [{ access_token: "nested" }] },
+    ])
+      expect(() => normalizeInstagramOAuthPayload(payload)).toThrow();
+  });
+  it("classifies Meta's flat OAuth errors without returning raw provider text or tokens", () => {
+    const result = instagramOAuthProviderFailure(
+      {
+        error_type: "OAuthException",
+        code: 400,
+        error_message: "Error validating client secret. access_token=do-not-expose",
+      },
+      400,
+    );
+    expect(result).toMatchObject({ reason: "invalid_client", code: 400, type: "OAuthException" });
+    expect(JSON.stringify(result)).not.toContain("do-not-expose");
+    expect(
+      instagramOAuthProviderFailure(
+        {
+          error_type: "OAuthException",
+          code: 400,
+          error_message: "Matching code was not found or was already used",
+        },
+        400,
+      )?.reason,
+    ).toBe("invalid_code");
+  });
   it("requests one full permission set for every Instagram connect intent", () => {
     const expected = [
       "instagram_business_basic",

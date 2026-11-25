@@ -33,6 +33,7 @@ export function registerContentStudioMcpTools(
   auth: AuthInfo,
   resolveWorkspaceId = resolveMcpWorkspaceId,
   nativeAuthUserId?: () => Promise<string>,
+  includeReelProduction = true,
 ) {
   const userId = auth.extra?.userId;
   if (
@@ -52,54 +53,56 @@ export function registerContentStudioMcpTools(
     };
   };
   registerContentReferenceMcpTools(server, actor);
-  for (const type of ["avatars", "voices"] as const)
+  if (includeReelProduction) {
+    for (const type of ["avatars", "voices"] as const)
+      server.registerTool(
+        `list_reel_${type}`,
+        {
+          title: `List managed Reel ${type}`,
+          description: `List ${type} authorized for the creator's managed Reel production. Requires a Creator+ allowance.`,
+          inputSchema: heyGenCatalogInput
+            .omit({ billing: true })
+            .extend({ workspaceId: z.uuid() })
+            .strict(),
+          annotations: {
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: true,
+          },
+        },
+        async ({ workspaceId, ...input }) =>
+          result(
+            await (type === "avatars" ? listHeyGenAvatarsFor : listHeyGenVoicesFor)(
+              await actor(workspaceId),
+              { ...input, billing: "managed" },
+            ),
+          ),
+      );
     server.registerTool(
-      `list_reel_${type}`,
+      "prepare_reel_production",
       {
-        title: `List managed Reel ${type}`,
-        description: `Read ${type} authorized for this creator's managed Reel production. Use returned IDs only. A shared account never grants access to other creators' private avatars or voices. Creator+ allowance required.`,
-        inputSchema: heyGenCatalogInput
-          .omit({ billing: true })
-          .extend({ workspaceId: z.uuid() })
-          .strict(),
+        title: "Prepare a managed Reel production",
+        description:
+          "Prepare a saved Reel revision for managed narration, avatar segments, subtitles and video production. Returns a cost estimate and review path. Requires Creator+.",
+        inputSchema: reelProductionInput,
         annotations: {
-          readOnlyHint: true,
+          readOnlyHint: false,
           destructiveHint: false,
           idempotentHint: true,
           openWorldHint: true,
         },
       },
-      async ({ workspaceId, ...input }) =>
-        result(
-          await (type === "avatars" ? listHeyGenAvatarsFor : listHeyGenVoicesFor)(
-            await actor(workspaceId),
-            { ...input, billing: "managed" },
-          ),
-        ),
+      async (input) =>
+        result({ production: await prepareReelProduction(await actor(input.workspaceId), input) }),
     );
-  server.registerTool(
-    "prepare_reel_production",
-    {
-      title: "Prepare a managed Reel production",
-      description:
-        "Prepare an exact saved Reel revision for narration, visible-only avatar segments, timed subtitles and a finished MP4. Use get_content_brain, get_content_discover and real workspace media first; save an editable project with voiceId/avatarId and spoken avatarScript on every narrated scene, including B-roll. Prefer short opening/closing avatar appearances and audio-only middle scenes. Include optional publication intent with actual connected account IDs, platform captions, requested timezone and timestamp; the user reviews this in Scheduler after approving the video. Return the cost estimate and reviewPath. This does not approve spending, generate footage or publish. Creator+ only; do not offer a managed fallback to Creator/BYOK.",
-      inputSchema: reelProductionInput,
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: true,
-      },
-    },
-    async (input) =>
-      result({ production: await prepareReelProduction(await actor(input.workspaceId), input) }),
-  );
+  }
   server.registerTool(
     "get_reel_production",
     {
       title: "Read a Reel production",
       description:
-        "Read the authenticated creator's durable production status, cost estimate and completed Media IDs. Read only: never starts or approves generation or publishing. Benny shows approvals and the private preview inside chat.",
+        "Read the creator’s Reel production status, cost estimate and completed Media IDs.",
       inputSchema: reelProductionIdInput,
       annotations: {
         readOnlyHint: true,
@@ -119,7 +122,7 @@ export function registerContentStudioMcpTools(
     {
       title: "Read saved content",
       description:
-        "List the selected workspace's carousel and Reel projects and presets. Pass an entryId to read its saved document, revision, editing plan checks, original brief and owned conversation link. Use these findings when revising; preserve ready avatar/narration IDs for visual-only changes. A technical check is not an aesthetic approval.",
+        "List the selected workspace's carousel and Reel projects and presets, or read a saved document and revision by entry ID.",
       inputSchema: z.object({ workspaceId: z.uuid(), entryId: z.uuid().optional() }).strict(),
       annotations: {
         readOnlyHint: true,
@@ -164,7 +167,7 @@ export function registerContentStudioMcpTools(
     {
       title: "Save content",
       description:
-        "Save a Carousel or Reel draft or reusable preset to the selected workspace when the user asks to save it. Use revision 0 and a new UUID to create an entry. For edits, get the existing id and revision first. Saving writes the editable project only. Benny presents rendering and downloads inside chat.",
+        "Save a Carousel or Reel draft or reusable preset to the selected workspace. New entries have revision 0; edits identify an existing entry and revision. Saving writes the editable project only and does not render it.",
       inputSchema: studioSaveInputSchema.strict(),
       annotations: {
         readOnlyHint: false,
@@ -187,7 +190,7 @@ export function registerContentStudioMcpTools(
     {
       title: "Revise saved content",
       description:
-        "Revise an existing saved Reel or carousel in chat using its latest copyRevision context. Read get_content_studio_projects first. Preserve sourceSceneId or sourceSlideIndex for retained content, and keep approved narration/duration for visual-only edits. The server retains owned photos, narration and footage when applicable and invalidates obsolete speech. This saves a reviewable revision only; it never generates paid media, renders, schedules or publishes.",
+        "Revise and save the copy of an existing Reel or carousel, retaining applicable owned media and invalidating obsolete speech.",
       inputSchema: z
         .object({
           workspaceId: z.uuid(),
@@ -222,7 +225,7 @@ export function registerContentStudioMcpTools(
     {
       title: "Read content export status",
       description:
-        "Read the status and ordered Media IDs of a background export already started in Bento. Use the saved project's entryId, revision and format. This does not start a render or publish anything.",
+        "Read the status and ordered Media IDs of a background export started in Bento by project entry ID, revision, and format. This does not start a render or publish anything.",
       inputSchema: studioCarouselJobInput,
       annotations: {
         readOnlyHint: true,

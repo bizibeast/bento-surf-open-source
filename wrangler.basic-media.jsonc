@@ -2,6 +2,7 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "bento-basic-media",
   "main": "scripts/basic-media-resolver/cloudflare.ts",
+  "rules": [{ "type": "Text", "globs": ["**/*.py"], "fallthrough": true }],
   "compatibility_date": "2026-11-21",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,

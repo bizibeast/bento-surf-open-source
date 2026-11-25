@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   reserve: vi.fn(),
   save: vi.fn(),
   preparation: vi.fn(),
+  grant: vi.fn(),
 }));
 vi.mock("@tanstack/react-start", () => ({
   createServerOnlyFn: (handler: unknown) => handler,
@@ -32,7 +33,19 @@ vi.mock("@tanstack/react-start", () => ({
   },
 }));
 vi.mock("@/integrations/supabase/auth-middleware", () => ({ requireSupabaseAuth: {} }));
-vi.mock("@/integrations/supabase/client.server", () => ({ supabaseAdmin: {} }));
+vi.mock("@/integrations/supabase/client.server", () => ({
+  supabaseAdmin: {
+    from: () => {
+      const query = {
+        select: () => query,
+        eq: () => query,
+        gt: () => query,
+        maybeSingle: mocks.grant,
+      };
+      return query;
+    },
+  },
+}));
 vi.mock("@/integrations/dodo/client.server", () => ({
   dodo: {
     checkoutSessions: { create: mocks.create, preview: mocks.preview },
@@ -62,6 +75,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.stubEnv("DODO_CREATOR_39_MONTHLY_PRODUCT_ID", "creator-39");
   vi.stubEnv("DODO_CREATOR_390_YEARLY_PRODUCT_ID", "creator-390");
+  mocks.grant.mockResolvedValue({ data: null, error: null });
   mocks.eligibility.mockResolvedValue({
     trialEligible: true,
     active: false,
@@ -156,9 +170,10 @@ describe("checkout after preparation", () => {
         price: 9900,
         payment_frequency_count: 1,
         payment_frequency_interval: "Month",
-        subscription_period_count: 1,
-        subscription_period_interval: "Month",
-        discount: 0,
+        subscription_period_count: 20,
+        subscription_period_interval: "Year",
+        discount_bps: 0,
+        trial_period_days: 0,
       },
     });
     await createCheckout({ data: managed });
@@ -233,6 +248,54 @@ describe("checkout after preparation", () => {
     expect(await createCheckout({ data: input })).toEqual({
       url: "https://checkout.dodopayments.com/existing",
     });
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+  it.each(["creator_plus", "creator", "store"] as const)(
+    "short-circuits %s when a Creator+ grant covers it",
+    async (plan) => {
+      mocks.grant.mockResolvedValueOnce({ data: { plan_id: "creator_plus" }, error: null });
+      await expect(createCheckout({ data: { ...input, plan } })).resolves.toEqual({
+        alreadyOnPlan: true,
+        message: "You're already on Creator+",
+      });
+      expect(mocks.eligibility).not.toHaveBeenCalled();
+      expect(mocks.product).not.toHaveBeenCalled();
+      expect(mocks.create).not.toHaveBeenCalled();
+    },
+  );
+  it.each([
+    { price: 9800 },
+    { currency: "EUR" },
+    { discount: 1 },
+    { discount_bps: 1 },
+    { subscription_period_count: 0 },
+    { subscription_period_count: 1.5 },
+    { subscription_period_interval: "Invalid" },
+  ])("rejects invalid managed pricing: %j", async (override) => {
+    vi.stubEnv("DODO_FULLY_MANAGED_99_MONTHLY_PRODUCT_ID", "fully-managed-99");
+    vi.stubEnv("BENTO_FULLY_MANAGED_CHECKOUT_ENABLED", "true");
+    mocks.eligibility.mockResolvedValueOnce({
+      trialEligible: false,
+      active: false,
+      profile: { billing_catalog: "2026-10", onboarded: true },
+    });
+    mocks.product.mockResolvedValueOnce({
+      product_id: "fully-managed-99",
+      is_recurring: true,
+      price: {
+        type: "recurring_price",
+        currency: "USD",
+        price: 9900,
+        payment_frequency_count: 1,
+        payment_frequency_interval: "Month",
+        subscription_period_count: 120,
+        subscription_period_interval: "Month",
+        ...override,
+      },
+    });
+    await expect(createCheckout({ data: { ...input, plan: "creator_plus" } })).rejects.toThrow(
+      "checkout could not be verified",
+    );
     expect(mocks.create).not.toHaveBeenCalled();
   });
   it("does not start a new subscription for an already active workspace", async () => {

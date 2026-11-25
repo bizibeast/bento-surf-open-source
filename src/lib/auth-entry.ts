@@ -1,3 +1,4 @@
+import { pricingOnboardingDestination } from "./pricing-selection";
 import { getCreatorEntryState } from "./workspace.functions";
 import { redirect } from "@tanstack/react-router";
 import { supabase } from "@/integrations/supabase/client";
@@ -117,7 +118,15 @@ export async function requireAuthenticatedCreator(pathname: string, href: string
 }
 
 export function authenticatedEntryDestination(onboarded: boolean, requestedDestination = "/link") {
-  if (!onboarded) return "/onboarding";
+  if (!onboarded) {
+    const url = new URL(sanitizeLocalRedirect(requestedDestination), "http://localhost:8080");
+    return url.pathname === "/settings"
+      ? pricingOnboardingDestination(
+          url.searchParams.get("checkoutPlan"),
+          url.searchParams.get("checkoutPeriod"),
+        )
+      : "/onboarding";
+  }
 
   const destination = sanitizeLocalRedirect(requestedDestination);
   const pathname = destination.split(/[?#]/, 1)[0];

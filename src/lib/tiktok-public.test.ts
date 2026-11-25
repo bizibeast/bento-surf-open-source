@@ -80,7 +80,11 @@ it.each(["photo", "cover"])("returns a signed %s through the real gateway", asyn
   expect((await mediaResolver.fetch(new Request(signed), env)).status).toBe(404);
 });
 it("extracts all ordered images without replacing them with the cover", () => {
-  expect(parseTikTokPublicPost(html(post), id)).toEqual({ id, images: [photo], cover: photo });
+  expect(parseTikTokPublicPost(html(post), id)).toMatchObject({
+    id,
+    images: [photo],
+    cover: photo,
+  });
   expect(parseTikTokPublicPost(html({ id, video: { cover: photo } }), id).images).toEqual([]);
 });
 it.each([
@@ -130,4 +134,22 @@ it("uses manual redirects and never follows an authwall or unknown redirect", as
   ).rejects.toThrow();
   expect(fetcher).toHaveBeenCalledOnce();
   expect(fetcher.mock.calls[0][1]).toMatchObject({ redirect: "manual", credentials: "omit" });
+});
+
+it("retains exact public counters from the same photo-download metadata", () => {
+  expect(
+    parseTikTokPublicPost(
+      html({
+        ...post,
+        statsV2: {
+          playCount: "100",
+          diggCount: "2",
+          commentCount: "3",
+          shareCount: "4",
+          collectCount: "0",
+        },
+      }),
+      id,
+    ).counts,
+  ).toEqual({ views: 100, likes: 2, comments: 3, shares: 4, saves: 0 });
 });

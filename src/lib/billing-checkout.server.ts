@@ -71,9 +71,15 @@ export async function reserveTrialCheckout(
   if (readError) throw new Error("Your previous checkout could not be loaded.");
   if (data.workspace_id !== workspaceId)
     throw new Error("Finish the trial checkout in your original workspace first.");
-  // A Dodo checkout URL works once. After a declined card or an expired
-  // session the owner has not used their trial, so issue a fresh reservation.
-  if (await previousTrialCheckoutEnded(data.checkout_session_id, data.created_at)) {
+  // Rotate ended sessions or unpaid sessions superseded by a different plan.
+  if (
+    await previousTrialCheckoutEnded(
+      data.checkout_session_id,
+      data.created_at,
+      Date.now(),
+      data.plan_id !== plan,
+    )
+  ) {
     const nextKey = crypto.randomUUID();
     const { data: rotated, error: rotateError } = await db
       .from("bento_trial_checkouts")
@@ -122,19 +128,21 @@ const CHECKOUT_SESSION_LIFETIME_MS = 25 * 60 * 60 * 1000;
 const ENDED_PAYMENT_STATUSES = new Set(["failed", "cancelled"]);
 
 /**
- * True only when the saved provider session can no longer start a trial: its
- * payment failed or was cancelled, or it expired before any payment was made.
+ * True when the saved session ended, or an unpaid session may be superseded.
  * Unknown, in-flight and succeeded sessions are never replaced.
  */
 export async function previousTrialCheckoutEnded(
   sessionId: unknown,
   reservedAt: unknown,
   now = Date.now(),
+  supersedeUnpaid = false,
 ) {
   if (typeof sessionId !== "string" || !sessionId) return false;
   try {
     const session = await dodo.checkoutSessions.retrieve(sessionId);
-    if (session.payment_status) return ENDED_PAYMENT_STATUSES.has(session.payment_status);
+    if (session.payment_status && session.payment_status !== "requires_payment_method")
+      return ENDED_PAYMENT_STATUSES.has(session.payment_status);
+    if (supersedeUnpaid) return true;
     const createdAt = Date.parse(String(session.created_at ?? reservedAt ?? ""));
     return Number.isFinite(createdAt) && now - createdAt > CHECKOUT_SESSION_LIFETIME_MS;
   } catch {

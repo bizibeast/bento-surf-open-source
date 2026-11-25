@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { agentBrandingSchema, colorOn, type AgentBranding } from "@/lib/content-agent-branding";
 import { getContentExistingPhotos } from "@/lib/content-agent-images.functions";
+import { CarouselStyleGallery } from "./CarouselStyleGallery";
 
 export function ContentAgentBranding({
   brand,
@@ -21,6 +22,7 @@ export function ContentAgentBranding({
           Finished slides use these colors. Text templates do not use your AI image allowance. Saved
           drafts keep their existing style.
         </p>
+        <CarouselStyleGallery brand={brand} onChange={onChange} />
         <div className="grid grid-cols-3 gap-3">
           {(
             [

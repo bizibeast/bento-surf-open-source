@@ -40,6 +40,29 @@ export const productionFixture = (): StudioReel =>
   });
 
 describe("audio-first visible avatar production", () => {
+  it("preserves three approved card beats when short narration fits each one", () => {
+    const scenes = ["First", "Second", "Third"].map((title) =>
+      newReelScene({ kind: "card", title, avatarScript: title, duration: 4 }),
+    );
+    const document = studioReelSchema.parse({ ...productionFixture(), scenes });
+    const audio = new Map(
+      scenes.map((scene, index) => [
+        scene.id,
+        {
+          jobId: crypto.randomUUID(),
+          durationSeconds: [1.63, 1.63, 2.35][index],
+          speechWords: [{ word: scene.title, start: 0.1, end: 1.2 }],
+        },
+      ]),
+    );
+    const result = conformReelNarration(document, audio);
+    expect(result.scenes.map((scene) => scene.duration)).toEqual([4, 4, 4]);
+    expect(result.subtitles?.map((cue) => cue.start)).toEqual([0.1, 4.1, 8.1]);
+    expect(result.scenes.map((scene) => scene.narrationJobId)).toEqual(
+      scenes.map((scene) => audio.get(scene.id)!.jobId),
+    );
+  });
+
   it("plans fifteen avatar seconds for a forty-five second Reel without generating hidden video", () => {
     const document = productionFixture();
     const audio = new Map(

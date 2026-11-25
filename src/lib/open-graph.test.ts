@@ -29,6 +29,11 @@ function previewData(): PublicPagePreviewData {
 }
 
 describe("landing page Open Graph metadata", () => {
+  it("retains the configured instance staging origin", () => {
+    const head = landingPageHead("https://staging.example");
+    expect(head.links).toContainEqual({ rel: "canonical", href: "https://staging.example" });
+    expect(head.meta).toContainEqual({ property: "og:url", content: "https://staging.example" });
+  });
   it("uses the marketing preview image for the homepage only", () => {
     const image = landingPageOpenGraphImageUrl("http://localhost:8080/");
     const head = landingPageHead("http://localhost:8080/");

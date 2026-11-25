@@ -81,6 +81,26 @@ export function parseTikTokPublicPost(html: string, expected: string) {
   });
   return {
     id: expected,
+    counts: Object.fromEntries(
+      (
+        [
+          ["views", "playCount"],
+          ["likes", "diggCount"],
+          ["comments", "commentCount"],
+          ["shares", "shareCount"],
+          ["saves", "collectCount"],
+        ] as const
+      ).flatMap(([key, field]) => {
+        const value = (post.statsV2 ?? post.stats ?? {})[field];
+        const n =
+          typeof value === "number"
+            ? value
+            : typeof value === "string" && /^\d+$/.test(value)
+              ? Number(value)
+              : NaN;
+        return Number.isSafeInteger(n) && n >= 0 ? [[key, n]] : [];
+      }),
+    ),
     images,
     cover:
       tiktokImageUrl(post.video?.cover) ||

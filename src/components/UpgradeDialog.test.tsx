@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { UpgradeDialog } from "./UpgradeDialog";
-import { getCheckoutOffer } from "@/lib/billing.functions";
+import { createCheckout, getCheckoutOffer } from "@/lib/billing.functions";
 vi.mock("@/lib/billing.functions", () => ({
   createCheckout: vi.fn(),
   getCheckoutOffer: vi
@@ -37,9 +37,15 @@ describe("paid hosted plans", () => {
     expect(screen.getByText("$190")).toBeVisible();
     expect(screen.getByText("$390")).toBeVisible();
     expect(screen.getByText("$99")).toBeVisible();
+    expect(screen.getByText(/Billed monthly/)).toBeVisible();
     expect(screen.getByText(/then \$190\/year plus applicable tax/)).toBeVisible();
     expect(screen.getByText(/Card, UPI or wallet required. \$0 today/)).toBeVisible();
     expect(screen.getByText(/after 3 full days/)).toBeVisible();
+  });
+  it("does not report Creator+ unavailable while the offer loads", () => {
+    vi.mocked(getCheckoutOffer).mockReturnValueOnce(new Promise(() => {}));
+    render(<UpgradeDialog trigger={null} open feature="brain" />);
+    expect(screen.queryByText("Currently unavailable")).not.toBeInTheDocument();
   });
   it("recommends the plan that actually includes Brain", async () => {
     render(<UpgradeDialog trigger={null} open feature="brain" />);
@@ -50,5 +56,23 @@ describe("paid hosted plans", () => {
     render(<UpgradeDialog trigger={null} open />);
     expect(await screen.findByText(/Your trial has already been used/)).toBeVisible();
     expect(screen.queryByText(/\$0 today/)).not.toBeInTheDocument();
+  });
+  it("shows all three plans without allowing unavailable Creator+ checkout", async () => {
+    vi.mocked(getCheckoutOffer).mockResolvedValueOnce({
+      trialEligible: true,
+      active: false,
+      fullyManagedCheckoutAvailable: false,
+    });
+    render(<UpgradeDialog trigger={null} open feature="brain" />);
+    const checkout = await screen.findByRole("button", {
+      name: "Creator+ checkout is currently unavailable",
+    });
+    expect(checkout).toBeDisabled();
+    expect(screen.getByText("Store")).toBeVisible();
+    expect(screen.getByText("Creator")).toBeVisible();
+    expect(screen.getByText("Creator+")).toBeVisible();
+    expect(screen.getByText("$99")).toBeVisible();
+    fireEvent.click(checkout);
+    expect(createCheckout).not.toHaveBeenCalled();
   });
 });

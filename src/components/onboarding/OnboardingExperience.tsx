@@ -1,4 +1,5 @@
 import { configuredPublicOrigin } from "@/lib/application-urls";
+import { toast } from "sonner";
 import {
   answeredFields,
   createOnboardingFunnel,
@@ -354,7 +355,10 @@ export function OnboardingExperience() {
       if (next.status === "prepared" && checkoutReturnRef.current?.outcome === "failed") setStep(5);
       setContextField(missingContext(initial) || "audience");
       try {
-        const choice = JSON.parse(window.sessionStorage.getItem("bentoPricingSelection") || "null");
+        const params = new URLSearchParams(window.location.search);
+        const choice = params.has("plan")
+          ? { plan: params.get("plan"), period: params.get("period") }
+          : JSON.parse(window.sessionStorage.getItem("bentoPricingSelection") || "null");
         if (choice?.plan && PAID_PLAN_IDS.includes(choice.plan)) setPlan(choice.plan);
         if (choice?.period === "yearly") setPeriod("yearly");
       } catch {
@@ -665,6 +669,8 @@ export function OnboardingExperience() {
   }
   async function checkout(selection = { plan, period }, retry = Boolean(checkoutFailure)) {
     const { plan } = selection;
+    clearCheckoutRecovery();
+    setRecoverable(null);
     if (plan === "creator_plus" && !managedAvailable) return;
     const period = newPlanBillingPeriod(plan, selection.period);
     captureProductEvent("trial_cta_clicked", {
@@ -680,6 +686,10 @@ export function OnboardingExperience() {
       const result = await createCheckout({
         data: { plan, period, returnTo: "onboarding", contactTier: 500, storageUnits: 0 },
       });
+      if (result.alreadyOnPlan) {
+        toast.success(result.message);
+        return;
+      }
       const href = safeNavigationHref(result.url);
       if (!href) throw new Error("The checkout link was invalid.");
       const properties = {
@@ -694,12 +704,13 @@ export function OnboardingExperience() {
       captureProductEvent("checkout_started", properties);
       beginCheckoutTracking({ plan, trial: trialEligible, surface: "onboarding_trial_step" });
       markOnboardingNavigationIntent("checkout_redirect");
-      rememberCheckoutForRecovery({
-        plan,
-        period,
-        trial: trialEligible,
-        surface: "onboarding_trial_step",
-      });
+      if (!new URL(href, window.location.origin).pathname.startsWith("/onboarding"))
+        rememberCheckoutForRecovery({
+          plan,
+          period,
+          trial: trialEligible,
+          surface: "onboarding_trial_step",
+        });
       window.location.assign(href);
     });
   }
@@ -1145,7 +1156,8 @@ export function OnboardingExperience() {
                     <span>
                       <strong>{brief.displayName}'s Bento</strong>
                       <small>
-                        {new URL(configuredPublicOrigin(import.meta.env.VITE_PUBLIC_URL)).host}/{brief.username} · {brainChapterSummary(candidates)}
+                        {new URL(configuredPublicOrigin(import.meta.env.VITE_PUBLIC_URL)).host}/
+                        {brief.username} · {brainChapterSummary(candidates)}
                       </small>
                     </span>
                     <CheckCircle2 />
