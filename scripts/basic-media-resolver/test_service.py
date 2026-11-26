@@ -2,6 +2,12 @@ import importlib.util
 import unittest
 import sys
 import io
+import json
+import os
+import signal
+import socket
+import subprocess
+import threading
 import time
 import tempfile
 import types
@@ -10,6 +16,45 @@ from pathlib import Path
 
 spec = importlib.util.spec_from_file_location('basic_media_service', Path(__file__).with_name('service.py'))
 service = importlib.util.module_from_spec(spec);spec.loader.exec_module(service)
+
+class ShutdownTests(unittest.TestCase):
+    def test_signal_stops_server(self):
+        try:server = service.ThreadingHTTPServer(('127.0.0.1', 0), service.Handler)
+        except PermissionError:self.skipTest('local sockets are unavailable')
+        previous = {sig:signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        try:
+            service.stop_on_signals(server)
+            thread.start()
+            handler = signal.getsignal(signal.SIGTERM)
+            handler(signal.SIGTERM, None);handler(signal.SIGTERM, None)
+            thread.join(5)
+            self.assertFalse(thread.is_alive())
+        finally:
+            for sig, handler in previous.items():signal.signal(sig, handler)
+            server.server_close()
+    def test_subprocess_exits_on_sigterm(self):
+        try:
+            with socket.socket() as sock:
+                sock.bind(('127.0.0.1', 0));port = sock.getsockname()[1]
+        except PermissionError:self.skipTest('local sockets are unavailable')
+        env = {**os.environ, 'INTERNAL_TOKEN':'test', 'BASIC_MEDIA_PORT':str(port)}
+        proc = subprocess.Popen([sys.executable, str(Path(__file__).with_name('service.py'))], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                if proc.poll() is not None:self.fail('service exited before listening: ' + proc.stderr.read())
+                try:
+                    with socket.create_connection(('127.0.0.1', port), timeout=0.2):break
+                except OSError:time.sleep(0.05)
+            else:self.fail('service did not start listening')
+            proc.send_signal(signal.SIGTERM)
+            stdout, stderr = proc.communicate(timeout=5)
+            self.assertEqual(proc.returncode, 0, stderr)
+            self.assertEqual(json.loads(stdout), {'event':'basic_media_shutdown', 'signal':'SIGTERM'})
+        finally:
+            if proc.poll() is None:proc.kill()
+            proc.communicate()
 
 class PublicMediaPolicy(unittest.TestCase):
     def test_statistics_are_signed_out_even_when_downloads_have_a_saved_session(self):

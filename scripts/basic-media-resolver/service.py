@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import signal
 import subprocess
 import sys
 import signal
@@ -519,6 +520,17 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
 
 
+def stop_on_signals(server, signals=(signal.SIGTERM, signal.SIGINT)):
+    stopping = False
+    def stop(signum, _frame):
+        nonlocal stopping
+        if stopping:return
+        stopping = True
+        print(json.dumps({'event': 'basic_media_shutdown', 'signal': signal.Signals(signum).name}), flush=True)
+        threading.Thread(target=server.shutdown, daemon=True).start()
+    for sig in signals:signal.signal(sig, stop)
+
+
 if __name__ == '__main__':
     if sys.argv[1:] == ['--stats-child']:
         try:
@@ -532,4 +544,7 @@ if __name__ == '__main__':
         print(json.dumps(result), flush=True)
         raise SystemExit(0)
     if not AUTH:raise SystemExit('Missing service authentication')
-    server = ThreadingHTTPServer(('0.0.0.0', 8080), Handler);server.daemon_threads = True;server.serve_forever()
+    server = ThreadingHTTPServer(('0.0.0.0', int(os.environ.get('BASIC_MEDIA_PORT', '8080'))), Handler);server.daemon_threads = True
+    stop_on_signals(server)
+    server.serve_forever()
+    server.server_close()
