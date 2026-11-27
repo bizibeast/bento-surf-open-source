@@ -21,11 +21,13 @@ import {
   failCommerceWebhookEvent,
 } from "@/lib/commerce-webhook-receipts.server";
 import {
+  dodoClientForCreatorAccount,
   dodoWebhookClientForCreatorAccount,
   type DodoCreatorPaymentAccount,
 } from "./creator-client.server";
 import {
   applyCommerceSubscriptionLifecycle,
+  commercePaidServicePeriod,
   dodoSubscriptionState,
 } from "@/lib/commerce-subscription-lifecycle.server";
 import { assertDodoCreatorBusiness, assertDodoPaymentAmount } from "./creator-webhook-validation";
@@ -67,12 +69,13 @@ async function paymentSession(
   return session;
 }
 
-async function processPaymentSucceeded(
+export async function processPaymentSucceeded(
   event: PaymentSucceededWebhookEvent,
   connection: DodoCreatorPaymentAccount,
   eventId: string,
 ) {
   const payment = event.data;
+  if (payment.status !== "succeeded") throw new Error("Dodo payment is not paid.");
   const db = supabaseAdmin as any;
   const session = await paymentSession(event, connection);
   const { data: product, error: productError } = await db
@@ -97,14 +100,37 @@ async function processPaymentSucceeded(
     if (refError) throw new Error(refError.message);
     checkoutProductId = String(providerRef?.provider_product_id || "");
   }
+  // Dodo only includes product_cart on one-time payments. Recurring payments
+  // must be bound to the product on the authenticated subscription resource.
+  const subscription = payment.subscription_id
+    ? await (
+        await dodoClientForCreatorAccount(connection)
+      ).subscriptions.retrieve(payment.subscription_id)
+    : null;
   const productIds = new Set((payment.product_cart || []).map((item) => item.product_id));
-  if (!checkoutProductId || !productIds.has(checkoutProductId)) {
+  if (subscription) productIds.add(subscription.product_id);
+  if (
+    !checkoutProductId ||
+    !productIds.has(checkoutProductId) ||
+    (subscription && subscription.product_id !== checkoutProductId)
+  ) {
     throw new Error("Dodo product does not match the Bento product.");
   }
   if (payment.currency.toLowerCase() !== String(session.currency).toLowerCase()) {
     throw new Error("Dodo payment currency does not match the Bento product.");
   }
   assertDodoPaymentAmount(payment, session);
+  const paidPeriod = subscription
+    ? commercePaidServicePeriod({
+        paidAt: payment.created_at,
+        interval: session.metadata?.billing_interval || subscription.payment_frequency_interval,
+        intervalCount: session.metadata?.billing_interval
+          ? 1
+          : subscription.payment_frequency_count,
+      })
+    : null;
+  if (subscription && !paidPeriod?.end)
+    throw new Error("Dodo paid subscription period could not be verified.");
   const tax = Math.max(0, payment.tax || 0);
   const netAmount =
     payment.settlement_currency.toLowerCase() === payment.currency.toLowerCase()
@@ -156,7 +182,9 @@ async function processPaymentSucceeded(
       provider: "dodo",
       providerAccountId: connection.provider_account_id,
       providerSubscriptionId: payment.subscription_id,
-      state: "active",
+      state: "renewed",
+      currentPeriodStart: paidPeriod?.start,
+      currentPeriodEnd: paidPeriod?.end,
       providerEventId: eventId,
       metadata: { dodo_payment_id: payment.payment_id },
     });

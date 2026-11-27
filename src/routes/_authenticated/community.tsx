@@ -1,3 +1,4 @@
+import { WorkspaceProductComposer } from "@/components/commerce/WorkspaceProductComposer";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
@@ -149,6 +150,10 @@ function CommunityWorkspace() {
   const search = Route.useSearch();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [composer, setComposer] = useState<{
+    kind: "paid_community" | "membership";
+    productId?: string;
+  } | null>(null);
   const query = useQuery({
     queryKey: ["community-workspace", search.community],
     queryFn: () =>
@@ -191,21 +196,24 @@ function CommunityWorkspace() {
               Upgrade
             </Link>
           ) : (
-            <Link
-              to="/store"
-              search={{ tab: "products", create: "paid_community", edit: undefined }}
+            <button
+              type="button"
+              onClick={() => setComposer({ kind: "paid_community" })}
               className={micro.btnPrimaryCompact}
             >
               <Plus className="size-4" />
               <span className="hidden sm:inline">New community</span>
-            </Link>
+            </button>
           )
         }
       />
 
       <div className={micro.main}>
         {!data.selected ? (
-          <EmptyCommunity locked={data.locked} />
+          <EmptyCommunity
+            locked={data.locked}
+            onCreate={() => setComposer({ kind: "paid_community" })}
+          />
         ) : (
           <>
             <CommunityTopbar
@@ -260,6 +268,9 @@ function CommunityWorkspace() {
                 />
               ) : (
                 <CommunitySettings
+                  onEdit={() =>
+                    setComposer({ kind: data.selected!.kind, productId: data.selected!.id })
+                  }
                   product={data.selected}
                   locked={data.locked}
                   refresh={refresh}
@@ -275,11 +286,22 @@ function CommunityWorkspace() {
           </>
         )}
       </div>
+      <WorkspaceProductComposer
+        kind={composer?.kind || "paid_community"}
+        productId={composer?.productId}
+        open={Boolean(composer)}
+        onOpenChange={(open) => {
+          if (!open) setComposer(null);
+        }}
+        onSaved={(saved) => {
+          void navigate({ to: "/community", search: { tab: search.tab, community: saved.id } });
+        }}
+      />
     </main>
   );
 }
 
-function EmptyCommunity({ locked }: { locked: boolean }) {
+function EmptyCommunity({ locked, onCreate }: { locked: boolean; onCreate: () => void }) {
   return (
     <MicroAppPanel className="mx-auto mt-12 max-w-3xl text-center">
       <span className={`${micro.iconWellMint} mx-auto size-14`}>
@@ -295,13 +317,9 @@ function EmptyCommunity({ locked }: { locked: boolean }) {
         {locked ? (
           <UpgradeDialog feature="communities" />
         ) : (
-          <Link
-            to="/store"
-            search={{ tab: "products", create: "paid_community", edit: undefined }}
-            className={micro.btnPrimary}
-          >
+          <button type="button" onClick={onCreate} className={micro.btnPrimary}>
             <Plus className="size-4" /> Create community
-          </Link>
+          </button>
         )}
       </div>
     </MicroAppPanel>
@@ -1073,6 +1091,7 @@ function Members({
 }
 
 function CommunitySettings({
+  onEdit,
   product,
   locked,
   refresh,
@@ -1082,6 +1101,7 @@ function CommunitySettings({
   locked: boolean;
   refresh: () => Promise<void>;
   onDeleted: () => void;
+  onEdit: () => void;
 }) {
   const queryClient = useQueryClient();
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -1215,13 +1235,13 @@ function CommunitySettings({
             Price, billing cadence, cover, description, and publication status are managed with the
             product.
           </p>
-          <Link
-            to="/store"
-            search={{ tab: "products", create: undefined, edit: product.id }}
+          <button
+            type="button"
+            onClick={onEdit}
             className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-[#3478f6]"
           >
             Edit product <ArrowUpRight className="size-4" />
-          </Link>
+          </button>
         </MicroAppPanel>
         <MicroAppPanel>
           <span className="flex size-11 items-center justify-center rounded-2xl bg-red-50 text-red-600">

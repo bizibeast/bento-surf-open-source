@@ -1,4 +1,5 @@
 import type { CommerceProductKind, CommercePricingType } from "./commerce";
+import { PAYPAL_SUPPORTED_CURRENCIES } from "@/integrations/paypal/money";
 
 export const CREATOR_PAYMENT_PROVIDERS = [
   "stripe",
@@ -21,6 +22,8 @@ export type CreatorPaymentProviderDefinition = {
     "oauth" | "partner_onboarding" | "platform_onboarding" | "oauth_no_fee" | "api_key_no_fee";
   supportsOneTime: boolean;
   supportsSubscriptions: boolean;
+  subscriptionBillingIntervals?: readonly string[];
+  supportedCurrencies?: readonly string[];
   supportedCommerceKinds: readonly CommerceProductKind[];
   requiresProviderApproval: boolean;
   directConnect: boolean;
@@ -112,13 +115,15 @@ export const CREATOR_PAYMENT_PROVIDER_DEFINITIONS: readonly CreatorPaymentProvid
     commissionMode: "unsupported",
     connectionMode: "api_key_no_fee",
     supportsOneTime: true,
-    supportsSubscriptions: false,
+    supportsSubscriptions: true,
+    subscriptionBillingIntervals: ["week", "month", "year"],
     supportedCommerceKinds: [
       "digital_product",
       "coaching_call",
       "course",
       "webinar",
       "paid_community",
+      "membership",
       "custom_product",
       "priority_dm",
       "bundle",
@@ -127,11 +132,11 @@ export const CREATOR_PAYMENT_PROVIDER_DEFINITIONS: readonly CreatorPaymentProvid
     directConnect: true,
     docsUrl: "https://razorpay.com/docs/payments/payment-gateway/web-integration/standard/",
     setupNote:
-      "this application verifies and encrypts your Razorpay keys, creates Orders server-side, and verifies every checkout and webhook signature. Razorpay settles sales directly to your account.",
+      "this application verifies and encrypts your Razorpay keys, creates Orders or recurring Subscriptions server-side, and verifies every payment and webhook signature. Recurring plans support weekly, monthly, and yearly billing. Razorpay settles sales directly to your account.",
     creatorSetupSteps: [
       "Finish activation in Razorpay, then generate Test keys for staging or Live keys for this deployment.",
       "Paste the Key ID and Key Secret in this application. They are verified server-side and encrypted at rest.",
-      "Add this application's unique webhook URL with payment.captured, payment.failed, and refund.processed.",
+      "Add this application's unique webhook URL and select every event shown in this application, including subscription charge, pause, cancellation, and completion events.",
     ],
   },
   {
@@ -163,13 +168,16 @@ export const CREATOR_PAYMENT_PROVIDER_DEFINITIONS: readonly CreatorPaymentProvid
     commissionMode: "unsupported",
     connectionMode: "api_key_no_fee",
     supportsOneTime: true,
-    supportsSubscriptions: false,
+    supportsSubscriptions: true,
+    supportedCurrencies: [...PAYPAL_SUPPORTED_CURRENCIES],
+    subscriptionBillingIntervals: ["month", "year"],
     supportedCommerceKinds: [
       "digital_product",
       "coaching_call",
       "course",
       "webinar",
       "paid_community",
+      "membership",
       "custom_product",
       "priority_dm",
       "bundle",
@@ -178,7 +186,7 @@ export const CREATOR_PAYMENT_PROVIDER_DEFINITIONS: readonly CreatorPaymentProvid
     directConnect: true,
     docsUrl: "https://developer.paypal.com/api/rest/authentication/",
     setupNote:
-      "this application encrypts the creator's PayPal REST app secret, creates Orders server-side, verifies PayPal signatures, and charges 0% platform fee. Sales settle directly to the creator's PayPal account.",
+      "this application encrypts the creator's PayPal REST app secret, creates Orders or recurring billing plans server-side, verifies PayPal signatures, and charges 0% platform fee. Sales settle directly to the creator's PayPal account.",
     creatorSetupSteps: [
       "Open PayPal Developer → Apps & Credentials and create a dedicated REST app.",
       "Choose Sandbox for staging.example.com or Live for this deployment, then copy the Client ID and Client Secret.",
@@ -207,6 +215,7 @@ export function creatorPaymentCompatibility(
   provider: string,
   kind: CommerceProductKind,
   pricingType: CommercePricingType,
+  options: { billingInterval?: string | null; currency?: string } = {},
 ): CreatorPaymentCompatibility {
   if (pricingType === "free") return { supported: true, reason: null };
   const definition = creatorPaymentProvider(provider);
@@ -222,6 +231,16 @@ export function creatorPaymentCompatibility(
       reason: `${definition.name} does not support this offer type in this application. Choose a compatible gateway in Settings → Integrations.`,
     };
   }
+  if (
+    options.currency &&
+    definition.supportedCurrencies &&
+    !definition.supportedCurrencies.includes(options.currency.toLowerCase())
+  ) {
+    return {
+      supported: false,
+      reason: `${options.currency.toUpperCase()} is not supported by ${definition.name}. Choose a supported currency for this paid offer.`,
+    };
+  }
   if (pricingType === "one_time" && !definition.supportsOneTime) {
     return {
       supported: false,
@@ -232,6 +251,17 @@ export function creatorPaymentCompatibility(
     return {
       supported: false,
       reason: `${definition.name} does not support recurring checkout in this application. Choose a compatible gateway or change the price to one-time.`,
+    };
+  }
+  if (
+    pricingType === "subscription" &&
+    options.billingInterval &&
+    definition.subscriptionBillingIntervals &&
+    !definition.subscriptionBillingIntervals.includes(options.billingInterval)
+  ) {
+    return {
+      supported: false,
+      reason: `${definition.name} does not support this billing interval. Choose ${definition.subscriptionBillingIntervals.join(", ")} billing.`,
     };
   }
   return { supported: true, reason: null };

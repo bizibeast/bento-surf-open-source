@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { z } from "zod";
 import { BentoBrand } from "@/components/BentoBrand";
-import { FontApplier } from "@/components/FontApplier";
+import { PublicProductTheme } from "@/components/public/PublicProductTheme";
 import {
   ArrowRight,
   CircleAlert,
@@ -25,7 +25,6 @@ import {
   publicProfileUrl,
 } from "@/lib/application-urls";
 import { clearCheckoutRecovery } from "@/lib/checkout-recovery";
-import { productAccentTextColor, productWebsite } from "@/lib/product-website";
 import { stripUrlSearchParameters } from "@/lib/safe-url";
 
 // The trailing underscore keeps this URL out of the product page's route layout.
@@ -140,22 +139,16 @@ function CommerceSuccessPage() {
   const accessBelongsToProduct = accessStatus.data?.product?.id === data.product.id;
   const isAccessDelayed =
     Boolean(isConfirmed && access && !accessBelongsToProduct) && pollingExpired;
-  const website = productWebsite(data.product.settings?.website);
   const accentStyle = {
-    background: website.accent,
-    color: productAccentTextColor(website.accent),
+    background: "var(--product-accent)",
+    color: "var(--product-on-accent)",
   };
   return (
-    <div
-      className="relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-10 text-[#17213a]"
-      style={{ background: `color-mix(in oklab, ${website.accent} 7%, #ffffff)` }}
+    <PublicProductTheme
+      creator={data.chrome.creator}
+      className="flex items-center justify-center overflow-hidden px-4 py-10"
     >
-      <FontApplier headline={data.creator.secondary_font} body={data.creator.primary_font} />
-      <div
-        className="pointer-events-none absolute -left-20 -top-20 size-72 rounded-full opacity-20 blur-2xl"
-        style={{ background: website.accent }}
-      />
-      <main className="relative w-full max-w-xl overflow-hidden rounded-[38px] border border-white bg-white/90 p-7 text-center shadow-[0_40px_120px_-55px_rgba(23,33,58,.7)] backdrop-blur-xl sm:p-10">
+      <main className="relative w-full max-w-xl overflow-hidden rounded-[38px] border border-border bg-card p-7 text-center shadow-[0_40px_120px_-55px_rgba(23,33,58,.7)] backdrop-blur-xl sm:p-10">
         <span
           className={`mx-auto flex size-16 items-center justify-center rounded-full text-white ${
             isConfirmed
@@ -176,9 +169,12 @@ function CommerceSuccessPage() {
         </span>
         <div
           className={`mt-6 text-[10px] font-semibold uppercase tracking-[0.18em] ${
-            isConfirmed ? "text-emerald-600" : isUnavailable ? "text-rose-600" : ""
+            isConfirmed
+              ? "text-emerald-600 dark:text-emerald-400"
+              : isUnavailable
+                ? "text-rose-600 dark:text-rose-400"
+                : "text-muted-foreground"
           }`}
-          style={!isConfirmed && !isUnavailable ? { color: website.accent } : undefined}
         >
           {isConfirmed
             ? "Order confirmed"
@@ -197,10 +193,10 @@ function CommerceSuccessPage() {
                 ? "This is taking longer."
                 : "Almost there."}
         </h1>
-        <p className="mt-4 text-sm leading-6 text-[#17213a]/55">
+        <p className="mt-4 text-sm leading-6 text-muted-foreground">
           {isConfirmed ? (
             <>
-              Your order for <strong className="text-[#17213a]">{data.product.title}</strong> is
+              Your order for <strong className="text-foreground">{data.product.title}</strong> is
               confirmed.{" "}
               {data.product.kind === "priority_dm"
                 ? "Your conversation link is on its way by email."
@@ -209,19 +205,19 @@ function CommerceSuccessPage() {
           ) : isUnavailable ? (
             <>
               We could not verify this order for{" "}
-              <strong className="text-[#17213a]">{data.product.title}</strong>. Return to the
+              <strong className="text-foreground">{data.product.title}</strong>. Return to the
               product or check your customer library before trying again.
             </>
           ) : isDelayed ? (
             <>
               The provider has not finished confirming your order for{" "}
-              <strong className="text-[#17213a]">{data.product.title}</strong>. You can safely check
-              your customer library in a moment; please do not pay again.
+              <strong className="text-foreground">{data.product.title}</strong>. You can safely
+              check your customer library in a moment; please do not pay again.
             </>
           ) : (
             <>
               We are waiting for the payment provider to confirm your order for{" "}
-              <strong className="text-[#17213a]">{data.product.title}</strong>. This usually takes
+              <strong className="text-foreground">{data.product.title}</strong>. This usually takes
               only a few seconds.
             </>
           )}
@@ -251,8 +247,8 @@ function CommerceSuccessPage() {
           <div
             className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-4 text-sm font-semibold"
             style={{
-              background: `color-mix(in oklab, ${website.accent} 12%, white)`,
-              color: website.accent,
+              background: "var(--product-muted)",
+              color: "var(--product-text)",
             }}
           >
             <LoaderCircle className="size-4 animate-spin" /> Preparing private access…
@@ -261,8 +257,8 @@ function CommerceSuccessPage() {
           <div
             className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-4 text-sm font-semibold"
             style={{
-              background: `color-mix(in oklab, ${website.accent} 12%, white)`,
-              color: website.accent,
+              background: "var(--product-muted)",
+              color: "var(--product-text)",
             }}
           >
             <LoaderCircle className="size-4 animate-spin" /> Checking secure payment…
@@ -287,8 +283,8 @@ function CommerceSuccessPage() {
             Back to product <ArrowRight className="size-4" />
           </Link>
         )}
-        <div className="mt-5 rounded-2xl bg-[#f2f5fb] px-4 py-3 text-left text-xs leading-5 text-[#17213a]/48">
-          <div className="font-semibold text-[#17213a]/70">Order reference</div>
+        <div className="mt-5 rounded-2xl bg-muted px-4 py-3 text-left text-xs leading-5 text-muted-foreground">
+          <div className="font-semibold text-foreground">Order reference</div>
           <div className="mt-1 font-mono">{order}</div>
         </div>
         <a
@@ -297,25 +293,24 @@ function CommerceSuccessPage() {
             "/library/"
           }
           className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold underline underline-offset-4"
-          style={{ color: website.accent }}
         >
           Open customer library <ArrowRight className="size-3.5" />
         </a>
-        <div className="mt-6 flex items-center justify-center gap-4 text-xs text-[#17213a]/42">
+        <div className="mt-6 flex items-center justify-center gap-4 text-xs text-muted-foreground">
           <a
             href={publicProfileUrl(data.creator.username, null, import.meta.env.VITE_PUBLIC_URL)}
-            className="inline-flex items-center gap-1.5 hover:text-[#17213a]"
+            className="inline-flex items-center gap-1.5 hover:text-foreground"
           >
             <ShoppingBag className="size-3.5" /> Creator storefront
           </a>
           <a
             href="http://localhost:8080"
-            className="inline-flex items-center gap-1.5 hover:text-[#17213a]"
+            className="inline-flex items-center gap-1.5 hover:text-foreground"
           >
             <BentoBrand iconClassName="size-5" /> <ExternalLink className="size-3.5" />
           </a>
         </div>
       </main>
-    </div>
+    </PublicProductTheme>
   );
 }

@@ -22,11 +22,12 @@ export function HomeWeeklyPulse({
     <section
       aria-label="Weekly growth"
       aria-busy={loading}
-      className="mt-5 border-b border-white/10 pb-5"
+      className="mt-6 border-b border-border pb-6"
     >
-      <div className="grid gap-3 px-5 sm:grid-cols-3 sm:px-6">
+      <div className="grid gap-4 px-4 sm:grid-cols-3 sm:px-6">
         <Metric
           label="Followers gained via Auto DM"
+          tone="sky"
           icon={<UsersRound className="size-4" />}
           value={data ? data.followers.current.toLocaleString("en") : "–"}
           metric={data?.followers}
@@ -35,6 +36,7 @@ export function HomeWeeklyPulse({
         />
         <Metric
           label="Leads generated"
+          tone="amber"
           icon={<Mail className="size-4" />}
           value={data ? data.leads.current.toLocaleString("en") : "–"}
           metric={data?.leads}
@@ -43,6 +45,7 @@ export function HomeWeeklyPulse({
         />
         <Metric
           label="Total revenue"
+          tone="mint"
           icon={<Wallet className="size-4" />}
           value={
             data
@@ -52,7 +55,7 @@ export function HomeWeeklyPulse({
                       {item.currency.toUpperCase()}{" "}
                       {formatCommerceMoney(item.current, item.currency)}
                       {data.revenue.length > 1 && (
-                        <span className="mt-1 block font-sans text-xs text-white/55">
+                        <span className="mt-1 block font-sans text-xs text-muted-foreground">
                           {weeklyChange(item).text}
                         </span>
                       )}
@@ -73,7 +76,7 @@ export function HomeWeeklyPulse({
           multiCurrency={Boolean(data && data.revenue.length > 1)}
         />
       </div>
-      <p className="mt-3 px-5 text-xs text-white/45 sm:px-6" role="status">
+      <p className="mt-4 px-4 text-xs text-muted-foreground sm:px-6" role="status">
         {loading
           ? "Loading your weekly totals…"
           : data
@@ -85,6 +88,7 @@ export function HomeWeeklyPulse({
 }
 
 function Metric({
+  tone,
   label,
   icon,
   value,
@@ -93,6 +97,7 @@ function Metric({
   loading,
   multiCurrency = false,
 }: {
+  tone: "sky" | "amber" | "mint";
   label: string;
   icon: ReactNode;
   value: ReactNode;
@@ -101,25 +106,40 @@ function Metric({
   loading: boolean;
   multiCurrency?: boolean;
 }) {
+  const colors = {
+    sky: "border-tint-sky-fg/15 bg-tint-sky/70",
+    amber: "border-tint-amber-fg/15 bg-tint-amber/70",
+    mint: "border-tint-mint-fg/15 bg-tint-mint/70",
+  }[tone];
+  const ink = {
+    sky: "text-tint-sky-fg",
+    amber: "text-tint-amber-fg",
+    mint: "text-tint-mint-fg",
+  }[tone];
   const change = weeklyChange(metric);
   const Icon =
     change.direction === "up" ? ArrowUpRight : change.direction === "down" ? ArrowDownRight : Minus;
   return (
-    <div className="min-w-0 rounded-xl border border-white/10 bg-white/[0.035] p-4">
-      <h4 className="flex items-center gap-2 text-xs font-medium text-white/65">
-        {icon}
+    <div className={`min-w-0 rounded-[12px] border p-4 ${colors}`}>
+      <h4 className={`flex min-h-8 items-center gap-2 text-xs font-medium ${ink}`}>
+        <span
+          className="flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-card/70 [&_svg]:stroke-[1.5]"
+          aria-hidden="true"
+        >
+          {icon}
+        </span>
         {label}
       </h4>
-      <div className="mt-3 break-words font-ui-display text-2xl tabular-nums text-white">
+      <div className="mt-3 break-words font-ui-sans text-3xl font-medium tabular-nums text-foreground">
         {value}
       </div>
       <p
-        className={`mt-2 flex items-center gap-1 text-xs ${change.direction === "down" ? "text-rose-300" : change.direction === "up" ? "text-[#8fd7ad]" : "text-white/50"}`}
+        className={`mt-2 flex items-center gap-1 text-xs ${change.direction === "down" ? "text-tint-rose-fg" : change.direction === "up" ? "text-tint-mint-fg" : "text-muted-foreground"}`}
       >
         <Icon className="size-3 shrink-0" aria-hidden />
         {loading ? "Loading…" : multiCurrency ? "Currencies shown separately" : change.text}
       </p>
-      <p className="mt-2 text-[11px] leading-4 text-white/40">{detail}</p>
+      <p className="mt-2 text-xs leading-5 text-foreground/70">{detail}</p>
     </div>
   );
 }

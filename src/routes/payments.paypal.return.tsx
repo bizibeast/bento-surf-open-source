@@ -8,6 +8,7 @@ import { publicProductSuccessPath } from "@/lib/application-urls";
 
 export const Route = createFileRoute("/payments/paypal/return")({
   validateSearch: z.object({
+    subscription_id: z.string().min(8).max(128).optional(),
     token: z.string().min(8).max(128).optional(),
     session: z.string().uuid().optional(),
     capture: z.string().min(20).max(200).optional(),
@@ -26,7 +27,7 @@ function PayPalReturnPage() {
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    if (!search.token || !search.session || !search.capture) {
+    if (!(search.subscription_id || search.token) || !search.session || !search.capture) {
       setStatus("error");
       setMessage("This PayPal return link is incomplete.");
       return;
@@ -35,12 +36,16 @@ function PayPalReturnPage() {
       data: {
         sessionId: search.session,
         captureToken: search.capture,
-        orderId: search.token,
+        orderId: (search.subscription_id || search.token)!,
       },
     })
-      .then(({ productSlug, creatorUsername, orderId }) => {
+      .then(({ productSlug, creatorUsername, orderId, pending }) => {
         setStatus("done");
-        setMessage("Payment confirmed. Preparing your order…");
+        setMessage(
+          pending
+            ? "Subscription approved. Waiting for PayPal to confirm your first payment…"
+            : "Payment confirmed. Preparing your order…",
+        );
         window.setTimeout(() => {
           const query = new URLSearchParams({ order: orderId });
           if (search.access) query.set("access", search.access);
@@ -58,7 +63,7 @@ function PayPalReturnPage() {
           error instanceof Error ? error.message : "PayPal payment could not be confirmed.",
         );
       });
-  }, [search.access, search.capture, search.session, search.token]);
+  }, [search.access, search.capture, search.session, search.subscription_id, search.token]);
 
   const Icon = status === "loading" ? LoaderCircle : status === "done" ? Check : TriangleAlert;
   return (

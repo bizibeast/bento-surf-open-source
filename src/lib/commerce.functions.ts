@@ -1,6 +1,14 @@
 import { productWebsiteSchema, STORE_TEMPLATE_DRAFTS } from "./product-website";
+import {
+  buyerQuestionAnswersSchema,
+  buyerQuestionsVersionSchema,
+  commerceBuyerQuestionSettingsError,
+  parseCommerceBuyerAnswers,
+} from "./commerce-buyer-questions";
 import { loadPublicCreatorPage } from "./profile.functions";
 import { loadPublicCreatorChrome } from "./public-creator-chrome.server";
+import { isCommerceProductListed } from "./commerce-visibility";
+import { invalidateCreatorPageCaches } from "./pages.functions";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Commerce tables are introduced by the pending staging migration; remove after regenerating Supabase types. */
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
@@ -24,8 +32,8 @@ import {
   commerceDeliveryIntegrationError,
   commerceKind,
   commerceProductBlockContent,
-  commerceProductKindPricingError,
   commerceProductPublishabilityError,
+  commerceProductRequiresPayment,
   type CommerceBuyerAnswer,
   type CommerceFormField,
   isPlausibleCommerceAccessToken,
@@ -55,7 +63,10 @@ import {
   requireCreatorStorePaymentSetup,
   requireReadyCreatorPaymentProvider,
 } from "./payment-connection-policy.server";
-import { resolveCommerceCheckoutGrowth } from "./commerce-growth.server";
+import {
+  resolveCommerceCheckoutGrowth,
+  secondaryCommerceIntakeError,
+} from "./commerce-growth.server";
 import { resolveCommerceGrantByToken } from "./commerce-access.server";
 import {
   resolveBundleDeliveryProductIds,
@@ -187,6 +198,16 @@ export const productDraftSchema = z
     if (unsafeCommerceSetting(value.settings)) {
       context.addIssue({ code: "custom", message: "Product settings contain invalid data." });
     }
+    if (
+      value.settings.calendarVisibility !== undefined &&
+      !["listed", "unlisted"].includes(value.settings.calendarVisibility)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["settings", "calendarVisibility"],
+        message: "Choose listed or unlisted session visibility.",
+      });
+    }
     if (value.pricing_type === "free" && value.price_amount !== 0) {
       context.addIssue({ code: "custom", message: "Free products must have a zero price." });
     }
@@ -208,10 +229,6 @@ export const productDraftSchema = z
         path: ["pricing_type"],
         message: "Priority messages and bundles use one-time pricing.",
       });
-    }
-    const kindPricingError = commerceProductKindPricingError(value.kind, value.pricing_type);
-    if (kindPricingError) {
-      context.addIssue({ code: "custom", path: ["pricing_type"], message: kindPricingError });
     }
     const settings = value.settings;
     if (value.kind === "priority_dm") {
@@ -321,36 +338,13 @@ export const productDraftSchema = z
         });
       }
     }
-    if (value.kind === "custom_product" && settings.buyerQuestions !== undefined) {
-      if (!Array.isArray(settings.buyerQuestions) || settings.buyerQuestions.length > 20) {
-        context.addIssue({
-          code: "custom",
-          path: ["settings", "buyerQuestions"],
-          message: "Add no more than 20 buyer questions.",
-        });
-      } else {
-        const normalized = new Set<string>();
-        settings.buyerQuestions.forEach((question: unknown, index: number) => {
-          const value = String(question || "").trim();
-          if (!value || value.length > 500) {
-            context.addIssue({
-              code: "custom",
-              path: ["settings", "buyerQuestions", index],
-              message: "Buyer questions must be between 1 and 500 characters.",
-            });
-          }
-          const key = value.toLowerCase();
-          if (key && normalized.has(key)) {
-            context.addIssue({
-              code: "custom",
-              path: ["settings", "buyerQuestions", index],
-              message: "Buyer questions must be unique.",
-            });
-          }
-          normalized.add(key);
-        });
-      }
-    }
+    const buyerQuestionError = commerceBuyerQuestionSettingsError(settings, value.kind);
+    if (buyerQuestionError)
+      context.addIssue({
+        code: "custom",
+        path: ["settings", "website"],
+        message: buyerQuestionError,
+      });
     const checkHttpSetting = (setting: unknown, path: (string | number)[]) => {
       if (setting === undefined || setting === null || setting === "") return;
       const parsed = httpUrlSchema.safeParse(setting);
@@ -435,6 +429,37 @@ async function requireCommerceDeliveryIntegrations(
   product: CommerceProductRow,
   readiness?: CreatorBookingIntegrationReadiness,
 ) {
+  if (product.kind === "bundle") {
+    const productIds = product.settings?.bundledProductIds || [];
+    const { data: bundledProducts, error } = await commerceDb(supabaseAdmin)
+      .from("commerce_products")
+      .select("id,kind,status,settings")
+      .eq("creator_id", product.creator_id)
+      .in("id", productIds);
+    if (error) throw new Error(error.message);
+    if (
+      bundledProducts?.length !== productIds.length ||
+      bundledProducts.some(
+        (item: { id: string; kind: string; status: string }) =>
+          item.id === product.id ||
+          item.status !== "published" ||
+          !["digital_product", "course", "custom_product"].includes(item.kind),
+      )
+    )
+      throw new Error(
+        "Bundles can include your published downloads, courses, and custom products.",
+      );
+    if (
+      bundledProducts.some((item: { kind: string; settings: unknown }) =>
+        secondaryCommerceIntakeError(item),
+      )
+    ) {
+      throw new Error(
+        "Bundle items cannot require separate buyer answers. Add the required questions to this bundle and remove them from its included products before selling it as a bundle.",
+      );
+    }
+    return;
+  }
   if (product.kind !== "coaching_call") return;
   const reason = commerceDeliveryIntegrationError(
     product,
@@ -467,6 +492,7 @@ async function commerceRuntimeAvailabilityError(
       configuredProvider,
       product.kind,
       effectivePricingType,
+      { billingInterval: product.billing_interval, currency: product.currency },
     );
     if (!compatibility.supported) {
       return compatibility.reason || "This payment gateway cannot sell this offer.";
@@ -507,6 +533,8 @@ async function commerceOrderBumpAvailability(
   if (!bumpProduct) {
     return { product: null, reason: "That order bump is no longer available." };
   }
+  const intakeError = secondaryCommerceIntakeError(bumpProduct);
+  if (intakeError) return { product: null, reason: intakeError };
   if (bumpProduct.inventory_limit && bumpProduct.sales_count >= bumpProduct.inventory_limit) {
     return { product: null, reason: "That order bump is sold out." };
   }
@@ -888,6 +916,7 @@ export const createCommerceProduct = createServerFn({ method: "POST" })
     await requireCommerceKind(context.userId, data.product.kind);
     if (
       isCommerceOfferKind(data.product.kind) &&
+      commerceProductRequiresPayment(data.product) &&
       (data.product.kind !== "coaching_call" || data.addToBento)
     ) {
       await requireCreatorStorePaymentSetup(context.userId);
@@ -909,7 +938,8 @@ export const createCommerceProduct = createServerFn({ method: "POST" })
     ]);
     const productInput = {
       ...data.product,
-      noindex: resolveProductNoindex(data.product.noindex),
+      noindex:
+        !isCommerceProductListed(data.product) || resolveProductNoindex(data.product.noindex),
       creator_id: context.userId,
       slug,
       public_slug: publicSlug,
@@ -1023,29 +1053,6 @@ export async function validateCommerceProductPublication(
   await requireCommerceKind(creatorId, product.kind);
   const reason = commerceProductPublishabilityError(product);
   if (reason) throw new Error(reason);
-  if (product.kind === "bundle") {
-    const db = commerceDb(supabaseAdmin);
-    const productIds = product.settings?.bundledProductIds || [];
-    const { data: bundledProducts, error: bundleError } = await db
-      .from("commerce_products")
-      .select("id, kind, status")
-      .eq("creator_id", creatorId)
-      .in("id", productIds);
-    if (bundleError) throw new Error(bundleError.message);
-    if (
-      bundledProducts?.length !== productIds.length ||
-      bundledProducts.some(
-        (item: { id: string; kind: string; status: string }) =>
-          item.id === product.id ||
-          item.status !== "published" ||
-          !["digital_product", "course", "custom_product"].includes(item.kind),
-      )
-    ) {
-      throw new Error(
-        "Bundles can include your published downloads, courses, and custom products.",
-      );
-    }
-  }
   await verifyDigitalProductAssets(creatorId, product.kind, product.settings);
   await requireCommerceDeliveryIntegrations(product);
 
@@ -1075,6 +1082,7 @@ export async function validateCommerceProductPublication(
     configuredProvider,
     product.kind,
     effectivePricingType,
+    { billingInterval: product.billing_interval, currency: product.currency },
   );
   if (!compatibility.supported) throw new Error(compatibility.reason || "Unavailable.");
   if (recordingAddonAmount > 0 && !creatorPaymentSupportsCheckoutAdjustments(configuredProvider)) {
@@ -1205,7 +1213,9 @@ export const updateCommerceProduct = createServerFn({ method: "POST" })
     await verifyDigitalProductAssets(context.userId, data.product.kind, data.product.settings);
     const patch = {
       ...data.product,
-      noindex: resolveProductNoindex(data.product.noindex, current.noindex),
+      noindex:
+        !isCommerceProductListed(data.product) ||
+        resolveProductNoindex(data.product.noindex, current.noindex),
       cover_url: data.product.cover_url || null,
       billing_interval:
         data.product.pricing_type === "subscription" ? data.product.billing_interval : null,
@@ -1227,6 +1237,7 @@ export const updateCommerceProduct = createServerFn({ method: "POST" })
     if (error || !updated) {
       throw new Error(error?.message || "Product could not be updated.");
     }
+    await invalidateCreatorPageCaches(supabaseAdmin, context.userId);
     return updated;
   });
 
@@ -1277,6 +1288,9 @@ export const addCommerceProductBlock = createServerFn({ method: "POST" })
       .single();
     if (error || !product) throw new Error(error?.message || "Product not found.");
     assertGenericCommerceProductMutationAllowed(product.kind);
+    if (product.status !== "published") {
+      throw new Error("Publish this product before adding a Bento block.");
+    }
     const { data: profile, error: profileError } = await db
       .from("profiles")
       .select("username")
@@ -1284,7 +1298,9 @@ export const addCommerceProductBlock = createServerFn({ method: "POST" })
       .single();
     if (profileError || !profile) throw new Error(profileError?.message || "Profile not found.");
     await requireCommerceKind(context.userId, product.kind);
-    await requireCreatorStorePaymentSetup(context.userId);
+    if (commerceProductRequiresPayment(product)) {
+      await requireCreatorStorePaymentSetup(context.userId);
+    }
     if (product.kind === "coaching_call") {
       await requireCalendarBlockSetup(db, context.userId);
     }
@@ -1332,7 +1348,7 @@ function publicCommerceProduct(product: CommerceProductRow) {
     cta_label: product.cta_label,
     inventory_limit: product.inventory_limit,
     sales_count: product.sales_count,
-    noindex: product.noindex,
+    noindex: product.noindex || !isCommerceProductListed(product),
     published_at: product.published_at,
     updated_at: product.updated_at,
     settings: sanitizeCommerceSettingsForPublic(product.kind, product.settings),
@@ -1398,7 +1414,7 @@ export const getPublicCommerceStore = createServerFn({ method: "GET" })
         .filter(
           (product: CommerceProductRow) =>
             planHasEntitlement(plan, commerceEntitlement(product.kind)) &&
-            !commerceProductKindPricingError(product.kind, product.pricing_type),
+            isCommerceProductListed(product),
         )
         .map(publicCommerceProduct),
     };
@@ -1461,7 +1477,6 @@ export const getPublicCommerceProduct = createServerFn({ method: "GET" })
       )
     )
       return null;
-    if (commerceProductKindPricingError(product.kind, product.pricing_type)) return null;
     const [
       { data: creatorWithProvider, error: creatorError },
       { data: lessons, error: lessonError },
@@ -1613,15 +1628,29 @@ export const getCommerceOrderConfirmation = createServerFn({ method: "GET" })
   )
   .handler(async ({ data }) => {
     await enforceRequestRateLimit("PUBLIC_API_RATE_LIMITER", "commerce-order-confirmation");
+    // Free checkout references are deterministic from public product + email.
+    // They are never a bearer secret for confirmation or private access recovery.
+    if (/^free_/i.test(data.reference)) {
+      return {
+        state: "not_found" as const,
+        orderId: null,
+        priorityDmRequestId: null,
+        accessToken: null,
+      };
+    }
     const db = commerceDb(supabaseAdmin);
     const referenceIsUuid = uuidSchema.safeParse(data.reference).success;
 
-    let order: { id: string; status: string; metadata: Record<string, unknown> | null } | null =
-      null;
+    let order: {
+      id: string;
+      status: string;
+      provider: string;
+      metadata: Record<string, unknown> | null;
+    } | null = null;
     if (referenceIsUuid) {
       const { data: orderById, error } = await db
         .from("commerce_orders")
-        .select("id,status,metadata")
+        .select("id,status,provider,metadata")
         .eq("id", data.reference)
         .eq("product_id", data.productId)
         .maybeSingle();
@@ -1631,7 +1660,7 @@ export const getCommerceOrderConfirmation = createServerFn({ method: "GET" })
     if (!order) {
       const { data: orderByCheckout, error } = await db
         .from("commerce_orders")
-        .select("id,status,metadata")
+        .select("id,status,provider,metadata")
         .eq("product_id", data.productId)
         .eq("provider_checkout_id", data.reference)
         .order("created_at", { ascending: false })
@@ -1641,11 +1670,16 @@ export const getCommerceOrderConfirmation = createServerFn({ method: "GET" })
       order = orderByCheckout;
     }
 
-    let session: { status: string; metadata: Record<string, unknown> | null } | null = null;
+    let session: {
+      id: string;
+      status: string;
+      provider: string;
+      metadata: Record<string, unknown> | null;
+    } | null = null;
     if (!order && referenceIsUuid) {
       const { data: sessionById, error } = await db
         .from("commerce_payment_sessions")
-        .select("status,metadata")
+        .select("id,status,provider,metadata")
         .eq("id", data.reference)
         .eq("product_id", data.productId)
         .maybeSingle();
@@ -1655,7 +1689,7 @@ export const getCommerceOrderConfirmation = createServerFn({ method: "GET" })
     if (!order && !session) {
       const { data: sessionByCheckout, error } = await db
         .from("commerce_payment_sessions")
-        .select("status,metadata")
+        .select("id,status,provider,metadata")
         .eq("product_id", data.productId)
         .eq("provider_checkout_id", data.reference)
         .order("created_at", { ascending: false })
@@ -1664,10 +1698,22 @@ export const getCommerceOrderConfirmation = createServerFn({ method: "GET" })
       if (error) throw new Error(error.message);
       session = sessionByCheckout;
     }
+    if (!order && session && uuidSchema.safeParse(session.id).success) {
+      const { data: orderBySession, error } = await db
+        .from("commerce_orders")
+        .select("id,status,provider,metadata")
+        .eq("product_id", data.productId)
+        .eq("metadata->>bento_session_id", session.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      order = orderBySession;
+    }
     if (!session && order && uuidSchema.safeParse(order.metadata?.bento_session_id).success) {
       const { data: sessionByOrder, error } = await db
         .from("commerce_payment_sessions")
-        .select("status,metadata")
+        .select("id,status,provider,metadata")
         .eq("id", String(order.metadata!.bento_session_id))
         .eq("product_id", data.productId)
         .maybeSingle();
@@ -1686,10 +1732,13 @@ export const getCommerceOrderConfirmation = createServerFn({ method: "GET" })
       uuidSchema.safeParse(metadata?.priority_dm_request_id).success
         ? String(metadata.priority_dm_request_id)
         : null;
-    const accessToken = await commerceAccessTokenFromConfirmation(
-      state,
-      session?.metadata ?? order?.metadata,
-    );
+    // First free claims already carry their new capability in the success URL.
+    // Recovering any older free grant requires verified library ownership.
+    const isFreeOrder =
+      order?.provider === "free" || session?.provider === "free" || metadata?.free_claim === true;
+    const accessToken = isFreeOrder
+      ? null
+      : await commerceAccessTokenFromConfirmation(state, session?.metadata ?? order?.metadata);
     return {
       state,
       orderId: order?.id || null,
@@ -1707,6 +1756,20 @@ const checkoutAttributionSchema = z
     utm_content: z.string().trim().max(200).optional(),
   })
   .default({});
+
+/** Public purchase mutations must honor the same explicit page pause as the product page. */
+async function requirePublishedCommerceCreator(creatorId: string) {
+  const { data: profile, error } = await commerceDb(supabaseAdmin)
+    .from("profiles")
+    .select("commerce_payment_provider,username,page_published")
+    .eq("id", creatorId)
+    .single();
+  if (error) throw new Error(error.message);
+  if (!profile || profile.page_published === false) {
+    throw new Error("This product is not available.");
+  }
+  return profile;
+}
 
 export const previewCommerceCheckout = createServerFn({ method: "POST" })
   .validator((input) =>
@@ -1735,15 +1798,10 @@ export const previewCommerceCheckout = createServerFn({ method: "POST" })
     ) {
       throw new Error("This product is not available.");
     }
+    const profile = await requirePublishedCommerceCreator(product.creator_id);
     const publishabilityError = commerceProductPublishabilityError(product);
     if (publishabilityError) throw new Error(publishabilityError);
     await requireCommerceDeliveryIntegrations(product);
-    const { data: profile, error: profileError } = await db
-      .from("profiles")
-      .select("commerce_payment_provider,username")
-      .eq("id", product.creator_id)
-      .single();
-    if (profileError) throw new Error(profileError.message);
     const configuredProvider = String(
       profile?.commerce_payment_provider || process.env.COMMERCE_PAYMENT_PROVIDER || "disabled",
     );
@@ -1767,6 +1825,7 @@ export const previewCommerceCheckout = createServerFn({ method: "POST" })
         configuredProvider,
         product.kind,
         effectivePricingType,
+        { billingInterval: product.billing_interval, currency: product.currency },
       );
       if (!compatibility.supported) {
         throw new Error(compatibility.reason || "This payment gateway cannot sell this offer.");
@@ -1830,6 +1889,7 @@ export const submitCommerceLead = createServerFn({ method: "POST" })
     ) {
       throw new Error("This form is not available.");
     }
+    await requirePublishedCommerceCreator(product.creator_id);
     const configuredFields: CommerceFormField[] = Array.isArray(product.settings?.fields)
       ? product.settings.fields
           .filter((field: unknown): field is CommerceFormField =>
@@ -1953,14 +2013,8 @@ export const createCommerceCheckout = createServerFn({ method: "POST" })
         newsletterOptIn: z.boolean().default(false),
         discountCode: z.string().trim().max(32).optional(),
         bumpProductId: uuidSchema.optional(),
-        answers: z
-          .record(z.string().max(40), z.string().max(10_000))
-          .refine((value) => Object.keys(value).length <= 20, "Too many checkout answers.")
-          .refine(
-            (value) => JSON.stringify(value).length <= 50_000,
-            "Checkout answers are too large.",
-          )
-          .default({}),
+        answers: buyerQuestionAnswersSchema.default({}),
+        buyerQuestionsVersion: buyerQuestionsVersionSchema,
         attribution: checkoutAttributionSchema,
       })
       .parse(input),
@@ -1983,11 +2037,17 @@ export const createCommerceCheckout = createServerFn({ method: "POST" })
     }
     if (
       !data.priorityDmRequestId &&
+      !(
+        product.pricing_type === "free" &&
+        isHostedAccessKind(product.kind) &&
+        !data.recordingAddon
+      ) &&
       product.inventory_limit &&
       product.sales_count >= product.inventory_limit
     ) {
       throw new Error("This product is sold out.");
     }
+    const profile = await requirePublishedCommerceCreator(product.creator_id);
     const publishabilityError = commerceProductPublishabilityError(product);
     if (publishabilityError) throw new Error(publishabilityError);
     await requireCommerceDeliveryIntegrations(product);
@@ -2010,6 +2070,8 @@ export const createCommerceCheckout = createServerFn({ method: "POST" })
         throw new Error("Use your included follow-up before paying for another.");
       }
       if (!message) throw new Error("Write your follow-up before continuing.");
+      if (Object.keys(data.answers).some((key) => key !== "priority_message"))
+        throw new Error("Unknown buyer question for this priority follow-up.");
     }
     const buyerEmail = customerIdentity
       ? customerIdentity.customer.email_normalized
@@ -2026,19 +2088,12 @@ export const createCommerceCheckout = createServerFn({ method: "POST" })
       : product;
     const buyerAnswers: CommerceBuyerAnswer[] = priorityDmRequest
       ? [priorityDmFollowUpAnswer(priorityDmRequest.id, message)]
-      : product.kind === "custom_product"
-        ? (product.settings?.buyerQuestions || []).map((question: string, index: number) => {
-            const answer = String(data.answers[`q_${index}`] || "").trim();
-            if (!answer) throw new Error(`Answer "${question}" before continuing.`);
-            if (answer.length > 5_000) throw new Error(`Answer "${question}" is too long.`);
-            return { question: String(question).trim(), answer };
-          })
-        : product.kind === "priority_dm"
-          ? (() => {
-              if (!message) throw new Error("Write your message before continuing.");
-              return [{ question: "Priority message", answer: message }];
-            })()
-          : [];
+      : parseCommerceBuyerAnswers({
+          kind: product.kind,
+          settings: product.settings,
+          answers: data.answers,
+          buyerQuestionsVersion: data.buyerQuestionsVersion,
+        });
 
     const recordingAddonAmount = data.recordingAddon
       ? Math.max(0, Math.round(Number(product.settings?.recordingAddonPrice || 0)))
@@ -2066,12 +2121,6 @@ export const createCommerceCheckout = createServerFn({ method: "POST" })
       throw new Error("This product does not use checkout.");
     }
 
-    const { data: profile, error: profileError } = await db
-      .from("profiles")
-      .select("commerce_payment_provider,username")
-      .eq("id", product.creator_id)
-      .single();
-    if (profileError) throw new Error(profileError.message);
     const feeBps = isFreeClaim ? 0 : commercePlatformFeeBps();
     const deployment = process.env.APP_ENV || process.env.VITE_APP_ENV || "production";
     const configuredProvider = String(
@@ -2108,6 +2157,7 @@ export const createCommerceCheckout = createServerFn({ method: "POST" })
         configuredProvider,
         product.kind,
         checkoutProduct.pricing_type,
+        { billingInterval: checkoutProduct.billing_interval, currency: checkoutProduct.currency },
       );
       if (!compatibility.supported) {
         throw new Error(compatibility.reason || "This payment gateway cannot sell this offer.");
@@ -2241,9 +2291,19 @@ export const createCommerceCheckout = createServerFn({ method: "POST" })
           p_metadata: fulfillmentMetadata,
           p_access_token_hash: accessTokenHash,
         });
-    if (fulfillmentError || !fulfillment?.order_id) {
+    if (fulfillmentError || !fulfillment) {
       throw new Error(fulfillmentError?.message || "Test order failed.");
     }
+    // An email address is not proof of ownership of an existing free purchase.
+    // Recovery goes through the library's verified email sign-in, without
+    // exposing the original order reference or a capability in this response.
+    if (isFreeClaim && fulfillment.created_new_order === false) {
+      return {
+        url: `${publicAppUrl()}/library/`,
+        test: false,
+      };
+    }
+    if (!fulfillment.order_id) throw new Error("Test order failed.");
 
     if (fulfillment.created_new_order !== false) {
       try {

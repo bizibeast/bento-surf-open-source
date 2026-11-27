@@ -349,7 +349,7 @@ async function loadPublicProfile(
     const commerceResult = await supabaseAdmin
       .from("commerce_products")
       .select(
-        "id, slug, public_slug, kind, title, subtitle, cover_url, pricing_type, price_amount, currency, billing_interval, cta_label, status",
+        "id, slug, public_slug, kind, title, subtitle, cover_url, pricing_type, price_amount, currency, billing_interval, cta_label, status, settings",
       )
       .eq("creator_id", profile.id)
       .in("id", commerceProductIds);
@@ -375,7 +375,7 @@ async function loadPublicProfile(
       ? { id: activePageId, name: activePageName!, system: activeSystemPage }
       : null;
   const canvas = page
-    ? await loadSystemPageCanvas(supabaseAdmin, profile.id, page, socialInsights ?? undefined)
+    ? await loadSystemPageCanvas(supabaseAdmin, profile.id, page, socialInsights ?? undefined, true)
     : null;
   return {
     chrome,

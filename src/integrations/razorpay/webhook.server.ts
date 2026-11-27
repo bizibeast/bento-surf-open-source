@@ -19,6 +19,12 @@ import {
   razorpayRequest,
   verifyRazorpayWebhookSignature,
 } from "./client.server";
+import {
+  applyRazorpaySubscriptionSnapshot,
+  assertRazorpaySubscriptionBinding,
+  type RazorpayInvoice,
+  type RazorpaySubscription,
+} from "./subscriptions.server";
 
 const MAX_WEBHOOK_BYTES = 1024 * 1024;
 
@@ -41,15 +47,106 @@ async function capturedPayment(event: any, connection: any) {
     .eq("connection_id", connection.id)
     .eq("provider_checkout_id", orderId)
     .maybeSingle();
-  if (error || !session) {
-    throw new Error(error?.message || "Razorpay payment session was not found.");
-  }
+  if (error) throw new Error(error.message);
   const credentials = await razorpayCredentialsForAccount(connection);
   const payment = await razorpayRequest<RazorpayPayment>(
     credentials,
     `/v1/payments/${encodeURIComponent(paymentId)}`,
   );
+  if (payment.id !== paymentId) throw new Error("Razorpay returned a different payment.");
+  if (!session && !payment.invoice_id) return;
+  if (!session && payment.invoice_id) {
+    const invoice = await razorpayRequest<RazorpayInvoice>(
+      credentials,
+      `/v1/invoices/${encodeURIComponent(payment.invoice_id)}`,
+    );
+    // A mandate authorization can also emit payment.captured. Only a paid
+    // subscription invoice with a plan line is a billable subscription cycle.
+    if (!invoice.subscription_id || !invoice.line_items?.some((line) => line.type === "plan"))
+      return;
+    await chargedSubscription(connection, invoice.subscription_id, payment, invoice);
+    return;
+  }
+  if (!session) {
+    throw new Error(error?.message || "Razorpay payment session was not found.");
+  }
   await finalizeRazorpayPayment({ account: connection, session, payment });
+}
+
+async function subscriptionSession(connection: any, subscription: RazorpaySubscription) {
+  const { data: session, error } = await (supabaseAdmin as any)
+    .from("commerce_payment_sessions")
+    .select("*")
+    .eq("provider", "razorpay")
+    .eq("connection_id", connection.id)
+    .eq("creator_id", connection.creator_id)
+    .eq("provider_checkout_id", subscription.id)
+    .maybeSingle();
+  if (error || !session)
+    throw new Error(error?.message || "Razorpay subscription checkout was not found.");
+  assertRazorpaySubscriptionBinding(connection, session, subscription);
+  return session;
+}
+
+async function chargedSubscription(
+  connection: any,
+  subscriptionId: string,
+  payment: RazorpayPayment,
+  invoice?: RazorpayInvoice,
+) {
+  if (
+    !/^sub_[A-Za-z0-9]+$/.test(subscriptionId) ||
+    !/^inv_[A-Za-z0-9]+$/.test(payment.invoice_id || "")
+  )
+    throw new Error("Razorpay subscription charge is missing a billed invoice.");
+  const credentials = await razorpayCredentialsForAccount(connection);
+  const [subscription, paidInvoice] = await Promise.all([
+    razorpayRequest<RazorpaySubscription>(
+      credentials,
+      `/v1/subscriptions/${encodeURIComponent(subscriptionId)}`,
+    ),
+    invoice
+      ? Promise.resolve(invoice)
+      : razorpayRequest<RazorpayInvoice>(
+          credentials,
+          `/v1/invoices/${encodeURIComponent(payment.invoice_id!)}`,
+        ),
+  ]);
+  const session = await subscriptionSession(connection, subscription);
+  await finalizeRazorpayPayment({
+    account: connection,
+    session,
+    payment,
+    subscription,
+    invoice: paidInvoice,
+  });
+}
+
+async function subscriptionEvent(event: any, connection: any, eventId: string) {
+  const subscriptionId = String(event.payload?.subscription?.entity?.id || "");
+  if (!/^sub_[A-Za-z0-9]+$/.test(subscriptionId))
+    throw new Error("Razorpay event is missing its subscription ID.");
+  const credentials = await razorpayCredentialsForAccount(connection);
+  if (event.event === "subscription.charged") {
+    const paymentId = String(event.payload?.payment?.entity?.id || "");
+    if (!/^pay_[A-Za-z0-9]+$/.test(paymentId))
+      throw new Error("Razorpay charge is missing its payment ID.");
+    const payment = await razorpayRequest<RazorpayPayment>(
+      credentials,
+      `/v1/payments/${encodeURIComponent(paymentId)}`,
+    );
+    if (payment.id !== paymentId) throw new Error("Razorpay returned a different payment.");
+    await chargedSubscription(connection, subscriptionId, payment);
+    return;
+  }
+  // Fetch current provider state to avoid a delayed pending/cancellation event
+  // overriding a more recent recovery. No access is granted on authentication.
+  const subscription = await razorpayRequest<RazorpaySubscription>(
+    credentials,
+    `/v1/subscriptions/${encodeURIComponent(subscriptionId)}`,
+  );
+  await subscriptionSession(connection, subscription);
+  await applyRazorpaySubscriptionSnapshot({ account: connection, subscription, eventId });
 }
 
 async function failedPayment(event: any, connectionId: string) {
@@ -148,6 +245,7 @@ export async function handleRazorpayWebhook(request: Request, connectionId: stri
     event.payload?.payment?.entity ||
     event.payload?.refund?.entity ||
     event.payload?.dispute?.entity ||
+    event.payload?.subscription?.entity ||
     {};
   const eventId =
     request.headers.get("x-razorpay-event-id") ||
@@ -168,6 +266,8 @@ export async function handleRazorpayWebhook(request: Request, connectionId: stri
   try {
     if (event.event === "payment.captured") await capturedPayment(event, connection);
     if (event.event === "payment.failed") await failedPayment(event, connection.id);
+    if (event.event.startsWith("subscription."))
+      await subscriptionEvent(event, connection, eventId);
     if (event.event === "refund.processed") {
       await processedRefund(event, connection, eventId);
     }

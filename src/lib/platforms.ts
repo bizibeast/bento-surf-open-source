@@ -186,7 +186,7 @@ export const PLATFORMS: PlatformDef[] = [
   },
   {
     key: "paid_community",
-    label: "Paid community",
+    label: "Community",
     icon: UsersRound,
     category: "monetize",
     color: "#24a56a",

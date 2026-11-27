@@ -24,6 +24,11 @@ import {
   type CommerceCheckoutGrowth,
 } from "@/lib/commerce-growth.server";
 import { publicProductUrl } from "@/lib/application-urls";
+import {
+  assertPayPalSubscriptionCheckout,
+  createPayPalSubscription,
+  verifiedPayPalSubscription,
+} from "./subscription.server";
 
 type CheckoutProduct = {
   id: string;
@@ -36,6 +41,7 @@ type CheckoutProduct = {
   description: string;
   pricing_type: "one_time" | "subscription";
   price_amount: number;
+  billing_interval?: "day" | "week" | "month" | "year" | null;
   currency: string;
 };
 
@@ -63,10 +69,25 @@ export async function createPayPalCommerceCheckout(input: {
   growth: CommerceCheckoutGrowth;
   buyerAnswers?: CommerceBuyerAnswer[];
 }) {
-  if (input.product.pricing_type === "subscription") {
-    throw new Error(
-      "PayPal subscriptions are not enabled in Bento yet. Use Stripe for this product.",
-    );
+  const subscriptionCheckout = input.product.pricing_type === "subscription";
+  if (subscriptionCheckout) {
+    assertPayPalSubscriptionCheckout({
+      billingInterval: input.product.billing_interval,
+      platformFeeAmount: calculateCommerceAmounts(
+        input.product.price_amount,
+        commercePlatformFeeBps(),
+      ).platformFeeAmount,
+      hasAdjustments: Boolean(
+        input.growth.discountAmount ||
+        input.growth.discountCodeId ||
+        input.growth.discountCode ||
+        input.growth.bumpProductId ||
+        input.growth.bumpAmount ||
+        input.growth.recordingAddonAmount ||
+        input.recordingAddon?.amount ||
+        input.growth.grossAmount !== input.product.price_amount,
+      ),
+    });
   }
   const db = supabaseAdmin as any;
   const account = await getPayPalPaymentAccount(input.product.creator_id);
@@ -82,6 +103,16 @@ export async function createPayPalCommerceCheckout(input: {
     ? randomToken()
     : null;
   const captureToken = randomToken();
+  const sessionMetadata = {
+    capture_token_hash: await sha256(captureToken),
+    product_slug: input.product.slug,
+    product_public_slug: input.product.public_slug,
+    creator_username: input.product.creator_username,
+    access_token_ciphertext: accessToken ? await encryptServerSecret(accessToken) : null,
+    recording_addon_selected: Boolean(input.recordingAddon?.selected),
+    recording_addon_amount: input.recordingAddon?.amount || 0,
+    ...(input.buyerAnswers?.length ? { buyer_answers: input.buyerAnswers } : {}),
+  };
   const { error: insertError } = await db.from("commerce_payment_sessions").insert({
     id: localSessionId,
     product_id: input.product.id,
@@ -97,16 +128,7 @@ export async function createPayPalCommerceCheckout(input: {
     access_token_hash: accessToken ? await sha256(accessToken) : null,
     recording_addon_selected: Boolean(input.recordingAddon?.selected),
     recording_addon_amount: input.recordingAddon?.amount || 0,
-    metadata: {
-      capture_token_hash: await sha256(captureToken),
-      product_slug: input.product.slug,
-      product_public_slug: input.product.public_slug,
-      creator_username: input.product.creator_username,
-      access_token_ciphertext: accessToken ? await encryptServerSecret(accessToken) : null,
-      recording_addon_selected: Boolean(input.recordingAddon?.selected),
-      recording_addon_amount: input.recordingAddon?.amount || 0,
-      ...(input.buyerAnswers?.length ? { buyer_answers: input.buyerAnswers } : {}),
-    },
+    metadata: sessionMetadata,
   });
   if (insertError) throw new Error(insertError.message);
   try {
@@ -126,58 +148,71 @@ export async function createPayPalCommerceCheckout(input: {
   if (accessToken) returnUrl.searchParams.set("access", accessToken);
   const currency = input.product.currency.toUpperCase();
   try {
-    const order = await paypalRequestForAccount<{
-      id: string;
-      links: Array<{ href: string; rel: string }>;
-    }>(account, "/v2/checkout/orders", {
-      method: "POST",
-      requestId: `bento-commerce-${localSessionId}`,
-      body: {
-        intent: "CAPTURE",
-        purchase_units: [
-          {
-            reference_id: localSessionId,
-            custom_id: localSessionId,
-            invoice_id: `bento-${localSessionId}`,
-            description: input.product.title,
-            ...(!directCredentials ? { payee: { merchant_id: account.provider_account_id } } : {}),
-            amount: {
-              currency_code: currency,
-              value: paypalMoney(amounts.grossAmount, input.product.currency),
-            },
-            ...(!directCredentials && amounts.platformFeeAmount > 0
-              ? {
-                  payment_instruction: {
-                    disbursement_mode: "INSTANT",
-                    platform_fees: [
-                      {
-                        amount: {
-                          currency_code: currency,
-                          value: paypalMoney(amounts.platformFeeAmount, input.product.currency),
-                        },
+    const cancelUrl = `${publicProductUrl(input.product.creator_username, input.product.public_slug, process.env.VITE_PUBLIC_URL)}?checkout=canceled`;
+    const order = subscriptionCheckout
+      ? await createPayPalSubscription({
+          account,
+          sessionId: localSessionId,
+          product: input.product,
+          metadata: sessionMetadata,
+          email: input.email,
+          returnUrl: returnUrl.toString(),
+          cancelUrl,
+        })
+      : await paypalRequestForAccount<{
+          id: string;
+          links: Array<{ href: string; rel: string }>;
+        }>(account, "/v2/checkout/orders", {
+          method: "POST",
+          requestId: `bento-commerce-${localSessionId}`,
+          body: {
+            intent: "CAPTURE",
+            purchase_units: [
+              {
+                reference_id: localSessionId,
+                custom_id: localSessionId,
+                invoice_id: `bento-${localSessionId}`,
+                description: input.product.title,
+                ...(!directCredentials
+                  ? { payee: { merchant_id: account.provider_account_id } }
+                  : {}),
+                amount: {
+                  currency_code: currency,
+                  value: paypalMoney(amounts.grossAmount, input.product.currency),
+                },
+                ...(!directCredentials && amounts.platformFeeAmount > 0
+                  ? {
+                      payment_instruction: {
+                        disbursement_mode: "INSTANT",
+                        platform_fees: [
+                          {
+                            amount: {
+                              currency_code: currency,
+                              value: paypalMoney(amounts.platformFeeAmount, input.product.currency),
+                            },
+                          },
+                        ],
                       },
-                    ],
-                  },
-                }
-              : {}),
-          },
-        ],
-        payment_source: {
-          paypal: {
-            experience_context: {
-              brand_name: "bento.surf",
-              user_action: "PAY_NOW",
-              return_url: returnUrl.toString(),
-              cancel_url: `${publicProductUrl(
-                input.product.creator_username,
-                input.product.public_slug,
-                process.env.VITE_PUBLIC_URL,
-              )}?checkout=canceled`,
+                    }
+                  : {}),
+              },
+            ],
+            payment_source: {
+              paypal: {
+                experience_context: {
+                  brand_name: "bento.surf",
+                  user_action: "PAY_NOW",
+                  return_url: returnUrl.toString(),
+                  cancel_url: `${publicProductUrl(
+                    input.product.creator_username,
+                    input.product.public_slug,
+                    process.env.VITE_PUBLIC_URL,
+                  )}?checkout=canceled`,
+                },
+              },
             },
           },
-        },
-      },
-    });
+        });
     const approval = order.links.find(
       (link) => link.rel === "payer-action" || link.rel === "approve",
     );
@@ -210,17 +245,34 @@ export async function capturePayPalCommerceOrder(input: {
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!local) throw new Error("PayPal checkout does not match a Bento payment session.");
+  if ((await sha256(input.captureToken)) !== local.metadata.capture_token_hash) {
+    throw new Error("Invalid PayPal return token.");
+  }
+  if (local.metadata?.subscription_checkout) {
+    if (!["pending", "approved", "paid"].includes(local.status))
+      throw new Error("This PayPal checkout has expired.");
+    const account = await getPayPalPaymentAccount(local.creator_id);
+    if (!account || account.id !== local.connection_id)
+      throw new Error("PayPal connection not found.");
+    const subscription = await verifiedPayPalSubscription(account, local);
+    if (!["ACTIVE", "APPROVED"].includes(subscription.status))
+      throw new Error("PayPal subscription approval is not complete.");
+    return {
+      productSlug: local.metadata.product_public_slug || local.metadata.product_slug,
+      creatorUsername: local.metadata.creator_username || null,
+      orderId: local.id,
+      pending: local.status !== "paid",
+    };
+  }
   if (local.status === "paid")
     return {
       productSlug: local.metadata.product_public_slug || local.metadata.product_slug,
       creatorUsername: local.metadata.creator_username || null,
       orderId: input.orderId,
+      pending: false,
     };
   if (local.status !== "pending" || new Date(local.expires_at).getTime() < Date.now()) {
     throw new Error("This PayPal checkout has expired.");
-  }
-  if ((await sha256(input.captureToken)) !== local.metadata.capture_token_hash) {
-    throw new Error("Invalid PayPal return token.");
   }
   const account = await getPayPalPaymentAccount(local.creator_id);
   if (!account || account.id !== local.connection_id)
@@ -310,5 +362,6 @@ export async function capturePayPalCommerceOrder(input: {
     productSlug: local.metadata.product_public_slug || local.metadata.product_slug,
     creatorUsername: local.metadata.creator_username || null,
     orderId: input.orderId,
+    pending: false,
   };
 }

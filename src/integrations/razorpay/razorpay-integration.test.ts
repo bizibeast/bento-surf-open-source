@@ -9,6 +9,7 @@ import {
   razorpayRequest,
   razorpayWebhookUrl,
   verifyRazorpayPaymentSignature,
+  verifyRazorpaySubscriptionSignature,
   verifyRazorpayWebhookSignature,
 } from "./client.server";
 
@@ -18,6 +19,41 @@ afterEach(() => {
 });
 
 describe("Razorpay creator payments", () => {
+  it("subscribes to the full recurring billing lifecycle", () => {
+    for (const event of [
+      "subscription.authenticated",
+      "subscription.activated",
+      "subscription.charged",
+      "subscription.pending",
+      "subscription.halted",
+      "subscription.cancelled",
+      "subscription.completed",
+      "subscription.updated",
+      "subscription.paused",
+      "subscription.resumed",
+    ]) {
+      expect(RAZORPAY_WEBHOOK_EVENTS).toContain(event);
+    }
+  });
+
+  it("verifies subscription callbacks using payment then the server subscription ID", async () => {
+    const input = {
+      subscriptionId: "sub_Example123",
+      paymentId: "pay_Example123",
+      keySecret: "secret",
+      signature: await hmacSha256Hex("secret", "pay_Example123|sub_Example123"),
+    };
+    expect(await verifyRazorpaySubscriptionSignature(input)).toBe(true);
+    expect(
+      await verifyRazorpaySubscriptionSignature({ ...input, subscriptionId: "sub_other" }),
+    ).toBe(false);
+    expect(
+      await verifyRazorpaySubscriptionSignature({
+        ...input,
+        signature: await hmacSha256Hex("secret", "sub_Example123|pay_Example123"),
+      }),
+    ).toBe(false);
+  });
   it("subscribes to payment, refund, and dispute lifecycle events", () => {
     expect(RAZORPAY_WEBHOOK_EVENTS).toContain("payment.dispute.created");
     expect(RAZORPAY_WEBHOOK_EVENTS).toContain("payment.dispute.won");

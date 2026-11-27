@@ -18,6 +18,8 @@ import {
   failCommerceWebhookEvent,
 } from "@/lib/commerce-webhook-receipts.server";
 
+import { processPayPalSubscriptionEvent } from "./subscription.server";
+
 const MAX_WEBHOOK_BYTES = 1024 * 1024;
 
 function response(status: number, body = "") {
@@ -64,6 +66,7 @@ async function verifyPayPalWebhook(
 
 type PayPalEventScope = {
   creatorId?: string;
+  connectionId?: string;
   providerAccountId?: string;
 };
 
@@ -86,6 +89,25 @@ async function processCaptureRefund(event: any, scope: PayPalEventScope = {}) {
     providerEventId: String(event.id),
     refundAmount,
     amountIsCumulative: true,
+    metadata: scope.creatorId ? { creator_id: scope.creatorId } : {},
+    occurredAt: event.create_time || null,
+  });
+}
+
+async function processSaleRefund(event: any, scope: PayPalEventScope) {
+  const resource = event.resource || {};
+  const reversed = event.event_type === "PAYMENT.SALE.REVERSED";
+  const paymentId = String(resource.sale_id || (reversed ? resource.id : "") || "");
+  if (!paymentId || !resource.amount?.total || !resource.amount?.currency) {
+    throw new Error("PayPal subscription refund is missing its payment details.");
+  }
+  await applyCommerceRefund({
+    provider: "paypal",
+    providerPaymentId: paymentId,
+    providerAccountId: scope.providerAccountId,
+    providerEventId: String(event.id),
+    refundAmount: paypalMinorUnits(resource.amount.total, resource.amount.currency),
+    amountIsCumulative: reversed,
     metadata: scope.creatorId ? { creator_id: scope.creatorId } : {},
     occurredAt: event.create_time || null,
   });
@@ -165,6 +187,18 @@ async function processPayPalEvent(event: any, scope: PayPalEventScope = {}) {
 
   try {
     if (
+      event.event_type === "PAYMENT.SALE.COMPLETED" ||
+      event.event_type.startsWith("BILLING.SUBSCRIPTION.")
+    ) {
+      await processPayPalSubscriptionEvent(event, scope);
+    }
+    if (
+      event.event_type === "PAYMENT.SALE.REFUNDED" ||
+      event.event_type === "PAYMENT.SALE.REVERSED"
+    ) {
+      await processSaleRefund(event, scope);
+    }
+    if (
       event.event_type === "PAYMENT.CAPTURE.REFUNDED" ||
       event.event_type === "PAYMENT.CAPTURE.REVERSED"
     ) {
@@ -215,6 +249,7 @@ export async function handleDirectPayPalWebhook(request: Request, connectionId: 
   }
   return processPayPalEvent(parsed.event, {
     creatorId: account.creator_id,
+    connectionId: account.id,
     providerAccountId: account.provider_account_id,
   });
 }

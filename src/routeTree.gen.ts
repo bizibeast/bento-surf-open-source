@@ -30,6 +30,7 @@ import { Route as AuthenticatedBookingsRouteImport } from './routes/_authenticat
 import { Route as AuthenticatedCalendarRouteImport } from './routes/_authenticated/calendar'
 import { Route as AuthenticatedCommunityRouteImport } from './routes/_authenticated/community'
 import { Route as AuthenticatedContentRouteImport } from './routes/_authenticated/content'
+import { Route as AuthenticatedCoursesRouteImport } from './routes/_authenticated/courses'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedEarnRouteImport } from './routes/_authenticated/earn'
 import { Route as AuthenticatedEmailMarketingRouteImport } from './routes/_authenticated/email-marketing'
@@ -185,6 +186,11 @@ const AuthenticatedCommunityRoute = AuthenticatedCommunityRouteImport.update({
 const AuthenticatedContentRoute = AuthenticatedContentRouteImport.update({
   id: '/content',
   path: '/content',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedCoursesRoute = AuthenticatedCoursesRouteImport.update({
+  id: '/courses',
+  path: '/courses',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
 const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
@@ -500,6 +506,7 @@ export interface FileRoutesByFullPath {
   '/calendar': typeof AuthenticatedCalendarRoute
   '/community': typeof AuthenticatedCommunityRoute
   '/content': typeof AuthenticatedContentRoute
+  '/courses': typeof AuthenticatedCoursesRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/earn': typeof AuthenticatedEarnRoute
   '/email-marketing': typeof AuthenticatedEmailMarketingRoute
@@ -574,6 +581,7 @@ export interface FileRoutesByTo {
   '/calendar': typeof AuthenticatedCalendarRoute
   '/community': typeof AuthenticatedCommunityRoute
   '/content': typeof AuthenticatedContentRoute
+  '/courses': typeof AuthenticatedCoursesRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/earn': typeof AuthenticatedEarnRoute
   '/email-marketing': typeof AuthenticatedEmailMarketingRoute
@@ -650,6 +658,7 @@ export interface FileRoutesById {
   '/_authenticated/calendar': typeof AuthenticatedCalendarRoute
   '/_authenticated/community': typeof AuthenticatedCommunityRoute
   '/_authenticated/content': typeof AuthenticatedContentRoute
+  '/_authenticated/courses': typeof AuthenticatedCoursesRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/earn': typeof AuthenticatedEarnRoute
   '/_authenticated/email-marketing': typeof AuthenticatedEmailMarketingRoute
@@ -726,6 +735,7 @@ export interface FileRouteTypes {
     | '/calendar'
     | '/community'
     | '/content'
+    | '/courses'
     | '/dashboard'
     | '/earn'
     | '/email-marketing'
@@ -800,6 +810,7 @@ export interface FileRouteTypes {
     | '/calendar'
     | '/community'
     | '/content'
+    | '/courses'
     | '/dashboard'
     | '/earn'
     | '/email-marketing'
@@ -875,6 +886,7 @@ export interface FileRouteTypes {
     | '/_authenticated/calendar'
     | '/_authenticated/community'
     | '/_authenticated/content'
+    | '/_authenticated/courses'
     | '/_authenticated/dashboard'
     | '/_authenticated/earn'
     | '/_authenticated/email-marketing'
@@ -1123,6 +1135,13 @@ declare module '@tanstack/react-router' {
       path: '/content'
       fullPath: '/content'
       preLoaderRoute: typeof AuthenticatedContentRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/courses': {
+      id: '/_authenticated/courses'
+      path: '/courses'
+      fullPath: '/courses'
+      preLoaderRoute: typeof AuthenticatedCoursesRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/dashboard': {
@@ -1510,6 +1529,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedCalendarRoute: typeof AuthenticatedCalendarRoute
   AuthenticatedCommunityRoute: typeof AuthenticatedCommunityRoute
   AuthenticatedContentRoute: typeof AuthenticatedContentRoute
+  AuthenticatedCoursesRoute: typeof AuthenticatedCoursesRoute
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
   AuthenticatedEarnRoute: typeof AuthenticatedEarnRoute
   AuthenticatedEmailMarketingRoute: typeof AuthenticatedEmailMarketingRoute
@@ -1541,6 +1561,7 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedCalendarRoute: AuthenticatedCalendarRoute,
   AuthenticatedCommunityRoute: AuthenticatedCommunityRoute,
   AuthenticatedContentRoute: AuthenticatedContentRoute,
+  AuthenticatedCoursesRoute: AuthenticatedCoursesRoute,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
   AuthenticatedEarnRoute: AuthenticatedEarnRoute,
   AuthenticatedEmailMarketingRoute: AuthenticatedEmailMarketingRoute,

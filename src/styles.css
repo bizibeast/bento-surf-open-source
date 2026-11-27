@@ -680,7 +680,7 @@ textarea {
       [class*="rounded-full"][class*="inline-flex"]:not([class*="size-"]),
       [class*="rounded-full"][class^="flex "]:not([class*="size-"]),
       [class*="rounded-full"][class*=" flex "]:not([class*="size-"])
-    ):not(:where([data-bento-public-page] *)) {
+    ):not(:where([data-bento-public-page] *, [data-app-navigation] *)) {
     border-radius: 0.5rem !important;
   }
 
@@ -699,7 +699,7 @@ textarea {
       [role="button"][class*="px-"],
       [role="button"][class*="py-"],
       a[class*="inline-flex"][class*="px-"]
-    ):not([role="switch"]):not(:where([data-bento-public-page] *)) {
+    ):not([role="switch"]):not(:where([data-bento-public-page] *, [data-app-navigation] *)) {
     min-height: 2.5rem !important;
     height: auto !important;
     gap: 0.5rem !important;
@@ -712,7 +712,7 @@ textarea {
       input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]),
       textarea,
       select
-    ):not(:where([data-bento-public-page] *)) {
+    ):not(:where([data-bento-public-page] *, [data-app-navigation] *)) {
     min-height: 2.5rem !important;
     border-radius: 0.5rem !important;
     padding: 0.625rem 0.9375rem !important;
@@ -723,7 +723,7 @@ textarea {
     :where(
       input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]),
       select
-    ):not(:where([data-bento-public-page] *)) {
+    ):not(:where([data-bento-public-page] *, [data-app-navigation] *)) {
     height: 2.625rem !important;
   }
 

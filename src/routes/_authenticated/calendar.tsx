@@ -43,7 +43,14 @@ import {
   type CalendarSetupStep,
   type WeeklyRule,
 } from "@/lib/booking";
-import { createCommerceProduct } from "@/lib/commerce.functions";
+import { createCommerceProduct, updateCommerceProduct } from "@/lib/commerce.functions";
+import type { CommerceProductRecord } from "@/lib/commerce";
+import { isCommerceProductListed } from "@/lib/commerce-visibility";
+import {
+  commerceDefaultCurrencyQueryKey,
+  DEFAULT_COMMERCE_CURRENCY,
+} from "@/lib/commerce-currency";
+import { getMyCommerceCurrency } from "@/lib/commerce-currency.functions";
 import { micro } from "@/lib/micro-app-ui";
 import { browserTimeZone } from "@/lib/timezones";
 import { publicProfilePath, publicProfileUrl } from "@/lib/application-urls";
@@ -87,16 +94,7 @@ type ReviewItem = {
   is_public: boolean;
 };
 
-type SessionItem = {
-  id: string;
-  title: string;
-  price_amount: number;
-  currency: string;
-  status: string;
-  slug?: string;
-  sales_count?: number;
-  settings?: { durationMinutes?: number };
-};
+type SessionItem = CommerceProductRecord;
 
 type ConnectionItem = {
   id: string;
@@ -353,6 +351,11 @@ function CalendarOnboarding({
   googleReady: boolean;
   onCompleted: () => Promise<unknown> | void;
 }) {
+  const { data: currencySettings } = useQuery({
+    queryKey: commerceDefaultCurrencyQueryKey,
+    queryFn: () => getMyCommerceCurrency(),
+  });
+  const currency = currencySettings?.currency || DEFAULT_COMMERCE_CURRENCY;
   const [sessionCreationMode, setSessionCreationMode] = useState<"templates" | "custom">(
     "templates",
   );
@@ -363,9 +366,12 @@ function CalendarOnboarding({
     durationMinutes: 30,
     pricingType: "free" as "free" | "one_time",
     priceAmount: 0,
+    calendarVisibility: "listed" as "listed" | "unlisted",
   });
   const createSessions = useMutation({
     mutationFn: async () => {
+      if (!currencySettings)
+        throw new Error("Wait for your default currency to load before creating a session.");
       const chosen = SESSION_TEMPLATES.filter((template) =>
         selectedTemplates.includes(template.id),
       );
@@ -381,7 +387,7 @@ function CalendarOnboarding({
               cover_url: null,
               pricing_type: template.priceAmount === 0 ? "free" : "one_time",
               price_amount: template.priceAmount,
-              currency: "usd",
+              currency,
               billing_interval: null,
               cta_label: "Book a call",
               inventory_limit: null,
@@ -406,6 +412,8 @@ function CalendarOnboarding({
   });
   const createCustomSession = useMutation({
     mutationFn: () => {
+      if (!currencySettings)
+        throw new Error("Wait for your default currency to load before creating a session.");
       const title = customSession.title.trim();
       if (!title) throw new Error("Add a name for your session.");
       if (customSession.pricingType === "one_time" && customSession.priceAmount <= 0) {
@@ -424,11 +432,12 @@ function CalendarOnboarding({
             cover_url: null,
             pricing_type: customSession.pricingType,
             price_amount: customSession.pricingType === "free" ? 0 : customSession.priceAmount,
-            currency: "usd",
+            currency,
             billing_interval: null,
             cta_label: "Book a call",
             inventory_limit: null,
             settings: {
+              calendarVisibility: customSession.calendarVisibility,
               durationMinutes: customSession.durationMinutes,
               location: "google_meet",
               ...bookingAvailabilitySettings(availability),
@@ -599,7 +608,7 @@ function CalendarOnboarding({
                           <span className="block text-sm font-semibold">{template.title}</span>
                           <span className="mt-0.5 block text-xs text-muted-foreground">
                             {template.durationMinutes} min ·{" "}
-                            {template.priceAmount ? `$${template.priceAmount / 100}` : "Free"}
+                            {formatMoney(template.priceAmount, currency)}
                           </span>
                         </span>
                         <span
@@ -612,7 +621,9 @@ function CalendarOnboarding({
                   })}
                   <button
                     type="button"
-                    disabled={!selectedTemplates.length || createSessions.isPending}
+                    disabled={
+                      !currencySettings || !selectedTemplates.length || createSessions.isPending
+                    }
                     onClick={() => createSessions.mutate()}
                     className={`mt-2 ${micro.btnPrimary} w-full sm:w-auto`}
                   >
@@ -676,7 +687,7 @@ function CalendarOnboarding({
                     </Field>
                   </div>
                   {customSession.pricingType === "one_time" && (
-                    <Field label="Price (USD)">
+                    <Field label={`Price (${currency.toUpperCase()})`}>
                       <PriceInput
                         amount={customSession.priceAmount}
                         onAmountChange={(priceAmount) =>
@@ -686,6 +697,26 @@ function CalendarOnboarding({
                       />
                     </Field>
                   )}
+                  <Field label="Session visibility">
+                    <select
+                      aria-label="Session visibility"
+                      value={customSession.calendarVisibility}
+                      onChange={(event) =>
+                        setCustomSession((current) => ({
+                          ...current,
+                          calendarVisibility: event.target.value as "listed" | "unlisted",
+                        }))
+                      }
+                      className={inputClass}
+                    >
+                      <option value="listed">Listed (show in public listings)</option>
+                      <option value="unlisted">Unlisted (direct link only)</option>
+                    </select>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Unlisted sessions stay bookable by direct link and are hidden from public
+                      listings.
+                    </p>
+                  </Field>
                   <Field label="Description (optional)">
                     <textarea
                       value={customSession.description}
@@ -703,6 +734,7 @@ function CalendarOnboarding({
                   <button
                     type="button"
                     disabled={
+                      !currencySettings ||
                       !customSession.title.trim() ||
                       (customSession.pricingType === "one_time" &&
                         customSession.priceAmount <= 0) ||
@@ -806,7 +838,7 @@ function CalendarOnboarding({
                           {customSession.pricingType === "free"
                             ? "Free"
                             : customSession.priceAmount > 0
-                              ? `$${customSession.priceAmount / 100}`
+                              ? formatMoney(customSession.priceAmount, currency)
                               : "Add a price"}
                         </div>
                       </div>
@@ -985,6 +1017,28 @@ function BookingsHome({
 }
 
 function SessionsView({ products }: { products: SessionItem[] }) {
+  const queryClient = useQueryClient();
+  const visibility = useMutation({
+    mutationFn: ({ product, listed }: { product: SessionItem; listed: boolean }) =>
+      updateCommerceProduct({
+        data: {
+          id: product.id,
+          product: {
+            ...product,
+            settings: { ...product.settings, calendarVisibility: listed ? "listed" : "unlisted" },
+          },
+        },
+      }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["booking-workspace"] }),
+        queryClient.invalidateQueries({ queryKey: ["my-commerce"] }),
+      ]);
+      toast.success("Session visibility saved");
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Could not save session visibility"),
+  });
   return (
     <div className="space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -1006,34 +1060,52 @@ function SessionsView({ products }: { products: SessionItem[] }) {
       {products.length ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {products.map((product) => (
-            <Link
-              key={product.id}
-              to="/store"
-              search={{ tab: "products", create: undefined, edit: product.id }}
-              className={`group ${micro.card} p-5 transition hover:-translate-y-0.5`}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <span className={`size-12 rounded-[18px] ${micro.iconWell}`}>
-                  <Video className="size-5" />
-                </span>
-                <span
-                  className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${product.status === "published" ? "bg-emerald-500/10 text-emerald-700" : "bg-[#f2f5fb] text-[#17213a]/55"}`}
-                >
-                  {product.status}
-                </span>
+            <article key={product.id} className={`${micro.card} p-5`}>
+              <Link
+                to="/store"
+                search={{ tab: "products", create: undefined, edit: product.id }}
+                className="group block"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <span className={`size-12 rounded-[18px] ${micro.iconWell}`}>
+                    <Video className="size-5" />
+                  </span>
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${product.status === "published" ? "bg-emerald-500/10 text-emerald-700" : "bg-[#f2f5fb] text-[#17213a]/55"}`}
+                  >
+                    {product.status}
+                  </span>
+                </div>
+                <h3 className="mt-5 font-ui-display text-2xl">{product.title}</h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {product.settings?.durationMinutes || 60} minutes ·{" "}
+                  {formatMoney(product.price_amount, product.currency)}
+                </p>
+                <div className="mt-6 flex items-center justify-between border-t border-border/70 pt-4 text-xs">
+                  <span className="text-muted-foreground">{product.sales_count || 0} booked</span>
+                  <span className="inline-flex items-center gap-1 font-semibold text-primary">
+                    Edit <ChevronRight className="size-3.5" />
+                  </span>
+                </div>
+              </Link>
+              <div className="mt-4 flex items-start justify-between gap-3 border-t border-border/70 pt-4">
+                <div>
+                  <span className="text-xs font-semibold">
+                    {isCommerceProductListed(product) ? "Listed" : "Unlisted"}
+                  </span>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Unlisted sessions stay bookable by direct link and are hidden from public
+                    listings.
+                  </p>
+                </div>
+                <Switch
+                  aria-label={`List ${product.title} publicly`}
+                  checked={isCommerceProductListed(product)}
+                  disabled={visibility.isPending}
+                  onCheckedChange={(listed) => visibility.mutate({ product, listed })}
+                />
               </div>
-              <h3 className="mt-5 font-ui-display text-2xl">{product.title}</h3>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {product.settings?.durationMinutes || 60} minutes ·{" "}
-                {formatMoney(product.price_amount, product.currency)}
-              </p>
-              <div className="mt-6 flex items-center justify-between border-t border-border/70 pt-4 text-xs">
-                <span className="text-muted-foreground">{product.sales_count || 0} booked</span>
-                <span className="inline-flex items-center gap-1 font-semibold text-primary">
-                  Edit <ChevronRight className="size-3.5" />
-                </span>
-              </div>
-            </Link>
+            </article>
           ))}
         </div>
       ) : (

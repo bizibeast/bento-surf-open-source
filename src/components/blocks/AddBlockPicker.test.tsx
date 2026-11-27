@@ -8,6 +8,18 @@ vi.mock("@/lib/profile.functions", () => ({
   getMyProfile: vi.fn().mockResolvedValue({ is_pro: true }),
 }));
 
+vi.mock("@/lib/commerce.functions", () => ({
+  getStoreOnboardingStatus: vi.fn().mockResolvedValue({ ready: false, selectedProvider: null }),
+}));
+vi.mock("@/lib/booking.functions", () => ({
+  getBookingWorkspace: vi.fn().mockResolvedValue({
+    locked: false,
+    availabilityConfigured: false,
+    calendarConnections: [],
+    products: [],
+  }),
+}));
+
 vi.mock("@/lib/upload", () => ({
   uploadFile: vi.fn().mockResolvedValue("https://cdn.bento.surf/acme-logo.png"),
 }));
@@ -22,6 +34,20 @@ vi.mock("@/lib/link-metadata.functions", () => ({
 }));
 
 describe("AddBlockPicker", () => {
+  it("opens community setup without a gateway so creators can choose free pricing", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <AddBlockPicker open onOpenChange={() => undefined} onAdd={() => undefined} />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Sell & Grow" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Community" }, { timeout: 10_000 }));
+    expect(
+      await screen.findByRole("button", { name: "Open product builder" }, { timeout: 10_000 }),
+    ).toBeVisible();
+    expect(screen.getByText(/published.*when you save/i)).toBeVisible();
+  });
   it("keeps every block category in the vertical category rail", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(

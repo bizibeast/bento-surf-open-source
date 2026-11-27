@@ -1,3 +1,4 @@
+import { isCommerceProductListed } from "./commerce-visibility";
 import { loadPublicCreatorPage } from "./profile.functions";
 import { isWorkspacePublicBillingAvailable } from "./billing-public.server";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Booking tables are added by the accompanying migration. */
@@ -99,7 +100,9 @@ export const getBookingWorkspace = createServerFn({ method: "GET" })
           .order("created_at"),
         client
           .from("commerce_products")
-          .select("id,slug,title,subtitle,status,price_amount,currency,settings,sales_count")
+          .select(
+            "id,kind,status,slug,public_slug,title,subtitle,description,cover_url,pricing_type,price_amount,currency,billing_interval,cta_label,inventory_limit,sales_count,noindex,settings",
+          )
           .eq("creator_id", context.userId)
           .eq("kind", "coaching_call")
           .neq("status", "archived")
@@ -303,7 +306,12 @@ async function loadPublicBookingCalendar(username: string) {
   const canvas = await loadPublicCreatorPage({ username }, "calendar", null);
   if (!canvas || canvas.notFound || !canvas.page) return null;
   const creator = canvas.profile;
-  const sessions = canvas.systemItems
+  const systemItems = canvas.systemItems.filter(
+    (item) =>
+      item.kind !== "session" ||
+      isCommerceProductListed({ kind: "coaching_call", settings: item.data.settings }),
+  );
+  const sessions = systemItems
     .filter((item) => item.kind === "session")
     .map(({ data }) => ({
       id: String(data.id),
@@ -316,7 +324,7 @@ async function loadPublicBookingCalendar(username: string) {
       priceLabel: String(data.priceLabel),
       soldOut: data.soldOut === true,
     }));
-  const reviews = canvas.systemItems
+  const reviews = systemItems
     .filter((item) => item.kind === "review")
     .map(({ data }) => ({
       id: String(data.id),
@@ -326,6 +334,7 @@ async function loadPublicBookingCalendar(username: string) {
     }));
   return {
     ...canvas,
+    systemItems,
     page: canvas.page,
     profile: {
       username: creator.username,

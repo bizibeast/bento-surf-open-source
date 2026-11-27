@@ -106,4 +106,31 @@ describe("Polar creator payment policy", () => {
       }),
     ).toThrow("platform fee");
   });
+  it("accepts renewal orders without a checkout only after verifying the subscription against a paid order", () => {
+    const input = {
+      session: {
+        id: "session",
+        product_id: "product",
+        creator_id: "creator",
+        connection_id: "connection",
+        provider_checkout_id: "checkout",
+        gross_amount: 1900,
+        currency: "usd",
+        status: "paid",
+      },
+      connection: { id: "connection", creator_id: "creator" },
+      order: { checkoutId: null, netAmount: 1900, currency: "usd", platformFeeAmount: 0 },
+    };
+    expect(() => assertPolarOrderSession(input)).toThrow("checkout");
+    expect(assertPolarOrderSession({ ...input, verifiedSubscriptionRenewal: true })).toBe(
+      "product",
+    );
+    expect(() =>
+      assertPolarOrderSession({
+        ...input,
+        session: { ...input.session, status: "pending" },
+        verifiedSubscriptionRenewal: true,
+      }),
+    ).toThrow("checkout");
+  });
 });

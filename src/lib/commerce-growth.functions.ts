@@ -4,6 +4,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { normalizeCommerceDiscountCode } from "./commerce-growth";
+import { secondaryCommerceIntakeError } from "./commerce-growth.server";
 import {
   enqueueEmailBatch,
   getCreatorEmailCapacity,
@@ -774,13 +775,17 @@ export const saveCommerceOrderBump = createServerFn({ method: "POST" })
     const [primaryResult, bumpResult] = await Promise.all([
       db
         .from("commerce_products")
-        .select("id, status, pricing_type, price_amount, currency, inventory_limit, sales_count")
+        .select(
+          "id, kind, settings, status, pricing_type, price_amount, currency, inventory_limit, sales_count",
+        )
         .eq("id", data.primaryProductId)
         .eq("creator_id", context.userId)
         .maybeSingle(),
       db
         .from("commerce_products")
-        .select("id, status, pricing_type, price_amount, currency, inventory_limit, sales_count")
+        .select(
+          "id, kind, settings, status, pricing_type, price_amount, currency, inventory_limit, sales_count",
+        )
         .eq("id", data.bumpProductId)
         .eq("creator_id", context.userId)
         .maybeSingle(),
@@ -797,6 +802,8 @@ export const saveCommerceOrderBump = createServerFn({ method: "POST" })
       throw new Error("The main product and order bump must use the same currency.");
     }
     if (data.isActive) {
+      const intakeError = secondaryCommerceIntakeError(bump);
+      if (intakeError) throw new Error(intakeError);
       if (primary.status !== "published" || bump.status !== "published") {
         throw new Error("Publish both products before activating this order bump.");
       }

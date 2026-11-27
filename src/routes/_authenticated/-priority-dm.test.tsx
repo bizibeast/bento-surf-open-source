@@ -46,6 +46,23 @@ vi.mock("@/lib/priority-dm.functions", () => ({
   setPriorityDmConversationClosed: vi.fn(),
 }));
 
+vi.mock("@/components/commerce/WorkspaceProductComposer", () => ({
+  WorkspaceProductComposer: ({
+    open,
+    kind,
+    onOpenChange,
+  }: {
+    open: boolean;
+    kind: string;
+    onOpenChange: (value: boolean) => void;
+  }) =>
+    open ? (
+      <div role="dialog">
+        Create {kind}
+        <button onClick={() => onOpenChange(false)}>Cancel creation</button>
+      </div>
+    ) : null,
+}));
 vi.mock("@/lib/webmcp", () => ({ useWebMcpTools: vi.fn() }));
 
 import { Route } from "./priority-dm";
@@ -156,13 +173,21 @@ describe("Priority DM inbox", () => {
     vi.mocked(setPriorityDmConversationClosed).mockResolvedValue({ ok: true });
   });
 
-  it("links an empty inbox to Priority DM product creation", async () => {
+  it("opens Priority DM creation in the inbox without navigating away", async () => {
     vi.mocked(getMyPriorityDmInbox).mockResolvedValue([]);
     renderPage();
 
-    expect(
-      await screen.findByRole("link", { name: "Create a Priority DM product" }),
-    ).toHaveAttribute("href", "/store?tab=products&create=priority_dm");
+    fireEvent.click(
+      await screen.findByRole(
+        "button",
+        { name: "Create a Priority DM product" },
+        { timeout: 10_000 },
+      ),
+    );
+    expect(screen.getByRole("dialog")).toHaveTextContent("Create priority_dm");
+    expect(navigate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel creation" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("shows only conversations matching the open or closed filter", async () => {

@@ -25,6 +25,7 @@ function response(status: number, body = "") {
 }
 
 export function assertPolarOrderSession(input: {
+  verifiedSubscriptionRenewal?: boolean;
   session: {
     id: string;
     product_id: string;
@@ -50,7 +51,11 @@ export function assertPolarOrderSession(input: {
   if (["failed", "expired", "canceled"].includes(session.status)) {
     throw new Error("This Bento payment session is no longer valid.");
   }
-  if (session.provider_checkout_id && session.provider_checkout_id !== order.checkoutId) {
+  if (
+    session.provider_checkout_id &&
+    session.provider_checkout_id !== order.checkoutId &&
+    !(input.verifiedSubscriptionRenewal && session.status === "paid" && !order.checkoutId)
+  ) {
     throw new Error("Polar checkout does not match the Bento payment session.");
   }
   if (
@@ -65,7 +70,7 @@ export function assertPolarOrderSession(input: {
   return session.product_id;
 }
 
-async function processOrderPaid(
+export async function processOrderPaid(
   event: Extract<ReturnType<typeof validateEvent>, { type: "order.paid" }>,
   connection: any,
   eventId: string,
@@ -89,7 +94,27 @@ async function processOrderPaid(
   if (sessionError || !session) {
     throw new Error(sessionError?.message || "Bento payment session was not found.");
   }
-  const productId = String(assertPolarOrderSession({ session, connection, order }));
+  let verifiedSubscriptionRenewal = false;
+  if (session.status === "paid" && !order.checkoutId && order.subscriptionId) {
+    const { data: previousOrder, error: previousOrderError } = await db
+      .from("commerce_orders")
+      .select("id")
+      .eq("provider", "polar")
+      .eq("provider_account_id", connection.provider_account_id)
+      .eq("provider_subscription_id", order.subscriptionId)
+      .eq("product_id", session.product_id)
+      .eq("creator_id", connection.creator_id)
+      .eq("buyer_email", session.buyer_email)
+      .in("status", ["paid", "partially_refunded"])
+      .contains("metadata", { bento_session_id: session.id })
+      .limit(1)
+      .maybeSingle();
+    if (previousOrderError) throw new Error(previousOrderError.message);
+    verifiedSubscriptionRenewal = Boolean(previousOrder);
+  }
+  const productId = String(
+    assertPolarOrderSession({ session, connection, order, verifiedSubscriptionRenewal }),
+  );
   const { data: product, error: productError } = await db
     .from("commerce_products")
     .select("id, creator_id, currency")
@@ -121,7 +146,7 @@ async function processOrderPaid(
       p_buyer_name: order.customer.name || order.billingName || "",
       p_provider: "polar",
       p_provider_account_id: connection.provider_account_id,
-      p_provider_checkout_id: order.checkoutId || order.id,
+      p_provider_checkout_id: session.provider_checkout_id || order.checkoutId || order.id,
       p_provider_payment_id: order.id,
       p_provider_subscription_id: order.subscriptionId || "",
       p_gross_amount: order.netAmount,
@@ -146,14 +171,16 @@ async function processOrderPaid(
   await finalizeCommerceFulfillment({
     session,
     orderId: fulfilled.order_id,
-    providerCheckoutId: order.checkoutId || order.id,
+    providerCheckoutId: session.provider_checkout_id || order.checkoutId || order.id,
   });
   if (order.subscriptionId) {
     await applyCommerceSubscriptionLifecycle({
       provider: "polar",
       providerAccountId: connection.provider_account_id,
       providerSubscriptionId: order.subscriptionId,
-      state: "active",
+      state: "renewed",
+      currentPeriodStart: order.subscription?.currentPeriodStart,
+      currentPeriodEnd: order.subscription?.currentPeriodEnd,
       providerEventId: eventId,
       metadata: {
         polar_order_id: order.id,

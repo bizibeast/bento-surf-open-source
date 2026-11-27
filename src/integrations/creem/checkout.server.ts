@@ -61,7 +61,7 @@ async function productSyncHash(product: CheckoutProduct) {
       billingInterval: product.billing_interval,
       // Bump when the remotely-synced checkout configuration changes so
       // existing creator products are recreated with the safe return URL.
-      checkoutConfigVersion: 2,
+      checkoutConfigVersion: 3,
     }),
   );
 }
@@ -73,7 +73,7 @@ export function creemSupportsCommerceKind(kind: CommerceProductKind) {
 function billingPeriod(interval: CheckoutProduct["billing_interval"]) {
   const periods = {
     day: "every-day",
-    week: "every-week",
+    week: "custom",
     month: "every-month",
     year: "every-year",
   } as const;
@@ -100,7 +100,7 @@ async function syncedCreemProduct(product: CheckoutProduct, account: CreemPaymen
   const remote = await creemRequest<CreemProduct>(
     apiKey,
     creemEnvironmentForAccount(account),
-    "/v1/store",
+    "/v1/products",
     {
       method: "POST",
       body: {
@@ -110,7 +110,12 @@ async function syncedCreemProduct(product: CheckoutProduct, account: CreemPaymen
         currency: product.currency.toUpperCase(),
         billing_type: product.pricing_type === "subscription" ? "recurring" : "onetime",
         ...(product.pricing_type === "subscription"
-          ? { billing_period: billingPeriod(product.billing_interval) }
+          ? {
+              billing_period: billingPeriod(product.billing_interval),
+              ...(product.billing_interval === "week"
+                ? { recurring_interval: "week", recurring_interval_count: 1 }
+                : {}),
+            }
           : {}),
         tax_mode: "exclusive",
         tax_category: "digital-goods-service",
@@ -152,14 +157,14 @@ export async function createCreemCommerceCheckout(input: {
   if (!account.charges_enabled || !account.webhook_secret_ciphertext) {
     throw new Error("This creator's Creem account is not ready to accept payments yet.");
   }
-  if (!creemSupportsCommerceKind(input.product.kind as CommerceProductKind)) {
-    throw new Error(
-      creatorPaymentCompatibility(
-        "creem",
-        input.product.kind as CommerceProductKind,
-        input.product.pricing_type,
-      ).reason || "Creem cannot sell this offer type.",
-    );
+  const compatibility = creatorPaymentCompatibility(
+    "creem",
+    input.product.kind as CommerceProductKind,
+    input.product.pricing_type,
+    { billingInterval: input.product.billing_interval, currency: input.product.currency },
+  );
+  if (!compatibility.supported) {
+    throw new Error(compatibility.reason || "Creem cannot sell this offer type.");
   }
 
   const remoteProductId = await syncedCreemProduct(input.product, account);
