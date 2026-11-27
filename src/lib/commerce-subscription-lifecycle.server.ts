@@ -14,48 +14,72 @@ export function polarSubscriptionState({
   eventType,
   status,
   cancelAtPeriodEnd,
-}: ProviderSubscriptionSnapshot): CommerceSubscriptionState {
-  const normalizedStatus = String(status || "").toLowerCase();
+}: ProviderSubscriptionSnapshot): CommerceSubscriptionState | null {
+  const normalizedStatus = String(status || "")
+    .trim()
+    .toLowerCase();
   if (eventType === "subscription.revoked" || ["canceled", "unpaid"].includes(normalizedStatus)) {
     return "revoked";
   }
   if (eventType === "subscription.past_due" || normalizedStatus === "past_due") {
     return "past_due";
   }
+  if (normalizedStatus && normalizedStatus !== "active") return null;
   if (eventType === "subscription.canceled" || cancelAtPeriodEnd) {
     return "cancel_at_period_end";
   }
-  return eventType === "subscription.updated" ? "renewed" : "active";
+  if (
+    normalizedStatus === "active" ||
+    [
+      "subscription.created",
+      "subscription.active",
+      "subscription.activated",
+      "subscription.uncanceled",
+    ].includes(eventType)
+  )
+    return "active";
+  return null;
 }
 
 export function dodoSubscriptionState({
   eventType,
   status,
   cancelAtPeriodEnd,
-}: ProviderSubscriptionSnapshot): CommerceSubscriptionState {
-  const normalizedStatus = String(status || "").toLowerCase();
-  if (eventType === "subscription.expired" || eventType === "subscription.cancelled") {
-    return eventType === "subscription.expired" ? "expired" : "revoked";
+}: ProviderSubscriptionSnapshot): CommerceSubscriptionState | null {
+  const normalizedStatus = String(status || "")
+    .trim()
+    .toLowerCase();
+  if (eventType === "subscription.expired" || normalizedStatus === "expired") return "expired";
+  if (
+    eventType === "subscription.cancelled" ||
+    ["cancelled", "canceled"].includes(normalizedStatus)
+  ) {
+    return "revoked";
   }
   if (
     eventType === "subscription.failed" ||
     eventType === "subscription.on_hold" ||
-    ["failed", "on_hold"].includes(normalizedStatus)
+    ["failed", "on_hold", "past_due", "paused", "unpaid"].includes(normalizedStatus)
   ) {
     return "past_due";
   }
+  if (normalizedStatus && normalizedStatus !== "active") return null;
   if (eventType === "subscription.updated" && cancelAtPeriodEnd) {
     return "cancel_at_period_end";
   }
-  return eventType === "subscription.renewed" ? "renewed" : "active";
+  if (eventType === "subscription.renewed") return "renewed";
+  if (normalizedStatus === "active" || eventType === "subscription.active") return "active";
+  return null;
 }
 
 export function creemSubscriptionState({
   eventType,
   status,
   cancelAtPeriodEnd,
-}: ProviderSubscriptionSnapshot): CommerceSubscriptionState {
-  const normalizedStatus = String(status || "").toLowerCase();
+}: ProviderSubscriptionSnapshot): CommerceSubscriptionState | null {
+  const normalizedStatus = String(status || "")
+    .trim()
+    .toLowerCase();
   if (eventType === "subscription.canceled" || normalizedStatus === "canceled") {
     return "revoked";
   }
@@ -69,10 +93,18 @@ export function creemSubscriptionState({
   ) {
     return "past_due";
   }
+  if (
+    eventType === "subscription.trialing" ||
+    (normalizedStatus && normalizedStatus !== "active")
+  ) {
+    return null;
+  }
   if (eventType === "subscription.scheduled_cancel" || cancelAtPeriodEnd) {
     return "cancel_at_period_end";
   }
-  return eventType === "subscription.paid" ? "renewed" : "active";
+  if (eventType === "subscription.paid") return "renewed";
+  if (normalizedStatus === "active" || eventType === "subscription.active") return "active";
+  return null;
 }
 
 function isoDate(value: unknown) {
@@ -86,11 +118,55 @@ function isoDate(value: unknown) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
+// Bound a paid event to its own cycle instead of a provider subscription's
+// mutable next billing date, which may already describe an unpaid later cycle.
+export function commercePaidServicePeriod(input: {
+  paidAt: unknown;
+  interval: unknown;
+  intervalCount?: unknown;
+}): { start: string | null; end: string | null } {
+  const invalid = { start: null, end: null };
+  const interval = String(input.interval || "")
+    .trim()
+    .toLowerCase();
+  const count = input.intervalCount === undefined ? 1 : Number(input.intervalCount);
+  if (
+    !Number.isSafeInteger(count) ||
+    count < 1 ||
+    !["day", "week", "month", "year"].includes(interval)
+  ) {
+    return invalid;
+  }
+  if (
+    !(input.paidAt instanceof Date) &&
+    typeof input.paidAt !== "number" &&
+    typeof input.paidAt !== "string"
+  ) {
+    return invalid;
+  }
+  const paidDate = new Date(input.paidAt instanceof Date ? input.paidAt.getTime() : input.paidAt);
+  if (!Number.isFinite(paidDate.getTime())) return invalid;
+  const end = new Date(paidDate);
+  if (interval === "day" || interval === "week") {
+    end.setUTCDate(end.getUTCDate() + count * (interval === "week" ? 7 : 1));
+  } else {
+    const originalDay = end.getUTCDate();
+    end.setUTCDate(1);
+    if (interval === "month") end.setUTCMonth(end.getUTCMonth() + count);
+    else end.setUTCFullYear(end.getUTCFullYear() + count);
+    const lastDay = new Date(end);
+    lastDay.setUTCMonth(lastDay.getUTCMonth() + 1, 0);
+    end.setUTCDate(Math.min(originalDay, lastDay.getUTCDate()));
+  }
+  if (!Number.isFinite(end.getTime())) return invalid;
+  return { start: paidDate.toISOString(), end: end.toISOString() };
+}
+
 export async function applyCommerceSubscriptionLifecycle(input: {
   provider: string;
   providerAccountId?: string | null;
   providerSubscriptionId: string;
-  state: CommerceSubscriptionState;
+  state: CommerceSubscriptionState | null;
   providerEventId: string;
   currentPeriodStart?: unknown;
   currentPeriodEnd?: unknown;
@@ -98,7 +174,7 @@ export async function applyCommerceSubscriptionLifecycle(input: {
   metadata?: Record<string, unknown>;
   graceDays?: number;
 }) {
-  if (!input.providerSubscriptionId) return null;
+  if (!input.providerSubscriptionId || input.state === null) return null;
   const db = supabaseAdmin as any;
   const { data, error } = await db.rpc("apply_commerce_subscription_lifecycle_guarded", {
     p_provider: input.provider,

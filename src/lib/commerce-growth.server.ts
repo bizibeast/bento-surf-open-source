@@ -7,6 +7,27 @@ import {
   type CommerceCheckoutQuote,
 } from "./commerce-growth";
 import { creatorPaymentSupportsCheckoutAdjustments } from "./payment-providers";
+import {
+  commerceBuyerQuestions,
+  commerceBuyerQuestionSettingsError,
+} from "./commerce-buyer-questions";
+
+/** Secondary offers do not have a separate answer namespace in checkout yet. */
+export function secondaryCommerceIntakeError(product: {
+  kind: string;
+  settings?: unknown;
+}): string | null {
+  if (product.kind === "priority_dm")
+    return "Priority messages must be purchased separately so the buyer can write their message.";
+  const settingsError = commerceBuyerQuestionSettingsError(product.settings, product.kind);
+  if (settingsError)
+    return `Products with invalid buyer questions must be purchased separately. ${settingsError}`;
+  return commerceBuyerQuestions(product.settings, product.kind).some(
+    (question) => question.required,
+  )
+    ? "Products with required buyer questions must be purchased separately."
+    : null;
+}
 
 type ProductForQuote = {
   id: string;
@@ -98,7 +119,7 @@ export async function resolveCommerceCheckoutGrowth(input: {
     const { data: bumpProduct, error: bumpError } = await db
       .from("commerce_products")
       .select(
-        "id, creator_id, title, status, pricing_type, price_amount, currency, inventory_limit, sales_count",
+        "id, creator_id, kind, settings, title, status, pricing_type, price_amount, currency, inventory_limit, sales_count",
       )
       .eq("id", bumpRule.bump_product_id)
       .eq("creator_id", input.product.creator_id)
@@ -113,6 +134,8 @@ export async function resolveCommerceCheckoutGrowth(input: {
     ) {
       throw new Error("That order bump is no longer available.");
     }
+    const intakeError = secondaryCommerceIntakeError(bumpProduct);
+    if (intakeError) throw new Error(intakeError);
     bump = bumpProduct;
   }
 

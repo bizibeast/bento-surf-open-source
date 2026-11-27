@@ -35,8 +35,6 @@ import { MobileTabSelect } from "@/components/MobileTabSelect";
 import { getBookingWorkspace } from "@/lib/booking.functions";
 import { calendarSetupReadiness } from "@/lib/booking";
 import { getStoreOnboardingStatus } from "@/lib/commerce.functions";
-import { followCurrentConnectPayments } from "@/lib/connect-payments";
-import { settingsIntegrationsPath } from "@/lib/settings-integrations";
 
 export type NewBlockPayload = {
   type: Database["public"]["Enums"]["block_type"];
@@ -141,18 +139,6 @@ export function AddBlockPicker({
     setSelected(null);
     setCategory(initialCategory ?? "custom");
   };
-  const connectPayments = () => {
-    void followCurrentConnectPayments(() => {
-      window.location.assign(settingsIntegrationsPath("payments"));
-    })
-      .then(() => {
-        onOpenChange(false);
-        reset();
-      })
-      .catch((error) => {
-        toast.error(error instanceof Error ? error.message : "Could not start checkout.");
-      });
-  };
 
   return (
     <Dialog
@@ -175,10 +161,6 @@ export function AddBlockPicker({
             onBack={() => setSelected(null)}
             onUpgradeLiveSocial={() => setLockedFeature("liveSocialPreviews")}
             onStartCommerce={(kind) => {
-              if (!storeReady) {
-                connectPayments();
-                return;
-              }
               onOpenChange(false);
               reset();
               window.location.assign(
@@ -278,20 +260,14 @@ export function AddBlockPicker({
                       entitlement && !planHasEntitlement(currentPlan, entitlement),
                     );
                     const calendarLocked =
-                      p.key === "coaching_call" && !planLocked && storeReady && !calendarReady;
-                    const storePaymentLocked =
-                      p.blockType === "commerce" && !planLocked && !storeReady;
-                    const locked = planLocked || storePaymentLocked || calendarLocked;
+                      p.key === "coaching_call" && !planLocked && !calendarReady;
+                    const locked = planLocked || calendarLocked;
                     return (
                       <button
                         key={p.key}
                         onClick={() => {
                           if (planLocked) {
                             setLockedFeature(entitlement);
-                            return;
-                          }
-                          if (storePaymentLocked) {
-                            connectPayments();
                             return;
                           }
                           if (calendarLocked) {
@@ -331,11 +307,6 @@ export function AddBlockPicker({
                         {calendarLocked && (
                           <span className="mt-1 text-[9px] font-semibold uppercase tracking-wide text-[#245fd0]">
                             Set up Calendar
-                          </span>
-                        )}
-                        {storePaymentLocked && (
-                          <span className="mt-1 text-[9px] font-semibold uppercase tracking-wide text-[#245fd0]">
-                            Connect payments
                           </span>
                         )}
                       </button>
@@ -474,20 +445,19 @@ function BlockForm({
             </h3>
             <p className="mt-3 text-sm leading-6 text-[#17213a]/60">{kind.description}</p>
             <div className="mt-5 rounded-2xl bg-[#dceaff]/70 px-4 py-3 text-sm text-[#245fd0]">
-              {storeReady
-                ? kind.setupHint
-                : "Connect a payment gateway first. Bento checks that payments, payouts, and the webhook are ready before Store products can be created."}
+              {kind.setupHint}
+              {!storeReady &&
+                " Free offers do not require a payment gateway. Connect payments before publishing a paid offer."}
             </div>
             <p className="mt-4 text-xs leading-5 text-[#17213a]/45">
-              The product builder creates the hosted product page and adds its matching Bento block
-              when you save. Draft products stay hidden from visitors until you publish them.
+              Your product is published and its matching Bento block is added when you save.
             </p>
             <button
               type="button"
               onClick={() => onStartCommerce(kind.kind)}
               className="mt-7 w-full rounded-2xl bg-[#3478f6] px-5 py-3.5 text-sm font-semibold text-white shadow-[0_14px_30px_-16px_rgba(52,120,246,0.8)] transition hover:-translate-y-0.5 hover:bg-[#2168e5]"
             >
-              {storeReady ? "Open product builder" : "Connect payments to continue"}
+              Open product builder
             </button>
           </div>
         </div>

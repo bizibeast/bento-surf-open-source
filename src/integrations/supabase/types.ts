@@ -2076,6 +2076,7 @@ export type Database = {
           social_insights_enabled: boolean;
           social_insights_period_days: number;
           store_page_enabled: boolean;
+          commerce_default_currency: string;
           cover_url: string | null;
           created_at: string;
           display_name: string;
@@ -2120,6 +2121,7 @@ export type Database = {
           social_insights_enabled?: boolean;
           social_insights_period_days?: number;
           store_page_enabled?: boolean;
+          commerce_default_currency?: string;
           cover_url?: string | null;
           created_at?: string;
           display_name?: string;
@@ -2164,6 +2166,7 @@ export type Database = {
           social_insights_enabled?: boolean;
           social_insights_period_days?: number;
           store_page_enabled?: boolean;
+          commerce_default_currency?: string;
           cover_url?: string | null;
           created_at?: string;
           display_name?: string;

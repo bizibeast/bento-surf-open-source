@@ -7,6 +7,76 @@ import {
 } from "./product-website";
 import { sanitizeCommerceSettingsForPublic } from "./commerce";
 describe("standalone product websites", () => {
+  it("preserves buyer intake questions on any product page with required as the default", () => {
+    const id = "11111111-1111-4111-8111-111111111111";
+    const website = productWebsite({
+      sections: [
+        {
+          id: "intake",
+          title: "Before you join",
+          body: "Help me tailor your experience",
+          buyerQuestions: [{ id, question: "What are you working on?" }],
+        },
+      ],
+    });
+    expect(website.sections[0]).toMatchObject({
+      buyerQuestions: [{ id, question: "What are you working on?", required: true }],
+    });
+    const publicSettings = sanitizeCommerceSettingsForPublic("paid_community", {
+      website,
+      meetingUrl: "https://private.example.com",
+      buyer_answers: [{ question: "secret", answer: "private" }],
+    });
+    expect(publicSettings.website?.sections[0]).toMatchObject({
+      buyerQuestions: [{ id, question: "What are you working on?", required: true }],
+    });
+    expect(JSON.stringify(publicSettings)).not.toContain("private");
+  });
+
+  it("rejects duplicate IDs, duplicate prompts, and more than twenty section questions", () => {
+    const first = { id: "11111111-1111-4111-8111-111111111111", question: "Your goal?" };
+    const second = { id: "22222222-2222-4222-8222-222222222222", question: "Your experience?" };
+    const sections = (questions: unknown[]) => ({
+      sections: [{ id: "intake", title: "Intake", body: "", buyerQuestions: questions }],
+    });
+    expect(
+      productWebsiteSchema.safeParse(sections([first, { ...second, id: first.id }])).success,
+    ).toBe(false);
+    expect(
+      productWebsiteSchema.safeParse(sections([first, { ...second, question: "  YOUR GOAL?  " }]))
+        .success,
+    ).toBe(false);
+    expect(productWebsiteSchema.safeParse(sections([{ ...first, question: "" }])).success).toBe(
+      false,
+    );
+    expect(
+      productWebsiteSchema.safeParse(sections([{ ...first, question: "x".repeat(501) }])).success,
+    ).toBe(false);
+    expect(
+      productWebsiteSchema.safeParse({
+        sections: [
+          {
+            id: "one",
+            title: "One",
+            body: "",
+            buyerQuestions: Array.from({ length: 11 }, (_, i) => ({
+              id: `10000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+              question: `Question ${i}`,
+            })),
+          },
+          {
+            id: "two",
+            title: "Two",
+            body: "",
+            buyerQuestions: Array.from({ length: 10 }, (_, i) => ({
+              id: `20000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+              question: `Question ${i + 11}`,
+            })),
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
   it("preserves ordered public sections without exposing private downloads", () => {
     const website = productWebsite({
       brand: "Studio",

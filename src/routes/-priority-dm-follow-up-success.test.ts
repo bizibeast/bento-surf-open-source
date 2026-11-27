@@ -53,8 +53,7 @@ describe("Priority DM paid follow-up success", () => {
       commerce.indexOf("const checkoutAttributionSchema"),
     );
 
-    expect(confirmation).toContain('.select("id,status,metadata")');
-    expect(confirmation).toContain('.select("status,metadata")');
+    expect(confirmation).toContain('.select("id,status,provider,metadata")');
     expect(confirmation).toContain('state === "confirmed"');
     expect(confirmation).toContain('metadata?.commerce_intent === "priority_dm_followup"');
     expect(confirmation).toContain("uuidSchema.safeParse(metadata?.priority_dm_request_id)");

@@ -28,6 +28,7 @@ describe("authenticated WebMCP route coverage", () => {
         "calendar",
         "community",
         "content",
+        "courses",
         "dashboard",
         "earn",
         "email-marketing",
@@ -75,6 +76,9 @@ describe("authenticated WebMCP route coverage", () => {
   });
 
   it("keeps shared mutations scoped to the current workspace", () => {
+    expect(authenticatedWebMcpToolNames("/courses")).toEqual(
+      new Set(["get_bento_overview", "read_workspace_data", ...WEBMCP_TOOLS_BY_ROUTE.courses]),
+    );
     expect(authenticatedWebMcpToolNames("/store")).toEqual(
       new Set(["get_bento_overview", "read_workspace_data", ...WEBMCP_TOOLS_BY_ROUTE.store]),
     );

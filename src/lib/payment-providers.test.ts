@@ -40,8 +40,8 @@ describe("creator payment provider capabilities", () => {
     );
     expect(support).toEqual({
       stripe: true,
-      paypal: false,
-      razorpay: false,
+      paypal: true,
+      razorpay: true,
       polar: true,
       dodo: true,
       creem: true,
@@ -100,10 +100,10 @@ describe("creator payment provider capabilities", () => {
       supported: false,
     });
     expect(creatorPaymentCompatibility("razorpay", "membership", "subscription")).toMatchObject({
-      supported: false,
+      supported: true,
     });
     expect(creatorPaymentCompatibility("paypal", "course", "subscription")).toMatchObject({
-      supported: false,
+      supported: true,
     });
     expect(creatorPaymentCompatibility("stripe", "priority_dm", "one_time").supported).toBe(true);
     expect(creatorPaymentCompatibility("stripe", "newsletter", "subscription")).toEqual({
@@ -127,5 +127,72 @@ describe("creator payment provider capabilities", () => {
       supported: true,
       reason: null,
     });
+  });
+
+  it("checks the actual recurring interval before a Razorpay product is published", () => {
+    expect(
+      creatorPaymentCompatibility("razorpay", "paid_community", "subscription", {
+        billingInterval: "day",
+        currency: "usd",
+      }).supported,
+    ).toBe(false);
+    for (const billingInterval of ["week", "month", "year"]) {
+      expect(
+        creatorPaymentCompatibility("razorpay", "paid_community", "subscription", {
+          billingInterval,
+          currency: "usd",
+        }).supported,
+      ).toBe(true);
+    }
+    expect(
+      creatorPaymentCompatibility("razorpay", "paid_community", "free", {
+        billingInterval: null,
+        currency: "usd",
+      }).supported,
+    ).toBe(true);
+  });
+
+  it("rejects unsupported PayPal currencies before publication but keeps free offers available", () => {
+    expect(
+      creatorPaymentCompatibility("paypal", "paid_community", "subscription", {
+        billingInterval: "month",
+        currency: "inr",
+      }).supported,
+    ).toBe(false);
+    expect(
+      creatorPaymentCompatibility("paypal", "paid_community", "subscription", {
+        billingInterval: "month",
+        currency: "usd",
+      }).supported,
+    ).toBe(true);
+    expect(
+      creatorPaymentCompatibility("paypal", "paid_community", "free", { currency: "inr" })
+        .supported,
+    ).toBe(true);
+  });
+
+  it("matches PayPal publication intervals to the checkout adapter", () => {
+    for (const billingInterval of ["day", "week"]) {
+      expect(
+        creatorPaymentCompatibility("paypal", "course", "subscription", {
+          billingInterval,
+          currency: "usd",
+        }),
+      ).toMatchObject({ supported: false, reason: expect.stringContaining("billing interval") });
+    }
+    for (const billingInterval of ["month", "year"]) {
+      expect(
+        creatorPaymentCompatibility("paypal", "course", "subscription", {
+          billingInterval,
+          currency: "usd",
+        }).supported,
+      ).toBe(true);
+    }
+    expect(
+      creatorPaymentCompatibility("paypal", "course", "free", {
+        billingInterval: "week",
+        currency: "usd",
+      }).supported,
+    ).toBe(true);
   });
 });

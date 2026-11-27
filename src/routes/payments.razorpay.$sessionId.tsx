@@ -11,7 +11,8 @@ import { safeNavigationHref } from "@/lib/safe-url";
 
 type RazorpaySuccess = {
   razorpay_payment_id: string;
-  razorpay_order_id: string;
+  razorpay_order_id?: string;
+  razorpay_subscription_id?: string;
   razorpay_signature: string;
 };
 
@@ -53,7 +54,10 @@ function loadRazorpayCheckout() {
 
 function RazorpayCheckoutPage() {
   const checkout = Route.useLoaderData();
-  const [status, setStatus] = useState<"loading" | "ready" | "verifying" | "error">("loading");
+  const [status, setStatus] = useState<"loading" | "ready" | "verifying" | "pending" | "error">(
+    "loading",
+  );
+  const [pendingMessage, setPendingMessage] = useState("");
   const opened = useRef(false);
 
   const openCheckout = async () => {
@@ -64,11 +68,11 @@ function RazorpayCheckoutPage() {
       setStatus("ready");
       const instance = new window.Razorpay({
         key: checkout.keyId,
-        amount: checkout.amount,
-        currency: checkout.currency,
+        ...(checkout.subscriptionId
+          ? { subscription_id: checkout.subscriptionId }
+          : { order_id: checkout.orderId, amount: checkout.amount, currency: checkout.currency }),
         name: checkout.creatorName,
         description: checkout.productTitle,
-        order_id: checkout.orderId,
         prefill: { name: checkout.buyerName, email: checkout.buyerEmail },
         notes: { bento_session_id: checkout.sessionId },
         theme: { color: "#2b84ea" },
@@ -83,9 +87,15 @@ function RazorpayCheckoutPage() {
                 sessionId: checkout.sessionId,
                 razorpayPaymentId: result.razorpay_payment_id,
                 razorpayOrderId: result.razorpay_order_id,
+                razorpaySubscriptionId: result.razorpay_subscription_id,
                 razorpaySignature: result.razorpay_signature,
               },
             });
+            if (verified.pending) {
+              setPendingMessage(verified.message);
+              setStatus("pending");
+              return;
+            }
             const destination = safeNavigationHref(verified.url);
             if (!destination) throw new Error("Razorpay returned an invalid destination.");
             window.location.assign(destination);
@@ -105,6 +115,12 @@ function RazorpayCheckoutPage() {
   useEffect(() => {
     if (opened.current) return;
     opened.current = true;
+    if (checkout.subscriptionId) {
+      // Keep the recurring amount and maximum term visible before the buyer
+      // opens Razorpay to authorize their mandate.
+      setStatus("ready");
+      return;
+    }
     void openCheckout();
     // The checkout data is immutable for this route load.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -118,6 +134,17 @@ function RazorpayCheckoutPage() {
         </span>
         <h1 className="mt-5 font-display text-3xl">{checkout.productTitle}</h1>
         <p className="mt-2 text-sm text-[#17213a]/55">Secure checkout with Razorpay</p>
+        {checkout.subscriptionTerms && (
+          <p className="mt-4 text-sm leading-6 text-[#17213a]/65">{checkout.subscriptionTerms}</p>
+        )}
+        {pendingMessage && (
+          <p
+            role="status"
+            className="mt-4 rounded-2xl bg-[#dceaff] px-4 py-3 text-sm leading-6 text-[#245fd0]"
+          >
+            {pendingMessage}
+          </p>
+        )}
         {checkout.test && (
           <div className="mt-4 rounded-2xl bg-[#dceaff] px-4 py-3 text-xs font-semibold text-[#245fd0]">
             Razorpay Test Mode - no real money will move.
@@ -125,14 +152,18 @@ function RazorpayCheckoutPage() {
         )}
         <button
           type="button"
-          disabled={status === "loading" || status === "verifying"}
+          disabled={status === "loading" || status === "verifying" || status === "pending"}
           onClick={() => void openCheckout()}
           className="mt-6 inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#17213a] px-5 text-sm font-semibold text-white transition hover:bg-[#25314f] disabled:opacity-60"
         >
           {(status === "loading" || status === "verifying") && (
             <Loader2 className="size-4 animate-spin" />
           )}
-          {status === "verifying" ? "Verifying payment…" : "Continue with Razorpay"}
+          {status === "verifying"
+            ? "Verifying payment…"
+            : status === "pending"
+              ? "Waiting for first payment"
+              : "Continue with Razorpay"}
         </button>
         <a
           href={checkout.cancelUrl}

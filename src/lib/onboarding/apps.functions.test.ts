@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   resultCount: 0,
   from: vi.fn(),
   upsert: vi.fn(),
+  filter: vi.fn(),
 }));
 vi.mock("@tanstack/react-start", () => ({
   createServerOnlyFn: (handler: unknown) => handler,
@@ -53,7 +54,10 @@ beforeEach(() => {
     });
     const query = {
       select: () => query,
-      eq: () => query,
+      eq: (column: string, value: unknown) => {
+        mocks.filter(table, column, value);
+        return query;
+      },
       single: async () => read(),
       maybeSingle: async () => read(),
       upsert: mocks.upsert,
@@ -102,4 +106,18 @@ it("records the completion milestone only when all real proofs exist", async () 
     }),
     { onConflict: "workspace_id,app_id" },
   );
+});
+
+it("checks course setup against courses in the selected workspace", async () => {
+  await getAppGuide({ data: { appId: "courses" } });
+  expect(mocks.filter).toHaveBeenCalledWith("commerce_products", "creator_id", "workspace");
+  expect(
+    mocks.filter.mock.calls.filter(
+      ([table, column]) => table === "commerce_products" && column === "kind",
+    ),
+  ).toEqual([
+    ["commerce_products", "kind", "course"],
+    ["commerce_products", "kind", "course"],
+  ]);
+  expect(mocks.filter).toHaveBeenCalledWith("commerce_products", "status", "published");
 });

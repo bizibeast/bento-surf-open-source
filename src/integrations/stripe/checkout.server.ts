@@ -14,6 +14,7 @@ import {
   persistCommerceCheckoutGrowth,
   type CommerceCheckoutGrowth,
 } from "@/lib/commerce-growth.server";
+import { creatorPaymentCompatibility } from "@/lib/payment-providers";
 import { publicProductSuccessPath, publicProductUrl } from "@/lib/application-urls";
 
 type CheckoutProduct = {
@@ -51,6 +52,14 @@ export async function createStripeCommerceCheckout(input: {
   growth: CommerceCheckoutGrowth;
   buyerAnswers?: CommerceBuyerAnswer[];
 }) {
+  const compatibility = creatorPaymentCompatibility(
+    "stripe",
+    input.product.kind as CommerceProductKind,
+    input.product.pricing_type,
+    { billingInterval: input.product.billing_interval, currency: input.product.currency },
+  );
+  if (!compatibility.supported)
+    throw new Error(compatibility.reason || "Stripe cannot sell this offer.");
   const db = supabaseAdmin as any;
   const account = await getStripePaymentAccount(input.product.creator_id);
   if (!account) throw new Error("This creator has not connected Stripe yet.");
@@ -92,6 +101,7 @@ export async function createStripeCommerceCheckout(input: {
     metadata: {
       access_token_ciphertext: accessToken ? await encryptServerSecret(accessToken) : null,
       product_slug: input.product.slug,
+      billing_interval: input.product.billing_interval,
       recording_addon_selected: Boolean(input.recordingAddon?.selected),
       recording_addon_amount: input.recordingAddon?.amount || 0,
       ...(input.buyerAnswers?.length ? { buyer_answers: input.buyerAnswers } : {}),

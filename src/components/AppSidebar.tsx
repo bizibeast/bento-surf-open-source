@@ -6,6 +6,7 @@ import {
   CalendarDays,
   ChevronDown,
   Compass,
+  GraduationCap,
   House,
   BadgeDollarSign,
   Bot,
@@ -33,6 +34,7 @@ type AppNavItem = {
     | "/home"
     | "/link"
     | "/store"
+    | "/courses"
     | "/priority-dm"
     | "/calendar"
     | "/community"
@@ -109,6 +111,12 @@ export const APP_NAV_GROUPS: ReadonlyArray<AppNavGroup> = [
     items: [
       { label: "Link", to: "/link", icon: Link2, description: "Edit the main page" },
       { label: "Store", to: "/store", icon: Store, description: "Products, orders and payouts" },
+      {
+        label: "E-courses",
+        to: "/courses",
+        icon: GraduationCap,
+        description: "Courses, lessons and student access",
+      },
       {
         label: "Priority DM",
         to: "/priority-dm",
@@ -195,7 +203,7 @@ export function AppSidebar({
             <button
               type="button"
               aria-label="Open app navigation"
-              className="inline-flex size-10 items-center justify-center rounded-lg text-foreground hover:bg-accent"
+              className="inline-flex size-10 items-center justify-center rounded-lg text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             >
               <Menu className="size-5" />
             </button>
@@ -204,7 +212,10 @@ export function AppSidebar({
 
         <DialogPrimitive.Portal>
           <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/25 backdrop-blur-[2px] data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 lg:hidden" />
-          <DialogPrimitive.Content className="fixed inset-y-0 left-0 z-50 flex h-dvh w-[min(14.5rem,86vw)] flex-col overflow-hidden border-r border-border bg-background p-2.5 shadow-2xl outline-none data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left lg:hidden">
+          <DialogPrimitive.Content
+            data-app-navigation
+            className="fixed inset-y-0 left-0 z-50 flex h-dvh w-[min(17rem,86vw)] flex-col overflow-hidden border-r border-border bg-background p-3 shadow-2xl outline-none data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left lg:hidden"
+          >
             <DialogPrimitive.Title className="sr-only">App navigation</DialogPrimitive.Title>
             <DialogPrimitive.Description className="sr-only">
               Navigate between Bento creator tools.
@@ -224,14 +235,15 @@ export function AppSidebar({
 
       <aside
         aria-label="App navigation"
+        data-app-navigation
         onMouseEnter={() => onCollapsedChange(false)}
         onMouseLeave={() => onCollapsedChange(true)}
         onFocusCapture={() => onCollapsedChange(false)}
         onBlurCapture={(event) => {
           if (!event.currentTarget.contains(event.relatedTarget)) onCollapsedChange(true);
         }}
-        className={`sticky top-0 z-40 hidden h-screen shrink-0 flex-col border-r border-border bg-background p-2.5 shadow-none transition-[width] duration-300 lg:flex ${
-          collapsed ? "w-16" : "w-[13.5rem]"
+        className={`sticky top-0 z-40 hidden h-screen shrink-0 flex-col border-r border-border bg-background p-3 shadow-none motion-reduce:transition-none lg:flex ${
+          collapsed ? "w-16" : "w-60"
         }`}
       >
         <SidebarPanel
@@ -287,7 +299,7 @@ function SidebarPanel({
           to="/home"
           aria-label="Bento home"
           onClick={onNavigate}
-          className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1.5 py-1.5 text-sm text-foreground hover:bg-accent"
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1.5 py-1.5 text-sm text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         >
           <BentoIcon className="size-7" />
           {!collapsed && <span className="truncate font-semibold">bento.surf</span>}
@@ -297,7 +309,7 @@ function SidebarPanel({
             <button
               type="button"
               aria-label="Close app navigation"
-              className="inline-flex size-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent"
+              className="inline-flex size-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             >
               <X className="size-3.5" />
             </button>
@@ -306,7 +318,7 @@ function SidebarPanel({
       </div>
 
       <nav
-        className="no-scrollbar mt-4 min-h-0 flex-1 overflow-y-auto overscroll-contain pr-0.5"
+        className="no-scrollbar mt-4 min-h-0 flex-1 overflow-y-auto overscroll-contain "
         aria-label="Creator tools"
       >
         <div className="space-y-1">
@@ -336,12 +348,12 @@ function SidebarPanel({
                       return next;
                     })
                   }
-                  className={`flex min-h-10 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground ${
+                  className={`flex min-h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${
                     open ? "bg-accent text-foreground" : ""
                   } ${collapsed ? "lg:justify-center lg:px-0" : ""}`}
                 >
                   {collapsed ? (
-                    <GroupIcon className="size-4 shrink-0" />
+                    <GroupIcon className="size-4 shrink-0" strokeWidth={1.5} aria-hidden="true" />
                   ) : (
                     <span>{group.label}</span>
                   )}
@@ -369,7 +381,7 @@ function SidebarPanel({
         </div>
       </nav>
 
-      <div className="shrink-0 border-t border-border/70 pt-2.5">
+      <div className="shrink-0 border-t border-border/70 pt-3">
         <SidebarLink
           {...EARN_NAV_ITEM}
           active={pathname === "/earn"}
@@ -419,9 +431,9 @@ function SidebarLink({
       aria-label={label}
       aria-current={active ? "page" : undefined}
       title={label}
-      className={`flex min-h-9 items-center gap-2.5 rounded-[8px] px-2.5 text-xs font-medium transition-[background-color,border-color,color,box-shadow] duration-150 ${
+      className={`flex min-h-9 items-center gap-2 rounded-[8px] px-2 text-sm font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${
         active
-          ? "border border-border/70 bg-card text-foreground shadow-sm"
+          ? "border border-tint-sky-fg/15 bg-tint-sky/60 text-tint-sky-fg"
           : "border border-transparent text-muted-foreground hover:bg-black/[0.035] hover:text-foreground dark:hover:bg-white/[0.06]"
       } ${collapsed ? "lg:justify-center lg:px-0" : nested ? "ml-2 w-[calc(100%-0.5rem)]" : ""}`}
     >
@@ -432,7 +444,7 @@ function SidebarLink({
           className="size-5 shrink-0 rounded-full object-cover"
         />
       ) : (
-        <Icon className="size-4 shrink-0" />
+        <Icon className="size-4 shrink-0" strokeWidth={1.5} aria-hidden="true" />
       )}
       {!collapsed && <span className="truncate">{label}</span>}
     </Link>

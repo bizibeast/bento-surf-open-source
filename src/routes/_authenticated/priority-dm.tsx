@@ -1,4 +1,5 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { WorkspaceProductComposer } from "@/components/commerce/WorkspaceProductComposer";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, Loader2, MessageSquareText, Send, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -43,6 +44,7 @@ function PriorityDmInboxPage() {
   const { filter, thread } = Route.useSearch();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [composerOpen, setComposerOpen] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [pendingReplyIds, setPendingReplyIds] = useState<Set<string>>(() => new Set());
   const [pendingCloseIds, setPendingCloseIds] = useState<Set<string>>(() => new Set());
@@ -182,13 +184,13 @@ function PriorityDmInboxPage() {
               Read requests, reply, and keep every follow-up in one thread.
             </p>
           </div>
-          <Link
-            to="/store"
-            search={{ tab: "products", create: "priority_dm" }}
+          <button
+            type="button"
+            onClick={() => setComposerOpen(true)}
             className={micro.btnPrimaryCompact}
           >
             New product
-          </Link>
+          </button>
         </div>
 
         <div className="grid min-h-[36rem] min-w-0 overflow-hidden rounded-[28px] border border-border bg-card shadow-sm lg:grid-cols-[20rem_minmax(0,1fr)]">
@@ -200,6 +202,7 @@ function PriorityDmInboxPage() {
             loading={inbox.isLoading}
             error={inbox.error}
             onRetry={() => void inbox.refetch()}
+            onCreate={() => setComposerOpen(true)}
             onFilter={(nextFilter) =>
               navigate({
                 to: "/priority-dm",
@@ -247,6 +250,12 @@ function PriorityDmInboxPage() {
           />
         </div>
       </main>
+      <WorkspaceProductComposer
+        kind="priority_dm"
+        open={composerOpen}
+        onOpenChange={setComposerOpen}
+        onSaved={refresh}
+      />
     </div>
   );
 }
@@ -259,6 +268,7 @@ function ConversationList({
   loading,
   error,
   onRetry,
+  onCreate,
   onFilter,
   onSelect,
 }: {
@@ -269,6 +279,7 @@ function ConversationList({
   loading: boolean;
   error: Error | null;
   onRetry: () => void;
+  onCreate: () => void;
   onFilter: (filter: "open" | "closed") => void;
   onSelect: (requestId: string) => void;
 }) {
@@ -285,8 +296,8 @@ function ConversationList({
             aria-pressed={filter === value}
             onClick={() => onFilter(value)}
             className={`min-h-9 flex-1 rounded-xl px-3 text-xs font-semibold capitalize outline-none transition focus-visible:ring-2 focus-visible:ring-ring ${
-                filter === value
-                  ? "bg-[#17213a] text-white"
+              filter === value
+                ? "bg-[#17213a] text-white"
                 : "text-muted-foreground hover:bg-accent hover:text-foreground"
             }`}
           >
@@ -353,13 +364,9 @@ function ConversationList({
             <p className={`mt-2 ${micro.mutedXs}`}>
               Create a Priority DM product and paid requests will appear here.
             </p>
-            <Link
-              to="/store"
-              search={{ tab: "products", create: "priority_dm" }}
-              className={`${micro.btnPrimaryCompact} mt-4`}
-            >
+            <button type="button" onClick={onCreate} className={`${micro.btnPrimaryCompact} mt-4`}>
               Create a Priority DM product
-            </Link>
+            </button>
           </div>
         ) : (
           <p className="p-8 text-center text-sm text-muted-foreground">

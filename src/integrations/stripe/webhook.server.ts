@@ -20,6 +20,7 @@ import {
 import { readRequestText, RequestBodyTooLargeError } from "@/lib/request-security.server";
 import {
   applyCommerceSubscriptionLifecycle,
+  commercePaidServicePeriod,
   type CommerceSubscriptionState,
 } from "@/lib/commerce-subscription-lifecycle.server";
 import {
@@ -85,7 +86,7 @@ async function processorFeeForPaymentIntent(
   }
 }
 
-async function fulfillCheckoutSession(
+export async function fulfillCheckoutSession(
   event: any,
   context: { accountId: string; connectionId?: string; paymentAccount?: StripePaymentAccount },
 ) {
@@ -116,12 +117,44 @@ async function fulfillCheckoutSession(
   if (String(checkout.currency).toLowerCase() !== String(local.currency).toLowerCase()) {
     throw new Error("Stripe checkout currency does not match the Bento product currency.");
   }
+  const subscriptionId = stripeObjectId(checkout.subscription);
+  // A delayed initial checkout must never inherit a later unpaid period from
+  // the current subscription. Verify the original paid interval before any grant.
+  let billingInterval = local.metadata?.billing_interval;
+  let billingIntervalCount = 1;
+  if (subscriptionId && !billingInterval) {
+    // Legacy sessions have no local cadence snapshot. The original Checkout
+    // line references an immutable Stripe Price, unlike the live subscription.
+    const lines = await stripeRequestForPaymentAccount<any>(
+      paymentAccount,
+      `/v1/checkout/sessions/${encodeURIComponent(checkout.id)}/line_items?limit=2`,
+    );
+    const line = lines?.data?.[0];
+    if (
+      lines?.data?.length === 1 &&
+      line.quantity === 1 &&
+      Number(line.amount_subtotal) === Number(local.gross_amount) &&
+      String(line.currency).toLowerCase() === String(local.currency).toLowerCase()
+    ) {
+      billingInterval = line.price?.recurring?.interval;
+      billingIntervalCount = line.price?.recurring?.interval_count;
+    }
+  }
+  const paidPeriod = subscriptionId
+    ? commercePaidServicePeriod({
+        paidAt: checkout.created ? Number(checkout.created) * 1_000 : local.created_at,
+        interval: billingInterval,
+        intervalCount: billingIntervalCount,
+      })
+    : null;
+  if (subscriptionId && !paidPeriod?.end)
+    throw new Error("Stripe paid subscription period could not be verified.");
   const paymentIntentId =
     typeof checkout.payment_intent === "string" ? checkout.payment_intent : "";
   const processorFee = paymentIntentId
     ? await processorFeeForPaymentIntent(paymentIntentId, paymentAccount)
     : 0;
-  const providerPaymentId = paymentIntentId || String(checkout.invoice || checkout.id);
+  const providerPaymentId = paymentIntentId || stripeObjectId(checkout.invoice) || checkout.id;
   const { data: fulfilled, error: fulfillmentError } = await db.rpc(
     "fulfill_provider_commerce_order",
     {
@@ -132,8 +165,7 @@ async function fulfillCheckoutSession(
       p_provider_account_id: context.accountId,
       p_provider_checkout_id: checkout.id,
       p_provider_payment_id: providerPaymentId,
-      p_provider_subscription_id:
-        typeof checkout.subscription === "string" ? checkout.subscription : "",
+      p_provider_subscription_id: stripeObjectId(checkout.subscription),
       p_gross_amount: local.gross_amount,
       p_platform_fee_bps: local.platform_fee_bps,
       p_platform_fee_amount: local.platform_fee_amount,
@@ -162,34 +194,18 @@ async function fulfillCheckoutSession(
     orderId: fulfilled.order_id,
     providerCheckoutId: checkout.id,
   });
-  const subscriptionId =
-    typeof checkout.subscription === "string" ? checkout.subscription : checkout.subscription?.id;
-  if (subscriptionId) {
-    let subscription = checkout.subscription;
-    if (typeof subscription === "string") {
-      try {
-        subscription = await stripeRequestForPaymentAccount<any>(
-          paymentAccount,
-          `/v1/subscriptions/${encodeURIComponent(subscriptionId)}`,
-        );
-      } catch {
-        subscription = { id: subscriptionId };
-      }
-    }
+  if (subscriptionId && paidPeriod) {
+    const subscription = typeof checkout.subscription === "object" ? checkout.subscription : null;
     await applyCommerceSubscriptionLifecycle({
       provider: "stripe",
       providerAccountId: context.accountId,
       providerSubscriptionId: subscriptionId,
-      state: subscription.cancel_at_period_end ? "cancel_at_period_end" : "active",
+      state: subscription?.cancel_at_period_end ? "cancel_at_period_end" : "active",
       providerEventId: String(event.id),
-      currentPeriodStart: subscription.current_period_start
-        ? Number(subscription.current_period_start) * 1_000
-        : null,
-      currentPeriodEnd: subscription.current_period_end
-        ? Number(subscription.current_period_end) * 1_000
-        : null,
-      cancelAtPeriodEnd: Boolean(subscription.cancel_at_period_end),
-      metadata: { stripe_status: subscription.status || null },
+      currentPeriodStart: paidPeriod.start,
+      currentPeriodEnd: paidPeriod.end,
+      cancelAtPeriodEnd: Boolean(subscription?.cancel_at_period_end),
+      metadata: { stripe_status: subscription?.status || null },
     });
   }
 }
@@ -256,43 +272,171 @@ async function processDispute(event: any, accountId: string) {
   });
 }
 
-async function processStripeSubscriptionLifecycle(event: any, accountId: string) {
+function stripeObjectId(value: any) {
+  return typeof value === "string" ? value : String(value?.id || "");
+}
+
+function stripeSubscriptionPeriod(subscription: any) {
+  const item = subscription.items?.data?.[0];
+  return {
+    start: subscription.current_period_start ?? item?.current_period_start,
+    end: subscription.current_period_end ?? item?.current_period_end,
+  };
+}
+
+export async function processStripeInvoicePaid(
+  event: any,
+  context: { accountId: string; connectionId?: string; paymentAccount?: StripePaymentAccount },
+) {
+  const invoice = event.data?.object || {};
+  // Checkout creates the first paid order. Subsequent invoices have no checkout
+  // event, so each verified cycle needs its own financial record.
+  if (
+    invoice.billing_reason !== "subscription_cycle" &&
+    invoice.billing_reason !== "subscription_update"
+  )
+    return;
+  const subscriptionId = stripeObjectId(
+    invoice.subscription || invoice.parent?.subscription_details?.subscription,
+  );
+  if (!subscriptionId || !invoice.id || invoice.status !== "paid") return;
+  const db = supabaseAdmin as any;
+  const { data: previousOrder, error: previousError } = await db
+    .from("commerce_orders")
+    .select("id, product_id, buyer_email, metadata")
+    .eq("provider", "stripe")
+    .eq("provider_account_id", context.accountId)
+    .eq("provider_subscription_id", subscriptionId)
+    .in("status", ["paid", "partially_refunded"])
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (previousError) throw new Error(previousError.message);
+  if (!previousOrder) return; // This subscription was not sold through Bento.
+  const { data: session, error: sessionError } = await db
+    .from("commerce_payment_sessions")
+    .select("*")
+    .eq("id", previousOrder.metadata?.bento_session_id || "")
+    .eq("provider", "stripe")
+    .maybeSingle();
+  if (sessionError || !session)
+    throw new Error(sessionError?.message || "Stripe renewal payment session was not found.");
+  const account =
+    context.paymentAccount || (await getStripePaymentAccountById(session.connection_id));
+  if (
+    !account ||
+    account.provider_account_id !== context.accountId ||
+    (context.connectionId && session.connection_id !== context.connectionId) ||
+    account.creator_id !== session.creator_id
+  ) {
+    throw new Error("Stripe renewal account does not match the Bento payment session.");
+  }
+  if (
+    session.product_id !== previousOrder.product_id ||
+    session.buyer_email !== previousOrder.buyer_email
+  ) {
+    throw new Error("Stripe renewal does not match the original paid order.");
+  }
+  const tax = Number(
+    invoice.tax ??
+      (invoice.total_taxes || invoice.total_tax_amounts || []).reduce(
+        (total: number, item: any) => total + Number(item.amount || 0),
+        0,
+      ),
+  );
+  const gross = Number(invoice.total) - tax;
+  if (
+    !Number.isSafeInteger(gross) ||
+    !Number.isSafeInteger(tax) ||
+    tax < 0 ||
+    gross !== Number(session.gross_amount) ||
+    String(invoice.currency).toLowerCase() !== String(session.currency).toLowerCase()
+  ) {
+    throw new Error("Stripe renewal amount does not match the original checkout.");
+  }
+  const intentId = stripeObjectId(invoice.payment_intent);
+  const processorFee = intentId ? await processorFeeForPaymentIntent(intentId, account) : 0;
+  const { data: fulfilled, error } = await db.rpc("fulfill_provider_commerce_order", {
+    p_product_id: session.product_id,
+    p_buyer_email: session.buyer_email,
+    p_buyer_name: invoice.customer_name || session.buyer_name || "",
+    p_provider: "stripe",
+    p_provider_account_id: context.accountId,
+    p_provider_checkout_id: session.provider_checkout_id || session.id,
+    p_provider_payment_id: intentId || invoice.id,
+    p_provider_subscription_id: subscriptionId,
+    p_gross_amount: session.gross_amount,
+    p_platform_fee_bps: session.platform_fee_bps,
+    p_platform_fee_amount: session.platform_fee_amount,
+    p_processor_fee_amount: processorFee,
+    p_tax_amount: tax,
+    p_net_amount: Math.max(0, gross - Number(session.platform_fee_amount) - processorFee),
+    p_currency: session.currency,
+    p_metadata: commerceOrderMetadata(session, {
+      bento_session_id: session.id,
+      stripe_invoice_id: invoice.id,
+      stripe_customer_id: stripeObjectId(invoice.customer),
+    }),
+    p_access_token_hash: session.access_token_hash,
+  });
+  if (error || !fulfilled?.order_id)
+    throw new Error(error?.message || "Stripe renewal could not be recorded.");
+  await finalizeCommerceFulfillment({
+    session,
+    orderId: fulfilled.order_id,
+    providerCheckoutId: session.provider_checkout_id,
+  });
+}
+
+export async function processStripeSubscriptionLifecycle(event: any, accountId: string) {
   const object = event.data?.object || {};
   const isInvoice = event.type.startsWith("invoice.");
-  const subscriptionId = String(
-    isInvoice
-      ? typeof object.subscription === "string"
-        ? object.subscription
-        : object.subscription?.id || ""
-      : object.id || "",
-  );
+  const subscriptionId = isInvoice
+    ? stripeObjectId(object.subscription || object.parent?.subscription_details?.subscription)
+    : stripeObjectId(object);
   if (!subscriptionId) return;
   let state: CommerceSubscriptionState = "active";
   if (event.type === "invoice.paid") state = "renewed";
   if (event.type === "invoice.payment_failed") state = "past_due";
   if (event.type === "customer.subscription.deleted") state = "revoked";
   if (event.type === "customer.subscription.updated") {
-    if (object.cancel_at_period_end) state = "cancel_at_period_end";
-    else if (["past_due", "unpaid", "incomplete"].includes(String(object.status)))
-      state = "past_due";
-    else if (["canceled", "incomplete_expired"].includes(String(object.status))) state = "revoked";
+    if (
+      !["active", "past_due", "unpaid", "canceled", "incomplete_expired", "paused"].includes(
+        String(object.status),
+      )
+    )
+      return;
+    if (["canceled", "incomplete_expired", "paused"].includes(String(object.status)))
+      state = "revoked";
+    else if (["past_due", "unpaid"].includes(String(object.status))) state = "past_due";
+    else if (object.cancel_at_period_end) state = "cancel_at_period_end";
   }
+  // Invoice periods describe the previous usage window. Only the subscription
+  // line describes the service period that the buyer actually paid for.
+  const line = isInvoice
+    ? object.lines?.data?.find((candidate: any) => {
+        const lineSubscription = stripeObjectId(
+          candidate.subscription || candidate.parent?.subscription_item_details?.subscription,
+        );
+        return (
+          (candidate.type === "subscription" || candidate.parent?.subscription_item_details) &&
+          (!lineSubscription || lineSubscription === subscriptionId)
+        );
+      })
+    : null;
+  const period = isInvoice
+    ? { start: line?.period?.start, end: line?.period?.end }
+    : stripeSubscriptionPeriod(object);
+  // Failed payment events must never advance the last paid service period.
+  const preservesPaidPeriod = state === "past_due";
   await applyCommerceSubscriptionLifecycle({
     provider: "stripe",
     providerAccountId: accountId,
     providerSubscriptionId: subscriptionId,
     state,
     providerEventId: String(event.id),
-    currentPeriodStart: object.current_period_start
-      ? Number(object.current_period_start) * 1_000
-      : object.period_start
-        ? Number(object.period_start) * 1_000
-        : null,
-    currentPeriodEnd: object.current_period_end
-      ? Number(object.current_period_end) * 1_000
-      : object.period_end
-        ? Number(object.period_end) * 1_000
-        : null,
+    currentPeriodStart: !preservesPaidPeriod && period.start ? Number(period.start) * 1_000 : null,
+    currentPeriodEnd: !preservesPaidPeriod && period.end ? Number(period.end) * 1_000 : null,
     cancelAtPeriodEnd: Boolean(object.cancel_at_period_end),
     metadata: {
       stripe_status: object.status || null,
@@ -447,6 +591,7 @@ async function processStripeEvent(
     if (event.type === "charge.dispute.created" || event.type === "charge.dispute.closed") {
       await processDispute(event, context.accountId);
     }
+    if (event.type === "invoice.paid") await processStripeInvoicePaid(event, context);
     if (
       event.type === "invoice.paid" ||
       event.type === "invoice.payment_failed" ||

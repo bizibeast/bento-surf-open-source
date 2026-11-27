@@ -5,6 +5,15 @@ import { decryptServerSecret } from "@/lib/secret-crypto.server";
 export const PAYPAL_PROVIDER = "paypal" as const;
 export const PAYPAL_WEBHOOK_EVENTS = [
   "PAYMENT.CAPTURE.COMPLETED",
+  "PAYMENT.SALE.COMPLETED",
+  "PAYMENT.SALE.REFUNDED",
+  "PAYMENT.SALE.REVERSED",
+  "BILLING.SUBSCRIPTION.ACTIVATED",
+  "BILLING.SUBSCRIPTION.UPDATED",
+  "BILLING.SUBSCRIPTION.CANCELLED",
+  "BILLING.SUBSCRIPTION.SUSPENDED",
+  "BILLING.SUBSCRIPTION.EXPIRED",
+  "BILLING.SUBSCRIPTION.PAYMENT.FAILED",
   "PAYMENT.CAPTURE.DENIED",
   "PAYMENT.CAPTURE.PENDING",
   "PAYMENT.CAPTURE.REFUNDED",
@@ -110,7 +119,7 @@ export function paypalAuthAssertion(sellerMerchantId: string) {
 export async function paypalRequest<T>(
   path: string,
   init: {
-    method?: "GET" | "POST" | "DELETE";
+    method?: "GET" | "POST" | "PATCH" | "DELETE";
     body?: unknown;
     sellerMerchantId?: string;
     requestId?: string;

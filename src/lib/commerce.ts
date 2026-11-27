@@ -1,6 +1,8 @@
 import { productWebsite, type ProductWebsite } from "./product-website";
 import { z } from "zod";
 import { publicProductPath } from "./application-urls";
+import { isCommerceProductListed } from "./commerce-visibility";
+import { commerceBuyerQuestionSettingsError } from "./commerce-buyer-questions";
 
 export const COMMERCE_PRODUCT_KINDS = [
   "digital_product",
@@ -45,13 +47,15 @@ export type CommerceGrowthKind = (typeof COMMERCE_GROWTH_KINDS)[number];
 export type CommercePricingType = "free" | "one_time" | "subscription";
 export type CommerceProductStatus = "draft" | "published" | "archived";
 
-export function commerceProductKindPricingError(
-  kind: CommerceProductKind,
-  pricingType: CommercePricingType,
+export function commerceProductRequiresPayment(
+  product: Pick<CommerceProductRecord, "kind" | "pricing_type" | "settings">,
 ) {
-  return kind === "paid_community" && pricingType === "free"
-    ? "Paid communities require paid pricing."
-    : null;
+  return (
+    product.pricing_type !== "free" ||
+    (product.kind === "coaching_call" &&
+      Boolean(product.settings?.recordingAddonEnabled) &&
+      Number(product.settings?.recordingAddonPrice) > 0)
+  );
 }
 
 const COMMERCE_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -134,6 +138,7 @@ export type CommerceBuyerAnswer = {
 };
 
 export type CommerceProductSettings = {
+  calendarVisibility?: "listed" | "unlisted";
   website?: ProductWebsite;
   files?: CommerceAsset[];
   durationMinutes?: number;
@@ -255,12 +260,9 @@ export function commerceProductPublishabilityError(
   now = Date.now(),
 ) {
   const settings = product.settings ?? {};
+  const buyerQuestionError = commerceBuyerQuestionSettingsError(settings, product.kind);
+  if (buyerQuestionError) return buyerQuestionError;
   if (!product.description.trim()) return "Add a product description before publishing.";
-  const pricingError = commerceProductKindPricingError(
-    product.kind,
-    product.pricing_type ?? "free",
-  );
-  if (pricingError) return pricingError;
   switch (product.kind) {
     case "digital_product":
       if (!Array.isArray(settings.files) || settings.files.length === 0) {
@@ -502,7 +504,8 @@ export type CommerceProductBlockSource = Pick<
   | "billing_interval"
   | "cta_label"
   | "status"
->;
+> &
+  Partial<Pick<CommerceProductRecord, "settings">>;
 
 export function commerceProductBlockContent(
   product: CommerceProductBlockSource,
@@ -573,7 +576,7 @@ export function hydratePublicCommerceBlocks<
     const productId = (block.content as Record<string, unknown>).productId;
     if (typeof productId !== "string") return [];
     const product = productsById.get(productId);
-    if (!product || product.status !== "published") return [];
+    if (!product || product.status !== "published" || !isCommerceProductListed(product)) return [];
     return [
       {
         ...block,
@@ -817,10 +820,10 @@ export const COMMERCE_KINDS: readonly CommerceKindDefinition[] = [
   {
     kind: "paid_community",
     family: "sell",
-    label: "Paid community",
+    label: "Community",
     shortLabel: "Community",
-    description: "Host private posts and conversations for paying members.",
-    setupHint: "Create the member promise, rules, welcome note, and billing cadence.",
+    description: "Host private posts and conversations with free or paid access.",
+    setupHint: "Create the member promise, rules, welcome note, and pricing.",
     defaultPricing: "subscription",
     defaultCta: "Join the community",
     tint: "mint",

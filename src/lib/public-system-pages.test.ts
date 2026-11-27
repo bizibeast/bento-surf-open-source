@@ -308,5 +308,48 @@ it("keeps the legacy Store tab visible when enabled without a dedicated page", a
 it("returns not found for a product on an unpublished creator page", async () => {
   state.tables.profiles[0].page_published = false;
   state.tables.commerce_products[1].kind = "digital_product";
-  await expect(getPublicCommerceProduct({ data: { username: "bizibeast", publicSlug: "guide" } })).resolves.toBeNull();
+  await expect(
+    getPublicCommerceProduct({ data: { username: "bizibeast", publicSlug: "guide" } }),
+  ).resolves.toBeNull();
+});
+
+function addUnlistedSession() {
+  state.tables.commerce_products.push({
+    ...state.tables.commerce_products[0],
+    id: "private-session",
+    slug: "bizibeast-private-session",
+    public_slug: "private-session",
+    title: "Private session",
+    pricing_type: "free",
+    price_amount: 0,
+    noindex: false,
+    description: "A session available only to people with the booking link.",
+    settings: { durationMinutes: 30, calendarVisibility: "unlisted" },
+  });
+}
+
+it("excludes unlisted sessions from public Store and Calendar listings", async () => {
+  addUnlistedSession();
+  const store = await getPublicCommerceStore({ data: { username: "bizibeast" } });
+  expect(store?.products.map((product) => product.id)).not.toContain("private-session");
+  if (!store || store.isStandalone) throw new Error("Expected a configured public Store page");
+  expect(store.systemItems.map((item) => item.key)).not.toContain("product:private-session");
+  const calendar = await getPublicBookingCalendar({ data: { username: "bizibeast" } });
+  expect(calendar?.sessions.map((session) => session.id)).not.toContain("private-session");
+});
+
+it("excludes unlisted sessions from standalone public Store catalogs", async () => {
+  addUnlistedSession();
+  state.tables.pages = state.tables.pages.filter((page) => page.system !== "store");
+  const store = await getPublicCommerceStore({ data: { username: "bizibeast" } });
+  expect(store?.isStandalone).toBe(true);
+  expect(store?.products.map((product) => product.id)).not.toContain("private-session");
+});
+
+it("keeps an unlisted session accessible by its direct link with indexing disabled", async () => {
+  addUnlistedSession();
+  const result = await getPublicCommerceProduct({
+    data: { username: "bizibeast", publicSlug: "private-session" },
+  });
+  expect(result?.product).toMatchObject({ id: "private-session", noindex: true });
 });

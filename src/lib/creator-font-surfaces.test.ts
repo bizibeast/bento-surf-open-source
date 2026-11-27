@@ -4,12 +4,21 @@ import { describe, expect, it } from "vitest";
 
 const sharedShellSurfaces = ["routes/$username_.store.tsx"];
 
-const directFontSurfaces = [
-  "routes/$username_.products.$productSlug_.success.tsx",
-  "routes/access.$token.tsx",
-];
+const directFontSurfaces = ["routes/access.$token.tsx"];
 
 describe("creator-owned commerce typography", () => {
+  it("inherits confirmation typography through the shared product theme", async () => {
+    const source = await readFile(
+      resolve(process.cwd(), "src/routes/$username_.products.$productSlug_.success.tsx"),
+      "utf8",
+    );
+    expect(source).toContain(
+      'import { PublicProductTheme } from "@/components/public/PublicProductTheme"',
+    );
+    expect(source).toContain("<PublicProductTheme");
+    expect(source).toContain("creator={data.chrome.creator}");
+  });
+
   it.each(sharedShellSurfaces)("applies shared creator fonts on %s", async (path) => {
     const source = await readFile(resolve(process.cwd(), "src", path), "utf8");
     expect(source).toContain(
@@ -35,12 +44,12 @@ describe("creator-owned commerce typography", () => {
   });
 });
 
-it("keeps product websites independent of creator profile chrome", async () => {
+it("shares the Link theme while keeping product websites independent of profile chrome", async () => {
   const source = await readFile(
     resolve(process.cwd(), "src/routes/$username_.products.$productSlug.tsx"),
     "utf8",
   );
-  expect(source).toContain("data-product-website");
+  expect(source).toContain("<PublicProductTheme");
   expect(source).not.toContain("<PublicCreatorShell");
   expect(source).not.toContain("creator.avatar_url");
 });

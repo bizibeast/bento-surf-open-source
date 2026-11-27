@@ -156,14 +156,14 @@ export async function createPolarCommerceCheckout(input: {
   if (!account.charges_enabled) {
     throw new Error("This creator's Polar account is not ready to accept payments yet.");
   }
-  if (!polarSupportsCommerceKind(input.product.kind as CommerceProductKind)) {
-    throw new Error(
-      creatorPaymentCompatibility(
-        "polar",
-        input.product.kind as CommerceProductKind,
-        input.product.pricing_type,
-      ).reason || "Polar does not support this offer type in Bento.",
-    );
+  const compatibility = creatorPaymentCompatibility(
+    "polar",
+    input.product.kind as CommerceProductKind,
+    input.product.pricing_type,
+    { billingInterval: input.product.billing_interval, currency: input.product.currency },
+  );
+  if (!compatibility.supported) {
+    throw new Error(compatibility.reason || "Polar does not support this offer type in Bento.");
   }
   const remoteProductId = await syncedPolarProduct(input.product, account);
   const polar = await polarClientForAccount(account);

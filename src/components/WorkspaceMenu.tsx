@@ -20,11 +20,19 @@ import { switchWorkspace, updateAccountPreference } from "@/lib/workspace.functi
 
 function WorkspaceAvatar({ workspace }: { workspace: WorkspaceSummary }) {
   const avatarUrl = safeMediaUrl(workspace.avatarUrl);
-  return avatarUrl ? (
-    <DecodedImage src={avatarUrl} alt="" className="size-8 shrink-0 rounded-lg object-cover" />
-  ) : (
-    <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent font-ui-display text-sm text-foreground">
-      {workspace.displayName.slice(0, 1).toUpperCase()}
+  return (
+    <span className="flex aspect-square size-8 min-h-8 min-w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-accent font-ui-display text-sm text-foreground">
+      {avatarUrl ? (
+        <DecodedImage
+          src={avatarUrl}
+          alt=""
+          width={32}
+          height={32}
+          className="block size-full object-cover"
+        />
+      ) : (
+        workspace.displayName.slice(0, 1).toUpperCase()
+      )}
     </span>
   );
 }
@@ -87,14 +95,14 @@ export function WorkspaceMenu({
           <button
             type="button"
             aria-label="Open workspace menu"
-            className={`mt-2 flex w-full items-center gap-2 rounded-lg border border-border bg-card p-1.5 pr-3 text-left hover:bg-accent ${
-              collapsed ? "lg:justify-center" : ""
+            className={`mt-2 flex min-h-11 w-full shrink-0 items-center gap-2 rounded-lg border border-border bg-card p-1.5 pr-3 text-left hover:bg-accent ${
+              collapsed ? "lg:justify-center lg:p-1" : ""
             }`}
           >
             {workspace ? (
               <WorkspaceAvatar workspace={workspace} />
             ) : (
-              <span className="size-8 shrink-0 rounded-lg bg-accent" />
+              <span className="aspect-square size-8 min-h-8 min-w-8 shrink-0 rounded-full bg-accent" />
             )}
             {!collapsed && (
               <>

@@ -6,6 +6,16 @@ export const RAZORPAY_PROVIDER = "razorpay" as const;
 export const RAZORPAY_WEBHOOK_EVENTS = [
   "payment.captured",
   "payment.failed",
+  "subscription.authenticated",
+  "subscription.activated",
+  "subscription.charged",
+  "subscription.pending",
+  "subscription.halted",
+  "subscription.cancelled",
+  "subscription.completed",
+  "subscription.updated",
+  "subscription.paused",
+  "subscription.resumed",
   "refund.processed",
   "payment.dispute.created",
   "payment.dispute.under_review",
@@ -191,4 +201,17 @@ export async function verifyRazorpayWebhookSignature(
   webhookSecret: string,
 ) {
   return constantTimeEqual(signature, await hmacSha256Hex(webhookSecret, rawBody));
+}
+
+export async function verifyRazorpaySubscriptionSignature(input: {
+  subscriptionId: string;
+  paymentId: string;
+  signature: string;
+  keySecret: string;
+}) {
+  const expected = await hmacSha256Hex(
+    input.keySecret,
+    `${input.paymentId}|${input.subscriptionId}`,
+  );
+  return constantTimeEqual(input.signature, expected);
 }

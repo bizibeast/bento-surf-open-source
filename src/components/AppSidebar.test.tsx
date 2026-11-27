@@ -59,11 +59,15 @@ describe("AppSidebar", () => {
     ).toEqual([
       ["Create", ["Benny", "Discover", "MCP"]],
       ["Grow", ["Post Scheduler", "Auto DMs", "Social Insights"]],
-      ["Monetize", ["Link", "Store", "Priority DM", "Calendar", "Community", "Newsletter"]],
+      [
+        "Monetize",
+        ["Link", "Store", "E-courses", "Priority DM", "Calendar", "Community", "Newsletter"],
+      ],
     ]);
 
     renderSidebar();
     const sidebar = screen.getByRole("complementary", { name: "App navigation" });
+    expect(sidebar).toHaveAttribute("data-app-navigation");
     const navigation = within(sidebar).getByRole("navigation", { name: "Creator tools" });
     expect(navigation).toHaveClass("overflow-y-auto", "flex-1");
     expect(
@@ -91,6 +95,18 @@ describe("AppSidebar", () => {
     const home = screen.getByRole("link", { name: "Home" });
     expect(home).toHaveAttribute("aria-current", "page");
     expect(home).toHaveAttribute("title", "Home");
+  });
+
+  it.each([false, true])("links E-courses to its own workspace when collapsed=%s", (collapsed) => {
+    routerState.pathname = "/courses";
+    renderSidebar(collapsed);
+    const course = screen.getByRole("link", { name: "E-courses" });
+    expect(course).toHaveAttribute("href", "/courses");
+    expect(course).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "Monetize" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
   });
 
   it("opens the current section and toggles other sections independently", () => {
@@ -170,6 +186,36 @@ describe("AppSidebar", () => {
     expect(onCollapsedChange).toHaveBeenLastCalledWith(true);
   });
 
+  it("preserves desktop collapse state across app routes", () => {
+    const onCollapsedChange = vi.fn();
+    const { rerender } = renderSidebar(true, onCollapsedChange);
+    routerState.pathname = "/store";
+    rerender(
+      <AppSidebar
+        profile={{ display_name: "Yash", username: "yash" }}
+        collapsed
+        onCollapsedChange={onCollapsedChange}
+      />,
+    );
+    expect(screen.getByRole("complementary", { name: "App navigation" })).toHaveClass("w-16");
+    expect(onCollapsedChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps keyboard expansion while focus moves between navigation controls", () => {
+    const onCollapsedChange = vi.fn();
+    renderSidebar(true, onCollapsedChange);
+    const sidebar = screen.getByRole("complementary", { name: "App navigation" });
+    const home = within(sidebar).getByRole("link", { name: "Home" });
+    const monetize = within(sidebar).getByRole("button", { name: "Monetize" });
+    fireEvent.focus(home);
+    expect(onCollapsedChange).toHaveBeenLastCalledWith(false);
+    onCollapsedChange.mockClear();
+    fireEvent.blur(home, { relatedTarget: monetize });
+    expect(onCollapsedChange).not.toHaveBeenCalled();
+    fireEvent.blur(monetize, { relatedTarget: document.body });
+    expect(onCollapsedChange).toHaveBeenLastCalledWith(true);
+  });
+
   it.each(["/email-marketing", "/email-marketing/newsletters/example"])(
     "marks Newsletter active at %s",
     (pathname) => {
@@ -216,6 +262,7 @@ describe("AppSidebar", () => {
     fireEvent.click(trigger);
 
     const dialog = screen.getByRole("dialog", { name: "App navigation" });
+    expect(dialog).toHaveAttribute("data-app-navigation");
     const navigation = within(dialog).getByRole("navigation", { name: "Creator tools" });
     expect(within(dialog).getByRole("link", { name: "Home" })).toHaveAttribute("href", "/home");
     expect(dialog).toHaveClass("h-dvh", "overflow-hidden");
@@ -235,6 +282,7 @@ describe("AppSidebar", () => {
       "MCP",
       "Link",
       "Store",
+      "E-courses",
       "Priority DM",
       "Calendar",
       "Community",
