@@ -1,10 +1,20 @@
 import { Info } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { FileDropzone } from "@/components/blocks/FileDropzone";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { PRODUCTION_PUBLIC_ORIGIN, publicNewsletterPublicationPath } from "@/lib/application-urls";
 import { NEWSLETTER_TEMPLATES, type NewsletterTemplateId } from "@/lib/newsletter-templates";
+import { getCreatorPaymentSettings } from "@/lib/payment-connections.functions";
+import { creatorPaymentCompatibility, creatorPaymentProvider } from "@/lib/payment-providers";
+import { getMyCommerceCurrency } from "@/lib/commerce-currency.functions";
+import {
+  COMMERCE_CURRENCIES,
+  DEFAULT_COMMERCE_CURRENCY,
+  commerceDefaultCurrencyQueryKey,
+} from "@/lib/commerce-currency";
+import { settingsIntegrationsPath } from "@/lib/settings-integrations";
 
 export type NewsletterSettingsPanel =
   "details" | "seo" | "branding" | "template" | "email" | "paid" | "advanced";
@@ -80,11 +90,53 @@ export function NewsletterSettings({
     default_template_id: publication.default_template_id ?? "editorial",
   }));
   const [price, setPrice] = useState(String((publication.paidProduct?.price_amount ?? 0) / 100));
-  const [currency, setCurrency] = useState(publication.paidProduct?.currency ?? "usd");
+  const [currencyOverride, setCurrencyOverride] = useState<string | null>(null);
   const [billingInterval, setBillingInterval] = useState<"month" | "year">(
     publication.paidProduct?.billing_interval ?? "month",
   );
   const [confirmation, setConfirmation] = useState("");
+  const paymentQuery = useQuery({
+    queryKey: ["creator-payment-settings"],
+    queryFn: () => getCreatorPaymentSettings(),
+    enabled: activeSection === "paid",
+  });
+  const currencyQuery = useQuery({
+    queryKey: commerceDefaultCurrencyQueryKey,
+    queryFn: () => getMyCommerceCurrency(),
+    enabled: activeSection === "paid" && !publication.paidProduct,
+  });
+  const currency =
+    currencyOverride ??
+    publication.paidProduct?.currency ??
+    currencyQuery.data?.currency ??
+    DEFAULT_COMMERCE_CURRENCY;
+  const currencyUnavailable = !publication.paidProduct && !currencyQuery.data;
+  const provider = creatorPaymentProvider(paymentQuery.data?.selectedProvider ?? "disabled");
+  const stagingMock = paymentQuery.data?.stagingMockAvailable === true && !provider;
+  const compatibility = creatorPaymentCompatibility(
+    provider?.id ?? "disabled",
+    "newsletter",
+    "subscription",
+    {
+      billingInterval,
+      currency,
+    },
+  );
+  const paymentError = paymentQuery.isError
+    ? "Payment settings could not be loaded. Try again."
+    : paymentQuery.data?.locked
+      ? "Your plan does not include paid checkout. Review your plan in Settings."
+      : !paymentQuery.isPending && !stagingMock && !compatibility.supported
+        ? compatibility.reason
+        : null;
+  const priceAmount = Math.round(Number(price) * 100);
+  const canSavePaidOffer =
+    !pending &&
+    !paymentQuery.isPending &&
+    !paymentError &&
+    !currencyUnavailable &&
+    Number.isSafeInteger(priceAmount) &&
+    priceAmount > 0;
   useEffect(() => {
     if (focusedPanel) setActiveSection(visibleSettingsPanel(focusedPanel));
   }, [focusedPanel]);
@@ -110,8 +162,7 @@ export function NewsletterSettings({
       }),
     );
   const savePaidOffer = () => {
-    const priceAmount = Math.round(Number(price) * 100);
-    if (Number.isInteger(priceAmount) && priceAmount > 0)
+    if (canSavePaidOffer)
       void run("Paid access saved", () =>
         onSavePaidOffer({ priceAmount, currency, billingInterval }),
       );
@@ -295,9 +346,55 @@ export function NewsletterSettings({
         description="Subscribers pay for access to paid posts in this publication."
       >
         <p className="text-sm text-[#17213a]/55">
-          Stripe is required for checkout. Bento fee: 0%. Stripe processing fees are separate.
-          Subscribers receive paid-post access after payment; account contact packs stay separate.
+          Bento fee: 0%. Your payment provider’s processing fees are separate. Subscribers receive
+          paid-post access after payment; account contact packs stay separate.
         </p>
+        <p className="text-sm text-[#17213a]/55">
+          {paymentQuery.isPending
+            ? "Loading payment provider…"
+            : stagingMock
+              ? "Test checkout only. No payment provider is connected."
+              : `Payment provider: ${provider?.name ?? "Not connected"}.`}{" "}
+          <a
+            href={settingsIntegrationsPath("payments")}
+            className="font-semibold text-[#3478f6] underline"
+          >
+            Payment settings
+          </a>
+        </p>
+        {paymentError ? (
+          <p role="alert" className="text-sm text-red-700">
+            {paymentError}
+          </p>
+        ) : null}
+        {paymentQuery.isError ? (
+          <button
+            type="button"
+            onClick={() => void paymentQuery.refetch()}
+            className="w-fit text-xs font-semibold underline"
+          >
+            Retry payment settings
+          </button>
+        ) : null}
+        {currencyUnavailable ? (
+          <p
+            role={currencyQuery.isError ? "alert" : "status"}
+            className="text-sm text-[#17213a]/55"
+          >
+            {currencyQuery.isError
+              ? "Default currency could not be loaded."
+              : "Loading your workspace’s default currency…"}
+            {currencyQuery.isError ? (
+              <button
+                type="button"
+                onClick={() => void currencyQuery.refetch()}
+                className="ml-1 font-semibold underline"
+              >
+                Try again
+              </button>
+            ) : null}
+          </p>
+        ) : null}
         <TooltipProvider delayDuration={0}>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -330,13 +427,15 @@ export function NewsletterSettings({
             <select
               aria-label="Currency"
               value={currency}
-              onChange={(event) => setCurrency(event.target.value)}
+              disabled={currencyUnavailable || pending}
+              onChange={(event) => setCurrencyOverride(event.target.value)}
               className={inputClass}
             >
-              <option value="usd">USD</option>
-              <option value="inr">INR</option>
-              <option value="eur">EUR</option>
-              <option value="gbp">GBP</option>
+              {COMMERCE_CURRENCIES.map((option) => (
+                <option key={option} value={option}>
+                  {option.toUpperCase()}
+                </option>
+              ))}
             </select>
           </label>
           <label className="grid gap-1.5 text-xs font-semibold text-[#17213a]/60">
@@ -355,8 +454,8 @@ export function NewsletterSettings({
         <button
           type="button"
           onClick={savePaidOffer}
-          disabled={pending}
-          className="w-fit rounded-xl bg-[#17213a] px-4 py-2.5 text-xs font-semibold text-white"
+          disabled={!canSavePaidOffer}
+          className="w-fit rounded-xl bg-[#17213a] px-4 py-2.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45"
         >
           Save paid access
         </button>

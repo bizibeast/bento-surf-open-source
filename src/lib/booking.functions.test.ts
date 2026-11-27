@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- Chainable server-function and Supabase test doubles. */
 import { beforeEach, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -6,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   single: vi.fn(),
   update: vi.fn(),
   workspace: false,
+  publicCanvas: vi.fn(),
 }));
 vi.mock("@tanstack/react-start", () => ({
   createServerOnlyFn: (fn: any) => fn,
@@ -25,6 +27,15 @@ vi.mock("@tanstack/react-start", () => ({
     };
     return fn;
   },
+}));
+vi.mock("@tanstack/react-start/server", () => ({ getRequestHost: () => "" }));
+vi.mock("./profile.functions", () => ({ loadPublicCreatorPage: mocks.publicCanvas }));
+vi.mock("./request-security.server", () => ({ enforceRequestRateLimit: vi.fn() }));
+vi.mock("./public-booking-calendar-cache.server", () => ({
+  clearPublicBookingCalendarCache: vi.fn(),
+  publicBookingCalendarCacheKey: (username: string) => username,
+  readPublicBookingCalendarCache: vi.fn().mockResolvedValue({ hit: false, value: null }),
+  writePublicBookingCalendarCache: vi.fn(),
 }));
 vi.mock("@/integrations/supabase/auth-middleware", () => ({ requireSupabaseAuth: {} }));
 vi.mock("@/integrations/supabase/client.server", () => ({
@@ -63,6 +74,7 @@ vi.mock("./plan.server", () => ({ requirePlanEntitlement: mocks.requirePlanEntit
 
 import {
   getBookingWorkspace,
+  getPublicBookingCalendar,
   renamePublicCalendarPage,
   setPublicCalendarPage,
 } from "./booking.functions";
@@ -116,4 +128,32 @@ it("does not sync after a failed flag mutation or bypass a plan gate", async () 
   mocks.requirePlanEntitlement.mockRejectedValue(new Error("Upgrade"));
   await expect(setPublicCalendarPage({ data: { enabled: true } })).rejects.toThrow("Upgrade");
   expect(mocks.sync).not.toHaveBeenCalled();
+});
+
+it("omits unlisted sessions from every public Calendar collection while retaining listed sessions", async () => {
+  const item = (id: string, visibility: string) => ({
+    key: `session:${id}`,
+    kind: "session",
+    data: {
+      id,
+      slug: id,
+      title: id,
+      settings: { calendarVisibility: visibility },
+      durationMinutes: 30,
+      priceLabel: "Free",
+    },
+  });
+  mocks.publicCanvas.mockResolvedValue({
+    notFound: false,
+    page: { id: "calendar" },
+    profile: { username: "creator" },
+    systemItems: [item("listed-session", "listed"), item("hidden-session", "unlisted")],
+  });
+  const result = await getPublicBookingCalendar({ data: { username: "creator" } });
+  expect(result?.sessions.map((session: { id: string }) => session.id)).toEqual(["listed-session"]);
+  expect(result?.systemItems.map((session) => session.data.id)).toEqual(["listed-session"]);
+  expect(result?.domainData.sessions.map((session: { id: string }) => session.id)).toEqual([
+    "listed-session",
+  ]);
+  expect(JSON.stringify(result)).not.toContain("hidden-session");
 });

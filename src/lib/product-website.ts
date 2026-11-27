@@ -1,30 +1,65 @@
 import { z } from "zod";
+import {
+  commerceBuyerQuestionSchema,
+  MAX_COMMERCE_BUYER_QUESTIONS,
+  normalizeBuyerQuestionLabel,
+} from "./commerce-buyer-questions";
 
-export const productWebsiteSchema = z.object({
-  brand: z.string().trim().max(80).default(""),
-  accent: z
-    .string()
-    .regex(/^#[0-9a-f]{6}$/i)
-    .default("#3478f6"),
-  background: z.enum(["paper", "white", "blue"]).default("paper"),
-  layout: z.enum(["split", "centered"]).default("split"),
-  font: z.enum(["sans", "serif"]).default("sans"),
-  sections: z
-    .array(
-      z.object({
-        id: z.string().min(1).max(100),
-        title: z.string().trim().max(120),
-        body: z.string().trim().max(5000),
-        imageUrl: z
-          .string()
-          .max(2048)
-          .refine((value) => !value || /^https:\/\//i.test(value), "Use an HTTPS image URL")
-          .default(""),
-      }),
-    )
-    .max(12)
-    .default([]),
-});
+export const productWebsiteSchema = z
+  .object({
+    brand: z.string().trim().max(80).default(""),
+    accent: z
+      .string()
+      .regex(/^#[0-9a-f]{6}$/i)
+      .default("#3478f6"),
+    background: z.enum(["paper", "white", "blue"]).default("paper"),
+    layout: z.enum(["split", "centered"]).default("split"),
+    font: z.enum(["sans", "serif"]).default("sans"),
+    sections: z
+      .array(
+        z.object({
+          id: z.string().min(1).max(100),
+          title: z.string().trim().max(120),
+          body: z.string().trim().max(5000),
+          imageUrl: z
+            .string()
+            .max(2048)
+            .refine((value) => !value || /^https:\/\//i.test(value), "Use an HTTPS image URL")
+            .default(""),
+          buyerQuestions: z
+            .array(commerceBuyerQuestionSchema)
+            .max(MAX_COMMERCE_BUYER_QUESTIONS)
+            .optional(),
+        }),
+      )
+      .max(12)
+      .default([]),
+  })
+  .superRefine((website, context) => {
+    const ids = new Set<string>();
+    const labels = new Set<string>();
+    let count = 0;
+    for (const [sectionIndex, section] of website.sections.entries()) {
+      for (const [questionIndex, question] of (section.buyerQuestions || []).entries()) {
+        count += 1;
+        const label = normalizeBuyerQuestionLabel(question.question);
+        if (ids.has(question.id) || labels.has(label))
+          context.addIssue({
+            code: "custom",
+            path: ["sections", sectionIndex, "buyerQuestions", questionIndex],
+            message: "Buyer questions must have unique IDs and prompts.",
+          });
+        ids.add(question.id);
+        labels.add(label);
+      }
+    }
+    if (count > MAX_COMMERCE_BUYER_QUESTIONS)
+      context.addIssue({
+        code: "custom",
+        path: ["sections"],
+        message: "Add no more than 20 buyer questions across all custom sections.",
+      });
+  });
 export type ProductWebsite = z.infer<typeof productWebsiteSchema>;
 export function productWebsite(value: unknown): ProductWebsite {
   const result = productWebsiteSchema.safeParse(value ?? {});

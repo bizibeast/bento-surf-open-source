@@ -344,7 +344,10 @@ describe("owned system canvas", () => {
       price_amount: 0,
     });
     const result = await getMySystemPageCanvas({ data: { pageId: calendarId } });
-    expect(result.items.map((entry) => entry.key)).toEqual([`product:${sessionId}`]);
+    expect(result.items.map((entry) => entry.key)).toEqual([
+      `product:${sessionId}`,
+      "product:free-community",
+    ]);
     expect(result.items[0]).toMatchObject({ defaultW: 2, defaultH: 2 });
     mocks.getPlan.mockResolvedValue("free");
     expect(

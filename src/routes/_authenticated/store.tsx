@@ -1,20 +1,17 @@
-import { STORE_TEMPLATE_DRAFTS } from "@/lib/product-website";
-import { ProductWebsiteEditor } from "@/components/commerce/ProductWebsiteEditor";
+import type { NewsletterPublicationSummary } from "@/lib/newsletter-publications";
+import { NewsletterProductBuilder } from "@/components/commerce/NewsletterProductBuilder";
+import { getMyNewsletterPublications } from "@/lib/newsletter.functions";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { z } from "zod";
 import {
   BadgePercent,
   BarChart3,
-  ArrowDown,
-  ArrowUp,
   Check,
-  ChevronLeft,
   ChevronRight,
   CircleDollarSign,
   ClipboardList,
-  Download,
   ExternalLink,
   GraduationCap,
   Inbox,
@@ -31,38 +28,21 @@ import {
   ShoppingBag,
   Sparkles,
   Trash2,
-  Upload,
   UsersRound,
   WalletCards,
   Wrench,
-  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { Switch } from "@/components/ui/switch";
-import { FileDropzone } from "@/components/blocks/FileDropzone";
-import { PriceInput } from "@/components/commerce/PriceInput";
-import { ProductBlockPreview } from "@/components/commerce/ProductBlockPreview";
 import { UpgradeDialog } from "@/components/UpgradeDialog";
 import { AppHeader } from "@/components/AppHeader";
 import { MicroAppTabs } from "@/components/MicroAppTabs";
 import { MicroAppTabMotion } from "@/components/MicroAppPanel";
 import { micro } from "@/lib/micro-app-ui";
-import { uploadFileResult } from "@/lib/upload";
 import { getMyProfile } from "@/lib/profile.functions";
-import { getBookingAvailabilityDefaults } from "@/lib/booking.functions";
-import {
-  bookingAvailabilitySettings,
-  DEFAULT_AVAILABILITY,
-  type Availability,
-  type WeeklyRule,
-} from "@/lib/booking";
 import { safeMediaUrl } from "@/lib/safe-url";
 import { publicProductPath } from "@/lib/application-urls";
 import { creatorPaymentProvider, type CreatorPaymentProvider } from "@/lib/payment-providers";
-import { browserTimeZone } from "@/lib/timezones";
-import { isoToZonedDateTimeInput, zonedDateTimeInputToIso } from "@/lib/local-datetime";
-import { clampProductBuilderStep, productBuilderSteps } from "@/lib/product-builder-steps";
 import {
   addCommerceProductBlock,
   createCommerceProduct,
@@ -87,11 +67,11 @@ import {
   COMMERCE_KINDS,
   COMMERCE_PRODUCT_KINDS,
   commerceKind,
+  commerceProductRequiresPayment,
   formatCommerceMoney,
   isCommerceGrowthKind,
   isCommerceOfferKind,
   pricingLabel,
-  type CommerceAsset,
   type CommerceAudienceContactRecord,
   type CommerceAudienceCampaignRecord,
   type CommerceAudienceEventRecord,
@@ -100,14 +80,22 @@ import {
   type CommerceLeadRecord,
   type CommerceOrderBumpRecord,
   type CommerceOrderItemRecord,
-  type CommerceLesson,
   type CommerceOrderRecord,
-  type CommercePricingType,
   type CommerceProductKind,
   type CommerceProductRecord,
   type CommerceProductSettings,
   type CommerceWebinarRegistrationRecord,
 } from "@/lib/commerce";
+
+import { WorkspaceProductComposer } from "@/components/commerce/WorkspaceProductComposer";
+import {
+  draftFor,
+  Field,
+  FormSection,
+  inputClass,
+  SpecificProductFields,
+  type ProductDraft,
+} from "@/components/commerce/ProductBuilder";
 
 const tabSchema = z.enum(["products", "growth", "orders", "audience", "analytics", "payouts"]);
 const optionalKindSchema = z.enum(COMMERCE_PRODUCT_KINDS).optional().catch(undefined);
@@ -212,6 +200,9 @@ function ProductsPage() {
   const { tab, create, edit } = Route.useSearch();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [newsletterComposer, setNewsletterComposer] = useState<{ publicationId?: string } | null>(
+    null,
+  );
   const [kindPickerOpen, setKindPickerOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<CommerceProductRecord | null>(null);
   const commerceQuery = useQuery({
@@ -221,26 +212,30 @@ function ProductsPage() {
   const data = commerceQuery.data as CommerceDashboardData | undefined;
   const isLoading = commerceQuery.isLoading;
   const { data: profile } = useQuery({ queryKey: ["my-profile"], queryFn: () => getMyProfile() });
+  const publicationsQuery = useQuery({
+    queryKey: ["newsletter-publications"],
+    queryFn: () => getMyNewsletterPublications(),
+    enabled: tab === "products",
+  });
   const products = data?.products ?? [];
+  const paidNewsletterPublicationIds = new Set(
+    products
+      .filter((product) => product.kind === "newsletter")
+      .map((product) => product.settings.newsletterPublicationId),
+  );
+  const standalonePublications = (publicationsQuery.data ?? []).filter(
+    (publication: NewsletterPublicationSummary) =>
+      !paidNewsletterPublicationIds.has(publication.id),
+  );
   const offers = products.filter((product) => isCommerceOfferKind(product.kind));
   const growthActions = products.filter((product) => isCommerceGrowthKind(product.kind));
   const paymentReady = Boolean(data?.storeSetup?.ready);
   const editing = edit ? products.find((product) => product.id === edit) : undefined;
-  const needsBookingAvailability = create === "coaching_call" || editing?.kind === "coaching_call";
-  const bookingAvailabilityQuery = useQuery({
-    queryKey: ["booking-availability-defaults"],
-    queryFn: () => getBookingAvailabilityDefaults(),
-    enabled: needsBookingAvailability,
-  });
   const editingGrowth = Boolean(
     (create && isCommerceGrowthKind(create)) || (editing && isCommerceGrowthKind(editing.kind)),
   );
-  const paymentBlockedCreate = Boolean(
-    data && !data.locked && create && isCommerceOfferKind(create) && !paymentReady,
-  );
   const builderOpen = Boolean(
-    (edit && editing?.kind !== "newsletter") ||
-    (create && create !== "newsletter" && !paymentBlockedCreate),
+    (edit && editing?.kind !== "newsletter") || (create && create !== "newsletter"),
   );
   const connectPayments = () => {
     void followCurrentConnectPayments(() => {
@@ -252,14 +247,6 @@ function ProductsPage() {
   const openProductCreator = () => {
     if (data?.locked) {
       toast.error("Creating and publishing products requires the Store plan.");
-      return;
-    }
-    if (!paymentReady) {
-      toast.error("Connect a payment gateway before creating a Store product.");
-      document.getElementById("store-onboarding")?.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-      });
       return;
     }
     setKindPickerOpen(true);
@@ -284,14 +271,7 @@ function ProductsPage() {
       });
       return;
     }
-    if (!paymentBlockedCreate) return;
-    toast.error("Connect a payment gateway before creating a Store product.");
-    void navigate({
-      to: "/store",
-      search: { tab: "products", create: undefined, edit: undefined },
-      replace: true,
-    });
-  }, [navigate, paymentBlockedCreate, data?.locked, create]);
+  }, [navigate, data?.locked, create]);
 
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ["my-commerce"] });
@@ -430,6 +410,7 @@ function ProductsPage() {
       />
 
       <main className={micro.main}>
+        {tab === "products" && <div className="mb-4 flex justify-end"></div>}
         {data?.locked && products.length > 0 && (
           <div
             className={`mb-4 flex flex-col gap-4 ${micro.bannerInfo} sm:flex-row sm:items-center sm:justify-between`}
@@ -444,7 +425,7 @@ function ProductsPage() {
             <UpgradeDialog feature="storeCards" />
           </div>
         )}
-        {!data?.locked && offers.length > 0 && !paymentReady && (
+        {!data?.locked && offers.some(commerceProductRequiresPayment) && !paymentReady && (
           <div
             className={`mb-4 flex flex-col gap-4 ${micro.bannerWarn} sm:flex-row sm:items-center sm:justify-between`}
           >
@@ -456,8 +437,8 @@ function ProductsPage() {
                   : "Connect payments to start selling"}
               </div>
               <p className={`mt-1 ${micro.mutedXs}`}>
-                Your existing products and customer access stay safe. New products, publishing, and
-                Store blocks pause until a payment gateway is ready.
+                Free offers remain available. Connect a payment gateway to publish paid offers and
+                add their Store blocks.
               </p>
             </div>
             <button
@@ -486,7 +467,10 @@ function ProductsPage() {
               </p>
             </div>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-2">
-              <HeroMetric label="Products" value={data?.stats.products ?? 0} />
+              <HeroMetric
+                label="Products"
+                value={(data?.stats.products ?? 0) + standalonePublications.length}
+              />
               <HeroMetric label="Live" value={data?.stats.published ?? 0} />
               <HeroMetric label="Orders" value={data?.stats.orders ?? 0} />
               <HeroMetric
@@ -521,42 +505,67 @@ function ProductsPage() {
               <Loader2 className="mr-2 size-5 animate-spin" /> Loading your shop…
             </div>
           ) : tab === "products" ? (
-            offers.length === 0 && !data?.locked ? (
-              <StoreOnboarding
-                paymentSetup={data?.storeSetup}
-                onConnectPayments={connectPayments}
-                onChooseTemplate={(kind) => {
-                  if (kind === "coaching_call") {
-                    window.location.assign("/calendar");
-                    return;
+            <div className="space-y-5">
+              {publicationsQuery.isError && (
+                <p role="alert" className="text-sm text-muted-foreground">
+                  Newsletter publications could not be loaded. Refresh to try again.
+                </p>
+              )}
+              {standalonePublications.length > 0 && (
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {standalonePublications.map((publication: NewsletterPublicationSummary) => (
+                    <NewsletterProductCard
+                      key={publication.id}
+                      title={publication.title}
+                      status={publication.status}
+                      priceLabel="Free newsletter"
+                      publicationId={publication.id}
+                      subscriberCount={publication.subscriberCount}
+                      onEdit={() => setNewsletterComposer({ publicationId: publication.id })}
+                    />
+                  ))}
+                </div>
+              )}
+              {offers.length === 0 && standalonePublications.length > 0 ? null : offers.length ===
+                  0 && !data?.locked ? (
+                <StoreOnboarding
+                  paymentSetup={data?.storeSetup}
+                  onConnectPayments={connectPayments}
+                  onChooseTemplate={(kind) => {
+                    if (kind === "coaching_call") {
+                      window.location.assign("/calendar");
+                      return;
+                    }
+                    return navigate({
+                      to: "/store",
+                      search: { tab: "products", create: kind, edit: undefined },
+                    });
+                  }}
+                />
+              ) : (
+                <ProductsPanel
+                  products={offers}
+                  onEditNewsletter={(publicationId) => setNewsletterComposer({ publicationId })}
+                  creatorUsername={profile?.username}
+                  webinarRegistrations={data?.webinarRegistrations ?? []}
+                  canSell={paymentReady}
+                  canPublish={!data?.locked}
+                  onCreate={openProductCreator}
+                  onEdit={(id) =>
+                    navigate({
+                      to: "/store",
+                      search: { tab: "products", create: undefined, edit: id },
+                    })
                   }
-                  return navigate({
-                    to: "/store",
-                    search: { tab: "products", create: kind, edit: undefined },
-                  });
-                }}
-              />
-            ) : (
-              <ProductsPanel
-                products={offers}
-                creatorUsername={profile?.username}
-                webinarRegistrations={data?.webinarRegistrations ?? []}
-                canSell={paymentReady}
-                onCreate={openProductCreator}
-                onEdit={(id) =>
-                  navigate({
-                    to: "/store",
-                    search: { tab: "products", create: undefined, edit: id },
-                  })
-                }
-                onStatus={(id, status) => statusMutation.mutate({ id, status })}
-                onAddBlock={(id) => addBlockMutation.mutate(id)}
-                onDelete={(product) => setProductToDelete(product)}
-                onAttendance={(registrationId, status) =>
-                  attendanceMutation.mutate({ registrationId, status })
-                }
-              />
-            )
+                  onStatus={(id, status) => statusMutation.mutate({ id, status })}
+                  onAddBlock={(id) => addBlockMutation.mutate(id)}
+                  onDelete={(product) => setProductToDelete(product)}
+                  onAttendance={(registrationId, status) =>
+                    attendanceMutation.mutate({ registrationId, status })
+                  }
+                />
+              )}
+            </div>
           ) : tab === "growth" ? (
             <GrowthPanel
               actions={growthActions}
@@ -601,12 +610,58 @@ function ProductsPage() {
         onOpenChange={setKindPickerOpen}
         onChoose={(kind) => {
           setKindPickerOpen(false);
+          if (kind === "newsletter") {
+            setNewsletterComposer({});
+            return;
+          }
           void navigate({
             to: "/store",
             search: { tab: "products", create: kind, edit: undefined },
           });
         }}
       />
+
+      {editing?.kind === "newsletter" && !editing.settings.newsletterPublicationId ? (
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open) closeBuilder();
+          }}
+        >
+          <DialogContent>
+            <DialogTitle>Newsletter unavailable</DialogTitle>
+            <p role="alert">
+              This product is missing its publication link. Open Newsletter to manage the original
+              publication.
+            </p>
+            <Link to="/email-marketing" search={{ section: "overview" }}>
+              Open Newsletter
+            </Link>
+          </DialogContent>
+        </Dialog>
+      ) : (
+        <NewsletterProductBuilder
+          open={
+            Boolean(newsletterComposer) || create === "newsletter" || editing?.kind === "newsletter"
+          }
+          publicationId={
+            newsletterComposer?.publicationId ||
+            (editing?.kind === "newsletter" ? editing.settings.newsletterPublicationId : undefined)
+          }
+          onOpenChange={(open) => {
+            if (!open) {
+              setNewsletterComposer(null);
+              if (create === "newsletter" || editing?.kind === "newsletter") closeBuilder();
+            }
+          }}
+          onSaved={async () => {
+            await Promise.all([
+              refresh(),
+              queryClient.invalidateQueries({ queryKey: ["newsletter-publications"] }),
+            ]);
+          }}
+        />
+      )}
 
       {editingGrowth ? (
         <GrowthActionBuilder
@@ -622,22 +677,15 @@ function ProductsPage() {
           }}
         />
       ) : (
-        <ProductBuilder
+        <WorkspaceProductComposer
           open={builderOpen}
-          kind={create ?? (editing?.kind as CommerceProductKind | undefined)}
-          product={editing}
-          profile={profile}
-          bookingAvailability={bookingAvailabilityQuery.data}
-          bookingAvailabilityLoading={
-            needsBookingAvailability && bookingAvailabilityQuery.isLoading
-          }
-          products={offers}
+          kind={create ?? editing?.kind ?? "digital_product"}
+          productId={edit}
           onOpenChange={(open) => {
             if (!open) closeBuilder();
           }}
           onSaved={async () => {
             await refresh();
-            closeBuilder();
           }}
         />
       )}
@@ -700,8 +748,8 @@ const STORE_STARTER_TEMPLATES: Array<{
   {
     kind: "paid_community",
     eyebrow: "Access",
-    title: "Paid community",
-    body: "Create a member space with paid access and conversations.",
+    title: "Community",
+    body: "Create a member space with free or paid access and conversations.",
   },
   {
     kind: "membership",
@@ -766,18 +814,18 @@ function StoreOnboarding({
         </div>
       </div>
 
-      {!paymentReady ? (
+      {!paymentReady && (
         <div className="grid gap-6 px-5 py-7 sm:px-8 sm:py-9 lg:grid-cols-[1fr_auto] lg:items-center">
           <div className="flex min-w-0 gap-4">
             <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-[#dceaff] text-[#245fd0]">
               <CircleDollarSign className="size-5" />
             </span>
             <div>
-              <div className="text-xs font-semibold text-[#3478f6]">Step 1 of 3</div>
+              <div className="text-xs font-semibold text-[#3478f6]">For paid offers</div>
               <h4 className="mt-1 font-ui-display text-2xl">Connect your payment gateway</h4>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-[#17213a]/52">
-                Store products stay locked until this application verifies that payments, payouts,
-                and the webhook are ready. Sales then settle directly into your provider account.
+                Free offers can be published now. Paid offers require verified payments, payouts,
+                and a webhook. Sales settle directly into your provider account.
               </p>
               {selectedProvider && (
                 <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-[#f2f5fb] px-3 py-1.5 text-xs font-medium text-[#17213a]/65">
@@ -796,64 +844,118 @@ function StoreOnboarding({
             <ChevronRight className="size-4" />
           </button>
         </div>
-      ) : (
-        <div className="px-5 py-7 sm:px-8 sm:py-9">
-          <div className="flex items-start gap-4">
-            <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-[#e7f7ee] text-[#197a4d]">
-              <Check className="size-5" />
-            </span>
-            <div>
-              <div className="text-xs font-semibold text-[#197a4d]">
-                Step 1 complete · {selectedProvider?.name || "Payments"} connected
-              </div>
-              <h4 className="mt-1 font-ui-display text-2xl">What would you like to sell first?</h4>
-              <p className="mt-2 text-sm leading-6 text-[#17213a]/52">
-                Choose a starting point. You can change every detail in the next step.
-              </p>
+      )}
+      <div className="px-5 py-7 sm:px-8 sm:py-9">
+        <div className="flex items-start gap-4">
+          <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-[#e7f7ee] text-[#197a4d]">
+            <Check className="size-5" />
+          </span>
+          <div>
+            <div className="text-xs font-semibold text-[#197a4d]">
+              {paymentReady
+                ? `${selectedProvider?.name || "Payments"} connected`
+                : "Start with a free or paid offer"}
             </div>
+            <h4 className="mt-1 font-ui-display text-2xl">What would you like to sell first?</h4>
+            <p className="mt-2 text-sm leading-6 text-[#17213a]/52">
+              Choose a starting point. You can change every detail in the next step.
+            </p>
           </div>
-          <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {STORE_STARTER_TEMPLATES.map((template) => {
-              const definition = commerceKind(template.kind);
-              const Icon = PRODUCT_ICONS[template.kind];
-              return (
-                <button
-                  key={template.kind}
-                  type="button"
-                  onClick={() => onChooseTemplate(template.kind)}
-                  className="group flex min-h-40 flex-col rounded-[24px] border border-black/[0.07] bg-[#f8faff] p-4 text-left transition hover:-translate-y-1 hover:border-[#3478f6]/28 hover:bg-[#eef5ff] hover:shadow-lg"
-                >
-                  <div className="flex items-start justify-between">
-                    <span
-                      className="flex size-10 items-center justify-center rounded-2xl text-white"
-                      style={{ background: definition.accent }}
-                    >
-                      <Icon className="size-4.5" />
-                    </span>
-                    <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#17213a]/35">
-                      {template.eyebrow}
-                    </span>
-                  </div>
-                  <div className="mt-4 font-ui-display text-xl">{template.title}</div>
-                  <p className="mt-1 text-xs leading-5 text-[#17213a]/48">{template.body}</p>
-                  <span className="mt-auto inline-flex items-center gap-1 pt-3 text-xs font-semibold text-[#245fd0]">
-                    Use template{" "}
-                    <ChevronRight className="size-3.5 transition group-hover:translate-x-0.5" />
+        </div>
+        <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {STORE_STARTER_TEMPLATES.map((template) => {
+            const definition = commerceKind(template.kind);
+            const Icon = PRODUCT_ICONS[template.kind];
+            return (
+              <button
+                key={template.kind}
+                type="button"
+                onClick={() => onChooseTemplate(template.kind)}
+                className="group flex min-h-40 flex-col rounded-[24px] border border-black/[0.07] bg-[#f8faff] p-4 text-left transition hover:-translate-y-1 hover:border-[#3478f6]/28 hover:bg-[#eef5ff] hover:shadow-lg"
+              >
+                <div className="flex items-start justify-between">
+                  <span
+                    className="flex size-10 items-center justify-center rounded-2xl text-white"
+                    style={{ background: definition.accent }}
+                  >
+                    <Icon className="size-4.5" />
                   </span>
-                </button>
-              );
-            })}
-          </div>
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#17213a]/35">
+                    {template.eyebrow}
+                  </span>
+                </div>
+                <div className="mt-4 font-ui-display text-xl">{template.title}</div>
+                <p className="mt-1 text-xs leading-5 text-[#17213a]/48">{template.body}</p>
+                <span className="mt-auto inline-flex items-center gap-1 pt-3 text-xs font-semibold text-[#245fd0]">
+                  Use template{" "}
+                  <ChevronRight className="size-3.5 transition group-hover:translate-x-0.5" />
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          onClick={() => onChooseTemplate("custom_product")}
+          className="mt-4 text-xs font-semibold text-[#17213a]/48 underline decoration-[#17213a]/20 underline-offset-4 hover:text-[#17213a]"
+        >
+          Start with a blank custom product instead
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function NewsletterProductCard({
+  title,
+  status,
+  priceLabel,
+  publicationId,
+  subscriberCount,
+  onEdit,
+}: {
+  title: string;
+  status: string;
+  priceLabel: string;
+  publicationId?: string;
+  subscriberCount?: number;
+  onEdit?: () => void;
+}) {
+  return (
+    <article className="overflow-hidden rounded-[30px] border border-black/[0.07] bg-white p-5 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <span className="flex size-11 items-center justify-center rounded-2xl bg-violet-100 text-violet-700">
+          <Newspaper className="size-5" />
+        </span>
+        <StatusPill status={status} />
+      </div>
+      <p className="mt-4 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+        Newsletter
+      </p>
+      <h3 className="mt-1 font-ui-display text-2xl">{title}</h3>
+      <p className="mt-2 text-sm font-semibold">{priceLabel}</p>
+      {subscriberCount !== undefined && (
+        <p className="mt-1 text-xs text-muted-foreground">{subscriberCount} subscribers</p>
+      )}
+      <div className="mt-5 flex flex-wrap gap-2">
+        {onEdit && (
           <button
             type="button"
-            onClick={() => onChooseTemplate("custom_product")}
-            className="mt-4 text-xs font-semibold text-[#17213a]/48 underline decoration-[#17213a]/20 underline-offset-4 hover:text-[#17213a]"
+            onClick={onEdit}
+            className="rounded-xl bg-[#dceaff] px-3 py-2.5 text-xs font-semibold text-[#245fd0]"
           >
-            Start with a blank custom product instead
+            Edit newsletter
           </button>
-        </div>
-      )}
-    </section>
+        )}
+        <Link
+          to="/email-marketing"
+          search={{ section: "overview", publication: publicationId }}
+          className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#f2f5fb] px-3 py-2.5 text-xs font-semibold"
+        >
+          Manage in Newsletter
+        </Link>
+      </div>
+    </article>
   );
 }
 
@@ -862,24 +964,33 @@ function ProductsPanel({
   creatorUsername,
   webinarRegistrations,
   canSell,
+  canPublish,
   onCreate,
   onEdit,
   onStatus,
   onAddBlock,
   onDelete,
   onAttendance,
+  onEditNewsletter,
 }: {
   products: CommerceProductRecord[];
   creatorUsername?: string;
   webinarRegistrations: CommerceWebinarRegistrationRecord[];
   canSell: boolean;
+  canPublish: boolean;
   onCreate: () => void;
+  onEditNewsletter: (publicationId: string) => void;
   onEdit: (id: string) => void;
   onStatus: (id: string, status: "published" | "archived") => void;
   onAddBlock: (id: string) => void;
   onDelete: (product: CommerceProductRecord) => void;
   onAttendance: (registrationId: string, status: "registered" | "attended" | "no_show") => void;
 }) {
+  const [showArchived, setShowArchived] = useState(false);
+  const archivedCount = products.filter((product) => product.status === "archived").length;
+  const visibleProducts = products.filter((product) =>
+    showArchived ? product.status === "archived" : product.status !== "archived",
+  );
   if (products.length === 0) {
     return (
       <div className="rounded-[32px] border border-dashed border-[#3478f6]/30 bg-white p-10 text-center shadow-sm">
@@ -902,118 +1013,172 @@ function ProductsPanel({
     );
   }
   return (
-    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-      {products.map((product) => {
-        const definition = commerceKind(product.kind);
-        const Icon = PRODUCT_ICONS[product.kind as CommerceProductKind];
-        const coverUrl = safeMediaUrl(product.cover_url);
-        const registrations =
-          product.kind === "webinar"
-            ? webinarRegistrations.filter((item) => item.product_id === product.id)
-            : [];
-        return (
-          <article
-            key={product.id}
-            className="group overflow-hidden rounded-[30px] border border-black/[0.07] bg-white shadow-[0_24px_60px_-44px_rgba(23,33,58,0.5)]"
-          >
-            <div
-              className="relative flex h-40 items-start justify-between overflow-hidden p-5"
-              style={{
-                background: coverUrl
-                  ? `linear-gradient(180deg,rgba(23,33,58,.05),rgba(23,33,58,.52)),url("${coverUrl.replaceAll('"', "%22")}") center/cover`
-                  : `linear-gradient(145deg,${definition.accent}28,#f8faff 68%)`,
-              }}
+    <div className="space-y-4">
+      {(archivedCount > 0 || showArchived) && (
+        <div className="flex gap-2" role="group" aria-label="Product status">
+          {[
+            { archived: false, label: `Active (${products.length - archivedCount})` },
+            { archived: true, label: `Archived (${archivedCount})` },
+          ].map(({ archived, label }) => (
+            <button
+              key={label}
+              type="button"
+              aria-pressed={showArchived === archived}
+              onClick={() => setShowArchived(archived)}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold ${showArchived === archived ? "bg-[#17213a] text-white" : "bg-white text-[#17213a]/60"}`}
             >
-              <span
-                className="flex size-11 items-center justify-center rounded-2xl shadow-sm"
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {visibleProducts.length === 0 && (
+        <div className="rounded-[30px] border border-dashed border-black/10 bg-white p-10 text-center">
+          <h3 className="font-ui-display text-2xl">
+            {showArchived ? "No archived products" : "No active products"}
+          </h3>
+          <p className="mt-2 text-sm text-[#17213a]/60">
+            {showArchived
+              ? "Products you archive will appear here."
+              : "Your archived products are saved in Archived. Create a new product to get started."}
+          </p>
+          {!showArchived && (
+            <button
+              type="button"
+              onClick={onCreate}
+              className="mt-4 rounded-xl bg-[#3478f6] px-4 py-2 text-sm font-semibold text-white"
+            >
+              Create a product
+            </button>
+          )}
+        </div>
+      )}
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {visibleProducts.map((product) => {
+          if (product.kind === "newsletter")
+            return (
+              <NewsletterProductCard
+                key={product.id}
+                title={product.title}
+                status={product.status}
+                priceLabel={pricingLabel(
+                  product.pricing_type,
+                  product.price_amount,
+                  product.currency,
+                  product.billing_interval,
+                )}
+                publicationId={product.settings.newsletterPublicationId}
+                onEdit={
+                  product.settings.newsletterPublicationId
+                    ? () => onEditNewsletter(product.settings.newsletterPublicationId!)
+                    : undefined
+                }
+              />
+            );
+          const paymentAllowed =
+            canPublish && (canSell || !commerceProductRequiresPayment(product));
+          const canAddBlock = paymentAllowed && product.status === "published";
+          const definition = commerceKind(product.kind);
+          const Icon = PRODUCT_ICONS[product.kind as CommerceProductKind];
+          const coverUrl = safeMediaUrl(product.cover_url);
+          const registrations =
+            product.kind === "webinar"
+              ? webinarRegistrations.filter((item) => item.product_id === product.id)
+              : [];
+          return (
+            <article
+              key={product.id}
+              className="group overflow-hidden rounded-[30px] border border-black/[0.07] bg-white shadow-[0_24px_60px_-44px_rgba(23,33,58,0.5)]"
+            >
+              <div
+                className="relative flex h-40 items-start justify-between overflow-hidden p-5"
                 style={{
-                  background: coverUrl ? "rgba(255,255,255,.9)" : definition.accent,
-                  color: coverUrl ? definition.accent : "white",
+                  background: coverUrl
+                    ? `linear-gradient(180deg,rgba(23,33,58,.05),rgba(23,33,58,.52)),url("${coverUrl.replaceAll('"', "%22")}") center/cover`
+                    : `linear-gradient(145deg,${definition.accent}28,#f8faff 68%)`,
                 }}
               >
-                <Icon className="size-5" />
-              </span>
-              <StatusPill status={product.status} />
-            </div>
-            <div className="p-5">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#17213a]/40">
-                {definition.label}
-              </div>
-              <h3 className="mt-1 line-clamp-2 font-ui-display text-2xl leading-tight">
-                {product.title}
-              </h3>
-              <div className="mt-2 flex items-center justify-between gap-3 text-sm">
-                <span className="font-semibold">
-                  {pricingLabel(
-                    product.pricing_type,
-                    product.price_amount,
-                    product.currency,
-                    product.billing_interval,
-                  )}
+                <span
+                  className="flex size-11 items-center justify-center rounded-2xl shadow-sm"
+                  style={{
+                    background: coverUrl ? "rgba(255,255,255,.9)" : definition.accent,
+                    color: coverUrl ? definition.accent : "white",
+                  }}
+                >
+                  <Icon className="size-5" />
                 </span>
-                <span className="text-[#17213a]/42">{product.sales_count || 0} sales</span>
+                <StatusPill status={product.status} />
               </div>
-              {product.kind === "webinar" && (
-                <details className="mt-4 rounded-2xl border border-[#e24c5a]/12 bg-[#fff6f7] p-3">
-                  <summary className="cursor-pointer list-none text-xs font-semibold text-[#b52f3d]">
-                    {registrations.filter((item) => item.status !== "canceled").length} registered ·{" "}
-                    {registrations.filter((item) => item.status === "attended").length} attended
-                  </summary>
-                  <div className="mt-3 max-h-64 space-y-2 overflow-y-auto">
-                    {registrations.length ? (
-                      registrations.map((registration) => (
-                        <div
-                          key={registration.id}
-                          className="min-w-0 rounded-xl border border-black/[0.05] bg-white p-3"
-                        >
-                          <div className="truncate text-xs font-semibold">
-                            {registration.buyer_name || registration.buyer_email}
-                          </div>
-                          <div className="mt-0.5 truncate text-[10px] text-[#17213a]/42">
-                            {registration.buyer_email}
-                          </div>
-                          {registration.status === "canceled" ? (
-                            <div className="mt-2 text-[10px] font-semibold text-[#17213a]/38">
-                              Canceled
-                            </div>
-                          ) : (
-                            <div className="mt-2 grid grid-cols-3 gap-1">
-                              {(["registered", "attended", "no_show"] as const).map((status) => (
-                                <button
-                                  key={status}
-                                  type="button"
-                                  onClick={() => onAttendance(registration.id, status)}
-                                  className={`min-w-0 rounded-lg px-1.5 py-1.5 text-[9px] font-semibold capitalize ${
-                                    registration.status === status
-                                      ? "bg-[#17213a] text-white"
-                                      : "bg-[#f2f5fb] text-[#17213a]/55"
-                                  }`}
-                                >
-                                  {status.replace("_", " ")}
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ))
-                    ) : (
-                      <div className="text-[11px] leading-5 text-[#17213a]/42">
-                        Registrations appear here after checkout.
-                      </div>
+              <div className="p-5">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#17213a]/40">
+                  {definition.label}
+                </div>
+                <h3 className="mt-1 line-clamp-2 font-ui-display text-2xl leading-tight">
+                  {product.title}
+                </h3>
+                <div className="mt-2 flex items-center justify-between gap-3 text-sm">
+                  <span className="font-semibold">
+                    {pricingLabel(
+                      product.pricing_type,
+                      product.price_amount,
+                      product.currency,
+                      product.billing_interval,
                     )}
-                  </div>
-                </details>
-              )}
-              <div className="mt-5 grid grid-cols-2 gap-2">
-                {product.kind === "newsletter" ? (
-                  <Link
-                    to="/email-marketing"
-                    search={{ section: "overview" }}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#dceaff] px-3 py-2.5 text-xs font-semibold text-[#245fd0]"
-                  >
-                    <Newspaper className="size-3.5" /> Manage in Newsletter
-                  </Link>
-                ) : (
+                  </span>
+                  <span className="text-[#17213a]/42">{product.sales_count || 0} sales</span>
+                </div>
+                {product.kind === "webinar" && (
+                  <details className="mt-4 rounded-2xl border border-[#e24c5a]/12 bg-[#fff6f7] p-3">
+                    <summary className="cursor-pointer list-none text-xs font-semibold text-[#b52f3d]">
+                      {registrations.filter((item) => item.status !== "canceled").length} registered
+                      · {registrations.filter((item) => item.status === "attended").length} attended
+                    </summary>
+                    <div className="mt-3 max-h-64 space-y-2 overflow-y-auto">
+                      {registrations.length ? (
+                        registrations.map((registration) => (
+                          <div
+                            key={registration.id}
+                            className="min-w-0 rounded-xl border border-black/[0.05] bg-white p-3"
+                          >
+                            <div className="truncate text-xs font-semibold">
+                              {registration.buyer_name || registration.buyer_email}
+                            </div>
+                            <div className="mt-0.5 truncate text-[10px] text-[#17213a]/42">
+                              {registration.buyer_email}
+                            </div>
+                            {registration.status === "canceled" ? (
+                              <div className="mt-2 text-[10px] font-semibold text-[#17213a]/38">
+                                Canceled
+                              </div>
+                            ) : (
+                              <div className="mt-2 grid grid-cols-3 gap-1">
+                                {(["registered", "attended", "no_show"] as const).map((status) => (
+                                  <button
+                                    key={status}
+                                    type="button"
+                                    onClick={() => onAttendance(registration.id, status)}
+                                    className={`min-w-0 rounded-lg px-1.5 py-1.5 text-[9px] font-semibold capitalize ${
+                                      registration.status === status
+                                        ? "bg-[#17213a] text-white"
+                                        : "bg-[#f2f5fb] text-[#17213a]/55"
+                                    }`}
+                                  >
+                                    {status.replace("_", " ")}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      ) : (
+                        <div className="text-[11px] leading-5 text-[#17213a]/42">
+                          Registrations appear here after checkout.
+                        </div>
+                      )}
+                    </div>
+                  </details>
+                )}
+                <div className="mt-5 grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => onEdit(product.id)}
@@ -1021,76 +1186,89 @@ function ProductsPanel({
                   >
                     <Pencil className="size-3.5" /> Edit
                   </button>
-                )}
-                {product.status === "published" ? (
-                  <a
-                    href={
-                      creatorUsername
-                        ? publicProductPath(creatorUsername, product.public_slug)
-                        : `/p/${product.slug}`
+                  {product.status === "published" ? (
+                    <a
+                      href={
+                        creatorUsername
+                          ? publicProductPath(creatorUsername, product.public_slug)
+                          : `/p/${product.slug}`
+                      }
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#17213a] px-3 py-2.5 text-xs font-semibold text-white"
+                    >
+                      View <ExternalLink className="size-3.5" />
+                    </a>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={!paymentAllowed}
+                      title={
+                        !paymentAllowed ? "Connect a payment gateway before publishing" : undefined
+                      }
+                      onClick={() => paymentAllowed && onStatus(product.id, "published")}
+                      className="rounded-xl bg-[#3478f6] px-3 py-2.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-[#17213a]/12 disabled:text-[#17213a]/40"
+                    >
+                      {paymentAllowed
+                        ? product.status === "archived"
+                          ? "Restore"
+                          : "Publish"
+                        : "Payments required"}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={!canAddBlock}
+                    title={
+                      product.status !== "published"
+                        ? "Publish this product before adding a page block"
+                        : !paymentAllowed
+                          ? "Connect a payment gateway before adding Store blocks"
+                          : undefined
                     }
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#17213a] px-3 py-2.5 text-xs font-semibold text-white"
+                    onClick={() => canAddBlock && onAddBlock(product.id)}
+                    className="rounded-xl border border-black/[0.08] px-3 py-2.5 text-xs font-semibold hover:bg-[#f7f8fc] disabled:cursor-not-allowed disabled:text-[#17213a]/30 disabled:hover:bg-transparent"
                   >
-                    View <ExternalLink className="size-3.5" />
-                  </a>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={!canSell}
-                    title={!canSell ? "Connect a payment gateway before publishing" : undefined}
-                    onClick={() => canSell && onStatus(product.id, "published")}
-                    className="rounded-xl bg-[#3478f6] px-3 py-2.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-[#17213a]/12 disabled:text-[#17213a]/40"
-                  >
-                    {canSell
-                      ? product.status === "archived"
-                        ? "Restore"
-                        : "Publish"
-                      : "Payments required"}
+                    {paymentAllowed ? "Add block" : "Block locked"}
                   </button>
-                )}
-                <button
-                  type="button"
-                  disabled={!canSell}
-                  title={
-                    !canSell ? "Connect a payment gateway before adding Store blocks" : undefined
-                  }
-                  onClick={() => canSell && onAddBlock(product.id)}
-                  className="rounded-xl border border-black/[0.08] px-3 py-2.5 text-xs font-semibold hover:bg-[#f7f8fc] disabled:cursor-not-allowed disabled:text-[#17213a]/30 disabled:hover:bg-transparent"
-                >
-                  {canSell ? "Add block" : "Block locked"}
-                </button>
-                {product.status !== "archived" && (
-                  <button
-                    type="button"
-                    onClick={() => onStatus(product.id, "archived")}
-                    className="rounded-xl border border-black/[0.08] px-3 py-2.5 text-xs font-semibold text-[#17213a]/55 hover:bg-[#f7f8fc]"
-                  >
-                    Archive
-                  </button>
-                )}
-                {(product.kind === "paid_community" || product.kind === "membership") && (
-                  <Link
-                    to="/community"
-                    search={{ tab: "overview", community: product.id }}
-                    className="col-span-2 inline-flex items-center justify-center gap-2 rounded-xl bg-[#e7f7ee] px-3 py-2.5 text-xs font-semibold text-[#197a4d] transition hover:bg-[#d9f2e5]"
-                  >
-                    <UsersRound className="size-3.5" /> Manage community
-                  </Link>
-                )}
-                <button
-                  type="button"
-                  onClick={() => onDelete(product)}
-                  className="col-span-2 inline-flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs font-semibold text-red-600 transition hover:border-red-300 hover:bg-red-100"
-                >
-                  <Trash2 className="size-3.5" /> Delete product
-                </button>
+                  {product.status !== "archived" && (
+                    <button
+                      type="button"
+                      onClick={() => onStatus(product.id, "archived")}
+                      className="rounded-xl border border-black/[0.08] px-3 py-2.5 text-xs font-semibold text-[#17213a]/55 hover:bg-[#f7f8fc]"
+                    >
+                      Archive
+                    </button>
+                  )}
+                  {(product.kind === "paid_community" || product.kind === "membership") && (
+                    <Link
+                      to="/community"
+                      search={{ tab: "overview", community: product.id }}
+                      className="col-span-2 inline-flex items-center justify-center gap-2 rounded-xl bg-[#e7f7ee] px-3 py-2.5 text-xs font-semibold text-[#197a4d] transition hover:bg-[#d9f2e5]"
+                    >
+                      <UsersRound className="size-3.5" /> Manage community
+                    </Link>
+                  )}
+                  {product.status === "archived" && product.sales_count > 0 ? (
+                    <p className="col-span-2 text-xs leading-5 text-[#17213a]/55">
+                      Kept for existing orders, receipts, and customer access.
+                    </p>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => onDelete(product)}
+                      className="col-span-2 inline-flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs font-semibold text-red-600 transition hover:border-red-300 hover:bg-red-100"
+                    >
+                      <Trash2 className="size-3.5" />{" "}
+                      {product.sales_count > 0 ? "Remove product" : "Delete product"}
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-          </article>
-        );
-      })}
+            </article>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1591,6 +1769,7 @@ function DeleteProductDialog({
   onClose: () => void;
   onConfirm: () => void;
 }) {
+  const willArchive = Number(product?.sales_count) > 0;
   return (
     <Dialog open={Boolean(product)} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-md overflow-hidden rounded-[30px] border-0 bg-white p-0 shadow-2xl">
@@ -1599,11 +1778,12 @@ function DeleteProductDialog({
             <Trash2 className="size-5" />
           </div>
           <DialogTitle className="mt-5 font-ui-display text-3xl leading-tight text-[#17213a]">
-            Delete {product?.title || "this item"}?
+            {willArchive ? "Archive" : "Delete"} {product?.title || "this item"}?
           </DialogTitle>
           <p className="mt-3 text-sm leading-6 text-[#17213a]/55">
-            This removes its this application blocks and attached setup. Items with orders cannot be
-            deleted, so receipts and customer access always stay safe.
+            {willArchive
+              ? "This removes the product from your active list and its page blocks. Existing orders, receipts, and customer access are preserved in Archived."
+              : "This removes its page blocks and attached setup. If it has orders or a payment in progress, it will be archived to preserve receipts and customer access."}
           </p>
           <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <button
@@ -1621,7 +1801,7 @@ function DeleteProductDialog({
               className="inline-flex items-center justify-center gap-2 rounded-2xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-50"
             >
               {busy ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
-              Delete permanently
+              {willArchive ? "Archive product" : "Delete permanently"}
             </button>
           </div>
         </div>
@@ -2095,180 +2275,52 @@ function ProductKindPicker({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[86dvh] w-[calc(100vw-1.5rem)] max-w-4xl overflow-y-auto rounded-[32px] border-white/80 bg-white/92 p-5 shadow-[0_40px_120px_-44px_rgba(23,33,58,.65)] backdrop-blur-2xl sm:p-7">
-        <DialogTitle className="font-ui-display text-3xl">What do you want to sell?</DialogTitle>
-        <p className="-mt-2 text-sm text-[#17213a]/50">
-          Pick an offer type for its dedicated setup, hosted page, checkout, and delivery flow. Lead
-          forms and this application affiliate links now live in the Grow tab.
-        </p>
-        <section className="mt-6">
-          <h3 className="font-sans text-sm font-semibold">Sell</h3>
-          <p className="mt-0.5 text-xs text-[#17213a]/42">
-            Products, services, learning, events, and paid access.
+      <DialogContent className="max-h-[86dvh] w-[calc(100vw-1.5rem)] max-w-4xl overflow-hidden rounded-[32px] border-white/80 bg-white/92 p-0 shadow-[0_40px_120px_-44px_rgba(23,33,58,.65)] backdrop-blur-2xl">
+        <div className="max-h-[86dvh] min-h-0 overflow-y-auto overscroll-contain p-5 [scrollbar-gutter:stable] sm:p-7">
+          <DialogTitle className="font-ui-display text-3xl">What do you want to sell?</DialogTitle>
+          <p className="-mt-2 text-sm text-[#17213a]/50">
+            Pick an offer type for its dedicated setup, hosted page, checkout, and delivery flow.
+            Lead forms and affiliate links now live in the Grow tab.
           </p>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {COMMERCE_KINDS.filter(
-              (definition) => definition.family === "sell" && definition.kind !== "newsletter",
-            ).map((definition) => {
-              const Icon = PRODUCT_ICONS[definition.kind];
-              return (
-                <button
-                  key={definition.kind}
-                  type="button"
-                  onClick={() => onChoose(definition.kind)}
-                  className="group rounded-[24px] border border-black/[0.07] bg-[#f8faff] p-4 text-left transition hover:-translate-y-1 hover:border-[#3478f6]/30 hover:bg-[#eef5ff] hover:shadow-lg"
-                >
-                  <div className="flex items-start justify-between">
-                    <span
-                      className="flex size-11 items-center justify-center rounded-2xl text-white"
-                      style={{ background: definition.accent }}
+          <section className="mt-6">
+            <h3 className="font-sans text-sm font-semibold">Sell</h3>
+            <p className="mt-0.5 text-xs text-[#17213a]/42">
+              Products, services, learning, events, and paid access.
+            </p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {COMMERCE_KINDS.filter((definition) => definition.family === "sell").map(
+                (definition) => {
+                  const Icon = PRODUCT_ICONS[definition.kind];
+                  return (
+                    <button
+                      key={definition.kind}
+                      type="button"
+                      onClick={() => onChoose(definition.kind)}
+                      className="group rounded-[24px] border border-black/[0.07] bg-[#f8faff] p-4 text-left transition hover:-translate-y-1 hover:border-[#3478f6]/30 hover:bg-[#eef5ff] hover:shadow-lg"
                     >
-                      <Icon className="size-5" />
-                    </span>
-                    <ChevronRight className="size-4 text-[#17213a]/25 transition group-hover:translate-x-0.5" />
-                  </div>
-                  <div className="mt-4 font-ui-display text-xl">{definition.label}</div>
-                  <p className="mt-1 text-xs leading-5 text-[#17213a]/48">
-                    {definition.description}
-                  </p>
-                </button>
-              );
-            })}
-          </div>
-        </section>
+                      <div className="flex items-start justify-between">
+                        <span
+                          className="flex size-11 items-center justify-center rounded-2xl text-white"
+                          style={{ background: definition.accent }}
+                        >
+                          <Icon className="size-5" />
+                        </span>
+                        <ChevronRight className="size-4 text-[#17213a]/25 transition group-hover:translate-x-0.5" />
+                      </div>
+                      <div className="mt-4 font-ui-display text-xl">{definition.label}</div>
+                      <p className="mt-1 text-xs leading-5 text-[#17213a]/48">
+                        {definition.description}
+                      </p>
+                    </button>
+                  );
+                },
+              )}
+            </div>
+          </section>
+        </div>
       </DialogContent>
     </Dialog>
   );
-}
-
-type ProductDraft = {
-  kind: CommerceProductKind;
-  title: string;
-  subtitle: string;
-  description: string;
-  cover_url: string | null;
-  pricing_type: CommercePricingType;
-  price_amount: number;
-  currency: string;
-  billing_interval: "day" | "week" | "month" | "year" | null;
-  cta_label: string;
-  settings: CommerceProductSettings;
-  inventory_limit: number | null;
-  noindex: boolean;
-};
-
-function draftFor(
-  kind: CommerceProductKind,
-  existing?: CommerceProductRecord,
-  bookingAvailability?: Availability,
-): ProductDraft {
-  const definition = commerceKind(kind);
-  if (existing) {
-    const settings = { ...(existing.settings || {}) };
-    const detectedTimeZone = browserTimeZone();
-    if (
-      kind === "coaching_call" &&
-      !Array.isArray(settings.weeklyRules) &&
-      !Array.isArray(settings.availabilityDays)
-    ) {
-      Object.assign(
-        settings,
-        bookingAvailabilitySettings(bookingAvailability || DEFAULT_AVAILABILITY),
-      );
-    }
-    if (kind === "webinar") settings.timezone = detectedTimeZone;
-    if (kind === "webinar" && settings.startsAt) {
-      settings.startsAt = isoToZonedDateTimeInput(String(settings.startsAt), detectedTimeZone);
-    }
-    if (kind === "priority_dm") {
-      settings.freeFollowUpLimit ??= 0;
-      settings.followUpPriceAmount ??= existing.price_amount;
-    }
-    return {
-      kind,
-      title: existing.title || "",
-      subtitle: existing.subtitle || "",
-      description: existing.description || "",
-      cover_url: existing.cover_url || null,
-      pricing_type: existing.pricing_type,
-      price_amount: Number(existing.price_amount || 0),
-      currency: existing.currency || "usd",
-      billing_interval: existing.billing_interval || null,
-      cta_label: existing.cta_label || definition.defaultCta,
-      settings,
-      inventory_limit: existing.inventory_limit || null,
-      noindex: existing.noindex ?? true,
-    };
-  }
-  const settings: CommerceProductSettings = {};
-  if (kind === "digital_product") settings.files = [];
-  if (kind === "coaching_call")
-    Object.assign(settings, {
-      durationMinutes: 60,
-      ...bookingAvailabilitySettings(bookingAvailability || DEFAULT_AVAILABILITY),
-      availabilitySummary: "Uses your Calendar availability",
-      recordingAddonEnabled: false,
-      recordingAddonPrice: 1900,
-    });
-  if (kind === "course") settings.lessons = [];
-  if (kind === "webinar")
-    Object.assign(settings, {
-      startsAt: "",
-      timezone: browserTimeZone(),
-      durationMinutes: 60,
-      joinUrl: "",
-      replayUrl: "",
-    });
-  if (kind === "paid_community")
-    Object.assign(settings, { welcomeMessage: "", rules: "Be kind. Share generously." });
-  if (kind === "membership") settings.benefits = ["Member-only updates"];
-  if (kind === "custom_product")
-    Object.assign(settings, { fulfillmentInstructions: "", buyerQuestions: [] });
-  if (kind === "priority_dm")
-    Object.assign(settings, {
-      priorityPrompt: "What would you like to ask?",
-      responseTimeHours: 48,
-      freeFollowUpLimit: 1,
-      followUpPriceAmount: 1900,
-    });
-  if (kind === "bundle") settings.bundledProductIds = [];
-  if (kind === "lead_form")
-    Object.assign(settings, {
-      fields: [{ id: "email", label: "Email", type: "email", required: true }],
-      confirmationMessage: "You're in. Thank you.",
-    });
-  const template = STORE_TEMPLATE_DRAFTS[kind];
-  return {
-    kind,
-    title: template?.title || "",
-    subtitle: template?.subtitle || "",
-    description: template?.description || "",
-    cover_url: null,
-    pricing_type: definition.defaultPricing,
-    price_amount: definition.defaultPricing === "free" ? 0 : 1900,
-    currency: "usd",
-    billing_interval: definition.defaultPricing === "subscription" ? "month" : null,
-    cta_label: definition.defaultCta,
-    settings,
-    inventory_limit: null,
-    noindex: true,
-  };
-}
-
-function productDraftForSave(draft: ProductDraft): ProductDraft {
-  if (draft.kind !== "webinar" || !draft.settings.startsAt) return draft;
-  const startsAt = zonedDateTimeInputToIso(
-    String(draft.settings.startsAt),
-    String(draft.settings.timezone || ""),
-  );
-  if (!startsAt) return draft;
-  return {
-    ...draft,
-    settings: {
-      ...draft.settings,
-      startsAt,
-    },
-  };
 }
 
 function GrowthActionBuilder({
@@ -2432,1084 +2484,5 @@ function GrowthActionBuilder({
         </form>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function ProductBuilder({
-  open,
-  kind,
-  product,
-  profile,
-  bookingAvailability,
-  bookingAvailabilityLoading,
-  products,
-  onOpenChange,
-  onSaved,
-}: {
-  open: boolean;
-  kind?: CommerceProductKind;
-  product?: CommerceProductRecord;
-  profile?: {
-    theme?: string | null;
-    accent_color?: string | null;
-  } | null;
-  bookingAvailability?: Availability;
-  bookingAvailabilityLoading?: boolean;
-  products: CommerceProductRecord[];
-  onOpenChange: (open: boolean) => void;
-  onSaved: () => void;
-}) {
-  const initialKey = `${kind}:${product?.id ?? "new"}`;
-  const [draft, setDraft] = useState<ProductDraft | null>(() =>
-    kind ? draftFor(kind, product, bookingAvailability) : null,
-  );
-  const [stepIndex, setStepIndex] = useState(0);
-  useEffect(() => {
-    if (kind === "coaching_call" && bookingAvailabilityLoading) return;
-    setDraft(kind ? draftFor(kind, product, bookingAvailability) : null);
-    setStepIndex(0);
-  }, [initialKey, kind, product, bookingAvailability, bookingAvailabilityLoading]);
-  const definition = kind ? commerceKind(kind) : null;
-  const save = useMutation({
-    mutationFn: async () => {
-      if (!draft) throw new Error("Product is not ready.");
-      const productDraft = productDraftForSave(draft);
-      return product
-        ? updateCommerceProduct({ data: { id: product.id, product: productDraft } })
-        : createCommerceProduct({
-            data: { product: productDraft, addToBento: true, pageId: null },
-          });
-    },
-    onSuccess: () => {
-      toast.success(product ? "Product saved" : "Product published and block created");
-      onSaved();
-    },
-    onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Could not save product"),
-  });
-  if (!draft || !definition || (kind === "coaching_call" && bookingAvailabilityLoading)) {
-    return null;
-  }
-  const set = <K extends keyof ProductDraft>(key: K, value: ProductDraft[K]) =>
-    setDraft((current) => (current ? { ...current, [key]: value } : current));
-  const setSetting = <K extends keyof CommerceProductSettings>(
-    key: K,
-    value: CommerceProductSettings[K],
-  ) => set("settings", { ...draft.settings, [key]: value });
-  const paid = !["lead_form", "bento_affiliate"].includes(draft.kind);
-  const steps = productBuilderSteps(paid);
-  const activeStepIndex = clampProductBuilderStep(stepIndex, steps.length);
-  const activeStep = steps[activeStepIndex];
-  const isLastStep = activeStepIndex === steps.length - 1;
-  const canContinue =
-    activeStep.id === "basics"
-      ? Boolean(draft.title.trim() && draft.description.trim())
-      : activeStep.id === "page"
-        ? Boolean(draft.cta_label.trim())
-        : true;
-  const canSave = Boolean(draft.title.trim() && draft.description.trim() && draft.cta_label.trim());
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="h-[calc(100dvh-1rem)] w-[calc(100vw-1rem)] max-w-6xl gap-0 overflow-hidden rounded-[24px] border-white/80 bg-[#f7f8fc] p-0 shadow-[0_42px_130px_-45px_rgba(23,33,58,.7)] sm:h-[min(92dvh,860px)] sm:rounded-[32px] [&>button]:z-40">
-        <DialogTitle className="sr-only">
-          {product ? "Edit" : "Create"} {definition.label}
-        </DialogTitle>
-        <div className="grid size-full min-h-0 overflow-hidden rounded-[22px] sm:rounded-[30px] lg:grid-cols-[360px_minmax(0,1fr)]">
-          <aside className="relative hidden overflow-hidden rounded-l-[30px] bg-[#17213a] p-7 text-white lg:flex lg:flex-col">
-            <div
-              className="absolute -right-24 -top-20 size-56 rounded-full blur-2xl"
-              style={{ background: `${definition.accent}66` }}
-            />
-            <div className="relative text-[10px] font-semibold uppercase tracking-[0.18em] text-white/35">
-              Product builder · Step {activeStepIndex + 1} of {steps.length}
-            </div>
-            <h2 className="relative mt-2 font-ui-display text-4xl leading-[1.02]">
-              {definition.label}
-            </h2>
-            <p className="relative mt-3 text-sm leading-6 text-white/50">{definition.setupHint}</p>
-            <div className="relative mt-auto">
-              <ProductBlockPreview
-                product={{ ...draft, id: product?.id, slug: product?.slug }}
-                profile={profile ?? undefined}
-                compact
-              />
-            </div>
-          </aside>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (!isLastStep) {
-                if (canContinue) setStepIndex((current) => current + 1);
-                return;
-              }
-              save.mutate();
-            }}
-            className="flex min-h-0 flex-col overflow-hidden rounded-r-[30px]"
-          >
-            <div className="flex min-w-0 items-center gap-3 border-b border-black/[0.06] bg-white px-4 py-3 pr-14 sm:px-7 sm:py-4">
-              <span
-                className="flex size-10 items-center justify-center rounded-2xl text-white lg:hidden"
-                style={{ background: definition.accent }}
-              >
-                {(() => {
-                  const Icon = PRODUCT_ICONS[draft.kind];
-                  return <Icon className="size-4" />;
-                })()}
-              </span>
-              <div className="min-w-0">
-                <div className="truncate font-ui-display text-lg sm:text-xl">
-                  {product ? "Edit" : "Create"} {definition.label.toLowerCase()}
-                </div>
-                <div className="text-xs text-[#17213a]/45">
-                  Step {activeStepIndex + 1} of {steps.length} · {activeStep.title}
-                </div>
-              </div>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-8 sm:py-6">
-              <div className="mx-auto max-w-3xl space-y-6">
-                {activeStep.id === "page" && (
-                  <div className="lg:hidden">
-                    <ProductBlockPreview
-                      product={{ ...draft, id: product?.id, slug: product?.slug }}
-                      profile={profile ?? undefined}
-                    />
-                  </div>
-                )}
-                {activeStep.id === "basics" && (
-                  <FormSection eyebrow="Basics" title="Make the offer clear">
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <Field label="Title">
-                        <input
-                          autoFocus
-                          required
-                          maxLength={120}
-                          value={draft.title}
-                          onChange={(event) => set("title", event.target.value)}
-                          className={inputClass}
-                          placeholder={definition.label}
-                        />
-                      </Field>
-                      <Field label="Short line">
-                        <input
-                          maxLength={180}
-                          value={draft.subtitle}
-                          onChange={(event) => set("subtitle", event.target.value)}
-                          className={inputClass}
-                          placeholder="What makes it worth clicking?"
-                        />
-                      </Field>
-                    </div>
-                    <Field label="Description">
-                      <textarea
-                        required
-                        maxLength={20_000}
-                        value={draft.description}
-                        onChange={(event) => set("description", event.target.value)}
-                        className={`${inputClass} min-h-32 resize-y`}
-                        placeholder="Tell buyers exactly what they get and who it is for."
-                      />
-                    </Field>
-                    <FileDropzone
-                      kind="cover"
-                      value={draft.cover_url || ""}
-                      onChange={(url) => set("cover_url", url || null)}
-                      label="Product cover"
-                      className="max-w-sm"
-                    />
-                  </FormSection>
-                )}
-
-                {activeStep.id === "pricing" && paid && (
-                  <FormSection eyebrow="Price" title="Choose how people pay">
-                    <div className="grid gap-4 sm:grid-cols-3">
-                      <Field label="Pricing">
-                        <select
-                          value={draft.pricing_type}
-                          onChange={(event) => {
-                            const next = event.target.value as CommercePricingType;
-                            setDraft({
-                              ...draft,
-                              pricing_type: next,
-                              price_amount: next === "free" ? 0 : Math.max(draft.price_amount, 100),
-                              billing_interval:
-                                next === "subscription" ? draft.billing_interval || "month" : null,
-                            });
-                          }}
-                          className={inputClass}
-                        >
-                          <option value="one_time">One-time</option>
-                          <option value="subscription">Recurring</option>
-                          <option value="free">Free</option>
-                        </select>
-                      </Field>
-                      <Field label="Price">
-                        <PriceInput
-                          amount={draft.price_amount}
-                          disabled={draft.pricing_type === "free"}
-                          onAmountChange={(amount) => set("price_amount", amount)}
-                          className={inputClass}
-                        />
-                      </Field>
-                      <Field label="Currency">
-                        <select
-                          value={draft.currency}
-                          onChange={(event) => set("currency", event.target.value)}
-                          className={inputClass}
-                        >
-                          <option value="usd">USD</option>
-                          <option value="inr">INR</option>
-                          <option value="eur">EUR</option>
-                          <option value="gbp">GBP</option>
-                          <option value="aud">AUD</option>
-                          <option value="cad">CAD</option>
-                        </select>
-                      </Field>
-                    </div>
-                    {draft.pricing_type === "subscription" && (
-                      <Field label="Renews every">
-                        <select
-                          value={draft.billing_interval || "month"}
-                          onChange={(event) =>
-                            set(
-                              "billing_interval",
-                              event.target.value as ProductDraft["billing_interval"],
-                            )
-                          }
-                          className={inputClass}
-                        >
-                          <option value="day">Day</option>
-                          <option value="week">Week</option>
-                          <option value="month">Month</option>
-                          <option value="year">Year</option>
-                        </select>
-                      </Field>
-                    )}
-                    <div className="rounded-2xl bg-[#dceaff] px-4 py-3 text-xs leading-5 text-[#245fd0]">
-                      this application platform fee: 0% on every plan. Your payment provider’s
-                      processing or merchant-of-record fees remain separate.
-                    </div>
-                  </FormSection>
-                )}
-
-                {activeStep.id === "details" && (
-                  <SpecificProductFields
-                    draft={draft}
-                    setSetting={setSetting}
-                    products={products}
-                    currentProductId={product?.id}
-                  />
-                )}
-
-                {activeStep.id === "page" && (
-                  <FormSection eyebrow="Page" title="Design your sales page">
-                    <ProductWebsiteEditor
-                      value={draft.settings.website}
-                      onChange={(website) => setSetting("website", website)}
-                      title={draft.title}
-                      subtitle={draft.subtitle}
-                      cover={draft.cover_url}
-                    />
-                    <Field label="What buyers get (one benefit per line)">
-                      <textarea
-                        rows={4}
-                        className={inputClass}
-                        value={(draft.settings.benefits || []).join("\n")}
-                        onChange={(event) =>
-                          setSetting("benefits", event.target.value.split("\n").slice(0, 30))
-                        }
-                        placeholder="Describe the value, not the file names"
-                      />
-                    </Field>
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <Field label="Button label">
-                        <input
-                          required
-                          maxLength={40}
-                          value={draft.cta_label}
-                          onChange={(event) => set("cta_label", event.target.value)}
-                          className={inputClass}
-                        />
-                      </Field>
-                      <Field label="Inventory limit (optional)">
-                        <input
-                          type="number"
-                          min="1"
-                          max="1000000"
-                          value={draft.inventory_limit ?? ""}
-                          onChange={(event) =>
-                            set(
-                              "inventory_limit",
-                              event.target.value ? Number(event.target.value) : null,
-                            )
-                          }
-                          className={inputClass}
-                          placeholder="Unlimited"
-                        />
-                      </Field>
-                    </div>
-                    <div className="flex items-start justify-between gap-6 rounded-2xl border border-black/[0.07] bg-[#f8faff] p-4">
-                      <div>
-                        <div className="text-sm font-semibold text-[#17213a]">
-                          Show in search engines
-                        </div>
-                        <p className="mt-1 text-xs leading-5 text-[#17213a]/52">
-                          Allow Google and other search engines to index this product page.
-                        </p>
-                      </div>
-                      <Switch
-                        aria-label="Show this product in search engines"
-                        checked={!draft.noindex}
-                        onCheckedChange={(showInSearch) => set("noindex", !showInSearch)}
-                      />
-                    </div>
-                  </FormSection>
-                )}
-              </div>
-            </div>
-            <div className="flex items-center justify-between gap-3 border-t border-black/[0.06] bg-white px-4 py-3 sm:px-8 sm:py-4">
-              <button
-                type="button"
-                onClick={() => onOpenChange(false)}
-                className="rounded-lg px-3 py-2.5 text-sm font-semibold text-[#17213a]/55 hover:bg-[#f2f5fb]"
-              >
-                Cancel
-              </button>
-              <div className="flex items-center gap-2">
-                <span className="hidden text-xs font-semibold text-[#17213a]/35 sm:block">
-                  {activeStepIndex + 1} / {steps.length}
-                </span>
-                <button
-                  type="button"
-                  disabled={activeStepIndex === 0}
-                  onClick={() => setStepIndex((current) => Math.max(0, current - 1))}
-                  aria-label="Previous step"
-                  className="inline-flex size-10 items-center justify-center rounded-lg border border-black/[0.07] bg-[#f2f5fb] text-[#17213a]/60 transition-colors hover:bg-[#e8eef9] disabled:opacity-30"
-                >
-                  <ChevronLeft className="size-4" />
-                </button>
-                <button
-                  type="submit"
-                  disabled={save.isPending || (isLastStep ? !canSave : !canContinue)}
-                  className="inline-flex min-w-28 items-center justify-center gap-2 rounded-lg bg-[#3478f6] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#2168e5] disabled:opacity-50"
-                >
-                  {save.isPending && <Loader2 className="size-4 animate-spin" />}
-                  {isLastStep ? (product ? "Save changes" : "Create product") : "Next"}
-                  {!isLastStep && <ChevronRight className="size-4" />}
-                </button>
-              </div>
-            </div>
-          </form>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-const inputClass =
-  "w-full rounded-2xl border border-black/[0.07] bg-white px-4 py-3 text-sm text-[#17213a] outline-none transition placeholder:text-[#17213a]/28 focus:border-[#3478f6]/45 focus:ring-4 focus:ring-[#3478f6]/10 disabled:opacity-50 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none";
-
-function FormSection({
-  eyebrow,
-  title,
-  children,
-}: {
-  eyebrow: string;
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="rounded-[28px] border border-black/[0.06] bg-white p-5 shadow-[0_20px_50px_-45px_rgba(23,33,58,.5)] sm:p-6">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#3478f6]">
-        {eyebrow}
-      </div>
-      <h3 className="mt-1 font-ui-display text-2xl">{title}</h3>
-      <div className="mt-5 space-y-4">{children}</div>
-    </section>
-  );
-}
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-xs font-semibold text-[#17213a]/55">{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function coachingRules(settings: CommerceProductSettings): WeeklyRule[] {
-  if (Array.isArray(settings.weeklyRules)) return settings.weeklyRules;
-  return (settings.availabilityDays || []).map((day) => ({
-    day,
-    start: settings.availabilityStart || "09:00",
-    end: settings.availabilityEnd || "17:00",
-  }));
-}
-
-function SpecificProductFields({
-  draft,
-  setSetting,
-  products = [],
-  currentProductId,
-}: {
-  draft: ProductDraft;
-  products?: CommerceProductRecord[];
-  currentProductId?: string;
-  setSetting: <K extends keyof CommerceProductSettings>(
-    key: K,
-    value: CommerceProductSettings[K],
-  ) => void;
-}) {
-  if (draft.kind === "digital_product")
-    return (
-      <FormSection eyebrow="Delivery" title="Upload what buyers receive">
-        <ProductAssetUploader
-          files={draft.settings.files || []}
-          onChange={(files) => setSetting("files", files)}
-        />
-      </FormSection>
-    );
-  if (draft.kind === "coaching_call")
-    return (
-      <FormSection eyebrow="Booking" title="Set the call details">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Duration (minutes)">
-            <input
-              type="number"
-              min="10"
-              value={draft.settings.durationMinutes || 60}
-              onChange={(e) => setSetting("durationMinutes", Number(e.target.value))}
-              className={inputClass}
-            />
-          </Field>
-        </div>
-        <Field label="Available days">
-          <div className="flex flex-wrap gap-2">
-            {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((label, day) => {
-              const rules = coachingRules(draft.settings);
-              const selected = rules.some((rule) => rule.day === day);
-              return (
-                <button
-                  key={label}
-                  type="button"
-                  aria-pressed={selected}
-                  onClick={() => {
-                    const firstRule = rules[0];
-                    setSetting(
-                      "weeklyRules",
-                      selected
-                        ? rules.filter((rule) => rule.day !== day)
-                        : [
-                            ...rules,
-                            {
-                              day,
-                              start: firstRule?.start || "09:00",
-                              end: firstRule?.end || "17:00",
-                            },
-                          ].sort((left, right) => left.day - right.day),
-                    );
-                  }}
-                  className={`rounded-xl px-3 py-2 text-xs font-semibold transition ${
-                    selected
-                      ? "bg-[#3478f6] text-white"
-                      : "border border-black/[0.07] bg-[#f7f8fc] text-[#17213a]/50"
-                  }`}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-        </Field>
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Field label="From">
-            <input
-              type="time"
-              value={coachingRules(draft.settings)[0]?.start || "09:00"}
-              onChange={(e) =>
-                setSetting(
-                  "weeklyRules",
-                  coachingRules(draft.settings).map((rule) => ({
-                    ...rule,
-                    start: e.target.value,
-                  })),
-                )
-              }
-              className={inputClass}
-            />
-          </Field>
-          <Field label="Until">
-            <input
-              type="time"
-              value={coachingRules(draft.settings)[0]?.end || "17:00"}
-              onChange={(e) =>
-                setSetting(
-                  "weeklyRules",
-                  coachingRules(draft.settings).map((rule) => ({
-                    ...rule,
-                    end: e.target.value,
-                  })),
-                )
-              }
-              className={inputClass}
-            />
-          </Field>
-          <Field label="Slot spacing">
-            <select
-              value={draft.settings.slotIntervalMinutes || 30}
-              onChange={(e) => setSetting("slotIntervalMinutes", Number(e.target.value))}
-              className={inputClass}
-            >
-              <option value="15">15 minutes</option>
-              <option value="30">30 minutes</option>
-              <option value="60">60 minutes</option>
-            </select>
-          </Field>
-        </div>
-        <Field label="Availability">
-          <textarea
-            value={draft.settings.availabilitySummary || ""}
-            onChange={(e) => setSetting("availabilitySummary", e.target.value)}
-            className={`${inputClass} min-h-24`}
-            placeholder="Mon–Thu, 10am–4pm. Exact slots are selected after purchase."
-          />
-        </Field>
-        <div className="rounded-2xl border border-black/[0.07] bg-[#f7f8fc] p-4">
-          <label className="flex cursor-pointer items-start gap-3">
-            <input
-              type="checkbox"
-              checked={Boolean(draft.settings.recordingAddonEnabled)}
-              onChange={(e) => setSetting("recordingAddonEnabled", e.target.checked)}
-              className="mt-1 size-4 accent-[#3478f6]"
-            />
-            <span>
-              <span className="block text-sm font-semibold">Offer a Fathom recording</span>
-              <span className="mt-1 block text-xs leading-5 text-[#17213a]/48">
-                Customers can add the private call recording during checkout.{" "}
-                <Link
-                  to="/settings"
-                  search={{ section: "integrations", integration: "bookings" }}
-                  className="font-semibold text-[#3478f6]"
-                >
-                  Connect Fathom in Settings
-                </Link>{" "}
-                before enabling this on a live session.
-              </span>
-            </span>
-          </label>
-          {draft.settings.recordingAddonEnabled && (
-            <div className="mt-4 max-w-xs">
-              <Field label="Recording price">
-                <PriceInput
-                  amount={Number(draft.settings.recordingAddonPrice || 0)}
-                  onAmountChange={(amount) => setSetting("recordingAddonPrice", amount)}
-                />
-              </Field>
-            </div>
-          )}
-        </div>
-        <Field label="Fallback meeting link (optional)">
-          <input
-            value={draft.settings.meetingUrl || ""}
-            onChange={(e) => setSetting("meetingUrl", e.target.value)}
-            className={inputClass}
-            placeholder="https://meet.google.com/..."
-          />
-        </Field>
-      </FormSection>
-    );
-  if (draft.kind === "course")
-    return (
-      <FormSection eyebrow="Course" title="Build the first lessons">
-        <CourseLessonEditor
-          lessons={draft.settings.lessons || []}
-          onChange={(lessons) => setSetting("lessons", lessons)}
-        />
-      </FormSection>
-    );
-  if (draft.kind === "webinar")
-    return (
-      <FormSection eyebrow="Event" title="Set the live experience">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Starts at">
-            <input
-              type="datetime-local"
-              value={draft.settings.startsAt || ""}
-              onChange={(e) => setSetting("startsAt", e.target.value)}
-              className={inputClass}
-            />
-          </Field>
-        </div>
-        <div className="max-w-xs">
-          <Field label="Duration (minutes)">
-            <input
-              type="number"
-              min="10"
-              max="480"
-              value={draft.settings.durationMinutes || 60}
-              onChange={(e) => setSetting("durationMinutes", Number(e.target.value))}
-              className={inputClass}
-            />
-          </Field>
-        </div>
-        <Field label="Private join link">
-          <input
-            value={draft.settings.joinUrl || ""}
-            onChange={(e) => setSetting("joinUrl", e.target.value)}
-            className={inputClass}
-            placeholder="Revealed only to paid attendees"
-          />
-        </Field>
-        <Field label="Replay link (optional)">
-          <input
-            value={draft.settings.replayUrl || ""}
-            onChange={(e) => setSetting("replayUrl", e.target.value)}
-            className={inputClass}
-          />
-        </Field>
-      </FormSection>
-    );
-  if (draft.kind === "paid_community")
-    return (
-      <FormSection eyebrow="Community" title="Welcome paying members">
-        <Field label="Welcome message">
-          <textarea
-            value={draft.settings.welcomeMessage || ""}
-            onChange={(e) => setSetting("welcomeMessage", e.target.value)}
-            className={`${inputClass} min-h-28`}
-            placeholder="What members will find inside"
-          />
-        </Field>
-        <Field label="Community rules">
-          <textarea
-            value={draft.settings.rules || ""}
-            onChange={(e) => setSetting("rules", e.target.value)}
-            className={`${inputClass} min-h-24`}
-          />
-        </Field>
-      </FormSection>
-    );
-  if (draft.kind === "membership")
-    return (
-      <FormSection eyebrow="Membership" title="Make the recurring value obvious">
-        <ListEditor
-          values={draft.settings.benefits || []}
-          onChange={(values) => setSetting("benefits", values)}
-          placeholder="Member benefit"
-          addLabel="Add benefit"
-        />
-      </FormSection>
-    );
-  if (draft.kind === "custom_product")
-    return (
-      <FormSection eyebrow="Fulfilment" title="Explain what happens next">
-        <Field label="Fulfilment instructions">
-          <textarea
-            value={draft.settings.fulfillmentInstructions || ""}
-            onChange={(e) => setSetting("fulfillmentInstructions", e.target.value)}
-            className={`${inputClass} min-h-28`}
-            placeholder="For example: delivery within five business days by email."
-          />
-        </Field>
-        <ListEditor
-          values={draft.settings.buyerQuestions || []}
-          onChange={(values) => setSetting("buyerQuestions", values)}
-          placeholder="Question for the buyer"
-          addLabel="Add question"
-        />
-      </FormSection>
-    );
-  if (draft.kind === "priority_dm")
-    return (
-      <FormSection eyebrow="Priority inbox" title="Set the reply promise">
-        <Field label="Message prompt">
-          <input
-            maxLength={500}
-            value={draft.settings.priorityPrompt || ""}
-            onChange={(event) => setSetting("priorityPrompt", event.target.value)}
-            className={inputClass}
-            placeholder="What would you like to ask?"
-          />
-        </Field>
-        <Field label="Reply within (hours)">
-          <input
-            type="number"
-            min="1"
-            max="720"
-            required
-            value={draft.settings.responseTimeHours || 48}
-            onChange={(event) => setSetting("responseTimeHours", Number(event.target.value))}
-            className={inputClass}
-          />
-        </Field>
-        <Field label="Included free buyer follow-ups">
-          <input
-            type="number"
-            min="0"
-            max="100"
-            step="1"
-            value={draft.settings.freeFollowUpLimit ?? 0}
-            onChange={(event) => setSetting("freeFollowUpLimit", Number(event.target.value))}
-            className={inputClass}
-          />
-        </Field>
-        <Field label="Paid follow-up price">
-          <PriceInput
-            amount={draft.settings.followUpPriceAmount ?? draft.price_amount}
-            ariaLabel="Paid follow-up price"
-            onAmountChange={(amount) => setSetting("followUpPriceAmount", amount)}
-            className={inputClass}
-          />
-        </Field>
-        <div className="rounded-2xl bg-[#eef5ff] px-4 py-3 text-xs leading-5 text-[#245fd0]">
-          Paid requests appear in your standalone Priority DM inbox. Email notifications let you
-          reply directly, or reply from this application and the buyer receives your response by
-          email.
-        </div>
-      </FormSection>
-    );
-  if (draft.kind === "bundle") {
-    const eligibleProducts = products.filter(
-      (product) =>
-        product.status === "published" &&
-        product.id !== currentProductId &&
-        ["digital_product", "course", "custom_product"].includes(product.kind),
-    );
-    const selected = new Set(draft.settings.bundledProductIds || []);
-    return (
-      <FormSection eyebrow="Bundle" title="Choose included products">
-        {eligibleProducts.length ? (
-          <div className="space-y-2">
-            {eligibleProducts.map((product) => (
-              <label
-                key={product.id}
-                className="flex cursor-pointer items-center gap-3 rounded-2xl border border-black/[0.07] bg-[#f8faff] p-4"
-              >
-                <input
-                  type="checkbox"
-                  checked={selected.has(product.id)}
-                  onChange={(event) =>
-                    setSetting(
-                      "bundledProductIds",
-                      event.target.checked
-                        ? [...selected, product.id]
-                        : [...selected].filter((id) => id !== product.id),
-                    )
-                  }
-                  className="size-4 accent-[#3478f6]"
-                />
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-semibold">{product.title}</span>
-                  <span className="text-xs text-[#17213a]/45">
-                    {commerceKind(product.kind).label}
-                  </span>
-                </span>
-              </label>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm leading-6 text-[#17213a]/50">
-            Publish at least two downloads, courses, or custom products before creating a bundle.
-          </p>
-        )}
-      </FormSection>
-    );
-  }
-  if (draft.kind === "lead_form")
-    return (
-      <FormSection eyebrow="Form" title="Choose what you collect">
-        <ListEditor
-          values={(draft.settings.fields || []).map((field) => field.label)}
-          onChange={(values) =>
-            setSetting(
-              "fields",
-              values.map((label, index) => ({
-                id: index === 0 ? "email" : `field-${index + 1}`,
-                label,
-                type: index === 0 ? "email" : "text",
-                required: index === 0,
-              })),
-            )
-          }
-          placeholder="Field label"
-          addLabel="Add field"
-        />
-        <Field label="Success message">
-          <input
-            value={draft.settings.confirmationMessage || ""}
-            onChange={(e) => setSetting("confirmationMessage", e.target.value)}
-            className={inputClass}
-          />
-        </Field>
-      </FormSection>
-    );
-  return (
-    <FormSection eyebrow="Referral" title="this application tracks the referral">
-      <div className="rounded-2xl bg-[#fff3c6] px-4 py-4 text-sm leading-6 text-[#7b5800]">
-        The public block points to this application signup with your creator attribution. Clicks are
-        recorded immediately; commission eligibility and payout rules remain centrally controlled by
-        this application.
-      </div>
-    </FormSection>
-  );
-}
-
-function ListEditor({
-  values,
-  onChange,
-  placeholder,
-  addLabel,
-}: {
-  values: string[];
-  onChange: (values: string[]) => void;
-  placeholder: string;
-  addLabel: string;
-}) {
-  return (
-    <div className="space-y-2">
-      {values.map((value, index) => (
-        <div key={index} className="flex gap-2">
-          <input
-            value={value}
-            onChange={(e) =>
-              onChange(
-                values.map((item, itemIndex) => (itemIndex === index ? e.target.value : item)),
-              )
-            }
-            className={inputClass}
-            placeholder={placeholder}
-          />
-          <button
-            type="button"
-            onClick={() => onChange(values.filter((_, itemIndex) => itemIndex !== index))}
-            className="inline-flex size-11 shrink-0 items-center justify-center rounded-2xl bg-[#f2f5fb] text-[#17213a]/45"
-          >
-            <X className="size-4" />
-          </button>
-        </div>
-      ))}
-      <button
-        type="button"
-        onClick={() => onChange([...values, ""])}
-        className="inline-flex items-center gap-2 rounded-xl bg-[#f2f5fb] px-3 py-2 text-xs font-semibold text-[#3478f6]"
-      >
-        <Plus className="size-3.5" /> {addLabel}
-      </button>
-    </div>
-  );
-}
-
-function CourseLessonEditor({
-  lessons,
-  onChange,
-}: {
-  lessons: CommerceLesson[];
-  onChange: (lessons: CommerceLesson[]) => void;
-}) {
-  const update = (index: number, patch: Partial<CommerceLesson>) =>
-    onChange(
-      lessons.map((lesson, lessonIndex) =>
-        lessonIndex === index ? { ...lesson, ...patch } : lesson,
-      ),
-    );
-  const move = (index: number, direction: -1 | 1) => {
-    const destination = index + direction;
-    if (destination < 0 || destination >= lessons.length) return;
-    const next = [...lessons];
-    [next[index], next[destination]] = [next[destination], next[index]];
-    onChange(next);
-  };
-  return (
-    <div className="space-y-3">
-      {lessons.map((lesson, index) => (
-        <article
-          key={lesson.id}
-          className="rounded-[22px] border border-black/[0.06] bg-[#f7f8fc] p-4"
-        >
-          <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 sm:flex">
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-[#fff3c6] text-xs font-semibold text-[#7b5800]">
-              {index + 1}
-            </span>
-            <input
-              required
-              value={lesson.title}
-              maxLength={180}
-              onChange={(event) => update(index, { title: event.target.value })}
-              className={inputClass}
-              placeholder="Lesson title"
-            />
-            <div className="col-span-2 flex justify-end gap-1 sm:col-span-1 sm:justify-start">
-              <button
-                type="button"
-                onClick={() => move(index, -1)}
-                disabled={index === 0}
-                className="inline-flex size-9 items-center justify-center rounded-xl bg-white text-[#17213a]/55 disabled:opacity-25"
-                aria-label={`Move lesson ${index + 1} up`}
-              >
-                <ArrowUp className="size-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => move(index, 1)}
-                disabled={index === lessons.length - 1}
-                className="inline-flex size-9 items-center justify-center rounded-xl bg-white text-[#17213a]/55 disabled:opacity-25"
-                aria-label={`Move lesson ${index + 1} down`}
-              >
-                <ArrowDown className="size-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => onChange(lessons.filter((_, lessonIndex) => lessonIndex !== index))}
-                className="inline-flex size-9 shrink-0 items-center justify-center rounded-xl bg-white text-[#17213a]/40"
-                aria-label={`Remove lesson ${index + 1}`}
-              >
-                <X className="size-4" />
-              </button>
-            </div>
-          </div>
-          <div className="mt-3 grid gap-3">
-            <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
-              <input
-                value={lesson.moduleTitle || ""}
-                onChange={(event) => update(index, { moduleTitle: event.target.value })}
-                className={inputClass}
-                placeholder="Module name, e.g. Getting started"
-              />
-              <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-2xl bg-white px-4 text-xs font-semibold text-[#17213a]/65">
-                <input
-                  type="checkbox"
-                  checked={Boolean(lesson.isPreview)}
-                  onChange={(event) => update(index, { isPreview: event.target.checked })}
-                  className="size-4 accent-emerald-600"
-                />
-                Free preview
-              </label>
-            </div>
-            <input
-              value={lesson.summary || ""}
-              onChange={(event) => update(index, { summary: event.target.value })}
-              className={inputClass}
-              placeholder="Short lesson summary"
-            />
-            <textarea
-              value={lesson.body || ""}
-              onChange={(event) => update(index, { body: event.target.value, contentType: "text" })}
-              className={`${inputClass} min-h-28 resize-y`}
-              placeholder="Write the lesson content. You can also add a resource link below."
-            />
-            <input
-              type="url"
-              value={lesson.url || ""}
-              onChange={(event) => update(index, { url: event.target.value })}
-              className={inputClass}
-              placeholder="Optional video, file, or resource URL"
-            />
-          </div>
-        </article>
-      ))}
-      <button
-        type="button"
-        onClick={() =>
-          onChange([
-            ...lessons,
-            {
-              id: crypto.randomUUID(),
-              moduleTitle: "Course",
-              title: "",
-              summary: "",
-              contentType: "text",
-              body: "",
-            },
-          ])
-        }
-        className="inline-flex items-center gap-2 rounded-xl bg-[#fff3c6] px-3 py-2 text-xs font-semibold text-[#7b5800]"
-      >
-        <Plus className="size-3.5" /> Add lesson
-      </button>
-    </div>
-  );
-}
-
-function ProductAssetUploader({
-  files,
-  onChange,
-}: {
-  files: CommerceAsset[];
-  onChange: (files: CommerceAsset[]) => void;
-}) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
-  const upload = async (selected: File[]) => {
-    setBusy(true);
-    const uploaded: CommerceAsset[] = [];
-    try {
-      for (const file of selected) {
-        const result = await uploadFileResult(file, "product_file");
-        uploaded.push({
-          id: crypto.randomUUID(),
-          key: result.key,
-          name: result.name,
-          size: result.size,
-          mimeType: result.mimeType,
-        });
-      }
-      onChange([...files, ...uploaded]);
-      toast.success(
-        uploaded.length === 1 ? "Buyer file uploaded" : `${uploaded.length} files uploaded`,
-      );
-    } catch (error) {
-      if (uploaded.length) onChange([...files, ...uploaded]);
-      toast.error(error instanceof Error ? error.message : "Upload failed");
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <div>
-      <div className="space-y-2">
-        {files.map((file) => (
-          <div key={file.id} className="flex items-center gap-3 rounded-2xl bg-[#f2f5fb] px-4 py-3">
-            <span className="flex size-9 items-center justify-center rounded-xl bg-white text-[#3478f6]">
-              <Download className="size-4" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-medium">{file.name}</div>
-              <div className="text-[10px] text-[#17213a]/40">
-                {Math.max(1, Math.round(Number(file.size || 0) / 1024))} KB · private
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => onChange(files.filter((candidate) => candidate.id !== file.id))}
-              className="text-[#17213a]/35"
-            >
-              <X className="size-4" />
-            </button>
-          </div>
-        ))}
-      </div>
-      <button
-        type="button"
-        disabled={busy}
-        onClick={() => inputRef.current?.click()}
-        className="mt-3 inline-flex items-center gap-2 rounded-2xl border border-dashed border-[#3478f6]/35 bg-[#eef5ff] px-4 py-3 text-sm font-semibold text-[#3478f6]"
-      >
-        {busy ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />} Add
-        files for buyers
-      </button>
-      <input
-        ref={inputRef}
-        type="file"
-        multiple
-        className="hidden"
-        onChange={(e) => {
-          const selected = Array.from(e.target.files || []);
-          if (selected.length) void upload(selected);
-          e.target.value = "";
-        }}
-      />
-      <p className="mt-2 text-xs text-[#17213a]/42">
-        Only customers with a valid purchase link can download these files.
-      </p>
-    </div>
   );
 }

@@ -114,6 +114,10 @@ export const getCreatorPaymentSettings = createServerFn({ method: "GET" })
       locked: !(await hasPlanEntitlement(context.userId, "oneTapCheckout")),
       feeBps,
       selectedProvider,
+      stagingMockAvailable:
+        !configuredSelection &&
+        process.env.APP_ENV === "staging" &&
+        process.env.COMMERCE_PAYMENT_PROVIDER === "mock",
       recommendedProvider: recommendedCreatorPaymentProvider(requestCountry()),
       connections: connections.map(publicAccount),
       providers: CREATOR_PAYMENT_PROVIDER_DEFINITIONS.map((provider) => ({

@@ -1,4 +1,5 @@
 import type { CommerceProductKind, CommercePricingType } from "./commerce";
+import { PAYPAL_SUPPORTED_CURRENCIES } from "@/integrations/paypal/money";
 
 export const CREATOR_PAYMENT_PROVIDERS = [
   "stripe",
@@ -21,6 +22,8 @@ export type CreatorPaymentProviderDefinition = {
     "oauth" | "partner_onboarding" | "platform_onboarding" | "oauth_no_fee" | "api_key_no_fee";
   supportsOneTime: boolean;
   supportsSubscriptions: boolean;
+  subscriptionBillingIntervals?: readonly string[];
+  supportedCurrencies?: readonly string[];
   supportedCommerceKinds: readonly CommerceProductKind[];
   requiresProviderApproval: boolean;
   directConnect: boolean;
@@ -71,12 +74,21 @@ export const CREATOR_PAYMENT_PROVIDER_DEFINITIONS: readonly CreatorPaymentProvid
     connectionMode: "api_key_no_fee",
     supportsOneTime: true,
     supportsSubscriptions: true,
-    supportedCommerceKinds: ["digital_product", "course"],
+    // Digital content and channel access are eligible; manual services are not.
+    // https://docs.dodopayments.com/miscellaneous/merchant-acceptance
+    supportedCommerceKinds: [
+      "digital_product",
+      "course",
+      "paid_community",
+      "membership",
+      "bundle",
+      "newsletter",
+    ],
     requiresProviderApproval: false,
     directConnect: true,
     docsUrl: "https://docs.dodopayments.com/developer-resources/integration-guide",
     setupNote:
-      "this application encrypts your Dodo API key and automatically creates the signed webhook. Dodo remains the merchant of record for eligible digital products and sends payouts directly to you.",
+      "This application encrypts your Dodo API key and automatically creates the signed webhook. Dodo remains the merchant of record for eligible digital content, newsletters, communities, memberships, and digital bundles. Written publications may require Dodo review; manual services are not eligible. Payouts go directly to you.",
     creatorSetupSteps: [
       "Create and verify a Dodo Payments business.",
       "Generate a dedicated API key from Developer → API keys.",
@@ -92,12 +104,15 @@ export const CREATOR_PAYMENT_PROVIDER_DEFINITIONS: readonly CreatorPaymentProvid
     connectionMode: "oauth_no_fee",
     supportsOneTime: true,
     supportsSubscriptions: true,
-    supportedCommerceKinds: ["digital_product", "course"],
+    // Premium subscription content is eligible, but the current AUP explicitly
+    // prohibits community access and human services (including hosted memberships).
+    // https://polar.sh/legal/acceptable-use-policy
+    supportedCommerceKinds: ["digital_product", "course", "bundle", "newsletter"],
     requiresProviderApproval: false,
     directConnect: true,
     docsUrl: "https://polar.sh/docs/integrate/oauth2/connect",
     setupNote:
-      "Uses Polar OAuth and keeps eligible digital products, checkout, tax handling, and payouts in the creator's Polar organization. Polar does not support human services or physical goods.",
+      "Uses Polar OAuth and keeps eligible digital products, checkout, tax handling, and payouts in the creator's Polar organization. Polar supports premium subscription content such as newsletters and digital bundles; its policy excludes human services, community access, and physical goods.",
     creatorSetupSteps: [
       "Choose Connect Polar and sign in to Polar.",
       "Select the organization that should own products and payouts, then approve this application's requested access.",
@@ -112,26 +127,29 @@ export const CREATOR_PAYMENT_PROVIDER_DEFINITIONS: readonly CreatorPaymentProvid
     commissionMode: "unsupported",
     connectionMode: "api_key_no_fee",
     supportsOneTime: true,
-    supportsSubscriptions: false,
+    supportsSubscriptions: true,
+    subscriptionBillingIntervals: ["week", "month", "year"],
     supportedCommerceKinds: [
       "digital_product",
       "coaching_call",
       "course",
       "webinar",
       "paid_community",
+      "membership",
       "custom_product",
       "priority_dm",
       "bundle",
+      "newsletter",
     ],
     requiresProviderApproval: false,
     directConnect: true,
     docsUrl: "https://razorpay.com/docs/payments/payment-gateway/web-integration/standard/",
     setupNote:
-      "this application verifies and encrypts your Razorpay keys, creates Orders server-side, and verifies every checkout and webhook signature. Razorpay settles sales directly to your account.",
+      "This application verifies and encrypts your Razorpay keys, creates Orders or recurring Subscriptions server-side, and verifies every payment and webhook signature. Recurring plans support weekly, monthly, and yearly billing. Razorpay settles sales directly to your account.",
     creatorSetupSteps: [
       "Finish activation in Razorpay, then generate Test keys for staging or Live keys for this deployment.",
       "Paste the Key ID and Key Secret in this application. They are verified server-side and encrypted at rest.",
-      "Add this application's unique webhook URL with payment.captured, payment.failed, and refund.processed.",
+      "Add this application's unique webhook URL and select every event shown here, including subscription charge, pause, cancellation, and completion events.",
     ],
   },
   {
@@ -143,12 +161,23 @@ export const CREATOR_PAYMENT_PROVIDER_DEFINITIONS: readonly CreatorPaymentProvid
     connectionMode: "api_key_no_fee",
     supportsOneTime: true,
     supportsSubscriptions: true,
-    supportedCommerceKinds: ["digital_product", "course"],
+    // Creem expressly supports paid newsletters and digital communities; services
+    // need separate enhanced approval and cannot be inferred from a generic kind.
+    // https://www.creem.io/blog/digital-products-to-sell
+    // https://docs.creem.io/merchant-of-record/account-reviews/account-reviews
+    supportedCommerceKinds: [
+      "digital_product",
+      "course",
+      "paid_community",
+      "membership",
+      "bundle",
+      "newsletter",
+    ],
     requiresProviderApproval: false,
     directConnect: true,
     docsUrl: "https://docs.creem.io/api-reference/introduction",
     setupNote:
-      "this application verifies and encrypts your Creem API key. Creem remains the merchant of record, handles eligible checkout and tax obligations, and sends payouts directly to you.",
+      "This application verifies and encrypts your Creem API key. Creem remains the merchant of record for eligible digital content, newsletters, communities, memberships, and digital bundles. Services require separate enhanced approval. Creem handles tax obligations and sends payouts directly to you.",
     creatorSetupSteps: [
       "Create a Creem account and generate a Test API key for staging or a Live API key for this deployment.",
       "Paste the API key in this application. It is verified server-side and encrypted at rest.",
@@ -163,22 +192,26 @@ export const CREATOR_PAYMENT_PROVIDER_DEFINITIONS: readonly CreatorPaymentProvid
     commissionMode: "unsupported",
     connectionMode: "api_key_no_fee",
     supportsOneTime: true,
-    supportsSubscriptions: false,
+    supportsSubscriptions: true,
+    supportedCurrencies: [...PAYPAL_SUPPORTED_CURRENCIES],
+    subscriptionBillingIntervals: ["day", "week", "month", "year"],
     supportedCommerceKinds: [
       "digital_product",
       "coaching_call",
       "course",
       "webinar",
       "paid_community",
+      "membership",
       "custom_product",
       "priority_dm",
       "bundle",
+      "newsletter",
     ],
     requiresProviderApproval: false,
     directConnect: true,
     docsUrl: "https://developer.paypal.com/api/rest/authentication/",
     setupNote:
-      "this application encrypts the creator's PayPal REST app secret, creates Orders server-side, verifies PayPal signatures, and charges 0% platform fee. Sales settle directly to the creator's PayPal account.",
+      "This application encrypts the creator's PayPal REST app secret, creates Orders or recurring billing plans server-side, verifies PayPal signatures, and charges 0% platform fee. Sales settle directly to the creator's PayPal account.",
     creatorSetupSteps: [
       "Open PayPal Developer → Apps & Credentials and create a dedicated REST app.",
       "Choose Sandbox for staging.example.com or Live for this deployment, then copy the Client ID and Client Secret.",
@@ -207,6 +240,16 @@ export function creatorPaymentCompatibility(
   provider: string,
   kind: CommerceProductKind,
   pricingType: CommercePricingType,
+  options: {
+    billingInterval?: string | null;
+    currency?: string;
+    /**
+     * Actual children loaded by the server for bundle publication/quote/checkout.
+     * Omission is a capability-only query for editors and adapters; it does not
+     * validate a bundle's fulfillment. Free children still need paid eligibility.
+     */
+    bundledProducts?: readonly { kind: CommerceProductKind }[];
+  } = {},
 ): CreatorPaymentCompatibility {
   if (pricingType === "free") return { supported: true, reason: null };
   const definition = creatorPaymentProvider(provider);
@@ -222,6 +265,37 @@ export function creatorPaymentCompatibility(
       reason: `${definition.name} does not support this offer type in this application. Choose a compatible gateway in Settings → Integrations.`,
     };
   }
+  if (kind === "bundle" && options.bundledProducts !== undefined) {
+    if (options.bundledProducts.length < 2 || options.bundledProducts.length > 20) {
+      return {
+        supported: false,
+        reason: "Choose between 2 and 20 products for this bundle.",
+      };
+    }
+    for (const child of options.bundledProducts) {
+      // Nested bundles have no directly inspectable fulfillment here. Never let
+      // a free child bypass the provider's restrictions on what is being sold.
+      if (
+        child.kind === "bundle" ||
+        !creatorPaymentCompatibility(provider, child.kind, "one_time").supported
+      ) {
+        return {
+          supported: false,
+          reason: `${definition.name} cannot sell this bundle because an included product is not eligible. Choose compatible digital products or another payment gateway.`,
+        };
+      }
+    }
+  }
+  if (
+    options.currency &&
+    definition.supportedCurrencies &&
+    !definition.supportedCurrencies.includes(options.currency.toLowerCase())
+  ) {
+    return {
+      supported: false,
+      reason: `${options.currency.toUpperCase()} is not supported by ${definition.name}. Choose a supported currency for this paid offer.`,
+    };
+  }
   if (pricingType === "one_time" && !definition.supportsOneTime) {
     return {
       supported: false,
@@ -232,6 +306,17 @@ export function creatorPaymentCompatibility(
     return {
       supported: false,
       reason: `${definition.name} does not support recurring checkout in this application. Choose a compatible gateway or change the price to one-time.`,
+    };
+  }
+  if (
+    pricingType === "subscription" &&
+    options.billingInterval &&
+    definition.subscriptionBillingIntervals &&
+    !definition.subscriptionBillingIntervals.includes(options.billingInterval)
+  ) {
+    return {
+      supported: false,
+      reason: `${definition.name} does not support this billing interval. Choose ${definition.subscriptionBillingIntervals.join(", ")} billing.`,
     };
   }
   return { supported: true, reason: null };

@@ -66,6 +66,9 @@ describe("Polar creator payment policy", () => {
   it("allows Polar only for immediately fulfilled digital goods and access", () => {
     expect(polarSupportsCommerceKind("digital_product")).toBe(true);
     expect(polarSupportsCommerceKind("course")).toBe(true);
+    expect(polarSupportsCommerceKind("newsletter")).toBe(true);
+    // Bundle contents are validated at the shared server boundary.
+    expect(polarSupportsCommerceKind("bundle")).toBe(true);
     expect(polarSupportsCommerceKind("paid_community")).toBe(false);
     expect(polarSupportsCommerceKind("membership")).toBe(false);
     expect(polarSupportsCommerceKind("coaching_call")).toBe(false);
@@ -105,5 +108,32 @@ describe("Polar creator payment policy", () => {
         order: { ...valid.order, platformFeeAmount: 100 },
       }),
     ).toThrow("platform fee");
+  });
+  it("accepts renewal orders without a checkout only after verifying the subscription against a paid order", () => {
+    const input = {
+      session: {
+        id: "session",
+        product_id: "product",
+        creator_id: "creator",
+        connection_id: "connection",
+        provider_checkout_id: "checkout",
+        gross_amount: 1900,
+        currency: "usd",
+        status: "paid",
+      },
+      connection: { id: "connection", creator_id: "creator" },
+      order: { checkoutId: null, netAmount: 1900, currency: "usd", platformFeeAmount: 0 },
+    };
+    expect(() => assertPolarOrderSession(input)).toThrow("checkout");
+    expect(assertPolarOrderSession({ ...input, verifiedSubscriptionRenewal: true })).toBe(
+      "product",
+    );
+    expect(() =>
+      assertPolarOrderSession({
+        ...input,
+        session: { ...input.session, status: "pending" },
+        verifiedSubscriptionRenewal: true,
+      }),
+    ).toThrow("checkout");
   });
 });

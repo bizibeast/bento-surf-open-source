@@ -77,10 +77,14 @@ describe("Creem creator payments", () => {
   it("limits Creem to eligible digital commerce kinds", () => {
     expect(creemSupportsCommerceKind("digital_product")).toBe(true);
     expect(creemSupportsCommerceKind("course")).toBe(true);
+    expect(creemSupportsCommerceKind("newsletter")).toBe(true);
+    // Bundle contents are validated at the shared server boundary.
+    expect(creemSupportsCommerceKind("bundle")).toBe(true);
     expect(creemSupportsCommerceKind("webinar")).toBe(false);
-    expect(creemSupportsCommerceKind("paid_community")).toBe(false);
-    expect(creemSupportsCommerceKind("membership")).toBe(false);
+    expect(creemSupportsCommerceKind("paid_community")).toBe(true);
+    expect(creemSupportsCommerceKind("membership")).toBe(true);
     expect(creemSupportsCommerceKind("coaching_call")).toBe(false);
+    expect(creemSupportsCommerceKind("priority_dm")).toBe(false);
     expect(creemSupportsCommerceKind("custom_product")).toBe(false);
   });
 });

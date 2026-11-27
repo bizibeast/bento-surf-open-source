@@ -37,13 +37,15 @@ See [verification status](docs/verification.md) for the exact boundary between l
 
 ## Product coverage
 
-The public tree contains the complete self-hostable creator and customer product: Link, Store, Email Marketing, Priority DM, Calendar, Community, Post Scheduler, Social Insights, Auto-DMs, Earn, Settings, customer checkout/library flows, remote OAuth MCP, and page-scoped WebMCP. Provider-backed features remain disabled until the instance owner supplies their own credentials and approvals.
+The public tree contains the complete self-hostable creator and customer product: Link, Store, E-courses, Email Marketing, Priority DM, Calendar, Community, Post Scheduler, Social Insights, Auto-DMs, Earn, Settings, customer checkout/library flows, remote OAuth MCP, and page-scoped WebMCP. Provider-backed features remain disabled until the instance owner supplies their own credentials and approvals.
+
+Store, courses, communities, Priority DM, and paid newsletters share product creation and workspace currency preferences. Stripe, PayPal, Razorpay, Polar, Dodo, and Creem support eligible recurring offers and paid newsletters; the setup UI explains provider restrictions. Customer pages inherit creator appearance settings, validate required buyer questions, and preserve purchased access when products are archived. Renewal access follows verified funded billing periods and refund/dispute events.
 
 Benny’s shared content harness now includes chat-based creation and revisions, persistent editable creator memory, reusable MCP skills, public-media reference analysis, video frame collages, HyperFrames/FFmpeg container services, avatar-scene jobs, and Instagram audio capability checks with volume controls. See [Benny media setup](docs/benny-media.md). Self-hosted installations supply their own infrastructure and provider accounts; Bento-funded managed allowances and hosted customer subscriptions are excluded.
 
 On `/content`, WebMCP exposes the self-hosted Brain, Media, Routines, Agent, and Discover reads and actions with bounded responses that omit private media URLs and provider payloads. It also opens the visible Content tabs. Hosted subscription cancellation and founder retention metrics do not apply to a self-hosted instance. OAuth approval, credentials, and final payment-provider steps stay in the visible UI.
 
-The reviewed private-source snapshot is recorded in [`docs/upstream-source.json`](docs/upstream-source.json). Corporate marketing and Bento-only founder operations remain outside the public boundary.
+The reviewed shared-source snapshot is recorded in [`upstream-source.json`](upstream-source.json). Corporate marketing and Bento-only founder operations remain outside the public boundary.
 
 ## Cursor Marketplace / MCP plugin
 

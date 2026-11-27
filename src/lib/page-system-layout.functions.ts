@@ -5,11 +5,8 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import type { Database } from "@/integrations/supabase/types";
-import {
-  commerceProductKindPricingError,
-  pricingLabel,
-  sanitizeCommerceSettingsForPublic,
-} from "./commerce";
+import { pricingLabel, sanitizeCommerceSettingsForPublic } from "./commerce";
+import { isCommerceProductListed } from "./commerce-visibility";
 import { getPlan } from "./plan.server";
 import { commerceEntitlement, planHasEntitlement } from "./plans";
 import { invalidateCreatorPageCaches, pageSystemSchema } from "./pages.functions";
@@ -50,6 +47,7 @@ export async function loadSystemPageItems(
   userId: string,
   page: SystemPage,
   socialInsights?: Awaited<ReturnType<typeof loadPublicSocialAnalytics>>,
+  publicOnly = false,
 ): Promise<SystemPageItem[]> {
   const db = supabase as any;
   const { data: profile, error } = await db
@@ -100,39 +98,46 @@ export async function loadSystemPageItems(
     if (sessions.error || reviews.error)
       throw new Error(sessions.error?.message || reviews.error.message);
     items.push(
-      ...(sessions.data ?? []).map((product: any) =>
-        tile(
-          `session:${product.id}`,
-          "session",
-          product.title,
-          {
-            id: product.id,
-            slug: product.public_slug,
-            title: product.title,
-            subtitle: product.subtitle,
-            coverUrl: product.cover_url,
-            pricing_type: product.pricing_type,
-            price_amount: product.price_amount,
-            currency: product.currency,
-            billing_interval: product.billing_interval,
-            ctaLabel: product.cta_label,
-            durationMinutes: Number(
-              sanitizeCommerceSettingsForPublic("coaching_call", product.settings)
-                .durationMinutes || 60,
-            ),
-            priceLabel: pricingLabel(
-              product.pricing_type,
-              product.price_amount,
-              product.currency,
-              product.billing_interval,
-            ),
-            soldOut: Boolean(
-              product.inventory_limit && product.sales_count >= product.inventory_limit,
-            ),
-          },
-          2,
+      ...(sessions.data ?? [])
+        .filter(
+          (product: any) =>
+            !publicOnly || isCommerceProductListed({ ...product, kind: "coaching_call" }),
+        )
+        .map((product: any) =>
+          tile(
+            `session:${product.id}`,
+            "session",
+            product.title,
+            {
+              id: product.id,
+              kind: "coaching_call",
+              settings: { calendarVisibility: product.settings?.calendarVisibility },
+              slug: product.public_slug,
+              title: product.title,
+              subtitle: product.subtitle,
+              coverUrl: product.cover_url,
+              pricing_type: product.pricing_type,
+              price_amount: product.price_amount,
+              currency: product.currency,
+              billing_interval: product.billing_interval,
+              ctaLabel: product.cta_label,
+              durationMinutes: Number(
+                sanitizeCommerceSettingsForPublic("coaching_call", product.settings)
+                  .durationMinutes || 60,
+              ),
+              priceLabel: pricingLabel(
+                product.pricing_type,
+                product.price_amount,
+                product.currency,
+                product.billing_interval,
+              ),
+              soldOut: Boolean(
+                product.inventory_limit && product.sales_count >= product.inventory_limit,
+              ),
+            },
+            2,
+          ),
         ),
-      ),
     );
     items.push(
       ...(reviews.data ?? []).map((review: any) =>
@@ -162,7 +167,7 @@ export async function loadSystemPageItems(
           .filter(
             (product: any) =>
               planHasEntitlement(plan, commerceEntitlement(product.kind)) &&
-              !commerceProductKindPricingError(product.kind, product.pricing_type),
+              (!publicOnly || isCommerceProductListed(product)),
           )
           .map((product: any) =>
             tile(
@@ -262,9 +267,10 @@ export async function loadSystemPageCanvas(
   userId: string,
   page: SystemPage,
   socialInsights?: Awaited<ReturnType<typeof loadPublicSocialAnalytics>>,
+  publicOnly = false,
 ) {
   const [items, saved] = await Promise.all([
-    loadSystemPageItems(supabase, userId, page, socialInsights),
+    loadSystemPageItems(supabase, userId, page, socialInsights, publicOnly),
     supabase
       .from("page_system_item_layouts")
       .select("item_key,x,y,w,h,position")

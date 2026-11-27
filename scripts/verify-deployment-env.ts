@@ -43,9 +43,13 @@ function verify(target: Target) {
   if (new TextEncoder().encode(workspaceCookieSigningKey).byteLength < 32) {
     throw new Error("WORKSPACE_COOKIE_SIGNING_KEY must be at least 32 bytes.");
   }
-  DODO_ADDON_ENV_NAMES.forEach(required);
-  if (!isDodoAddonConfigurationReady(process.env)) {
-    throw new Error("Dodo add-on IDs must be unique.");
+  // Self-hosted editions do not sell hosted contact/storage add-ons. Optional
+  // creator payment connections are verified independently when configured.
+  if (process.env.BENTO_EDITION !== "self_hosted") {
+    DODO_ADDON_ENV_NAMES.forEach(required);
+    if (!isDodoAddonConfigurationReady(process.env)) {
+      throw new Error("Dodo add-on IDs must be unique.");
+    }
   }
 
   if (target === "staging") {

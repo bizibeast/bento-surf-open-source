@@ -87,6 +87,10 @@ export const getAppGuide = createServerFn({ method: "GET" })
           });
         case "published_product":
           return product(undefined, true);
+        case "course_draft":
+          return product("course");
+        case "course_live":
+          return product("course", true);
         case "priority_draft":
           return product("priority_dm");
         case "priority_live":

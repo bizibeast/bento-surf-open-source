@@ -38,6 +38,7 @@ import { UpgradeDialog } from "@/components/UpgradeDialog";
 import { AppHeader } from "@/components/AppHeader";
 import { BennyProviderForm } from "@/components/content/BennyProviderSettings";
 import { getBennyAiSettings } from "@/lib/benny-byok.functions";
+import { DefaultCurrencySelector } from "@/components/commerce/DefaultCurrencySelector";
 import { MicroAppTabMotion } from "@/components/MicroAppPanel";
 import { CustomDomainDialog } from "@/components/CustomDomainDialog";
 import { StripeRestrictedKeyDialog } from "@/components/StripeRestrictedKeyDialog";
@@ -1636,6 +1637,7 @@ function SettingsPage() {
                 titleRef={sectionTitleRef}
               >
                 <div className="grid gap-4 md:grid-cols-2">
+                  <ProductCurrencyPreference />
                   <BentoCard className="md:col-span-2">
                     <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
                       <div className="flex min-w-0 items-start gap-3">
@@ -2380,6 +2382,25 @@ function CopyButton({ value }: { value: string }) {
     >
       {copied ? <Check className="size-4 text-emerald-500" /> : <Copy className="size-4" />}
     </button>
+  );
+}
+
+export function ProductCurrencyPreference() {
+  return (
+    <BentoCard className="md:col-span-2">
+      <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <CardLabel>Product currency</CardLabel>
+          <p className="mt-2 max-w-xl text-sm leading-6 text-[#17213a]/52">
+            Applies to new products in this Bento workspace. Existing products keep their prices and
+            currencies.
+          </p>
+        </div>
+        <div className="min-w-0 sm:w-80 sm:shrink-0">
+          <DefaultCurrencySelector />
+        </div>
+      </div>
+    </BentoCard>
   );
 }
 

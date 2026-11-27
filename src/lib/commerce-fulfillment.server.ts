@@ -9,6 +9,8 @@ type CommercePaymentSession = {
   id: string;
   provider: string;
   provider_checkout_id?: string | null;
+  product_id?: string | null;
+  creator_id?: string | null;
   metadata?: Record<string, unknown> | null;
   attribution?: Record<string, unknown> | null;
 };
@@ -18,11 +20,33 @@ type CommerceOrder = {
   provider: string;
   provider_checkout_id: string | null;
   product_id?: string;
+  creator_id?: string;
+  metadata?: Record<string, unknown> | null;
   status?: string;
 };
 
 export function commerceFulfillmentMatchKey(provider: string, checkoutId: string) {
   return `${provider.trim().toLowerCase()}:${checkoutId.trim()}`;
+}
+
+function commerceOrderSessionId(order: CommerceOrder) {
+  const sessionId = order.metadata?.bento_session_id;
+  return typeof sessionId === "string" && sessionId ? sessionId : null;
+}
+
+function commerceOrderMatchesSession(order: CommerceOrder, session: CommercePaymentSession) {
+  if (order.provider !== session.provider) return false;
+  if (order.product_id && session.product_id && order.product_id !== session.product_id)
+    return false;
+  if (order.creator_id && session.creator_id && order.creator_id !== session.creator_id)
+    return false;
+  const immutableSessionId = commerceOrderSessionId(order);
+  // An explicit immutable binding wins over legacy provider checkout IDs. A
+  // mismatched/missing referenced session must never expose another token.
+  if (immutableSessionId) return immutableSessionId === session.id;
+  return Boolean(
+    order.provider_checkout_id && order.provider_checkout_id === session.provider_checkout_id,
+  );
 }
 
 export function commerceOrderEmailKeys(
@@ -141,9 +165,8 @@ export async function reconcileCommerceFulfillment(limit = 100) {
   const boundedLimit = Math.min(250, Math.max(1, Math.floor(limit)));
   const { data: incompleteSessions, error: sessionError } = await db
     .from("commerce_payment_sessions")
-    .select("id,provider,provider_checkout_id,metadata,status")
+    .select("id,provider,provider_checkout_id,product_id,creator_id,metadata,status")
     .neq("status", "paid")
-    .not("provider_checkout_id", "is", null)
     .order("updated_at", { ascending: false })
     .limit(boundedLimit);
   if (sessionError) throw new Error(sessionError.message);
@@ -156,29 +179,35 @@ export async function reconcileCommerceFulfillment(limit = 100) {
     ),
   );
   let reconciledSessions = 0;
-  if (checkoutIds.length) {
-    const { data: matchedOrders, error: matchedOrderError } = await db
-      .from("commerce_orders")
-      .select("id,provider,provider_checkout_id,status")
-      .in("provider_checkout_id", checkoutIds)
-      .in("status", ["paid", "partially_refunded", "refunded", "disputed"]);
-    if (matchedOrderError) throw new Error(matchedOrderError.message);
-    const paidCheckoutKeys = new Set(
-      (matchedOrders || [])
-        .filter((order: CommerceOrder) => Boolean(order.provider_checkout_id))
-        .map((order: CommerceOrder) =>
-          commerceFulfillmentMatchKey(order.provider, order.provider_checkout_id!),
-        ),
-    );
-    for (const session of incompleteSessions || []) {
-      if (
-        !session.provider_checkout_id ||
-        !paidCheckoutKeys.has(
-          commerceFulfillmentMatchKey(session.provider, session.provider_checkout_id),
+  if (incompleteSessions?.length) {
+    const orderFields = "id,provider,provider_checkout_id,product_id,creator_id,metadata,status";
+    const paidStatuses = ["paid", "partially_refunded", "refunded", "disputed"];
+    const orderLookups = [
+      db
+        .from("commerce_orders")
+        .select(orderFields)
+        .in(
+          "metadata->>bento_session_id",
+          incompleteSessions.map((session: CommercePaymentSession) => session.id),
         )
-      ) {
-        continue;
-      }
+        .in("status", paidStatuses),
+      ...(checkoutIds.length
+        ? [
+            db
+              .from("commerce_orders")
+              .select(orderFields)
+              .in("provider_checkout_id", checkoutIds)
+              .in("status", paidStatuses),
+          ]
+        : []),
+    ];
+    const matchedOrders: CommerceOrder[] = [];
+    for (const result of await Promise.all(orderLookups)) {
+      if (result.error) throw new Error(result.error.message);
+      matchedOrders.push(...(result.data || []));
+    }
+    for (const session of incompleteSessions) {
+      if (!matchedOrders.some((order) => commerceOrderMatchesSession(order, session))) continue;
       const { error } = await db
         .from("commerce_payment_sessions")
         .update({ status: "paid" })
@@ -191,7 +220,7 @@ export async function reconcileCommerceFulfillment(limit = 100) {
 
   const { data: recentOrders, error: orderError } = await db
     .from("commerce_orders")
-    .select("id,provider,provider_checkout_id,product_id")
+    .select("id,provider,provider_checkout_id,product_id,creator_id,metadata")
     .in("status", ["paid", "partially_refunded", "refunded", "disputed"])
     .order("created_at", { ascending: false })
     .limit(boundedLimit);
@@ -268,30 +297,41 @@ export async function reconcileCommerceFulfillment(limit = 100) {
         .filter((value: unknown): value is string => typeof value === "string" && Boolean(value)),
     ),
   );
-  const sessionsByCheckout = new Map<string, CommercePaymentSession>();
-  if (repairCheckoutIds.length) {
-    const { data: sessions, error } = await db
-      .from("commerce_payment_sessions")
-      .select("id,provider,provider_checkout_id,metadata")
-      .in("provider_checkout_id", repairCheckoutIds);
-    if (error) throw new Error(error.message);
-    for (const session of sessions || []) {
-      if (!session.provider_checkout_id) continue;
-      sessionsByCheckout.set(
-        commerceFulfillmentMatchKey(session.provider, session.provider_checkout_id),
-        session,
-      );
-    }
+  const repairSessionIds = Array.from(
+    new Set(
+      ordersNeedingRepair
+        .map((order: CommerceOrder) => commerceOrderSessionId(order))
+        .filter((value: string | null): value is string =>
+          Boolean(value && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value)),
+        ),
+    ),
+  );
+  const sessionFields = "id,provider,provider_checkout_id,product_id,creator_id,metadata";
+  const sessionLookups = [
+    ...(repairSessionIds.length
+      ? [db.from("commerce_payment_sessions").select(sessionFields).in("id", repairSessionIds)]
+      : []),
+    ...(repairCheckoutIds.length
+      ? [
+          db
+            .from("commerce_payment_sessions")
+            .select(sessionFields)
+            .in("provider_checkout_id", repairCheckoutIds),
+        ]
+      : []),
+  ];
+  const repairSessions: CommercePaymentSession[] = [];
+  for (const result of await Promise.all(sessionLookups)) {
+    if (result.error) throw new Error(result.error.message);
+    repairSessions.push(...(result.data || []));
   }
 
   let repairedOrders = 0;
   let failedOrders = 0;
   for (const order of ordersNeedingRepair) {
-    const session = order.provider_checkout_id
-      ? sessionsByCheckout.get(
-          commerceFulfillmentMatchKey(order.provider, order.provider_checkout_id),
-        )
-      : null;
+    const session = repairSessions.find((candidate) =>
+      commerceOrderMatchesSession(order, candidate),
+    );
     try {
       await enqueueCommerceOrderEmails({
         orderId: order.id,

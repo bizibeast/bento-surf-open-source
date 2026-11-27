@@ -18,6 +18,7 @@ import { commerceProductPublishabilityError } from "./commerce";
 import { uniqueProductSlug, uniquePublicProductSlug } from "./commerce.functions";
 import { publicNewsletterPublicationPath, publicProductPath } from "./application-urls";
 import { requireCreatorStorePaymentSetup } from "./payment-connection-policy.server";
+import { creatorPaymentCompatibility } from "./payment-providers";
 import {
   newsletterContentSchema,
   newsletterPlainText,
@@ -365,6 +366,9 @@ export const savePaidNewsletterOffer = createServerFn({ method: "POST" })
       .maybeSingle();
     if (publicationError) throw new Error(publicationError.message);
     if (!publication) throw new Error("Newsletter publication not found.");
+    if (publication.status === "archived") {
+      throw new Error("Archived newsletters cannot accept new paid subscriptions.");
+    }
     await requirePlanEntitlement(
       context.userId,
       "emailMarketing",
@@ -372,8 +376,22 @@ export const savePaidNewsletterOffer = createServerFn({ method: "POST" })
     );
 
     const paymentSetup = await requireCreatorStorePaymentSetup(context.userId);
-    if (paymentSetup.selectedProvider !== "stripe") {
-      throw new Error("Paid newsletters currently require Stripe.");
+    const stagingMock =
+      !paymentSetup.selectedProvider &&
+      process.env.APP_ENV === "staging" &&
+      process.env.COMMERCE_PAYMENT_PROVIDER === "mock";
+    if (!stagingMock) {
+      const compatibility = creatorPaymentCompatibility(
+        paymentSetup.selectedProvider || "",
+        "newsletter",
+        "subscription",
+        { billingInterval: data.billingInterval, currency: data.currency },
+      );
+      if (!compatibility.supported) {
+        throw new Error(
+          compatibility.reason || "This payment gateway cannot sell this newsletter.",
+        );
+      }
     }
 
     let productSlugs: { slug: string; publicSlug: string };

@@ -167,6 +167,7 @@ vi.mock("./request-security.server", () => ({ enforceRequestRateLimit: vi.fn() }
 import { saveAudienceCampaign } from "./commerce-growth.functions";
 import { createBlock, updateBlock, deleteBlock } from "./blocks.functions";
 import { getPlan } from "./plan.server";
+import { requireCreatorStorePaymentSetup } from "./payment-connection-policy.server";
 import { mutateAudience, type CreatorMcpContext } from "./mcp.creator-ops.server";
 import {
   addNewsletterToBento,
@@ -193,6 +194,10 @@ import {
 describe("newsletter authenticated writes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(requireCreatorStorePaymentSetup).mockResolvedValue({
+      ready: true,
+      selectedProvider: "stripe",
+    });
     mocks.rpc.mockReset();
     mocks.requirePlanEntitlement.mockReset().mockResolvedValue(undefined);
     mocks.publicChrome.mockReset().mockResolvedValue({
@@ -1233,55 +1238,160 @@ describe("newsletter authenticated writes", () => {
     });
   });
 
-  it("creates a creator-owned recurring newsletter offer and links it after validation", async () => {
+  it.each(
+    (["stripe", "razorpay", "paypal", "dodo", "polar", "creem"] as const).flatMap(
+      (selectedProvider) =>
+        (["month", "year"] as const).map((billingInterval) => ({
+          selectedProvider,
+          billingInterval,
+        })),
+    ),
+  )(
+    "creates a creator-owned $billingInterval newsletter offer using $selectedProvider",
+    async ({ selectedProvider, billingInterval }) => {
+      vi.mocked(requireCreatorStorePaymentSetup).mockResolvedValue({
+        ready: true,
+        selectedProvider,
+      });
+      mocks.rows.newsletter_publications = {
+        id: "11111111-1111-4111-8111-111111111111",
+        creator_id: "33333333-3333-4333-8333-333333333333",
+        title: "Studio Notes",
+        slug: "studio-notes",
+        description: "Notes from the studio",
+        paid_product_id: null,
+      };
+      mocks.rows.commerce_products = {
+        id: "55555555-5555-4555-8555-555555555555",
+        creator_id: "33333333-3333-4333-8333-333333333333",
+        kind: "newsletter",
+        status: "published",
+      };
+
+      await savePaidNewsletterOffer({
+        data: {
+          publicationId: "11111111-1111-4111-8111-111111111111",
+          priceAmount: 900,
+          currency: "usd",
+          billingInterval,
+        },
+      });
+
+      expect(mocks.queries).toContainEqual(
+        expect.objectContaining({
+          table: "commerce_products",
+          action: "insert",
+          value: expect.objectContaining({
+            creator_id: "33333333-3333-4333-8333-333333333333",
+            kind: "newsletter",
+            pricing_type: "subscription",
+            price_amount: 900,
+            billing_interval: billingInterval,
+            settings: {
+              newsletterPublicationId: "11111111-1111-4111-8111-111111111111",
+            },
+          }),
+        }),
+      );
+      expect(mocks.queries).toContainEqual(
+        expect.objectContaining({
+          table: "newsletter_publications",
+          action: "update",
+          value: { paid_product_id: "55555555-5555-4555-8555-555555555555" },
+        }),
+      );
+    },
+  );
+
+  it("rejects an unsupported selected-provider currency before writing a newsletter offer", async () => {
+    vi.mocked(requireCreatorStorePaymentSetup).mockResolvedValue({
+      ready: true,
+      selectedProvider: "paypal",
+    });
     mocks.rows.newsletter_publications = {
       id: "11111111-1111-4111-8111-111111111111",
       creator_id: "33333333-3333-4333-8333-333333333333",
       title: "Studio Notes",
-      slug: "studio-notes",
-      description: "Notes from the studio",
       paid_product_id: null,
     };
-    mocks.rows.commerce_products = {
-      id: "55555555-5555-4555-8555-555555555555",
-      creator_id: "33333333-3333-4333-8333-333333333333",
-      kind: "newsletter",
-      status: "published",
-    };
-
-    await savePaidNewsletterOffer({
-      data: {
-        publicationId: "11111111-1111-4111-8111-111111111111",
-        priceAmount: 900,
-        currency: "usd",
-        billingInterval: "month",
-      },
-    });
-
-    expect(mocks.queries).toContainEqual(
-      expect.objectContaining({
-        table: "commerce_products",
-        action: "insert",
-        value: expect.objectContaining({
-          creator_id: "33333333-3333-4333-8333-333333333333",
-          kind: "newsletter",
-          pricing_type: "subscription",
-          price_amount: 900,
-          billing_interval: "month",
-          settings: {
-            newsletterPublicationId: "11111111-1111-4111-8111-111111111111",
-          },
-        }),
+    await expect(
+      savePaidNewsletterOffer({
+        data: {
+          publicationId: "11111111-1111-4111-8111-111111111111",
+          priceAmount: 900,
+          currency: "inr",
+          billingInterval: "month",
+        },
       }),
-    );
-    expect(mocks.queries).toContainEqual(
-      expect.objectContaining({
-        table: "newsletter_publications",
-        action: "update",
-        value: { paid_product_id: "55555555-5555-4555-8555-555555555555" },
-      }),
-    );
+    ).rejects.toThrow("INR is not supported by PayPal");
+    expect(
+      mocks.queries.some((query) => query.action === "insert" || query.action === "update"),
+    ).toBe(false);
   });
+
+  it("rejects a paid newsletter when its payment connection is incomplete before writing", async () => {
+    vi.mocked(requireCreatorStorePaymentSetup).mockRejectedValueOnce(
+      new Error("Finish payment setup."),
+    );
+    mocks.rows.newsletter_publications = {
+      id: "11111111-1111-4111-8111-111111111111",
+      title: "Studio Notes",
+      paid_product_id: null,
+    };
+    await expect(
+      savePaidNewsletterOffer({
+        data: {
+          publicationId: "11111111-1111-4111-8111-111111111111",
+          priceAmount: 900,
+          currency: "usd",
+          billingInterval: "month",
+        },
+      }),
+    ).rejects.toThrow("Finish payment setup.");
+    expect(
+      mocks.queries.some((query) => query.action === "insert" || query.action === "update"),
+    ).toBe(false);
+  });
+
+  it.each(["staging", "production"])(
+    "allows the isolated mock newsletter gateway only in staging, not $0",
+    async (deployment) => {
+      vi.stubEnv("APP_ENV", deployment);
+      vi.stubEnv("COMMERCE_PAYMENT_PROVIDER", "mock");
+      vi.mocked(requireCreatorStorePaymentSetup).mockResolvedValue({
+        ready: true,
+        selectedProvider: null,
+      });
+      mocks.rows.newsletter_publications = {
+        id: "11111111-1111-4111-8111-111111111111",
+        title: "Studio Notes",
+        paid_product_id: null,
+      };
+      mocks.rows.commerce_products = { id: "55555555-5555-4555-8555-555555555555" };
+      try {
+        const result = savePaidNewsletterOffer({
+          data: {
+            publicationId: "11111111-1111-4111-8111-111111111111",
+            priceAmount: 900,
+            currency: "usd",
+            billingInterval: "month",
+          },
+        });
+        if (deployment === "staging")
+          await expect(result).resolves.toMatchObject({
+            id: "55555555-5555-4555-8555-555555555555",
+          });
+        else {
+          await expect(result).rejects.toThrow("Connect a supported payment gateway");
+          expect(
+            mocks.queries.some((query) => query.action === "insert" || query.action === "update"),
+          ).toBe(false);
+        }
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
 
   it("rejects a paid offer for a publication the creator does not own", async () => {
     mocks.rows.newsletter_publications = null;
@@ -1297,6 +1407,28 @@ describe("newsletter authenticated writes", () => {
       }),
     ).rejects.toThrow("Newsletter publication not found.");
     expect(mocks.queries.some((query) => query.table === "commerce_products")).toBe(false);
+  });
+
+  it("rejects new paid offers for an archived publication before writing", async () => {
+    mocks.rows.newsletter_publications = {
+      id: "11111111-1111-4111-8111-111111111111",
+      title: "Archived Notes",
+      status: "archived",
+      paid_product_id: null,
+    };
+    await expect(
+      savePaidNewsletterOffer({
+        data: {
+          publicationId: "11111111-1111-4111-8111-111111111111",
+          priceAmount: 900,
+          currency: "usd",
+          billingInterval: "month",
+        },
+      }),
+    ).rejects.toThrow("Archived newsletters cannot accept new paid subscriptions.");
+    expect(
+      mocks.queries.some((query) => query.action === "insert" || query.action === "update"),
+    ).toBe(false);
   });
 
   it("derives paid eligibility only from active unexpired commerce grants", async () => {

@@ -107,6 +107,30 @@ export const APP_GUIDES: AppGuide[] = [
     ],
   },
   {
+    id: "courses",
+    name: "E-courses",
+    path: "/courses",
+    benefit: "Turn your expertise into lessons students can follow at their own pace.",
+    entitlement: "storeCards",
+    steps: [
+      step(
+        "Outline your course",
+        "Create a course here, explain the outcome and add your lessons and materials.",
+        "course_draft",
+      ),
+      step(
+        "Prepare checkout",
+        "For a paid course, connect your payment provider and review the course price before publishing.",
+        "payments",
+      ),
+      step(
+        "Welcome your students",
+        "Preview the course and publish when the lessons and delivery details are ready.",
+        "course_live",
+      ),
+    ],
+  },
+  {
     id: "priority_dm",
     name: "Priority DM",
     path: "/priority-dm",

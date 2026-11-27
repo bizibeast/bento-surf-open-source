@@ -1,6 +1,6 @@
 {
   "source": "Bento shared application",
-  "syncedAt": "2026-11-23T17:31:46.992045+00:00",
+  "syncedAt": "2026-11-27T09:34:35.441319+00:00",
   "features": [
     "proactive content agent",
     "Brain and Discover editorial context",
@@ -33,13 +33,21 @@
     "LinkedIn workflow with upstream MIT attribution",
     "managed billing entitlements and atomic weekly/monthly spending caps",
     "production fixes for MCP metadata and annotations",
-    "uploaded Reel audio start selection and mixed previews"
+    "uploaded Reel audio start selection and mixed previews",
+    "Dedicated Courses, Community and Priority DM workspaces with a shared inline product builder",
+    "Workspace default currency in Account settings for new products, with individual product overrides",
+    "Eligible paid newsletters and verified recurring offers across Stripe, PayPal, Razorpay, Polar, Dodo and Creem",
+    "Funded subscription periods, renewal replay safety, and refund/dispute access reconciliation",
+    "Required checkout questions, publication-scoped newsletter consent and private course lesson protection",
+    "Creator theme inheritance, safe product archival, and consistent sidebar navigation geometry"
   ],
   "editionDifferences": [
     "Configurable instance URLs and self-hosted setup",
     "Hosted marketing and SEO operations excluded",
     "No hosted credentials or customer data",
-    "AGPL license and public release tooling retained"
+    "AGPL license and public release tooling retained",
+    "Public-only migration initializes self-hosted SQL entitlements without hosted subscriptions or complimentary grants",
+    "Self-hosted deployment validation does not require the hosted billing add-on catalog"
   ],
-  "sharedSourceCommit": "8a0c69a8395217d1e5b7c289282f0de872e5cd19"
+  "sharedSourceCommit": "884bbac80b39c38f03cbf5eb94f63b21d8c93e80"
 }

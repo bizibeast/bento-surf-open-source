@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Provider references use service-role tables. */
 import type { Currency } from "dodopayments/resources/misc";
-import type { TimeInterval } from "dodopayments/resources/subscriptions";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import {
   isHostedAccessKind,
@@ -57,6 +56,7 @@ async function productSyncHash(product: CheckoutProduct) {
       priceAmount: product.price_amount,
       currency: product.currency,
       billingInterval: product.billing_interval,
+      recurringConfigVersion: 2,
     }),
   );
 }
@@ -99,7 +99,9 @@ async function syncedDodoProduct(
 
   const client = await dodoClientForCreatorAccount(account);
   const currency = product.currency.toUpperCase() as Currency;
-  const interval = (product.billing_interval || "month") as TimeInterval;
+  const interval = { day: "Day", week: "Week", month: "Month", year: "Year" }[
+    product.billing_interval || "month"
+  ] as "Day" | "Week" | "Month" | "Year";
   const common = {
     name: product.title,
     description: product.description || null,
@@ -118,8 +120,10 @@ async function syncedDodoProduct(
             purchasing_power_parity: false,
             payment_frequency_count: 1,
             payment_frequency_interval: interval,
-            subscription_period_count: 1,
-            subscription_period_interval: interval,
+            // Dodo treats the subscription period as its total lifetime.
+            // Using the billing cadence here stops renewals after one charge.
+            subscription_period_count: 20,
+            subscription_period_interval: "Year",
           },
         }
       : {
@@ -171,13 +175,15 @@ export async function createDodoCommerceCheckout(input: {
   if (!account.charges_enabled || !account.webhook_secret_ciphertext) {
     throw new Error("This creator's Dodo Payments account is not ready to accept payments yet.");
   }
-  if (!dodoSupportsCommerceKind(input.product.kind as CommerceProductKind)) {
+  const compatibility = creatorPaymentCompatibility(
+    "dodo",
+    input.product.kind as CommerceProductKind,
+    input.product.pricing_type,
+    { billingInterval: input.product.billing_interval, currency: input.product.currency },
+  );
+  if (!compatibility.supported) {
     throw new Error(
-      creatorPaymentCompatibility(
-        "dodo",
-        input.product.kind as CommerceProductKind,
-        input.product.pricing_type,
-      ).reason || "Dodo Payments does not support this offer type in Bento.",
+      compatibility.reason || "Dodo Payments does not support this offer type in Bento.",
     );
   }
 
@@ -206,6 +212,7 @@ export async function createDodoCommerceCheckout(input: {
       access_token_hash: accessToken ? await sha256(accessToken) : null,
       metadata: {
         provider_product_id: remoteProductId,
+        billing_interval: input.product.billing_interval,
         ...(encryptedAccessToken ? { access_token_ciphertext: encryptedAccessToken } : {}),
         ...(input.buyerAnswers?.length ? { buyer_answers: input.buyerAnswers } : {}),
       },

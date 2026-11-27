@@ -25,10 +25,14 @@ describe("Dodo creator payments", () => {
   it("supports only Dodo-compatible digital and hosted products", () => {
     expect(dodoSupportsCommerceKind("digital_product")).toBe(true);
     expect(dodoSupportsCommerceKind("course")).toBe(true);
+    expect(dodoSupportsCommerceKind("newsletter")).toBe(true);
+    // Bundle contents are validated at the shared server boundary.
+    expect(dodoSupportsCommerceKind("bundle")).toBe(true);
     expect(dodoSupportsCommerceKind("webinar")).toBe(false);
-    expect(dodoSupportsCommerceKind("paid_community")).toBe(false);
-    expect(dodoSupportsCommerceKind("membership")).toBe(false);
+    expect(dodoSupportsCommerceKind("paid_community")).toBe(true);
+    expect(dodoSupportsCommerceKind("membership")).toBe(true);
     expect(dodoSupportsCommerceKind("coaching_call")).toBe(false);
+    expect(dodoSupportsCommerceKind("priority_dm")).toBe(false);
     expect(dodoSupportsCommerceKind("custom_product")).toBe(false);
   });
 

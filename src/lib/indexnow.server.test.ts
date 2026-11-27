@@ -120,6 +120,11 @@ describe("IndexNow publication notification", () => {
       productionEnv({ APP_ENV: "staging" }),
       fetchImpl,
     );
+    await notifyIndexNow(
+      ["https://staging.self.invalid/blog/creator-website-checklist"],
+      productionEnv({ APP_ENV: "staging", VITE_PUBLIC_URL: "https://staging.self.invalid" }),
+      fetchImpl,
+    );
     const dropped = await notifyIndexNow(
       ["https://example.com/blog/other"],
       productionEnv(),

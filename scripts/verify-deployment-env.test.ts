@@ -31,6 +31,13 @@ function runVerifier(target: "staging" | "production", overrides: Record<string,
 }
 
 describe("self-host deployment environment", () => {
+  it("does not require the hosted billing add-on catalog for a self-hosted edition", () => {
+    const result = runVerifier("staging", {
+      BENTO_EDITION: "self_hosted",
+      ...Object.fromEntries(DODO_ADDON_ENV_NAMES.map((name) => [name, ""])),
+    });
+    expect(result.status, result.stderr).toBe(0);
+  });
   it.each(["", "short"])("rejects a missing or short workspace cookie signing key", (key) => {
     const result = runVerifier("staging", { WORKSPACE_COOKIE_SIGNING_KEY: key });
     expect(result.status).not.toBe(0);

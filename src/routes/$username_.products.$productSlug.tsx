@@ -1,4 +1,4 @@
-import { BentoFullLogo } from "@/components/BentoBrand";
+import { BentoBrand } from "@/components/BentoBrand";
 import { createFileRoute, notFound, redirect } from "@tanstack/react-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -22,8 +22,14 @@ import {
   Wrench,
 } from "lucide-react";
 import { toast } from "sonner";
+import { PublicProductTheme } from "@/components/public/PublicProductTheme";
+import { BuyerQuestionsFields } from "@/components/commerce/BuyerQuestionsFields";
+import {
+  commerceBuyerQuestions,
+  commerceBuyerQuestionsVersion,
+} from "@/lib/commerce-buyer-questions";
 import { DecodedImage } from "@/components/DecodedImage";
-import { productWebsite, downloadBenefit, productAccentTextColor } from "@/lib/product-website";
+import { productWebsite, downloadBenefit } from "@/lib/product-website";
 import {
   createCommerceCheckout,
   getCommerceAccess,
@@ -151,6 +157,14 @@ function PublicProductPage() {
                   ? null
                   : Math.max(0, product.inventory_limit - product.sales_count),
               benefits,
+              buyerQuestions: commerceBuyerQuestions(product.settings, product.kind).map(
+                ({ answerKey, question, required, sectionTitle }) => ({
+                  answerKey,
+                  question,
+                  required,
+                  sectionTitle,
+                }),
+              ),
               lessonCount: lessons.length,
               lessons: lessons.slice(0, 100).map((lesson) => ({
                 title: lesson.title,
@@ -169,22 +183,8 @@ function PublicProductPage() {
   useWebMcpTools(webMcpTools);
 
   return (
-    <div
-      data-product-website
-      className="min-h-screen overflow-x-clip pb-24 font-sans text-[#17213a] lg:pb-0"
-      style={
-        {
-          background:
-            website.background === "white"
-              ? "#ffffff"
-              : website.background === "blue"
-                ? "#f0f5ff"
-                : "#faf8f4",
-          "--product-accent": website.accent,
-        } as React.CSSProperties
-      }
-    >
-      <header className="border-b border-black/[0.06]">
+    <PublicProductTheme creator={data.chrome.creator} className="overflow-x-clip pb-24 lg:pb-0">
+      <header className="border-b border-border">
         <div className="mx-auto flex min-h-20 max-w-7xl items-center justify-between gap-5 px-5 sm:px-10">
           <a
             href={publicProfileUrl(creator.username, null, import.meta.env.VITE_PUBLIC_URL)}
@@ -205,8 +205,8 @@ function PublicProductPage() {
               href="#purchase"
               className="inline-flex items-center gap-2 rounded-lg px-4 py-2.5"
               style={{
-                background: website.accent,
-                color: productAccentTextColor(website.accent),
+                background: "var(--product-accent)",
+                color: "var(--product-on-accent)",
               }}
             >
               {product.pricing_type === "free" ? "Get access" : "Get it now"}
@@ -220,21 +220,16 @@ function PublicProductPage() {
           <section className={website.layout === "centered" ? "text-center" : "text-left"}>
             <p
               className="mb-5 inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em]"
-              style={{ background: website.accent, color: productAccentTextColor(website.accent) }}
+              style={{ background: "var(--product-accent)", color: "var(--product-on-accent)" }}
             >
               <Icon className="size-4" />
               {definition.label}
             </p>
-            <h1
-              className={
-                (website.font === "serif" ? "font-display" : "font-sans font-semibold") +
-                " text-balance text-5xl leading-[1.04] tracking-[-0.055em] sm:text-6xl xl:text-7xl"
-              }
-            >
+            <h1 className="text-balance text-5xl font-semibold leading-[1.04] tracking-[-0.055em] sm:text-6xl xl:text-7xl">
               {product.title}
             </h1>
             {product.subtitle && (
-              <p className="mt-6 text-xl leading-8 text-[#17213a]/65">{product.subtitle}</p>
+              <p className="mt-6 text-xl leading-8 text-muted-foreground">{product.subtitle}</p>
             )}
             {coverUrl && (
               <DecodedImage
@@ -245,24 +240,24 @@ function PublicProductPage() {
               />
             )}
             {product.description && (
-              <div className="mt-8 whitespace-pre-wrap text-base leading-8 text-[#17213a]/75">
+              <div className="mt-8 whitespace-pre-wrap text-base leading-8 text-muted-foreground">
                 {product.description}
               </div>
             )}
           </section>
 
           {benefits.length > 0 && (
-            <section id="included" className="mt-12 border-t border-black/10 pt-8">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#3478f6]">
+            <section id="included" className="mt-12 border-t border-border pt-8">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-primary">
                 What you get
               </div>
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 {benefits.map((benefit: string) => (
                   <div
                     key={benefit}
-                    className="flex min-w-0 items-start gap-3 rounded-xl bg-white/70 px-4 py-4 text-sm leading-6 [overflow-wrap:anywhere]"
+                    className="flex min-w-0 items-start gap-3 rounded-xl bg-card px-4 py-4 text-sm leading-6 [overflow-wrap:anywhere]"
                   >
-                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-[#dceaff] text-[#3478f6]">
+                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
                       <Check className="size-3" />
                     </span>
                     {benefit}
@@ -273,14 +268,14 @@ function PublicProductPage() {
           )}
 
           {product.kind === "course" && lessons.length > 0 && (
-            <section className="mt-5 rounded-2xl border border-black/[0.06] bg-white p-6 shadow-sm sm:p-8">
+            <section className="mt-5 rounded-2xl border border-border bg-card p-6 shadow-sm sm:p-8">
               <div className="flex items-center gap-3">
                 <span className="flex size-11 items-center justify-center rounded-2xl bg-[#fff3c6] text-[#b47800]">
                   <GraduationCap className="size-5" />
                 </span>
                 <div>
                   <h2 className="font-display text-2xl">Inside the course</h2>
-                  <p className="text-xs text-[#17213a]/45">
+                  <p className="text-xs text-muted-foreground">
                     {lessons.length} lessons · private after purchase
                   </p>
                 </div>
@@ -289,9 +284,9 @@ function PublicProductPage() {
                 {lessons.map((lesson: CommerceLesson, index: number) => (
                   <div
                     key={lesson.id || index}
-                    className="flex items-center gap-3 rounded-2xl border border-black/[0.06] px-4 py-3"
+                    className="flex items-center gap-3 rounded-2xl border border-border px-4 py-3"
                   >
-                    <span className="flex size-8 items-center justify-center rounded-xl bg-[#f2f5fb] text-xs font-semibold text-[#17213a]/45">
+                    <span className="flex size-8 items-center justify-center rounded-xl bg-muted text-xs font-semibold text-muted-foreground">
                       {index + 1}
                     </span>
                     <div className="min-w-0 flex-1 truncate text-sm font-medium">
@@ -302,7 +297,7 @@ function PublicProductPage() {
                         Preview
                       </span>
                     ) : (
-                      <LockKeyhole className="size-3.5 text-[#17213a]/28" />
+                      <LockKeyhole className="size-3.5 text-muted-foreground" />
                     )}
                   </div>
                 ))}
@@ -316,7 +311,7 @@ function PublicProductPage() {
                   >
                     <div className="text-xs font-semibold text-emerald-800">{lesson.title}</div>
                     {(lesson.body || lesson.summary) && (
-                      <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[#17213a]/60">
+                      <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
                         {lesson.body || lesson.summary}
                       </p>
                     )}
@@ -336,12 +331,12 @@ function PublicProductPage() {
           )}
 
           {website.sections.map((section) => (
-            <section key={section.id} className="mt-12 border-t border-black/10 pt-8">
+            <section key={section.id} className="mt-12 border-t border-border pt-8">
               {section.title && (
                 <h2 className="text-3xl font-semibold tracking-tight">{section.title}</h2>
               )}
               {section.body && (
-                <p className="mt-5 whitespace-pre-wrap text-base leading-8 text-[#17213a]/70">
+                <p className="mt-5 whitespace-pre-wrap text-base leading-8 text-muted-foreground">
                   {section.body}
                 </p>
               )}
@@ -355,7 +350,7 @@ function PublicProductPage() {
               )}
             </section>
           ))}
-          <section className="mt-12 rounded-2xl bg-[#17213a] p-6 text-white sm:p-8">
+          <section className="mt-12 rounded-2xl bg-card p-6 text-foreground border border-border sm:p-8">
             <div className="grid gap-4 sm:grid-cols-3">
               <TrustPoint
                 icon={ShieldCheck}
@@ -378,8 +373,9 @@ function PublicProductPage() {
 
         <aside id="purchase" className="min-w-0 scroll-mt-8 lg:sticky lg:top-8">
           <PurchaseCard
+            key={product.id}
             product={product}
-            accent={website.accent}
+            accent="var(--product-accent)"
             testCheckout={Boolean(data.testCheckout)}
             orderBump={data.orderBump}
             availabilityError={data.availabilityError}
@@ -390,7 +386,7 @@ function PublicProductPage() {
       <a
         href="#purchase"
         className="fixed inset-x-4 bottom-4 z-50 flex items-center justify-between gap-4 rounded-xl px-5 py-4 text-sm font-semibold shadow-2xl lg:hidden"
-        style={{ background: website.accent, color: productAccentTextColor(website.accent) }}
+        style={{ background: "var(--product-accent)", color: "var(--product-on-accent)" }}
       >
         <span>
           {pricingLabel(
@@ -404,16 +400,14 @@ function PublicProductPage() {
           {product.cta_label} <ArrowRight className="size-4" />
         </span>
       </a>
-      <footer className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 border-t border-black/10 px-5 py-8 text-xs text-[#17213a]/55 sm:px-10">
+      <footer className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 border-t border-border px-5 py-8 text-xs text-muted-foreground sm:px-10">
         <span>{brand}</span>
-        <a href={publicProfileUrl(creator.username, "store", import.meta.env.VITE_PUBLIC_URL)}>
-          More from {brand}
-        </a>
-        <a href="http://localhost:8080" aria-label="Made with bento.surf">
-          <BentoFullLogo className="h-5 w-auto" />
+        <a href={publicProfileUrl(creator.username, "store", import.meta.env.VITE_PUBLIC_URL)}>More from {brand}</a>
+        <a href={import.meta.env.VITE_PUBLIC_URL || "http://localhost:8080"} aria-label="Made with bento.surf">
+          <BentoBrand iconClassName="size-5" textClassName="text-sm" />
         </a>
       </footer>
-    </div>
+    </PublicProductTheme>
   );
 }
 
@@ -457,6 +451,11 @@ function PurchaseCard({
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const buyerQuestions = useMemo(
+    () => commerceBuyerQuestions(product.settings, product.kind),
+    [product.settings, product.kind],
+  );
+  const buyerQuestionsVersion = commerceBuyerQuestionsVersion(buyerQuestions);
   const [marketingConsent, setMarketingConsent] = useState(false);
   const [recordingAddon, setRecordingAddon] = useState(false);
   const [bumpProductId, setBumpProductId] = useState<string | undefined>();
@@ -669,6 +668,7 @@ function PurchaseCard({
               discountCode: next.discountCode,
               bumpProductId: next.bumpProductId,
               answers: next.answers,
+              buyerQuestionsVersion,
               attribution: checkoutAttribution(),
             },
           });
@@ -683,7 +683,7 @@ function PurchaseCard({
       });
     }
     return tools;
-  }, [product]);
+  }, [product, buyerQuestionsVersion]);
   useWebMcpTools(webMcpTools);
   const quotePreview = useMutation({
     mutationFn: (next: {
@@ -761,6 +761,7 @@ function PurchaseCard({
           discountCode: appliedDiscountCode,
           bumpProductId,
           answers,
+          buyerQuestionsVersion,
           attribution: checkoutAttribution(),
         },
       }),
@@ -817,13 +818,13 @@ function PurchaseCard({
   const soldOut = product.inventory_limit && product.sales_count >= product.inventory_limit;
   if (ownedToken && ownedAccess.data?.product?.id === product.id)
     return (
-      <div className="rounded-2xl border border-black/10 bg-white p-7">
+      <div className="rounded-2xl border border-border bg-card p-7">
         <h2 className="text-2xl font-semibold">Your purchase is ready</h2>
         <p className="mt-3 text-sm text-muted-foreground">
           You already have access to this product.
         </p>
         <a
-          className="mt-5 flex items-center justify-center rounded-lg bg-[#17213a] px-5 py-3 font-semibold text-white"
+          className="mt-5 flex items-center justify-center rounded-lg bg-primary px-5 py-3 font-semibold text-primary-foreground"
           href={
             (import.meta.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "") +
             "/access/" +
@@ -845,16 +846,16 @@ function PurchaseCard({
       </div>
     );
   return (
-    <div className="overflow-hidden rounded-2xl border border-black/[0.07] bg-white shadow-[0_28px_80px_-52px_rgba(23,33,58,.65)]">
+    <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-[0_28px_80px_-52px_rgba(23,33,58,.65)]">
       {testCheckout && product.pricing_type !== "free" && (
-        <div className="border-b border-[#3478f6]/15 bg-[#dceaff] px-6 py-3 text-center text-xs font-semibold text-[#245fd0]">
+        <div className="border-b border-primary/15 bg-primary/10 px-6 py-3 text-center text-xs font-semibold text-foreground">
           Test checkout - no card is requested, no money is charged, and no payout is created.
         </div>
       )}
       <div className="p-6 sm:p-7">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <div className="text-[10px] font-semibold uppercase tracking-[0.17em] text-[#17213a]/38">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.17em] text-muted-foreground">
               {product.pricing_type === "subscription"
                 ? "Recurring access"
                 : product.pricing_type === "free"
@@ -906,7 +907,7 @@ function PurchaseCard({
           {(checkoutState === "canceled" || restoredCheckout) && (
             <div
               role="status"
-              className="rounded-2xl border border-[#3478f6]/15 bg-[#eef5ff] px-4 py-3 text-xs leading-5 text-[#245fd0]"
+              className="rounded-2xl border border-primary/15 bg-primary/10 px-4 py-3 text-xs leading-5 text-foreground"
             >
               {checkoutState === "canceled"
                 ? "Checkout was not completed. Your details are still here when you're ready."
@@ -915,7 +916,7 @@ function PurchaseCard({
           )}
           {product.kind !== "bento_affiliate" && (
             <>
-              <label className="block text-xs font-semibold text-[#17213a]/70">
+              <label className="block text-xs font-semibold text-muted-foreground">
                 Email address
                 <input
                   type="email"
@@ -926,8 +927,8 @@ function PurchaseCard({
                   className={`${inputClass} mt-1.5`}
                 />
               </label>
-              <label className="block text-xs font-semibold text-[#17213a]/70">
-                Name <span className="font-normal text-[#17213a]/50">(optional)</span>
+              <label className="block text-xs font-semibold text-muted-foreground">
+                Name <span className="font-normal text-muted-foreground">(optional)</span>
                 <input
                   value={name}
                   onChange={(event) => setName(event.target.value)}
@@ -935,8 +936,15 @@ function PurchaseCard({
                   className={`${inputClass} mt-1.5`}
                 />
               </label>
+              {product.kind === "newsletter" && (
+                <p className="rounded-lg border border-border bg-muted p-3 text-xs leading-5 text-muted-foreground">
+                  Buying this subscription signs you up for this newsletter’s paid emails. It does
+                  not sign you up for other creator updates. Existing unsubscribe preferences still
+                  apply.
+                </p>
+              )}
               {product.kind !== "lead_form" && (
-                <label className="flex items-start gap-3 rounded-lg bg-[#f7f8fc] p-3 text-xs leading-5 text-[#17213a]/70">
+                <label className="flex items-start gap-3 rounded-lg bg-muted p-3 text-xs leading-5 text-muted-foreground">
                   <input
                     type="checkbox"
                     checked={marketingConsent}
@@ -944,8 +952,9 @@ function PurchaseCard({
                     className="mt-1 size-4 shrink-0"
                   />
                   <span>
-                    Email me updates and offers from this creator. Optional; access does not depend
-                    on subscribing.
+                    {product.kind === "newsletter"
+                      ? "Also email me other updates and offers from this creator. Optional and separate from this paid newsletter."
+                      : "Email me updates and offers from this creator. Optional; access does not depend on subscribing."}
                   </span>
                 </label>
               )}
@@ -966,31 +975,16 @@ function PurchaseCard({
                   className={inputClass}
                 />
               ))}
-          {product.kind === "custom_product" &&
-            (product.settings?.buyerQuestions || []).map((question: string, index: number) => (
-              <label key={`${index}-${question}`} className="block">
-                <span className="mb-2 block text-xs font-semibold text-[#17213a]/65">
-                  {question}
-                </span>
-                <textarea
-                  required
-                  rows={3}
-                  maxLength={5_000}
-                  value={answers[`q_${index}`] || ""}
-                  onChange={(event) =>
-                    setAnswers((current) => ({
-                      ...current,
-                      [`q_${index}`]: event.target.value,
-                    }))
-                  }
-                  placeholder="Your answer"
-                  className={`${inputClass} resize-y`}
-                />
-              </label>
-            ))}
+          <BuyerQuestionsFields
+            questions={buyerQuestions}
+            answers={answers}
+            onChange={setAnswers}
+            disabled={checkout.isPending}
+            inputClassName={inputClass}
+          />
           {product.kind === "priority_dm" && (
             <label className="block">
-              <span className="mb-2 block text-xs font-semibold text-[#17213a]/65">
+              <span className="mb-2 block text-xs font-semibold text-muted-foreground">
                 {product.settings?.priorityPrompt || "What would you like to ask?"}
               </span>
               <textarea
@@ -1007,21 +1001,21 @@ function PurchaseCard({
                 placeholder="Write your message"
                 className={`${inputClass} resize-y`}
               />
-              <span className="mt-2 block text-[11px] leading-4 text-[#17213a]/45">
+              <span className="mt-2 block text-[11px] leading-4 text-muted-foreground">
                 The creator will receive this as a paid priority request and can reply by email or
                 through Bento.
               </span>
             </label>
           )}
           {product.kind === "lead_form" && (
-            <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-black/[0.07] bg-[#f8faff] p-4">
+            <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-border bg-muted p-4">
               <input
                 type="checkbox"
                 checked={marketingConsent}
                 onChange={(event) => setMarketingConsent(event.target.checked)}
-                className="mt-0.5 size-4 shrink-0 accent-[#3478f6]"
+                className="mt-0.5 size-4 shrink-0 accent-[var(--product-accent)]"
               />
-              <span className="text-xs leading-5 text-[#17213a]/58">
+              <span className="text-xs leading-5 text-muted-foreground">
                 Email me useful updates from this creator. Optional, and I can unsubscribe anytime.
               </span>
             </label>
@@ -1030,7 +1024,7 @@ function PurchaseCard({
             recordingAddonReady &&
             product.settings?.recordingAddonEnabled &&
             Number(product.settings.recordingAddonPrice || 0) > 0 && (
-              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-black/[0.12] bg-white p-4">
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-card p-4">
                 <input
                   type="checkbox"
                   checked={recordingAddon}
@@ -1047,11 +1041,11 @@ function PurchaseCard({
                       { onError: () => setRecordingAddon(previous) },
                     );
                   }}
-                  className="mt-0.5 size-4 accent-[#3478f6]"
+                  className="mt-0.5 size-4 accent-[var(--product-accent)]"
                 />
                 <span>
                   <span className="block text-sm font-semibold">Add the Fathom recording</span>
-                  <span className="mt-0.5 block text-xs leading-5 text-[#17213a]/50">
+                  <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
                     Receive a private recording link after the call ·{" "}
                     {formatCommerceMoney(
                       Number(product.settings.recordingAddonPrice),
@@ -1083,7 +1077,7 @@ function PurchaseCard({
               />
               <span className="min-w-0">
                 <span className="block text-sm font-semibold">{orderBump.headline}</span>
-                <span className="mt-0.5 block text-xs leading-5 text-[#17213a]/50">
+                <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
                   {orderBump.description || orderBump.product.title} ·{" "}
                   {formatCommerceMoney(orderBump.product.price_amount, orderBump.product.currency)}
                 </span>
@@ -1091,10 +1085,10 @@ function PurchaseCard({
             </label>
           )}
           {product.pricing_type === "one_time" && (
-            <div className="rounded-2xl border border-black/[0.07] bg-[#f8faff] p-3">
+            <div className="rounded-2xl border border-border bg-muted p-3">
               <label
                 htmlFor={`discount-${product.id}`}
-                className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.14em] text-[#17213a]/40"
+                className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground"
               >
                 Discount code
               </label>
@@ -1105,7 +1099,7 @@ function PurchaseCard({
                   onChange={(event) => setDiscountInput(event.target.value.toUpperCase())}
                   placeholder="Enter code"
                   maxLength={32}
-                  className="min-w-0 flex-1 rounded-xl border border-black/[0.08] bg-white px-3 py-2.5 text-sm uppercase outline-none focus:border-[#3478f6]/45"
+                  className="min-w-0 flex-1 rounded-xl border border-border bg-card px-3 py-2.5 text-sm uppercase outline-none focus:border-primary/45"
                 />
                 <button
                   type="button"
@@ -1120,7 +1114,7 @@ function PurchaseCard({
                       { applyingCode: true },
                     )
                   }
-                  className="shrink-0 rounded-xl bg-[#17213a] px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-45"
+                  className="shrink-0 rounded-xl bg-primary px-4 py-2.5 text-xs font-semibold text-primary-foreground disabled:opacity-45"
                 >
                   {quotePreview.isPending ? <Loader2 className="size-4 animate-spin" /> : "Apply"}
                 </button>
@@ -1132,7 +1126,7 @@ function PurchaseCard({
                   </span>
                   <button
                     type="button"
-                    className="text-[#17213a]/45 underline"
+                    className="text-muted-foreground underline"
                     onClick={() => {
                       const previousCode = appliedDiscountCode;
                       const previousInput = discountInput;
@@ -1156,7 +1150,7 @@ function PurchaseCard({
             </div>
           )}
           {(quote.discountAmount > 0 || quote.bumpAmount > 0 || quote.recordingAddonAmount > 0) && (
-            <div className="space-y-2 rounded-2xl border border-black/[0.06] px-4 py-3 text-xs">
+            <div className="space-y-2 rounded-2xl border border-border px-4 py-3 text-xs">
               <PriceRow
                 label="Subtotal"
                 value={formatCommerceMoney(quote.subtotalAmount, product.currency)}
@@ -1168,7 +1162,7 @@ function PurchaseCard({
                   positive
                 />
               )}
-              <div className="border-t border-black/[0.06] pt-2">
+              <div className="border-t border-border pt-2">
                 <PriceRow
                   label="Total"
                   value={formatCommerceMoney(quote.grossAmount, product.currency)}
@@ -1190,7 +1184,7 @@ function PurchaseCard({
             className="inline-flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-4 text-sm font-semibold text-white shadow-[0_16px_30px_-20px_rgba(23,33,58,.7)] transition hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-50"
             style={{
               background: accent,
-              color: productAccentTextColor(accent),
+              color: "var(--product-on-accent)",
             }}
           >
             {checkout.isPending ||
@@ -1208,7 +1202,7 @@ function PurchaseCard({
             <ArrowRight className="size-4" />
           </button>
         </form>
-        <p className="mt-3 text-center text-[11px] leading-5 text-[#17213a]/38">
+        <p className="mt-3 text-center text-[11px] leading-5 text-muted-foreground">
           {product.kind === "bento_affiliate"
             ? "Tracked Bento referral link"
             : product.kind === "lead_form"
@@ -1219,7 +1213,7 @@ function PurchaseCard({
         </p>
       </div>
       {product.pricing_type !== "free" && (
-        <div className="border-t border-black/[0.06] bg-[#f7f8fc] px-6 py-4 text-center text-[10px] font-medium text-[#17213a]/38">
+        <div className="border-t border-border bg-muted px-6 py-4 text-center text-[10px] font-medium text-muted-foreground">
           {testCheckout
             ? "Staging uses zero-money mock checkout only."
             : "Payment is processed securely by this creator's connected payment provider."}
@@ -1242,7 +1236,7 @@ function PriceRow({
 }) {
   return (
     <div
-      className={`flex items-center justify-between gap-4 ${strong ? "font-semibold" : "text-[#17213a]/55"}`}
+      className={`flex items-center justify-between gap-4 ${strong ? "font-semibold" : "text-muted-foreground"}`}
     >
       <span>{label}</span>
       <span className={`tabular-nums ${positive ? "text-emerald-600" : ""}`}>{value}</span>
@@ -1262,7 +1256,7 @@ function checkoutAttribution() {
 }
 
 const inputClass =
-  "w-full rounded-lg border border-black/[0.12] bg-white px-4 py-3.5 text-sm outline-none transition placeholder:text-[#17213a]/30 focus:border-[#3478f6]/45 focus:ring-4 focus:ring-[#3478f6]/10";
+  "w-full rounded-lg border border-border bg-card px-4 py-3.5 text-sm outline-none transition placeholder:text-muted-foreground focus:border-primary/45 focus:ring-4 focus:ring-primary/10";
 
 function productBenefits(
   product: CommerceProductRecord,
@@ -1293,13 +1287,7 @@ function productBenefits(
   if (product.kind === "paid_community")
     return ["Private member feed", "Creator updates", "Member conversations"];
   if (product.kind === "membership") return (settings.benefits || []).filter(Boolean);
-  if (product.kind === "custom_product")
-    return [
-      "Personalised fulfilment",
-      ...(settings.buyerQuestions || [])
-        .slice(0, 2)
-        .map((question: string) => `Buyer detail: ${question}`),
-    ];
+  if (product.kind === "custom_product") return ["Personalised fulfilment"];
   if (product.kind === "priority_dm")
     return [
       "Paid priority inbox",
@@ -1350,11 +1338,11 @@ function TrustPoint({
 }) {
   return (
     <div>
-      <span className="flex size-10 items-center justify-center rounded-2xl bg-white/10 text-[#ffc928]">
+      <span className="flex size-10 items-center justify-center rounded-2xl bg-primary/10 text-primary">
         <Icon className="size-4" />
       </span>
       <div className="mt-3 text-sm font-semibold">{title}</div>
-      <p className="mt-1 text-xs leading-5 text-white/72">{body}</p>
+      <p className="mt-1 text-xs leading-5 text-muted-foreground">{body}</p>
     </div>
   );
 }

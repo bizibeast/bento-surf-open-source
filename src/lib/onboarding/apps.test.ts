@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { APP_GUIDES, appGuideForLocation } from "./apps";
 describe("contextual app setup", () => {
   it("covers every sidebar app and independent messaging providers", () => {
-    expect(APP_GUIDES).toHaveLength(20);
-    expect(new Set(APP_GUIDES.map((app) => app.id)).size).toBe(20);
+    expect(APP_GUIDES).toHaveLength(21);
+    expect(new Set(APP_GUIDES.map((app) => app.id)).size).toBe(21);
     for (const app of APP_GUIDES) {
       expect(app.steps).toHaveLength(3);
       expect(app.steps.every((step) => step.title && step.instruction && step.proof)).toBe(true);
@@ -16,5 +16,6 @@ describe("contextual app setup", () => {
     expect(appGuideForLocation("/content", {})?.id).toBe("discover");
     expect(appGuideForLocation("/onboarding", {})).toBeUndefined();
     expect(appGuideForLocation("/email-marketing/posts/123", {})?.id).toBe("newsletter");
+    expect(appGuideForLocation("/courses", {})?.id).toBe("courses");
   });
 });

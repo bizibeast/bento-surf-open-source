@@ -4,6 +4,7 @@ import { z } from "zod";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import {
   calculateCommerceAmounts,
+  formatCommerceMoney,
   isHostedAccessKind,
   type CommerceBuyerAnswer,
   type CommerceProductKind,
@@ -21,6 +22,7 @@ import {
   razorpayEnvironment,
   razorpayRequest,
   verifyRazorpayPaymentSignature,
+  verifyRazorpaySubscriptionSignature,
   type RazorpayPaymentAccount,
 } from "./client.server";
 import {
@@ -30,6 +32,16 @@ import {
   type CommerceCheckoutGrowth,
 } from "@/lib/commerce-growth.server";
 import { publicProductSuccessPath, publicProductUrl } from "@/lib/application-urls";
+import { creatorPaymentCompatibility } from "@/lib/payment-providers";
+import {
+  applyRazorpaySubscriptionSnapshot,
+  assertRazorpaySubscriptionBinding,
+  assertRazorpaySubscriptionInvoice,
+  isRazorpaySubscriptionSession,
+  razorpayRecurringPlan,
+  type RazorpayInvoice,
+  type RazorpaySubscription,
+} from "./subscriptions.server";
 
 type CheckoutProduct = {
   id: string;
@@ -53,6 +65,7 @@ export type RazorpayPayment = {
   status: string;
   captured: boolean;
   order_id: string | null;
+  invoice_id?: string | null;
   email?: string | null;
   fee?: number | null;
   tax?: number | null;
@@ -70,6 +83,10 @@ const orderIdSchema = z
   .regex(/^order_[A-Za-z0-9]+$/)
   .max(128);
 const signatureSchema = z.string().regex(/^[a-f0-9]{64}$/i);
+const subscriptionIdSchema = z
+  .string()
+  .regex(/^sub_[A-Za-z0-9]+$/)
+  .max(128);
 
 function appUrl() {
   return (process.env.VITE_APP_URL || "http://localhost:8080").replace(/\/$/, "");
@@ -90,15 +107,27 @@ export async function finalizeRazorpayPayment(input: {
   account: RazorpayPaymentAccount;
   session: any;
   payment: RazorpayPayment;
+  subscription?: RazorpaySubscription;
+  invoice?: RazorpayInvoice;
 }) {
   const { account, session, payment } = input;
-  if (session.provider !== "razorpay" || session.connection_id !== account.id) {
+  if (
+    session.provider !== "razorpay" ||
+    session.connection_id !== account.id ||
+    session.creator_id !== account.creator_id
+  ) {
     throw new Error("Razorpay payment does not match this Bento connection.");
   }
   if (["failed", "expired", "canceled"].includes(session.status)) {
     throw new Error("This checkout session is no longer valid.");
   }
-  if (!session.provider_checkout_id || payment.order_id !== session.provider_checkout_id) {
+  const recurring = isRazorpaySubscriptionSession(session);
+  if (recurring) {
+    if (!input.subscription || !input.invoice)
+      throw new Error("Razorpay subscription payment needs a verified billed invoice.");
+    assertRazorpaySubscriptionBinding(account, session, input.subscription);
+    assertRazorpaySubscriptionInvoice(session, input.subscription, payment, input.invoice);
+  } else if (!session.provider_checkout_id || payment.order_id !== session.provider_checkout_id) {
     throw new Error("Razorpay Order does not match this Bento checkout.");
   }
   if (!payment.captured || payment.status !== "captured") {
@@ -113,15 +142,21 @@ export async function finalizeRazorpayPayment(input: {
 
   const processorFee = Math.max(0, Number(payment.fee || 0));
   const db = supabaseAdmin as any;
-  const { data: fulfilled, error } = await db.rpc("fulfill_provider_commerce_order", {
+  const { data: fulfilled, error } = await db.rpc("fulfill_provider_commerce_order_with_period", {
     p_product_id: session.product_id,
     p_buyer_email: session.buyer_email,
     p_buyer_name: session.buyer_name || "",
     p_provider: "razorpay",
     p_provider_account_id: account.provider_account_id,
-    p_provider_checkout_id: session.provider_checkout_id,
+    p_provider_checkout_id: recurring ? payment.order_id : session.provider_checkout_id,
     p_provider_payment_id: payment.id,
-    p_provider_subscription_id: "",
+    p_provider_subscription_id: input.subscription?.id || "",
+    ...(recurring
+      ? {
+          p_subscription_period_start: new Date(input.invoice!.billing_start! * 1000).toISOString(),
+          p_subscription_period_end: new Date(input.invoice!.billing_end! * 1000).toISOString(),
+        }
+      : {}),
     p_gross_amount: session.gross_amount,
     p_platform_fee_bps: 0,
     p_platform_fee_amount: 0,
@@ -131,7 +166,13 @@ export async function finalizeRazorpayPayment(input: {
     p_currency: session.currency,
     p_metadata: commerceOrderMetadata(session, {
       bento_session_id: session.id,
-      razorpay_order_id: session.provider_checkout_id,
+      razorpay_order_id: payment.order_id,
+      ...(recurring
+        ? {
+            razorpay_subscription_id: input.subscription!.id,
+            razorpay_invoice_id: input.invoice!.id,
+          }
+        : {}),
       razorpay_payment_id: payment.id,
       razorpay_method: payment.method || null,
       razorpay_fee_tax: Math.max(0, Number(payment.tax || 0)),
@@ -142,6 +183,15 @@ export async function finalizeRazorpayPayment(input: {
   });
   if (error || !fulfilled?.order_id) {
     throw new Error(error?.message || "Razorpay order could not be fulfilled.");
+  }
+  if (recurring) {
+    await applyRazorpaySubscriptionSnapshot({
+      account,
+      subscription: input.subscription!,
+      invoice: input.invoice,
+      fundingOrderId: String(fulfilled.order_id),
+      eventId: `payment:${payment.id}`,
+    });
   }
   const accessToken = session.metadata?.access_token_ciphertext
     ? await decryptServerSecret(session.metadata.access_token_ciphertext)
@@ -163,9 +213,28 @@ export async function createRazorpayCommerceCheckout(input: {
   growth: CommerceCheckoutGrowth;
   buyerAnswers?: CommerceBuyerAnswer[];
 }) {
-  if (input.product.pricing_type === "subscription") {
+  const compatibility = creatorPaymentCompatibility(
+    "razorpay",
+    input.product.kind as CommerceProductKind,
+    input.product.pricing_type,
+    { billingInterval: input.product.billing_interval, currency: input.product.currency },
+  );
+  if (!compatibility.supported)
+    throw new Error(compatibility.reason || "Razorpay cannot sell this offer.");
+  const recurring = input.product.pricing_type === "subscription";
+  const recurringPlan = recurring ? razorpayRecurringPlan(input.product.billing_interval) : null;
+  if (
+    recurring &&
+    (input.growth.discountAmount ||
+      input.growth.discountCodeId ||
+      input.growth.bumpProductId ||
+      input.growth.bumpAmount ||
+      input.growth.recordingAddonAmount ||
+      input.recordingAddon?.selected ||
+      input.growth.grossAmount !== input.product.price_amount)
+  ) {
     throw new Error(
-      "Razorpay recurring subscriptions are not available in Bento yet. Choose Stripe, Polar, or Dodo Payments for this product.",
+      "Discounts and paid add-ons require a one-time offer; recurring checkout adjustments are unavailable.",
     );
   }
   const account = await getRazorpayPaymentAccount(input.product.creator_id);
@@ -201,6 +270,9 @@ export async function createRazorpayCommerceCheckout(input: {
     recording_addon_amount: input.recordingAddon?.amount || 0,
     expires_at: expiresAt.toISOString(),
     metadata: {
+      pricing_type: input.product.pricing_type,
+      billing_interval: input.product.billing_interval,
+      ...(recurringPlan ? { razorpay_total_count: recurringPlan.totalCount } : {}),
       product_slug: input.product.slug,
       product_public_slug: input.product.public_slug,
       creator_username: input.product.creator_username,
@@ -217,6 +289,91 @@ export async function createRazorpayCommerceCheckout(input: {
       buyerEmail: input.email,
       growth: input.growth,
     });
+    if (recurringPlan) {
+      const plan = await razorpayRequest<{
+        id: string;
+        period: string;
+        interval: number;
+        item: { amount: number; currency: string };
+      }>(credentials, "/v1/plans", {
+        method: "POST",
+        body: {
+          period: recurringPlan.period,
+          interval: recurringPlan.interval,
+          item: {
+            name: input.product.title.slice(0, 255),
+            amount: amounts.grossAmount,
+            currency: input.product.currency.toUpperCase(),
+            ...(input.product.description
+              ? { description: input.product.description.slice(0, 255) }
+              : {}),
+          },
+          notes: { bento_product_id: input.product.id, bento_creator_id: input.product.creator_id },
+        },
+      });
+      if (
+        !/^plan_[A-Za-z0-9]+$/.test(plan.id) ||
+        plan.period !== recurringPlan.period ||
+        plan.interval !== recurringPlan.interval ||
+        plan.item?.amount !== amounts.grossAmount ||
+        plan.item?.currency.toLowerCase() !== input.product.currency.toLowerCase()
+      ) {
+        throw new Error("Razorpay did not create the requested subscription plan.");
+      }
+      const subscription = await razorpayRequest<{
+        id: string;
+        status: string;
+        plan_id: string;
+        quantity: number;
+      }>(credentials, "/v1/subscriptions", {
+        method: "POST",
+        body: {
+          plan_id: plan.id,
+          quantity: 1,
+          total_count: recurringPlan.totalCount,
+          customer_notify: true,
+          expire_by: Math.floor(expiresAt.getTime() / 1000),
+          notes: {
+            bento_session_id: sessionId,
+            bento_product_id: input.product.id,
+            bento_creator_id: input.product.creator_id,
+          },
+        },
+      });
+      if (
+        !/^sub_[A-Za-z0-9]+$/.test(subscription.id) ||
+        subscription.status !== "created" ||
+        subscription.plan_id !== plan.id ||
+        subscription.quantity !== 1
+      )
+        throw new Error("Razorpay did not create a payable subscription.");
+      const { data: saved, error: saveError } = await db
+        .from("commerce_payment_sessions")
+        .update({
+          provider_checkout_id: subscription.id,
+          metadata: {
+            pricing_type: input.product.pricing_type,
+            billing_interval: input.product.billing_interval,
+            razorpay_total_count: recurringPlan.totalCount,
+            razorpay_plan_id: plan.id,
+            product_slug: input.product.slug,
+            product_public_slug: input.product.public_slug,
+            creator_username: input.product.creator_username,
+            access_token_ciphertext: accessToken ? await encryptServerSecret(accessToken) : null,
+            ...(input.buyerAnswers?.length ? { buyer_answers: input.buyerAnswers } : {}),
+          },
+        })
+        .eq("id", sessionId)
+        .eq("status", "pending")
+        .select("id")
+        .maybeSingle();
+      if (saveError || !saved)
+        throw new Error(saveError?.message || "Bento could not save the Razorpay subscription.");
+      return {
+        url: `${appUrl()}/payments/razorpay/${sessionId}`,
+        test: razorpayEnvironment(credentials.keyId) === "sandbox",
+      };
+    }
   } catch (error) {
     await failCommerceCheckoutSession(sessionId, error);
     throw error;
@@ -285,7 +442,7 @@ export const getRazorpayCheckout = createServerFn({ method: "GET" })
       getRazorpayPaymentAccountById(session.connection_id),
       db
         .from("commerce_products")
-        .select("title, description, slug")
+        .select("title, description, slug, public_slug")
         .eq("id", session.product_id)
         .eq("creator_id", session.creator_id)
         .maybeSingle(),
@@ -295,7 +452,12 @@ export const getRazorpayCheckout = createServerFn({ method: "GET" })
         .eq("id", session.creator_id)
         .maybeSingle(),
     ]);
-    if (!account || !account.charges_enabled || !account.webhook_secret_ciphertext) {
+    if (
+      !account ||
+      account.creator_id !== session.creator_id ||
+      !account.charges_enabled ||
+      !account.webhook_secret_ciphertext
+    ) {
       throw new Error("This creator's Razorpay connection is not ready.");
     }
     const product = productResult.data;
@@ -305,10 +467,18 @@ export const getRazorpayCheckout = createServerFn({ method: "GET" })
     if (productResult.error || !product) {
       throw new Error("This product is not available.");
     }
-    if (!session.provider_checkout_id) throw new Error("Razorpay Order is missing.");
+    if (!session.provider_checkout_id) throw new Error("Razorpay checkout is missing.");
+    const recurring = isRazorpaySubscriptionSession(session);
+    const totalBillingCycles = recurring ? Number(session.metadata?.razorpay_total_count) : null;
     return {
       sessionId: session.id as string,
-      orderId: session.provider_checkout_id as string,
+      orderId: recurring ? null : (session.provider_checkout_id as string),
+      subscriptionId: recurring ? (session.provider_checkout_id as string) : null,
+      billingInterval: recurring ? String(session.metadata.billing_interval) : null,
+      totalBillingCycles,
+      subscriptionTerms: recurring
+        ? `${formatCommerceMoney(Number(session.gross_amount), String(session.currency))} every ${session.metadata.billing_interval} for up to ${totalBillingCycles} payments (maximum 10 years), unless canceled earlier. Access begins after your first subscription charge is captured.${session.currency.toLowerCase() !== "inr" ? " International recurring card payments must be enabled on the creator's Razorpay account." : ""}`
+        : null,
       keyId: account.provider_account_id,
       amount: Number(session.gross_amount),
       currency: String(session.currency).toUpperCase(),
@@ -335,7 +505,8 @@ export const verifyRazorpayCheckout = createServerFn({ method: "POST" })
       .object({
         sessionId: uuidSchema,
         razorpayPaymentId: paymentIdSchema,
-        razorpayOrderId: orderIdSchema,
+        razorpayOrderId: orderIdSchema.optional(),
+        razorpaySubscriptionId: subscriptionIdSchema.optional(),
         razorpaySignature: signatureSchema,
       })
       .parse(input),
@@ -353,24 +524,71 @@ export const verifyRazorpayCheckout = createServerFn({ method: "POST" })
     if (new Date(session.expires_at) <= new Date() && session.status !== "paid") {
       throw new Error("This Razorpay checkout has expired.");
     }
-    if (session.provider_checkout_id !== data.razorpayOrderId) {
-      throw new Error("Razorpay returned a different Order.");
+    const recurring = isRazorpaySubscriptionSession(session);
+    if (
+      recurring
+        ? session.provider_checkout_id !== data.razorpaySubscriptionId || data.razorpayOrderId
+        : session.provider_checkout_id !== data.razorpayOrderId || data.razorpaySubscriptionId
+    ) {
+      throw new Error("Razorpay returned a different checkout.");
     }
     const account = await getRazorpayPaymentAccountById(session.connection_id);
     if (!account) throw new Error("Razorpay connection was not found.");
     const credentials = await razorpayCredentialsForAccount(account);
-    const validSignature = await verifyRazorpayPaymentSignature({
-      orderId: session.provider_checkout_id,
-      paymentId: data.razorpayPaymentId,
-      signature: data.razorpaySignature,
-      keySecret: credentials.keySecret,
-    });
+    const validSignature = await (recurring
+      ? verifyRazorpaySubscriptionSignature({
+          subscriptionId: session.provider_checkout_id,
+          paymentId: data.razorpayPaymentId,
+          signature: data.razorpaySignature,
+          keySecret: credentials.keySecret,
+        })
+      : verifyRazorpayPaymentSignature({
+          orderId: session.provider_checkout_id,
+          paymentId: data.razorpayPaymentId,
+          signature: data.razorpaySignature,
+          keySecret: credentials.keySecret,
+        }));
     if (!validSignature) throw new Error("Razorpay payment signature is invalid.");
     const payment = await razorpayRequest<RazorpayPayment>(
       credentials,
       `/v1/payments/${encodeURIComponent(data.razorpayPaymentId)}`,
     );
-    const result = await finalizeRazorpayPayment({ account, session, payment });
+    if (payment.id !== data.razorpayPaymentId)
+      throw new Error("Razorpay returned a different payment.");
+    let subscription: RazorpaySubscription | undefined;
+    let invoice: RazorpayInvoice | undefined;
+    if (recurring) {
+      subscription = await razorpayRequest<RazorpaySubscription>(
+        credentials,
+        `/v1/subscriptions/${encodeURIComponent(session.provider_checkout_id)}`,
+      );
+      assertRazorpaySubscriptionBinding(account, session, subscription);
+      if (!["authorized", "captured"].includes(payment.status))
+        throw new Error("The Razorpay mandate payment was not successful.");
+      if (
+        !/^inv_[A-Za-z0-9]+$/.test(payment.invoice_id || "") ||
+        subscription.paid_count === 0 ||
+        payment.status !== "captured"
+      ) {
+        return {
+          pending: true as const,
+          url: null,
+          message:
+            "Your recurring payment is authorized. We'll email your access link after the first subscription payment is captured.",
+        };
+      }
+      invoice = await razorpayRequest<RazorpayInvoice>(
+        credentials,
+        `/v1/invoices/${encodeURIComponent(payment.invoice_id!)}`,
+      );
+    }
+    const result = await finalizeRazorpayPayment({
+      account,
+      session,
+      payment,
+      subscription,
+      invoice,
+    });
     const query = new URLSearchParams({ order: result.orderId });
     if (result.accessToken) query.set("access", result.accessToken);
     const successPath =
@@ -381,6 +599,7 @@ export const verifyRazorpayCheckout = createServerFn({ method: "POST" })
           )
         : `/p/${encodeURIComponent(session.metadata?.product_slug || "product")}/success`;
     return {
+      pending: false as const,
       url: `${(process.env.VITE_PUBLIC_URL || "http://localhost:8080").replace(/\/$/, "")}${successPath}?${query}`,
     };
   });

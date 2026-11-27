@@ -102,6 +102,8 @@ async function fulfill(input: {
   checkoutId: string;
   paymentId: string;
   subscriptionId?: string;
+  subscriptionPeriodStart?: string;
+  subscriptionPeriodEnd?: string;
   amount: number;
   currency: string;
   buyerEmail?: string;
@@ -113,7 +115,7 @@ async function fulfill(input: {
   }
   await validateProduct(input);
   const db = supabaseAdmin as any;
-  const { data: fulfilled, error } = await db.rpc("fulfill_provider_commerce_order", {
+  const { data: fulfilled, error } = await db.rpc("fulfill_provider_commerce_order_with_period", {
     p_product_id: input.session.product_id,
     p_buyer_email: input.session.buyer_email,
     p_buyer_name: input.buyerName || input.session.buyer_name || "",
@@ -135,6 +137,12 @@ async function fulfill(input: {
       ...(input.metadata || {}),
     }),
     p_access_token_hash: input.session.access_token_hash || null,
+    ...(input.subscriptionId
+      ? {
+          p_subscription_period_start: input.subscriptionPeriodStart,
+          p_subscription_period_end: input.subscriptionPeriodEnd,
+        }
+      : {}),
   });
   if (error || !fulfilled?.order_id) {
     throw new Error(error?.message || "Creem order could not be fulfilled.");
@@ -144,6 +152,7 @@ async function fulfill(input: {
     orderId: fulfilled.order_id,
     providerCheckoutId: input.checkoutId,
   });
+  return String(fulfilled.order_id);
 }
 
 async function checkoutCompleted(event: any, account: CreemPaymentAccount) {
@@ -172,15 +181,30 @@ async function checkoutCompleted(event: any, account: CreemPaymentAccount) {
 
 async function subscriptionPaid(event: any, account: CreemPaymentAccount) {
   const subscription = event.object || {};
+  const paidPeriodStart = subscription.current_period_start_date;
+  const paidPeriodEnd = subscription.current_period_end_date;
+  // Verify the signed payment's service window before any order/grant/session
+  // mutation; lifecycle registration cannot repair an unbounded initial grant.
+  if (
+    typeof paidPeriodStart !== "string" ||
+    typeof paidPeriodEnd !== "string" ||
+    !Number.isFinite(Date.parse(paidPeriodStart)) ||
+    !Number.isFinite(Date.parse(paidPeriodEnd)) ||
+    Date.parse(paidPeriodEnd) <= Date.parse(paidPeriodStart)
+  ) {
+    throw new Error("Creem paid service period could not be verified.");
+  }
   const sessionId = String(subscription.metadata?.bento_session_id || "");
   const session = await findSession(sessionId, account);
-  await fulfill({
+  const fundingOrderId = await fulfill({
     account,
     session,
     providerProductId: String(subscription.product?.id || subscription.product || ""),
     checkoutId: String(session.provider_checkout_id || session.id),
     paymentId: String(subscription.last_transaction_id || ""),
     subscriptionId: String(subscription.id || ""),
+    subscriptionPeriodStart: new Date(paidPeriodStart).toISOString(),
+    subscriptionPeriodEnd: new Date(paidPeriodEnd).toISOString(),
     amount: Number(subscription.product?.price),
     currency: String(subscription.product?.currency || ""),
     buyerEmail: subscription.customer?.email,
@@ -196,6 +220,7 @@ async function subscriptionPaid(event: any, account: CreemPaymentAccount) {
     providerAccountId: account.provider_account_id,
     providerSubscriptionId: String(subscription.id || ""),
     state: "renewed",
+    fundingOrderId,
     providerEventId: String(event.id),
     currentPeriodStart: subscription.current_period_start_date,
     currentPeriodEnd: subscription.current_period_end_date,

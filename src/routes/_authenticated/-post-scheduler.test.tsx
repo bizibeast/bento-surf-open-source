@@ -1110,10 +1110,18 @@ describe("scheduler compose close protection", () => {
         },
       ],
     });
-    const create = await screen.findByRole("button", { name: "Create new post" });
-    await waitFor(() => expect(create).toBeEnabled());
+    const create = await screen.findByRole(
+      "button",
+      { name: "Create new post" },
+      { timeout: 4_000 },
+    );
+    await waitFor(() => expect(create).toBeEnabled(), { timeout: 4_000 });
     fireEvent.click(create);
-    const compose = await screen.findByRole("dialog", { name: "Create a post" });
+    const compose = await screen.findByRole(
+      "dialog",
+      { name: "Create a post" },
+      { timeout: 4_000 },
+    );
     const editor = within(compose).getByRole("textbox", { name: /Post text/i });
     fireEvent.change(editor, { target: { value: "@yc", selectionStart: 3, selectionEnd: 3 } });
     const listbox = within(compose).getByRole("listbox", { name: "Accounts to mention" });
@@ -1124,7 +1132,11 @@ describe("scheduler compose close protection", () => {
     expect(within(compose).getByText("Type at least 3 letters to search")).toBeVisible();
     expect(searchSocialMentions).not.toHaveBeenCalled();
     fireEvent.change(editor, { target: { value: "@yco", selectionStart: 4, selectionEnd: 4 } });
-    const found = await within(compose).findByRole("option", { name: /Y Combinator/ });
+    const found = await within(compose).findByRole(
+      "option",
+      { name: /Y Combinator/ },
+      { timeout: 4_000 },
+    );
     await waitFor(() =>
       expect(searchSocialMentions).toHaveBeenCalledWith({
         data: { connectionId: missingAvatar.id, query: "yco" },

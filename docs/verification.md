@@ -1,6 +1,22 @@
 # Verification status
 
-## Current shared-app parity release
+## November 27, 2026 commerce and workspace parity
+
+Reviewed shared source: `884bbac80b39c38f03cbf5eb94f63b21d8c93e80`. The public port starts from public upstream `8a5145bc8b45c59998bdb4b1d6cf03ee558c4e69` and preserves public history, setup, neutral configuration, licensing, and operator-owned infrastructure.
+
+Includes dedicated Courses, Community and Priority DM product creation, workspace currency preferences for new offers, provider-compatible paid newsletters and recurring offers, funded renewal periods and cancellation/refund/dispute reconciliation, required buyer questions, scoped newsletter consent, creator theme inheritance, archival visibility, and sidebar fixes. Apply all included shared migrations plus `20261127092302_public_self_hosted_edition.sql` before upgrading.
+
+The public-only edition migration aligns database entitlements with `BENTO_EDITION=self_hosted`; it creates no hosted subscriptions, complimentary grants, or artificial profile plans. Self-hosted deployment checks no longer require the hosted contact/storage add-on catalog. Core security and production provider-mode checks remain.
+
+Local PostgreSQL verification used an isolated clone of the final migration schema. An ordinary newly bootstrapped profile, without a paid plan or subscription/grant, receives the intended self-hosted entitlements and can accept an INR paid newsletter. The shared newsletter quota/downgrade/delivery contract then passes in transaction-scoped hosted mode; rollback restores the self-hosted edition, and the public-edition test passes again. The clone was deleted. This verifies the new public edition setting against the current schema; it does not claim that every historical migration was replayed into a brand-new operator project.
+
+Run `scripts/test-paid-newsletter-delivery-db.sh` for the shared hosted policy contract, setting `BENTO_SUPABASE_DB_CONTAINER` and `BENTO_NEWSLETTER_TEST_DATABASE` to an isolated local instance. Its transaction restores the public edition. Run `supabase/tests/public_self_hosted_edition.sql` after public migrations to check normal self-hosted entitlements. Other new SQL harnesses also require an explicit local container/database.
+
+Validation: frozen-lockfile installation; 5,647 passing tests across 679 files (two skipped tests/files); TypeScript with a 4 GiB heap limit; production build; production deployment guard with no hosted add-on catalog; and Cloudflare Worker packaging dry run. The dry run reports 24,832.02 KiB uncompressed / 6,088.67 KiB gzip. Public boundary and complete reachable-history scans pass, and shared-source parity reports zero missing, stale, removed, or unclassified paths. The existing reviewed historical non-secret exception remains unchanged. Focused public callback/privacy/mock fixtures (51 tests), operator-copy/staging-policy checks (14 tests), and the isolated PostgreSQL checks also pass.
+
+No operator-owned deployment, payment, live provider call, email delivery, social publication, or hosted database migration was performed by this public sync. Private source history, credentials, customer data, and hosted release evidence were not imported. Operators must apply migrations and configure their own infrastructure and approved provider accounts.
+
+## Earlier shared-app parity release
 
 Shared source: `25b2bcb4f8de2cffc4a6a9d2900df55919ff91a5`. Adds polling backoff (hidden tabs stop polling, idle tabs back off, cached founder web analytics), one shared daily and monthly Resend send budget with the weekly digest split into Monday and Tuesday cohorts, and trial cancellation that ends the trial and access immediately with no charge (paid cancellations still run to the end of the paid period). Includes migration `20261023060000_resend_shared_daily_budget`; apply it before deploying this code.
 

@@ -34,6 +34,7 @@ const WEBMCP_WORKSPACES = {
   content: "/content",
   link: "/link",
   store: "/store",
+  courses: "/courses",
   email_marketing: "/email-marketing",
   priority_dm: "/priority-dm",
   calendar: "/calendar",
@@ -78,6 +79,13 @@ export const WEBMCP_TOOLS_BY_ROUTE: Record<string, readonly string[]> = {
     "manage_discount_code",
     "manage_order_bump",
     "manage_audience",
+  ],
+  courses: [
+    "list_products",
+    "get_store_workspace",
+    "upload_media",
+    "begin_media_upload",
+    "manage_product",
   ],
   "email-marketing": ["manage_audience"],
   products: ["list_products", "get_store_workspace", "manage_product"],
@@ -355,7 +363,7 @@ function AuthLayout() {
             className="flex min-h-screen"
             style={
               {
-                "--app-sidebar-width": sidebarCollapsed ? "4rem" : "13.5rem",
+                "--app-sidebar-width": sidebarCollapsed ? "4rem" : "15rem",
               } as CSSProperties
             }
           >
