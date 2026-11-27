@@ -173,7 +173,6 @@ begin
 end;
 $$;
 revoke all on function public.guard_paid_newsletter_delivery_capacity() from public,anon,authenticated;
-drop trigger if exists newsletter_subscriptions_paid_delivery_capacity on public.newsletter_subscriptions;
 create trigger newsletter_subscriptions_paid_delivery_capacity
   before insert or update of publication_id,contact_id,status,email_enabled,consent_proof
   on public.newsletter_subscriptions for each row

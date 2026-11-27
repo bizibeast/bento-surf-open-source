@@ -2,7 +2,7 @@
 
 ## November 27, 2026 commerce and workspace parity
 
-Reviewed shared source: `884bbac80b39c38f03cbf5eb94f63b21d8c93e80`. The public port starts from public upstream `8a5145bc8b45c59998bdb4b1d6cf03ee558c4e69` and preserves public history, setup, neutral configuration, licensing, and operator-owned infrastructure.
+Reviewed shared source: `f6a549c94088f2d928124db1f0fd67e46c9f78e3`. The public port starts from public upstream `8a5145bc8b45c59998bdb4b1d6cf03ee558c4e69` and preserves public history, setup, neutral configuration, licensing, and operator-owned infrastructure.
 
 Includes dedicated Courses, Community and Priority DM product creation, workspace currency preferences for new offers, provider-compatible paid newsletters and recurring offers, funded renewal periods and cancellation/refund/dispute reconciliation, required buyer questions, scoped newsletter consent, creator theme inheritance, archival visibility, and sidebar fixes. Apply all included shared migrations plus `20261127092302_public_self_hosted_edition.sql` before upgrading.
 
@@ -13,6 +13,8 @@ Local PostgreSQL verification used an isolated clone of the final migration sche
 Run `scripts/test-paid-newsletter-delivery-db.sh` for the shared hosted policy contract, setting `BENTO_SUPABASE_DB_CONTAINER` and `BENTO_NEWSLETTER_TEST_DATABASE` to an isolated local instance. Its transaction restores the public edition. Run `supabase/tests/public_self_hosted_edition.sql` after public migrations to check normal self-hosted entitlements. Other new SQL harnesses also require an explicit local container/database.
 
 Validation: frozen-lockfile installation; 5,647 passing tests across 679 files (two skipped tests/files); TypeScript with a 4 GiB heap limit; production build; production deployment guard with no hosted add-on catalog; and Cloudflare Worker packaging dry run. The dry run reports 24,832.02 KiB uncompressed / 6,088.67 KiB gzip. Public boundary and complete reachable-history scans pass, and shared-source parity reports zero missing, stale, removed, or unclassified paths. The existing reviewed historical non-secret exception remains unchanged. Focused public callback/privacy/mock fixtures (51 tests), operator-copy/staging-policy checks (14 tests), and the isolated PostgreSQL checks also pass.
+
+The final source follow-up removes an unnecessary trigger DROP before its first creation and makes the onboarding test wait for passive-effect telemetry. Runtime application code is unchanged from the full-suite/build snapshot `884bbac80b39c38f03cbf5eb94f63b21d8c93e80`. The final delta passes 27 focused onboarding tests with CI settings and the affected SQL installation/delivery/edition-restoration checks; the earlier full application-suite and build results cover the unchanged runtime code.
 
 No operator-owned deployment, payment, live provider call, email delivery, social publication, or hosted database migration was performed by this public sync. Private source history, credentials, customer data, and hosted release evidence were not imported. Operators must apply migrations and configure their own infrastructure and approved provider accounts.
 

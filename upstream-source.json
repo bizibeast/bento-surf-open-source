@@ -1,6 +1,6 @@
 {
   "source": "Bento shared application",
-  "syncedAt": "2026-11-27T09:34:35.441319+00:00",
+  "syncedAt": "2026-11-27T10:55:34.834194+00:00",
   "features": [
     "proactive content agent",
     "Brain and Discover editorial context",
@@ -49,5 +49,5 @@
     "Public-only migration initializes self-hosted SQL entitlements without hosted subscriptions or complimentary grants",
     "Self-hosted deployment validation does not require the hosted billing add-on catalog"
   ],
-  "sharedSourceCommit": "884bbac80b39c38f03cbf5eb94f63b21d8c93e80"
+  "sharedSourceCommit": "f6a549c94088f2d928124db1f0fd67e46c9f78e3"
 }

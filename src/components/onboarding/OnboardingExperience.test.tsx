@@ -379,9 +379,11 @@ it("shows personal proof before payment, then activates only after verified chec
   fireEvent.click(screen.getByRole("button", { name: "This feels like me" }));
   // Free workspaces see the capability showcase right before the trial step.
   expect(await screen.findByTestId("capability-showcase")).toBeVisible();
-  expect(captureProductEvent).toHaveBeenCalledWith(
-    "onboarding_showcase_viewed",
-    expect.objectContaining({ items: 5 }),
+  await waitFor(() =>
+    expect(captureProductEvent).toHaveBeenCalledWith(
+      "onboarding_showcase_viewed",
+      expect.objectContaining({ items: 5 }),
+    ),
   );
   fireEvent.click(screen.getByRole("button", { name: /Choose my plan/ }));
   expect(await screen.findByRole("button", { name: "Start my 3-day trial" })).toBeVisible();
